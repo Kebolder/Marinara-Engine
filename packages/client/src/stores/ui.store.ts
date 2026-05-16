@@ -272,6 +272,8 @@ interface UIState {
   trimIncompleteModelOutput: boolean;
   /** When true, chat inputs show a microphone button for browser speech-to-text dictation. */
   speechToTextEnabled: boolean;
+  /** When true, allow the rare Chibi Professor Mari scroll toast. */
+  chibiProfessorMariEnabled: boolean;
   /** When true, show the global Spotify mini player in the app chrome. */
   spotifyPlayerEnabled: boolean;
   /** Mobile Spotify widget collapsed state. */
@@ -480,6 +482,7 @@ interface UIState {
   setBoldDialogue: (v: boolean) => void;
   setTrimIncompleteModelOutput: (v: boolean) => void;
   setSpeechToTextEnabled: (v: boolean) => void;
+  setChibiProfessorMariEnabled: (v: boolean) => void;
   setSpotifyPlayerEnabled: (v: boolean) => void;
   setSpotifyMobileWidgetCollapsed: (v: boolean) => void;
   setSpotifyMobileWidgetPosition: (position: FloatingWidgetPosition) => void;
@@ -597,6 +600,7 @@ export function pickSyncedSettings(state: UIState) {
     boldDialogue: state.boldDialogue,
     trimIncompleteModelOutput: state.trimIncompleteModelOutput,
     speechToTextEnabled: state.speechToTextEnabled,
+    chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
     spotifyPlayerEnabled: state.spotifyPlayerEnabled,
     spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
     spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,
@@ -712,6 +716,7 @@ export const useUIStore = create<UIState>()(
       boldDialogue: true,
       trimIncompleteModelOutput: false,
       speechToTextEnabled: false,
+      chibiProfessorMariEnabled: true,
       spotifyPlayerEnabled: false,
       spotifyMobileWidgetCollapsed: true,
       spotifyMobileWidgetPosition: { x: 16, y: 96 },
@@ -1062,6 +1067,7 @@ export const useUIStore = create<UIState>()(
       setBoldDialogue: (v) => set({ boldDialogue: v }),
       setTrimIncompleteModelOutput: (v) => set({ trimIncompleteModelOutput: v }),
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
+      setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
       setSpotifyPlayerEnabled: (v) => set({ spotifyPlayerEnabled: v }),
       setSpotifyMobileWidgetCollapsed: (v) => set({ spotifyMobileWidgetCollapsed: v }),
       setSpotifyMobileWidgetPosition: (position) =>
@@ -1174,7 +1180,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 29,
+      version: 30,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1440,6 +1446,10 @@ export const useUIStore = create<UIState>()(
           persisted.showQuickReplyGuide = false;
           persisted.showQuickReplyImpersonate = true;
         }
+        // v29 -> v30: allow users to disable the rare Chibi Professor Mari toast.
+        if (version <= 29 && persisted.chibiProfessorMariEnabled === undefined) {
+          persisted.chibiProfessorMariEnabled = true;
+        }
         return persisted;
       },
       partialize: (state) => ({
@@ -1491,6 +1501,7 @@ export const useUIStore = create<UIState>()(
         boldDialogue: state.boldDialogue,
         trimIncompleteModelOutput: state.trimIncompleteModelOutput,
         speechToTextEnabled: state.speechToTextEnabled,
+        chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
         spotifyPlayerEnabled: state.spotifyPlayerEnabled,
         spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
         spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,

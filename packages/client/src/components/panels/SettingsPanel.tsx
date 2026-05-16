@@ -450,6 +450,8 @@ function GeneralSettings() {
   const setTrimIncompleteModelOutput = useUIStore((s) => s.setTrimIncompleteModelOutput);
   const speechToTextEnabled = useUIStore((s) => s.speechToTextEnabled);
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
+  const chibiProfessorMariEnabled = useUIStore((s) => s.chibiProfessorMariEnabled);
+  const setChibiProfessorMariEnabled = useUIStore((s) => s.setChibiProfessorMariEnabled);
   const spotifyPlayerEnabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const setSpotifyPlayerEnabled = useUIStore((s) => s.setSpotifyPlayerEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
@@ -563,6 +565,13 @@ function GeneralSettings() {
         checked={spotifyPlayerEnabled}
         onChange={setSpotifyPlayerEnabled}
         help="Shows a compact Spotify player in the top bar on desktop and as a draggable floating widget on mobile. Requires the Spotify DJ agent to be connected."
+      />
+
+      <ToggleSetting
+        label="Mini Mari surprise visits"
+        checked={chibiProfessorMariEnabled}
+        onChange={setChibiProfessorMariEnabled}
+        help="Allows the rare Chibi Professor Mari message to appear while scrolling. Turn this off if it gets in the way of settings or other workflows."
       />
 
       {/* Streaming Speed */}
