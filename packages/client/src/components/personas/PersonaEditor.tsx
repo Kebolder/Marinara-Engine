@@ -868,7 +868,7 @@ function PersonaSpritesTab({
     if (
       !(await showConfirmDialog({
         title: "Clean Sprite Backgrounds",
-        message: `Run the local backgroundremover model on ${visibleSprites.length} saved ${modeLabel} sprite${visibleSprites.length === 1 ? "" : "s"} at strength ${savedCleanupStrength}? Marinara will keep a restore point in case the cleanup looks wrong.`,
+        message: `Clean backgrounds on ${visibleSprites.length} saved ${modeLabel} sprite${visibleSprites.length === 1 ? "" : "s"} at strength ${savedCleanupStrength}? Marinara will keep a restore point in case the cleanup looks wrong.`,
         confirmLabel: "Clean",
       }))
     ) {
@@ -881,13 +881,19 @@ function PersonaSpritesTab({
         characterId: personaId,
         expressions: visibleSprites.map((sprite) => sprite.expression),
         cleanupStrength: savedCleanupStrength,
-        engine: "backgroundremover",
+        engine: "auto",
       });
 
       if (result.processed > 0) {
         setLastCleanupBackupId(result.backupId ?? null);
+        const engineDetails =
+          result.backgroundRemoverProcessed && result.builtinProcessed
+            ? ` with backgroundremover and built-in fallback`
+            : result.backgroundRemoverProcessed
+              ? ` with backgroundremover`
+              : ` with built-in cleanup`;
         toast.success(
-          `Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"} with backgroundremover.`,
+          `Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"}${engineDetails}.`,
         );
       }
       if (result.failed.length > 0) {
@@ -1047,16 +1053,13 @@ function PersonaSpritesTab({
               disabled={
                 cleaningSprites ||
                 backgroundCleanupUnavailable ||
-                backgroundRemoverUnavailable ||
                 visibleSprites.length === 0
               }
               className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-center text-[0.6875rem] font-medium leading-tight text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-40 max-md:flex-1 max-md:basis-[calc(50%-0.25rem)] max-md:px-2.5"
               title={
                 backgroundCleanupUnavailable
                   ? backgroundCleanupReason
-                  : backgroundRemoverUnavailable
-                    ? backgroundRemoverReason
-                    : "Run the local backgroundremover model on the currently visible saved sprites"
+                  : "Clean backgrounds on the currently visible saved sprites"
               }
             >
               {cleaningSprites ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Eraser size="0.8125rem" />}
