@@ -83,7 +83,13 @@ export function isMessageHiddenFromAI(message: { extra?: unknown }): boolean {
 
 function parsePromptAttachments(extra: unknown): PromptAttachment[] | undefined {
   const rawAttachments = parseExtra(extra).attachments;
-  return Array.isArray(rawAttachments) ? (rawAttachments as PromptAttachment[]) : undefined;
+  if (!Array.isArray(rawAttachments)) return undefined;
+  const attachments = rawAttachments.filter(isPromptAttachment);
+  return attachments.length ? attachments : undefined;
+}
+
+function isPromptAttachment(value: unknown): value is PromptAttachment {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 /**

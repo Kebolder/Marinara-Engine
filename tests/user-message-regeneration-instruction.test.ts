@@ -74,6 +74,28 @@ describe("user message regeneration instruction", () => {
     assert.match(prompt.content, /<original_user_message>\nregenerate this safely\n<\/original_user_message>/);
   });
 
+  it("ignores malformed attachment array entries when rebuilding a user-message regeneration prompt", () => {
+    const imageDataUrl = "data:image/png;base64,aW1hZ2U=";
+    const prompt = buildUserMessageRegenerationPrompt({
+      content: "describe this safely",
+      extra: {
+        attachments: [
+          null,
+          "not an object",
+          123,
+          {
+            type: "image/png",
+            filename: "image.png",
+            data: imageDataUrl,
+          },
+        ],
+      },
+    });
+
+    assert.match(prompt.content, /<original_user_message>\ndescribe this safely\n<\/original_user_message>/);
+    assert.deepEqual(prompt.images, [imageDataUrl]);
+  });
+
   it("ignores malformed attachment metadata when building the regeneration instruction directly", () => {
     const instruction = buildUserMessageRegenerationInstruction({
       content: "direct instruction",
@@ -155,6 +177,27 @@ describe("user message regeneration instruction", () => {
     });
 
     assert.deepEqual(source, { role: "user", content: "keep this" });
+  });
+
+  it("ignores malformed attachment array entries in the regeneration source message", () => {
+    const imageDataUrl = "data:image/png;base64,aW1hZ2U=";
+    const source = buildUserMessageRegenerationSourceMessage({
+      content: "keep valid image",
+      extra: {
+        attachments: [
+          undefined,
+          false,
+          {
+            type: "image/png",
+            filename: "image.png",
+            data: imageDataUrl,
+          },
+        ],
+      },
+    });
+
+    assert.equal(source.content, "keep valid image");
+    assert.deepEqual(source.images, [imageDataUrl]);
   });
 
   it("keeps Gemini user-message regeneration as the final user turn while preserving assistant prefill", () => {
