@@ -32,6 +32,7 @@ export const DEFAULT_COMFYUI_DEFAULTS: ComfyUiDefaults = {
   cfgScale: 7,
   denoisingStrength: 1,
   clipSkip: null,
+  uploadPlaceholderOnMissingReference: false,
 };
 
 export const DEFAULT_NOVELAI_DEFAULTS: NovelAiDefaults = {
@@ -211,6 +212,10 @@ function normalizeComfyUiDefaults(rawDefaults: unknown): ComfyUiDefaults {
     cfgScale: readNumber(raw.cfgScale, DEFAULT_COMFYUI_DEFAULTS.cfgScale, 0, 30),
     denoisingStrength: readNumber(raw.denoisingStrength, DEFAULT_COMFYUI_DEFAULTS.denoisingStrength, 0, 1),
     clipSkip: readNullableInteger(raw.clipSkip, DEFAULT_COMFYUI_DEFAULTS.clipSkip, 1, 12),
+    uploadPlaceholderOnMissingReference: readBoolean(
+      raw.uploadPlaceholderOnMissingReference,
+      DEFAULT_COMFYUI_DEFAULTS.uploadPlaceholderOnMissingReference,
+    ),
   };
 }
 

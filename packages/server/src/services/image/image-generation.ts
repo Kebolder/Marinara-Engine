@@ -1575,6 +1575,8 @@ const DEFAULT_COMFYUI_WORKFLOW: Record<string, unknown> = {
 };
 
 const COMFYUI_GEN_TIMEOUT_SECONDS = Number(process.env.COMFYUI_GEN_TIMEOUT ?? 300);
+const COMFYUI_PLACEHOLDER_REFERENCE_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const COMFYUI_OUTPUT_FILE_KEYS = ["gifs", "images"] as const;
 
 interface ComfyUiOutputFile {
@@ -1718,7 +1720,10 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
   if (request.model) {
     replacements["%model%"] = request.model;
   }
-  const reference = request.referenceImage ?? request.referenceImages?.[0];
+  const reference =
+    request.referenceImage ??
+    request.referenceImages?.[0] ??
+    (defaults.uploadPlaceholderOnMissingReference ? COMFYUI_PLACEHOLDER_REFERENCE_BASE64 : undefined);
   if (reference) {
     replacements["%reference_image%"] = reference;
     if (JSON.stringify(workflow).includes("%reference_image_name%")) {

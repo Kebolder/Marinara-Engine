@@ -21,6 +21,7 @@ export interface ComfyUiDefaults {
   cfgScale: number;
   denoisingStrength: number;
   clipSkip: number | null;
+  uploadPlaceholderOnMissingReference: boolean;
 }
 
 export interface NovelAiDefaults {

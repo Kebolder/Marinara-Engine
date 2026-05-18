@@ -2409,9 +2409,26 @@ function ImageGenerationDefaultsPanel({
                     onChange={(scheduler) => updateComfyUi({ scheduler })}
                   />
                 </div>
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
+                  <input
+                    type="checkbox"
+                    checked={comfyui.uploadPlaceholderOnMissingReference}
+                    onChange={(event) => updateComfyUi({ uploadPlaceholderOnMissingReference: event.target.checked })}
+                    className="mt-0.5 h-4 w-4 accent-sky-400"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-xs text-[var(--foreground)]">
+                      Upload a 1x1 placeholder when no reference image is provided
+                    </span>
+                    <span className="mt-0.5 block text-[0.55rem] text-[var(--muted-foreground)]">
+                      Custom workflows using %reference_image% or %reference_image_name% receive a tiny PNG instead
+                      of the raw placeholder text.
+                    </span>
+                  </span>
+                </label>
                 <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                  Custom ComfyUI workflows can use %steps%, %cfg%, %sampler%, %scheduler%, %denoise%, and %clip_skip%
-                  placeholders.
+                  Custom ComfyUI workflows can use %steps%, %cfg%, %sampler%, %scheduler%, %denoise%, %clip_skip%,
+                  %reference_image%, and %reference_image_name% placeholders.
                 </p>
               </>
             ) : (
