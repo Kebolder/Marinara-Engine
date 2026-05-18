@@ -20,6 +20,9 @@ import type { CharacterData } from "@marinara-engine/shared";
 
 type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "favorites";
 
+const CHARACTER_LIBRARY_SORT_SESSION_KEY = "marinara:character-library-sort";
+const SORT_OPTIONS = ["name-asc", "name-desc", "newest", "oldest", "favorites"] as const satisfies SortOption[];
+
 type CharacterRow = {
   id: string;
   data: string;
@@ -107,6 +110,27 @@ function getCharacterSections(char: ParsedCharacterRow) {
     { title: "Scenario", content: getText(char.parsed.scenario) },
     { title: "Opening Message", content: getText(char.parsed.first_mes) },
   ].filter((section) => section.content);
+}
+
+function isSortOption(value: string | null): value is SortOption {
+  return SORT_OPTIONS.includes(value as SortOption);
+}
+
+function readSessionSort(): SortOption {
+  try {
+    const storedSort = window.sessionStorage.getItem(CHARACTER_LIBRARY_SORT_SESSION_KEY);
+    return isSortOption(storedSort) ? storedSort : "name-asc";
+  } catch {
+    return "name-asc";
+  }
+}
+
+function writeSessionSort(sort: SortOption) {
+  try {
+    window.sessionStorage.setItem(CHARACTER_LIBRARY_SORT_SESSION_KEY, sort);
+  } catch {
+    // Session storage can be unavailable in privacy modes; the control still works for the mounted view.
+  }
 }
 
 function CharacterLibraryDetailCard({
@@ -228,7 +252,7 @@ export function CharacterLibraryView() {
   const { data: characters, isLoading } = useCharacters();
 
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOption>("name-asc");
+  const [sort, setSort] = useState<SortOption>(readSessionSort);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string | null>(null);
 
@@ -300,6 +324,12 @@ export function CharacterLibraryView() {
     () => sortedCharacters.find((char) => char.id === selectedCharacterId) ?? null,
     [selectedCharacterId, sortedCharacters],
   );
+
+  const handleSortChange = (value: string) => {
+    if (!isSortOption(value)) return;
+    setSort(value);
+    writeSessionSort(value);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_rgba(244,114,182,0.14),_transparent_30%),radial-gradient(circle_at_top_right,_rgba(56,189,248,0.14),_transparent_26%),var(--background)] lg:overflow-hidden">
@@ -383,7 +413,7 @@ export function CharacterLibraryView() {
             <div className="relative min-w-0 flex-1 sm:w-auto sm:flex-none">
               <select
                 value={sort}
-                onChange={(event) => setSort(event.target.value as SortOption)}
+                onChange={(event) => handleSortChange(event.target.value)}
                 className="w-full appearance-none rounded-2xl border border-[var(--border)]/60 bg-[var(--secondary)]/80 py-2 pl-3 pr-8 text-[0.8125rem] outline-none transition-colors focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20 md:py-2.5 md:pl-3.5 md:pr-9 md:text-sm"
               >
                 <option value="name-asc">Name A-Z</option>
