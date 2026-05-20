@@ -216,6 +216,7 @@ export function AgentEditor() {
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
   const [localSpotifyClientId, setLocalSpotifyClientId] = useState("");
   const [localSourceLorebookIds, setLocalSourceLorebookIds] = useState<string[]>([]);
+  const [localUseChatActiveLorebooks, setLocalUseChatActiveLorebooks] = useState(false);
   const [localSourceFileIds, setLocalSourceFileIds] = useState<string[]>([]);
   const [localAutoGenerateAvatars, setLocalAutoGenerateAvatars] = useState(false);
   const [localAutoGenerateBackgrounds, setLocalAutoGenerateBackgrounds] = useState(false);
@@ -272,6 +273,9 @@ export function AgentEditor() {
       setLocalEnabledTools(settings.enabledTools ?? DEFAULT_AGENT_TOOLS[dbConfig.type] ?? []);
       setLocalSpotifyClientId(settings.spotifyClientId ?? "");
       setLocalSourceLorebookIds(settings.sourceLorebookIds ?? []);
+      setLocalUseChatActiveLorebooks(
+        (settings.useChatActiveLorebooks as boolean | undefined) ?? (defaultSettings.useChatActiveLorebooks === true),
+      );
       setLocalSourceFileIds(settings.sourceFileIds ?? []);
       setLocalAutoGenerateAvatars(settings.autoGenerateAvatars ?? false);
       setLocalAutoGenerateBackgrounds(settings.autoGenerateBackgrounds ?? false);
@@ -296,6 +300,7 @@ export function AgentEditor() {
       setLocalEnabledTools(DEFAULT_AGENT_TOOLS[builtIn.id] ?? []);
       setLocalSpotifyClientId("");
       setLocalSourceLorebookIds([]);
+      setLocalUseChatActiveLorebooks(defaultSettings.useChatActiveLorebooks === true);
       setLocalSourceFileIds([]);
       setLocalAutoGenerateAvatars(false);
       setLocalAutoGenerateBackgrounds(false);
@@ -321,6 +326,7 @@ export function AgentEditor() {
       setLocalEnabledTools([]);
       setLocalSpotifyClientId("");
       setLocalSourceLorebookIds([]);
+      setLocalUseChatActiveLorebooks(false);
       setLocalSourceFileIds([]);
       setLocalAutoGenerateAvatars(false);
       setLocalAutoGenerateBackgrounds(false);
@@ -491,6 +497,9 @@ export function AgentEditor() {
         ...(localInjectAsSection ? { injectAsSection: true } : {}),
         enabledTools: localEnabledTools,
         ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
+        ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
+          ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
+          : {}),
         ...(localSourceLorebookIds.length > 0 ? { sourceLorebookIds: localSourceLorebookIds } : {}),
         // Only persist sourceFileIds for the Knowledge Retrieval agent — the Router
         // doesn't read this setting. Without this guard, switching an agent from
@@ -546,6 +555,7 @@ export function AgentEditor() {
     localInjectAsSection,
     localEnabledTools,
     localSpotifyClientId,
+    localUseChatActiveLorebooks,
     localSourceLorebookIds,
     localSourceFileIds,
     localAutoGenerateAvatars,
@@ -558,6 +568,7 @@ export function AgentEditor() {
     isCustomAgent,
     isNewCustomAgent,
     isKnowledgeRetrievalAgent,
+    isKnowledgeRouterAgent,
     updateAgent,
     createAgent,
     openAgentDetail,
@@ -1699,15 +1710,43 @@ export function AgentEditor() {
               icon={<BookOpen size="0.875rem" className="text-amber-400" />}
               help={
                 isKnowledgeRouterAgent
-                  ? "Select lorebooks for this agent to route over. The router picks relevant entries by id and they're injected verbatim."
-                  : "Select lorebooks and/or upload files for this agent to scan. Supported file types: .txt, .md, .csv, .json, .xml, .html, .pdf"
+                  ? "Use chat-active lorebooks by default, or select fixed lorebooks for this agent to route over. The router picks relevant entries by id and injects them verbatim."
+                  : "Use chat-active lorebooks by default, select fixed lorebooks, and/or upload files for this agent to scan. Supported file types: .txt, .md, .csv, .json, .xml, .html, .pdf"
               }
             >
               <div className="space-y-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalUseChatActiveLorebooks((value) => !value);
+                    markDirty();
+                  }}
+                  className={cn(
+                    "flex w-full items-start gap-3 rounded-xl p-3 text-left text-xs ring-1 transition-all",
+                    localUseChatActiveLorebooks
+                      ? "bg-[var(--primary)]/10 ring-[var(--primary)] text-[var(--foreground)]"
+                      : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                  )}
+                >
+                  {localUseChatActiveLorebooks ? (
+                    <ToggleRight size="1.25rem" className="mt-0.5 shrink-0 text-emerald-400" />
+                  ) : (
+                    <ToggleLeft size="1.25rem" className="mt-0.5 shrink-0" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block font-semibold">Use this chat&apos;s active lorebooks</span>
+                    <span className="mt-0.5 block text-[0.625rem] leading-tight">
+                      When no fixed source is selected below, this agent scans the lorebooks attached to the current
+                      chat.
+                    </span>
+                  </span>
+                </button>
                 {/* ── Lorebooks ── */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <p className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Lorebooks</p>
+                    <p className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                      Fixed source override
+                    </p>
                     {/* Description coverage badge — Knowledge Router only.
                         Tells the user how many entries in their selected source lorebooks
                         have descriptions filled in. Routing precision drops sharply when
@@ -1793,14 +1832,19 @@ export function AgentEditor() {
                   ) : (
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">No lorebooks available.</p>
                   )}
+                  {localSourceLorebookIds.length > 0 && (
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Fixed selections override chat-active lorebooks for every chat that uses this agent.
+                    </p>
+                  )}
                   {/* Router-only tip explaining the description fallback behavior.
                       Without this, users have no way to know that filling in entry
                       descriptions improves routing precision — the fallback to a
                       content snippet works invisibly. */}
-                  {isKnowledgeRouterAgent && localSourceLorebookIds.length > 0 && (
+                  {isKnowledgeRouterAgent && (localSourceLorebookIds.length > 0 || localUseChatActiveLorebooks) && (
                     <p className="text-[0.625rem] italic text-[var(--muted-foreground)]">
-                      Tip: entries without a description fall back to a short content snippet. Adding tight one-line
-                      descriptions to your most important entries improves routing precision.
+                      Tip: entry descriptions help Knowledge Router choose entries; descriptions are not triggers by
+                      themselves. Entries without a description fall back to a short content snippet.
                     </p>
                   )}
                 </div>

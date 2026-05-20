@@ -484,6 +484,10 @@ export function getDefaultBuiltInAgentSettings(agentType: string): Record<string
     settings.runInterval = runInterval;
   }
 
+  if (agentType === "knowledge-retrieval" || agentType === "knowledge-router") {
+    settings.useChatActiveLorebooks = true;
+  }
+
   return settings;
 }
 

@@ -59,6 +59,40 @@ export function mergeCustomParameters(
   return merged;
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
+}
+
+export function resolveKnowledgeSourceLorebookIds(args: {
+  settings: Record<string, unknown> | null | undefined;
+  chatActiveLorebookIds: unknown;
+}): { sourceLorebookIds: string[]; source: "manual" | "chat_active" | "none" } {
+  const manualIds = normalizeStringArray(args.settings?.sourceLorebookIds);
+  if (manualIds.length > 0) {
+    return { sourceLorebookIds: manualIds, source: "manual" };
+  }
+
+  if (args.settings?.useChatActiveLorebooks === false) {
+    return { sourceLorebookIds: [], source: "none" };
+  }
+
+  const chatActiveIds = normalizeStringArray(args.chatActiveLorebookIds);
+  return {
+    sourceLorebookIds: chatActiveIds,
+    source: chatActiveIds.length > 0 ? "chat_active" : "none",
+  };
+}
+
 /** Find last message index matching a role (or predicate). Returns -1 if not found. */
 export function findLastIndex(messages: SimpleMessage[], role: string): number {
   for (let i = messages.length - 1; i >= 0; i--) {

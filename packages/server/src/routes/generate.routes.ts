@@ -164,6 +164,7 @@ import {
   resolveRegenerationGameStateAnchor,
   resolveUserRegenerationPersistentAttachments,
   resolveVisibleGameStateAnchor,
+  resolveKnowledgeSourceLorebookIds,
   shouldPreferLatestVisibleGameState,
   shouldAbortOnPassiveGenerationDisconnect,
   shouldEnableAgentsForGeneration,
@@ -4674,7 +4675,10 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Load lorebook entries
           try {
-            const sourceIds = (knowledgeRetrievalAgent.settings.sourceLorebookIds as string[]) ?? [];
+            const { sourceLorebookIds: sourceIds } = resolveKnowledgeSourceLorebookIds({
+              settings: knowledgeRetrievalAgent.settings,
+              chatActiveLorebookIds: chatActiveLorebookIds,
+            });
             if (sourceIds.length > 0) {
               const entries = await lorebooksStore.listEntriesByLorebooks(sourceIds);
               const activeEntries = entries.filter((e: any) => e.enabled !== false);
@@ -4736,7 +4740,10 @@ export async function generateRoutes(app: FastifyInstance) {
         let knowledgeRouterKeywordScanEntries: LorebookEntry[] = [];
         if (knowledgeRouterAgent) {
           try {
-            const sourceIds = (knowledgeRouterAgent.settings.sourceLorebookIds as string[]) ?? [];
+            const { sourceLorebookIds: sourceIds } = resolveKnowledgeSourceLorebookIds({
+              settings: knowledgeRouterAgent.settings,
+              chatActiveLorebookIds: chatActiveLorebookIds,
+            });
             if (sourceIds.length > 0) {
               const entries = (await lorebooksStore.listEntriesByLorebooks(sourceIds)) as LorebookEntry[];
               // Honor per-chat entry state overrides — a user can disable an entry for
