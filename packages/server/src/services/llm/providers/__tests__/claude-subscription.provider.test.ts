@@ -31,9 +31,16 @@ function makeFakeSdk(captured: CapturedQuery[]): { query: (args: unknown) => Asy
     query(args: unknown) {
       const { prompt, options } = args as { prompt: unknown; options: Record<string, unknown> };
       captured.push({ prompt, options });
-      // Return an AsyncIterable that ends cleanly with a `result` message so
-      // the provider's streaming loop exits the for-await without error.
+      // Return an AsyncIterable that emits one text delta and then a `result`
+      // message. The text delta is required so the provider's emittedText
+      // tracker flips true — without it, the "SDK completed without usable
+      // text" guard (added upstream to surface silent empty responses) throws
+      // and the wiring tests fail unrelated to what they're verifying.
       async function* iter(): AsyncIterable<unknown> {
+        yield {
+          type: "stream_event",
+          event: { type: "content_block_delta", delta: { type: "text_delta", text: "ok" } },
+        };
         yield {
           type: "result",
           subtype: "success",
