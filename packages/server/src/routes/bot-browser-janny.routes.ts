@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 const JANNY_SEARCH_URL = "https://search.jannyai.com/multi-search";
 const JANNY_IMAGE_BASE = "https://image.jannyai.com/bot-avatars/";
 const JANNY_SITE_BASE = "https://jannyai.com";
+const JANNY_API_SITE_BASE = "https://api.jannyai.com";
 const JANNY_FALLBACK_TOKEN = "88a6463b66e04fb07ba87ee3db06af337f492ce511d93df6e2d2968cb2ff2b30";
 
 const BROWSER_UA =
@@ -302,38 +303,43 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
 
     const slug = (req.query as Record<string, string>)?.slug || "character";
     const pageUrl = `${JANNY_SITE_BASE}/characters/${charId}_${slug}`;
+    const apiPageUrl = `${JANNY_API_SITE_BASE}/characters/${charId}_${slug}`;
+
+    const isUsableCharacterHtml = (value: string) =>
+      value.length >= 1000 &&
+      !value.includes("Just a moment") &&
+      !value.includes("cf-challenge") &&
+      !value.includes("challenge-platform") &&
+      value.includes("astro-island");
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       let html = "";
 
-      // Strategy 1: Direct fetch
-      try {
-        const directRes = await fetch(pageUrl, {
-          headers: {
-            Accept: "text/html,application/xhtml+xml,*/*",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            Referer: "https://jannyai.com/",
-          },
-          signal: controller.signal,
-          redirect: "follow",
-        });
-        if (directRes.ok) {
-          html = await directRes.text();
-          if (
-            html.length < 1000 ||
-            html.includes("Just a moment") ||
-            html.includes("cf-challenge") ||
-            html.includes("challenge-platform") ||
-            !html.includes("astro-island")
-          ) {
-            html = "";
+      // Strategy 1: Direct fetch. Try JannyAI's public API mirror first because
+      // it serves the same Astro payload with fewer bot gates than the main site.
+      for (const url of [apiPageUrl, pageUrl]) {
+        try {
+          const directRes = await fetch(url, {
+            headers: {
+              Accept: "text/html,application/xhtml+xml,*/*",
+              "User-Agent": BROWSER_UA,
+              Referer: "https://jannyai.com/",
+            },
+            signal: controller.signal,
+            redirect: "follow",
+          });
+          if (directRes.ok) {
+            const directHtml = await directRes.text();
+            if (isUsableCharacterHtml(directHtml)) {
+              html = directHtml;
+              break;
+            }
           }
+        } catch {
+          /* fall through */
         }
-      } catch {
-        /* fall through */
       }
 
       // Strategy 2: corsproxy.io
@@ -348,13 +354,7 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
           });
           if (proxyRes.ok) {
             html = await proxyRes.text();
-            if (
-              html.length < 1000 ||
-              html.includes("Just a moment") ||
-              html.includes("cf-challenge") ||
-              html.includes("challenge-platform") ||
-              !html.includes("astro-island")
-            ) {
+            if (!isUsableCharacterHtml(html)) {
               html = "";
             }
           }
