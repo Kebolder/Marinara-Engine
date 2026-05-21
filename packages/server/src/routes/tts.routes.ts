@@ -369,6 +369,24 @@ export function isAllowedTTSAudioContentType(contentType: string | null): boolea
   return normalized.includes("audio/") || normalized.includes("application/octet-stream");
 }
 
+function audioFormatMimeType(format: string): string {
+  switch (format) {
+    case "wav":
+      return "audio/wav";
+    default:
+      return "audio/mpeg";
+  }
+}
+
+function elevenLabsOutputFormat(format: string): string {
+  switch (format) {
+    case "wav":
+      return "wav";
+    default:
+      return "mp3_44100_128";
+  }
+}
+
 function buildSpeechInstructions(input: { speaker?: string; tone?: string; includeSpeaker?: boolean }) {
   const parts: string[] = [];
   if (input.includeSpeaker !== false && input.speaker?.trim()) {
@@ -594,12 +612,13 @@ export async function ttsRoutes(app: FastifyInstance) {
       });
     }
 
+    const audioFormat = cfg.audioFormat ?? "mp3";
     const url = useNanoGptSpeech
       ? `${nanoGptV1BaseUrl(base)}/audio/speech`
       : usePocketTtsSpeech
         ? `${base}/tts`
         : cfg.source === "elevenlabs"
-          ? `${elevenLabsApiRoot(base)}/v1/text-to-speech/${encodeURIComponent(requestVoice)}?output_format=mp3_44100_128`
+          ? `${elevenLabsApiRoot(base)}/v1/text-to-speech/${encodeURIComponent(requestVoice)}?output_format=${elevenLabsOutputFormat(audioFormat)}`
           : `${base}/audio/speech`;
     const providerText = cfg.source === "elevenlabs" ? buildElevenLabsTextInput(text, tone) : text;
     const elevenLabsLanguageCode = cfg.elevenLabsLanguageCode?.trim();
@@ -616,6 +635,7 @@ export async function ttsRoutes(app: FastifyInstance) {
       if (pocketTtsForm) {
         pocketTtsForm.set("text", providerText);
         if (requestVoice.trim()) pocketTtsForm.set("voice_url", requestVoice.trim());
+        if (audioFormat !== "mp3") pocketTtsForm.set("output_format", audioFormat);
       }
 
       providerRes = await safeFetch(url, {
@@ -635,7 +655,7 @@ export async function ttsRoutes(app: FastifyInstance) {
                 input: providerText,
                 voice: requestVoice || "alloy",
                 speed: cfg.speed,
-                response_format: "mp3",
+                response_format: audioFormat,
                 ...(speechInstructions ? { instructions: speechInstructions } : {}),
               })
             : cfg.source === "elevenlabs"
@@ -653,7 +673,7 @@ export async function ttsRoutes(app: FastifyInstance) {
                   input: providerText,
                   voice: requestVoice,
                   speed: cfg.speed,
-                  response_format: "mp3",
+                  response_format: audioFormat,
                   ...(speechInstructions ? { instructions: speechInstructions } : {}),
                 }),
         signal: AbortSignal.timeout(60_000),
@@ -688,7 +708,7 @@ export async function ttsRoutes(app: FastifyInstance) {
     }
 
     const audioBuffer = await providerRes.arrayBuffer();
-    reply.header("Content-Type", contentType?.startsWith("audio/") ? contentType : "audio/mpeg");
+    reply.header("Content-Type", contentType?.startsWith("audio/") ? contentType : audioFormatMimeType(audioFormat));
     reply.header("Content-Length", String(audioBuffer.byteLength));
     return reply.send(Buffer.from(audioBuffer));
   });

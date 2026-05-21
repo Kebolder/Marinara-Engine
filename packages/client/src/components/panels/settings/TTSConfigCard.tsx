@@ -22,7 +22,7 @@ import { useTTSConfig, useUpdateTTSConfig, useTTSVoices } from "../../../hooks/u
 import { useCharacters } from "../../../hooks/use-characters";
 import { ttsService } from "../../../lib/tts-service";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
-import type { TTSConfig, TTSSource, TTSVoiceAssignment, TTSVoiceMode } from "@marinara-engine/shared";
+import type { TTSConfig, TTSSource, TTSVoiceAssignment, TTSVoiceMode, TTSAudioFormat } from "@marinara-engine/shared";
 import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 
@@ -304,6 +304,7 @@ export function TTSConfigCard() {
   const [autoplayConvo, setAutoplayConvo] = useState(false);
   const [autoplayGame, setAutoplayGame] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
+  const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
 
   const [expanded, setExpanded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -345,6 +346,7 @@ export function TTSConfigCard() {
     setAutoplayConvo(savedConfig.autoplayConvo);
     setAutoplayGame(savedConfig.autoplayGame);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
+    setAudioFormat(savedConfig.audioFormat ?? "mp3");
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -387,6 +389,7 @@ export function TTSConfigCard() {
     autoplayConvo,
     autoplayGame,
     dialogueOnly,
+    audioFormat,
     dialogueScope: "all",
     dialogueCharacterName: "",
     ...overrides,
@@ -967,6 +970,25 @@ export function TTSConfigCard() {
               </div>
             </FieldRow>
           )}
+
+          {/* Audio Format */}
+          <FieldRow
+            label="Audio Format"
+            help="Output audio format. WAV are useful for local/self-hosted TTS servers that do not support MP3."
+          >
+            <select
+              value={audioFormat}
+              onChange={(e) => {
+                const next = e.target.value as TTSAudioFormat;
+                setAudioFormat(next);
+                mark({ audioFormat: next });
+              }}
+              className={cn(INPUT_CLS, "cursor-pointer appearance-none")}
+            >
+              <option value="mp3">MP3</option>
+              <option value="wav">WAV</option>
+            </select>
+          </FieldRow>
 
           {source === "elevenlabs" && (
             <FieldRow
