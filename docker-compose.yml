@@ -16,6 +16,14 @@ services:
       - FILE_STORAGE_DIR=/app/data/storage
       - MARINARA_DOCKER=true
       - AUTO_CREATE_DEFAULT_CONNECTION=${AUTO_CREATE_DEFAULT_CONNECTION:-true}
+      # Claude Subscription (Pro/Max) — optional. Set CLAUDE_CODE_OAUTH_TOKEN
+      # in your .env (or shell env) to enable the `claude_subscription` provider
+      # without an `sk-ant-*` API key. Generate the token on a logged-in machine
+      # with `claude setup-token` (from `@anthropic-ai/claude-code`). Empty value
+      # is fine — the provider falls back to API-key auth or to a credentials
+      # file in CLAUDE_CONFIG_DIR. See docs/CONFIGURATION.md for details.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-/app/data/claude-config}
       # Set BASIC_AUTH_USER/BASIC_AUTH_PASS and ADMIN_SECRET before exposing beyond localhost.
       # - TZ=America/New_York          # IANA timezone for time-based features (e.g. character schedules)
       # - ENCRYPTION_KEY=              # AES key for API key encryption (generate: openssl rand -hex 32)
