@@ -13,6 +13,7 @@ import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { ChoiceSelectionModal } from "./ChoiceSelectionModal";
 import { Plus, Download, FileText, Trash2, Check, Copy, Search, Code2, Hash, Star } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
+import { boolish } from "../../../../engine/generation/runtime-records";
 
 type PresetRow = {
   id: string;
@@ -23,6 +24,7 @@ type PresetRow = {
   author?: string;
   sectionOrder?: string | string[];
 };
+
 
 export function PresetsPanel() {
   const { data: presets, isLoading } = usePresets();
@@ -277,7 +279,7 @@ export function PresetsPanel() {
           const isBulkSelected = selectedPresetIds.has(preset.id);
           const sectionCount = getSectionCount(preset);
           const wrapFormat = (preset.wrapFormat ?? "xml") as string;
-          const isDefault = preset.isDefault === "true";
+          const isDefault = boolish(preset.isDefault ?? (preset as PresetRow & { default?: unknown }).default, false);
 
           return (
             <div

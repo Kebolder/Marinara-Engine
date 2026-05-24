@@ -128,6 +128,7 @@ import { LIMITS } from "../../../../../engine/contracts/constants/defaults";
 import { DEFAULT_IMPERSONATE_PROMPT } from "../../../../../engine/contracts/constants/impersonate";
 import { BUILT_IN_AGENTS, BUILT_IN_TOOLS, DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_TOOLS, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS, getDefaultBuiltInAgentSettings } from "../../../../../engine/contracts/types/agent";
 import { estimateAgentLoadCost, AGENT_COST_HIGH_CALLS, AGENT_COST_HIGH_TOKENS } from "../../../../../engine/shared/scoring/agent-cost";
+import { boolish as isEnabledFlag } from "../../../../../engine/generation/runtime-records";
 import type { CharacterGroup } from "../../../../../engine/contracts/types/character";
 import type { Chat } from "../../../../../engine/contracts/types/chat";
 import type { Lorebook } from "../../../../../engine/contracts/types/lorebook";
@@ -253,9 +254,6 @@ function normalizeSpriteDisplayValue(value: unknown, fallback: number, min: numb
   return Math.max(min, Math.min(max, numeric));
 }
 
-function isEnabledFlag(value: unknown): boolean {
-  return value === true || value === "true" || value === "1";
-}
 
 function normalizeNonNegativeInteger(value: unknown, fallback: number, max: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
