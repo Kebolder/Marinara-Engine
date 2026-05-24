@@ -1,6 +1,8 @@
 use super::super::{
     game_state_snapshots,
-    shared::{materialize_message_swipe_fields, non_negative_i64_value},
+    shared::{
+        materialize_message_swipe_fields, non_negative_i64_value, normalize_legacy_text_array_fields,
+    },
 };
 use super::assets::{normalize_legacy_profile_asset_paths, restore_legacy_profile_json_assets};
 use super::{finish_profile_import_assets, insert_profile_import_aliases};
@@ -161,6 +163,16 @@ fn add_legacy_lorebook_links(rows: &mut [Value], tables: &Map<String, Value>) {
         object
             .entry("personaIds".to_string())
             .or_insert_with(|| json!(persona_ids));
+        // Pre-refactor stored `tags`/`characterIds`/`personaIds` as TEXT
+        // columns (JSON-stringified arrays). The refactor lorebook editor
+        // expects real arrays — without this normalize the editor crashes
+        // on `formTags.map is not a function`. The junction-table paths above
+        // emit real arrays; this catches any text-encoded values that came in
+        // directly on the lorebook row.
+        normalize_legacy_text_array_fields(
+            row,
+            &["tags", "characterIds", "personaIds"],
+        );
     }
 }
 

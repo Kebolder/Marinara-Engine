@@ -415,6 +415,34 @@ pub(crate) fn string_array_from_value(value: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// Replace any text-encoded JSON-array field on a record object with a real
+/// JSON array. The pre-refactor server stored `tags`, `characterIds`,
+/// `personaIds`, etc. as TEXT columns (a JSON-stringified array); the
+/// refactor expects an actual JSON array on every row, and the frontend
+/// crashes (`.map is not a function`) when it sees a string. Called from the
+/// migration import paths to bridge that schema gap.
+pub(crate) fn normalize_legacy_text_array_fields(record: &mut Value, fields: &[&str]) {
+    let Some(object) = record.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        let Some(entry) = object.get_mut(*field) else {
+            continue;
+        };
+        if entry.is_array() {
+            continue;
+        }
+        if let Some(raw) = entry.as_str() {
+            *entry = serde_json::from_str::<Value>(raw)
+                .ok()
+                .filter(Value::is_array)
+                .unwrap_or_else(|| json!([]));
+        } else if entry.is_null() {
+            *entry = json!([]);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct UploadedFile {
     pub(crate) name: String,

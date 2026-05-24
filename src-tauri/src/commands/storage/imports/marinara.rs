@@ -430,6 +430,13 @@ fn import_marinara_lorebook(
     inherit_wrapper_timestamps(&mut lorebook_data, &data);
     remove_import_id(&mut lorebook_data);
     remove_fields(&mut lorebook_data, &["entries", "folders"]);
+    // Pre-refactor stored `tags`/`characterIds`/`personaIds` as TEXT columns
+    // (JSON-stringified arrays). Refactor expects real arrays — without this
+    // normalize step the lorebook editor crashes on `formTags.map is not a function`.
+    normalize_legacy_text_array_fields(
+        &mut lorebook_data,
+        &["tags", "characterIds", "personaIds"],
+    );
     let mut lorebook = with_entity_defaults("lorebooks", lorebook_data.clone());
     if let Some(image) = data
         .get("avatar")

@@ -12,6 +12,7 @@ const PROFILE_ASSET_DIRS: &[&str] = &[
     "avatars",
     "sprites",
     "backgrounds",
+    "gallery",
     "game-assets",
     "fonts",
     "knowledge-sources",

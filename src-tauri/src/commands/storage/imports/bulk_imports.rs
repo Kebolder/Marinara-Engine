@@ -486,7 +486,7 @@ fn import_st_chat_text(
     chat.remove("id");
     chat.insert("name".to_string(), Value::String(chat_name));
     chat.entry("mode".to_string())
-        .or_insert(Value::String("chat".to_string()));
+        .or_insert(Value::String("conversation".to_string()));
     chat.entry("characterIds".to_string())
         .or_insert_with(|| json!([]));
     chat.entry("metadata".to_string())
