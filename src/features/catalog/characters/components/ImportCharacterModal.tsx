@@ -267,6 +267,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
     const { files, error } = extractDroppedFiles(e);
     if (error) {
       setDropError(error);
+      setPendingLorebookChoice(null);
       setStatus("idle");
       setResults([]);
       return;
