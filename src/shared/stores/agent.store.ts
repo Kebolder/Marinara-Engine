@@ -2,7 +2,7 @@
 // Zustand Store: Agent Slice
 // ──────────────────────────────────────────────
 import { create } from "zustand";
-import type { AgentResult, CharacterCardFieldUpdate } from "../../engine/contracts/types/agent";
+import type { AgentDebugEntry, AgentResult, CharacterCardFieldUpdate } from "../../engine/contracts/types/agent";
 import type { AgentFailure } from "../lib/agent-failures";
 
 /**
@@ -20,29 +20,6 @@ export interface PendingCardUpdate {
   updates: CharacterCardFieldUpdate[];
   agentName: string;
   /** ms since epoch — used for stable ordering. */
-  timestamp: number;
-}
-
-export interface AgentDebugEntry {
-  phase: string;
-  agents?: Array<{
-    type: string;
-    name: string;
-    model: string;
-    maxTokens: number;
-  }>;
-  results?: AgentResult[];
-  toolCall?: {
-    name: string;
-    arguments: string;
-    allowed: boolean;
-  };
-  toolResult?: {
-    name: string;
-    result: string;
-    success: boolean;
-  };
-  batchMaxTokens?: number;
   timestamp: number;
 }
 

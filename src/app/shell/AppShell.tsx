@@ -6,6 +6,7 @@ import { TopBar } from "./TopBar";
 import { WindowTitleBar } from "./WindowTitleBar";
 import { SpotifyMobileWidget } from "../../features/shell/spotify/shell";
 import { ChatNotificationBubbles } from "../../features/shell/notifications/shell";
+import { AgentDebugPanel } from "../../features/catalog/agents/components/AgentDebugPanel";
 import {
   getTrackerPanelWidthForProfile,
   RIGHT_PANEL_WIDTH_MAX,
@@ -1022,6 +1023,7 @@ export function AppShell() {
           <OnboardingTutorial />
         </Suspense>
       )}
+      <AgentDebugPanel />
       <SpotifyMobileWidget />
       </div>
     </div>

@@ -36,6 +36,7 @@ import {
   type GenerationReplay,
 } from "../../../../engine/generation/generation-replay";
 import { readNonNegativeInteger } from "../../../../engine/generation/runtime-records";
+import type { AgentDebugEntry } from "../../../../engine/contracts/types/agent";
 
 export type GenerateArgs = GenerationReplayInput & {
   chatId: string;
@@ -860,7 +861,12 @@ export function useGenerate() {
         (streamArgs, signal) =>
           startGeneration(
             { storage: storageApi, llm: llmApi, integrations: integrationGateway },
-            streamArgs,
+            {
+              ...streamArgs,
+              debugMode: useUIStore.getState().debugMode,
+              debugSink: (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) =>
+                useAgentStore.getState().addDebugEntry(entry),
+            },
             signal,
           ) as AsyncGenerator<StreamEvent>,
         {

@@ -7,16 +7,15 @@ import type {
   LLMToolCall,
   LLMToolDefinition,
 } from "../../generation-core/llm/base-provider.js";
-import type { AgentResult, AgentContext, AgentResultType } from "../../contracts/types/agent";
+import type { AgentResult, AgentContext, AgentResultType, AgentDebugEntry } from "../../contracts/types/agent";
 import { getDefaultAgentPrompt } from "../../contracts/constants/agent-prompts";
 import { DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS } from "../../contracts/types/agent";
-const isDebugAgentsEnabled = () => false;
-const logger = {
-  debug: (..._args: unknown[]) => {},
-  info: (..._args: unknown[]) => {},
-  warn: (..._args: unknown[]) => {},
-  error: (..._args: unknown[]) => {},
-  isLevelEnabled: (_level: string) => false,
+type Logger = {
+  debug: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  isLevelEnabled: (level: string) => boolean;
 };
 
 const MAX_AGENT_CONTEXT_MESSAGES = 200;
@@ -54,6 +53,34 @@ export function normalizeAgentContextSize(value: unknown, fallback = DEFAULT_AGE
     typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.max(1, Math.min(MAX_AGENT_CONTEXT_MESSAGES, Math.trunc(parsed)));
+}
+
+function createLogger(enabled: boolean): Logger {
+  const log = (level: "debug" | "info" | "warn" | "error", args: unknown[]) => {
+    if (!enabled) return;
+    const target =
+      typeof console !== "undefined" && typeof console[level] === "function"
+        ? console[level]
+        : typeof console !== "undefined" && typeof console.log === "function"
+          ? console.log
+          : undefined;
+    target?.(...args);
+  };
+
+  return {
+    debug: (...args: unknown[]) => log("debug", args),
+    info: (...args: unknown[]) => log("info", args),
+    warn: (...args: unknown[]) => log("warn", args),
+    error: (...args: unknown[]) => log("error", args),
+    isLevelEnabled: () => enabled,
+  };
+}
+
+function emitDebug(context: AgentContext, entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) {
+  context.debugSink?.({
+    ...entry,
+    timestamp: entry.timestamp ?? Date.now(),
+  });
 }
 
 function redactSensitiveValue(value: unknown): unknown {
@@ -118,6 +145,8 @@ export async function executeAgent(
   toolContext?: AgentToolContext,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+  const logger = createLogger(context.debugMode === true);
+  const emit = (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) => emitDebug(context, entry);
 
   try {
     const template = config.promptTemplate || getDefaultAgentPrompt(config.type);
@@ -151,16 +180,25 @@ export async function executeAgent(
         toolContext,
         streamResponses,
         startTime,
+        context,
         context.signal,
       );
     }
 
     // Call LLM (streaming to avoid proxy timeouts, no tools)
     logger.info(`[agent] ${config.type} (${config.name}) — ${model}`);
+    emit({
+      level: "info",
+      phase: config.phase,
+      message: "agent-start",
+      args: [config.type, config.name, model],
+    });
     for (const msg of messages) {
       logger.debug(`[agent] [${msg.role}] ${msg.content}`);
+      emit({ level: "debug", phase: config.phase, message: "prompt-message", args: [msg.role, msg.content] });
     }
     logger.debug(`[agent] ═══ END PROMPT — temperature=${temperature} maxTokens=${maxTokens} ═══\n`);
+    emit({ level: "debug", phase: config.phase, message: "prompt-end", args: [temperature, maxTokens] });
 
     let responseText = "";
     const result = await provider.chatComplete(messages, {
@@ -182,6 +220,18 @@ export async function executeAgent(
 
     logger.info(`[agent] ${config.type} done (${responseText.length} chars, ${durationMs}ms)`);
     logger.debug(`[agent] ${config.type} raw response: ${responseText.slice(0, 500)}`);
+    emit({
+      level: "info",
+      phase: config.phase,
+      message: "agent-complete",
+      args: [config.type, responseText.length, durationMs],
+    });
+    emit({
+      level: "debug",
+      phase: config.phase,
+      message: "raw-response",
+      args: [config.type, responseText.slice(0, 500)],
+    });
 
     // Parse the result based on agent type
     const parsed = parseAgentResponse(config, responseText);
@@ -215,12 +265,15 @@ async function executeAgentWithTools(
   toolContext: AgentToolContext,
   streamResponses: boolean,
   startTime: number,
+  context: AgentContext,
   signal?: AbortSignal,
 ): Promise<AgentResult> {
   const MAX_TOOL_ROUNDS = 5;
   const loopMessages = [...initialMessages];
   let totalTokens = 0;
-  const debugAgentsEnabled = isDebugAgentsEnabled() && logger.isLevelEnabled("debug");
+  const logger = createLogger(context.debugMode === true);
+  const debugAgentsEnabled = logger.isLevelEnabled("debug");
+  const emit = (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) => emitDebug(context, entry);
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result = await provider.chatComplete(loopMessages, {
@@ -261,6 +314,12 @@ async function executeAgentWithTools(
     // Execute each tool call and append results
     for (const tc of result.toolCalls) {
       logger.info("[agent-tools] %s calling: %s", config.type, tc.function.name);
+      emit({
+        level: "info",
+        phase: config.phase,
+        message: "tool-call",
+        toolCall: { name: tc.function.name, arguments: formatToolPayloadForLog(tc.function.arguments), allowed: true },
+      });
       if (debugAgentsEnabled) {
         logger.debug("[agent-tools] %s args: %s", config.type, formatToolPayloadForLog(tc.function.arguments));
       }
@@ -272,6 +331,12 @@ async function executeAgentWithTools(
         throw err;
       }
       logger.info("[agent-tools] %s %s completed", config.type, tc.function.name);
+      emit({
+        level: "info",
+        phase: config.phase,
+        message: "tool-result",
+        toolResult: { name: tc.function.name, result: formatToolPayloadForLog(toolResult), success: true },
+      });
       if (debugAgentsEnabled) {
         logger.debug("[agent-tools] %s result: %s", config.type, formatToolPayloadForLog(toolResult));
       }
@@ -325,6 +390,8 @@ export async function executeAgentBatch(
   model: string,
 ): Promise<AgentResult[]> {
   if (configs.length === 0) return [];
+  const logger = createLogger(context.debugMode === true);
+  const emit = (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) => emitDebug(context, entry);
   const isolatedConfigs = configs.filter(shouldRunAgentIndividually);
   if (isolatedConfigs.length === configs.length) {
     logger.info(
@@ -396,12 +463,26 @@ export async function executeAgentBatch(
     logger.info(
       `[agent-batch] maxTokens: ${batchMaxTokens} (sum=${rawBatchMaxTokens} from [${perAgentTokens.join(", ")}]${provider.maxTokensOverrideValue !== null ? `, capped at ${provider.maxTokensOverrideValue}` : ""})`,
     );
+    emit({
+      level: "info",
+      phase: configs[0]!.phase,
+      message: "batch-start",
+      agents: configs.map((c) => ({
+        type: c.type,
+        name: c.name,
+        model,
+        maxTokens: normalizeAgentMaxTokens(c.settings.maxTokens),
+      })),
+      batchMaxTokens,
+    });
 
     logger.debug(`\n[agent-batch] ═══ BATCH PROMPT — [${configs.map((c) => c.type).join(", ")}] — ${model} ═══`);
     for (const msg of messages) {
       logger.debug(`[agent-batch] [${msg.role}] ${msg.content}`);
+      emit({ level: "debug", phase: configs[0]!.phase, message: "batch-prompt-message", args: [msg.role, msg.content] });
     }
     logger.debug(`[agent-batch] ═══ END BATCH PROMPT — temperature=${temperature} maxTokens=${batchMaxTokens} ═══\n`);
+    emit({ level: "debug", phase: configs[0]!.phase, message: "batch-prompt-end", args: [temperature, batchMaxTokens] });
 
     // Use streaming (onToken) to keep the connection alive — avoids proxy
     // timeouts (e.g. Cloudflare 524) on large batch responses.
@@ -428,6 +509,13 @@ export async function executeAgentBatch(
 
     logger.info(`[agent-batch] Got response (${responseText.length} chars, ${durationMs}ms, ${totalTokens} tokens)`);
     logger.debug(`[agent-batch] ${responseText}`);
+    emit({
+      level: "info",
+      phase: configs[0]!.phase,
+      message: "batch-response",
+      args: [responseText.length, durationMs, totalTokens],
+    });
+    emit({ level: "debug", phase: configs[0]!.phase, message: "batch-raw-response", args: [responseText] });
 
     // Parse the batched response into individual results
     const { parsed, failed } = parseBatchResponse(configs, responseText, durationMs, totalTokens);

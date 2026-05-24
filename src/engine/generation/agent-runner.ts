@@ -34,6 +34,8 @@ export interface GenerationAgentRuntimeInput {
   persona: GenerationPersonaContext | null;
   activatedLorebookEntries: Array<{ id: string; name: string; content: string; tag: string }>;
   chatSummary: string | null;
+  debugMode?: boolean;
+  debugSink?: AgentContext["debugSink"];
   signal?: AbortSignal;
   agentTypes?: Set<string>;
 }
@@ -627,6 +629,8 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
     activatedLorebookEntries: input.activatedLorebookEntries,
     writableLorebookIds: null,
     chatSummary: input.chatSummary,
+    debugMode: input.debugMode === true,
+    debugSink: input.debugSink,
     streaming: true,
     signal: input.signal,
   };

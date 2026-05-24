@@ -1,4 +1,4 @@
-import type { AgentContext, AgentResult } from "../../contracts/types/agent";
+import type { AgentContext, AgentDebugEntry, AgentResult } from "../../contracts/types/agent";
 import type { BaseLLMProvider } from "../../generation-core/llm/base-provider.js";
 import {
   executeAgent,
@@ -7,11 +7,26 @@ import {
   type AgentToolContext,
 } from "../executor/agent-executor.js";
 
-const logger = {
-  debug: (..._args: unknown[]) => {},
-  warn: (..._args: unknown[]) => {},
-  error: (..._args: unknown[]) => {},
-};
+function createLogger(enabled: boolean) {
+  return {
+    debug: (...args: unknown[]) => {
+      if (enabled) console.debug(...args);
+    },
+    warn: (...args: unknown[]) => {
+      if (enabled) console.warn(...args);
+    },
+    error: (...args: unknown[]) => {
+      if (enabled) console.error(...args);
+    },
+  };
+}
+
+function emitDebug(context: AgentContext, entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) {
+  context.debugSink?.({
+    ...entry,
+    timestamp: entry.timestamp ?? Date.now(),
+  });
+}
 
 /** A fully resolved agent ready for execution. */
 export interface ResolvedAgent extends AgentExecConfig {
@@ -143,6 +158,18 @@ async function executeGroup(
   context: AgentContext,
   onResult?: AgentResultCallback,
 ): Promise<AgentResult[]> {
+  const logger = createLogger(context.debugMode === true);
+  emitDebug(context, {
+    level: "debug",
+    phase: group.agents[0]?.phase ?? "unknown",
+    message: "group-start",
+    agents: group.agents.map((agent) => ({
+      type: agent.type,
+      name: agent.name,
+      model: agent.model,
+      maxTokens: normalizeAgentMaxParallelJobs(agent.maxParallelJobs),
+    })),
+  });
   const groupContext = buildAgentContext(group.agents[0]!, context);
   // Separate tool-using agents (can't be batched) from regular agents
   const toolAgents = group.agents.filter((a) => a.toolContext?.tools.length);
@@ -202,7 +229,14 @@ async function executePhase(
   const phaseAgents = agents.filter((a) => a.phase === phase);
   if (phaseAgents.length === 0) return [];
 
+  const logger = createLogger(context.debugMode === true);
   const groups = groupByProviderModel(phaseAgents).flatMap(splitGroupForParallelJobs);
+  emitDebug(context, {
+    level: "debug",
+    phase,
+    message: "phase-groups",
+    args: [phaseAgents.length, groups.length],
+  });
 
   logger.debug(
     '[agent-pipeline] Phase "%s": %d agents → %d job group(s) %j',
@@ -238,6 +272,12 @@ async function executePhase(
           String(entry.reason),
         );
       }
+      emitDebug(context, {
+        level: "error",
+        phase,
+        message: "group-error",
+        args: [group.agents.map((a) => a.type).join(", "), String(entry.reason)],
+      });
       for (const agent of group.agents) {
         const errorResult: AgentResult = {
           agentId: agent.id,

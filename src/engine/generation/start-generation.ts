@@ -1,4 +1,4 @@
-import type { AgentResult } from "../contracts/types/agent";
+import type { AgentContext, AgentResult } from "../contracts/types/agent";
 import type { GameState } from "../contracts/types/game-state";
 import type { EventGateway } from "../capabilities/events";
 import type { IntegrationGateway } from "../capabilities/integrations";
@@ -53,6 +53,8 @@ export interface StartGenerationInput extends JsonRecord {
   forCharacterId?: string | null;
   mentionedCharacterNames?: string[];
   attachments?: PromptAttachment[];
+  debugMode?: boolean;
+  debugSink?: AgentContext["debugSink"];
 }
 
 export interface GenerationEngineDeps {
@@ -545,6 +547,8 @@ export async function* startGeneration(
             persona: assembly.persona,
             activatedLorebookEntries: assembly.activatedLorebookEntries,
             chatSummary: assembly.chatSummary,
+            debugMode: input.debugMode === true,
+            debugSink: input.debugSink,
             signal,
           },
           (result) => agentEvents.push(result),
