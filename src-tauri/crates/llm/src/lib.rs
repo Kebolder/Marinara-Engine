@@ -284,7 +284,9 @@ fn should_send_top_k(request: &LlmRequest) -> bool {
 fn provider_error_text(details: &Value) -> Option<String> {
     [
         details.pointer("/error/message").and_then(Value::as_str),
-        details.pointer("/response/error/message").and_then(Value::as_str),
+        details
+            .pointer("/response/error/message")
+            .and_then(Value::as_str),
         details.get("message").and_then(Value::as_str),
         details.pointer("/error").and_then(Value::as_str),
         details.pointer("/response/error").and_then(Value::as_str),

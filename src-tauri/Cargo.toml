@@ -35,6 +35,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 autoagents = { git = "https://github.com/liquidos-ai/AutoAgents.git", rev = "57ebeaa4e18989909013ebd58351b3ef6a5586e0", features = ["codeact"] }
+bashkit = "0.7.1"
 axum = "0.7"
 base64 = "0.22"
 buttplug = "10.0.2"
