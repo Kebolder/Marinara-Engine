@@ -169,8 +169,8 @@ interface ChatMessageProps {
 /** Regex to match a plain image URL as the entire content. */
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:gif|png|jpe?g|webp)(?:\?[^\s]*)?$/i;
 
-/** Regex to match <speaker="name">dialogue</speaker> tags. */
-const SPEAKER_TAG_RE = /<speaker="([^"]*)">([\s\S]*?)<\/speaker>/g;
+/** Regex to match <speaker>dialogue</speaker> and <speaker="name">dialogue</speaker> tags. */
+const SPEAKER_TAG_RE = /<speaker(?:="([^"]*)")?>([\s\S]*?)<\/speaker>/g;
 const INLINE_MARKDOWN_CONTAINER_RE =
   /\*\*\*[\s\S]+?\*\*\*|\*\*[\s\S]+?\*\*|__[\s\S]+?__|(?<!\*)\*(?!\*)[\s\S]+?(?<!\*)\*(?!\*)|==[\s\S]+?==|~~[\s\S]+?~~|(?<![_\w])_[^_]+?_(?![_\w])/g;
 
@@ -203,9 +203,9 @@ function renderWithSpeakerTags(
     if (match.index > lastIndex) {
       nodes.push(...renderLine(text.slice(lastIndex, match.index), defaultDialogueColor));
     }
-    const speakerName = match[1]!;
+    const speakerName = match[1]?.trim() ?? "";
     const dialogue = match[2]!;
-    const speakerColor = speakerColorMap?.get(speakerName) ?? defaultDialogueColor;
+    const speakerColor = speakerName ? (speakerColorMap?.get(speakerName) ?? defaultDialogueColor) : defaultDialogueColor;
     // Render the dialogue content (without the tags) using the speaker's color
     nodes.push(<span key={`s${key++}`}>{renderLine(dialogue, speakerColor)}</span>);
     lastIndex = match.index + match[0].length;
@@ -497,7 +497,8 @@ function renderContent(
   // For HTML content, replace speaker tags with color-annotated spans (preserves per-character colors)
   const stripped = speakerColorMap
     ? normalized.replace(SPEAKER_TAG_RE, (_, name, dialogue) => {
-        const color = speakerColorMap.get(name as string);
+        const speakerName = typeof name === "string" ? name.trim() : "";
+        const color = speakerName ? speakerColorMap.get(speakerName) : undefined;
         return color ? `<span data-spk="${color}">${dialogue as string}</span>` : (dialogue as string);
       })
     : normalized.replace(SPEAKER_TAG_RE, "$2");
