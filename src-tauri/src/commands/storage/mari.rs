@@ -129,12 +129,13 @@ pub(crate) async fn professor_mari_prompt(state: &AppState, body: Value) -> AppR
         }),
     )?;
     let connection = llm_connection_from_value(&connection_value)?;
-    let (content, action) = run_mari_agent(state, connection, &input).await?;
+    let (content, action, trace) = run_mari_agent(state, connection, &input).await?;
 
     Ok(json!({
         "content": content,
         "createdAt": chrono::Utc::now().to_rfc3339(),
         "action": action,
+        "trace": trace,
     }))
 }
 
@@ -142,11 +143,11 @@ async fn run_mari_agent(
     state: &AppState,
     connection: marinara_llm::LlmConnection,
     input: &MariPromptRequest,
-) -> AppResult<(String, Value)> {
+) -> AppResult<(String, Value, Vec<Value>)> {
     let workspace_seed = build_mari_workspace_seed(state)?;
     let session = MariShellSession::new(input, workspace_seed).await?;
     let tools = build_pi_like_tools(session.clone());
-    let llm: Arc<dyn LLMProvider> = Arc::new(MarinaraLlmProvider::new(connection));
+    let llm: Arc<dyn LLMProvider> = Arc::new(MarinaraLlmProvider::new(connection, session.clone()));
     let agent = ReActAgent::with_max_turns(ProfessorMariAgent { tools }, 8);
     let agent_handle = AgentBuilder::<_, DirectAgent>::new(agent)
         .llm(llm)
@@ -166,17 +167,22 @@ async fn run_mari_agent(
     } else {
         content.to_string()
     };
-    Ok((content, staged_mari_action_contract(&session).await?))
+    Ok((
+        content,
+        staged_mari_action_contract(&session).await?,
+        session.trace_events(),
+    ))
 }
 
 #[derive(Clone)]
 struct MarinaraLlmProvider {
     connection: marinara_llm::LlmConnection,
+    session: Arc<MariShellSession>,
 }
 
 impl MarinaraLlmProvider {
-    fn new(connection: marinara_llm::LlmConnection) -> Self {
-        Self { connection }
+    fn new(connection: marinara_llm::LlmConnection, session: Arc<MariShellSession>) -> Self {
+        Self { connection, session }
     }
 
     async fn complete_chat(
@@ -198,6 +204,13 @@ impl MarinaraLlmProvider {
         })
         .await
         .map_err(|error| LLMError::ProviderError(format_app_error_for_debug(&error)))?;
+        self.session.record_trace(json!({
+            "type": "model_turn",
+            "label": "Model turn",
+            "summary": model_turn_summary(&response.content, &response.tool_calls),
+            "content": truncate_tool_text(response.content.trim()),
+            "toolCalls": response.tool_calls.iter().map(summarize_tool_call_value).collect::<Vec<_>>(),
+        }));
         Ok(MarinaraChatResponse {
             content: response.content,
             tool_calls: map_marinara_tool_calls(response.tool_calls),
