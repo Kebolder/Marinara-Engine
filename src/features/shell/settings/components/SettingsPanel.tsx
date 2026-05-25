@@ -3430,7 +3430,7 @@ function AdvancedSettings() {
         label="Debug mode"
         checked={debugMode}
         onChange={setDebugMode}
-        help="Logs the prompt and response payloads sent to the local Tauri console for debugging."
+        help="Shows the in-app agent debug panel with prompt, response, tool, and result details for troubleshooting."
       />
 
       {/* ── Profile Export ── */}

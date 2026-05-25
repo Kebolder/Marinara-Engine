@@ -261,6 +261,17 @@ export async function executeKnowledgeRouter(
   options: KnowledgeRouterCandidateOptions = {},
 ): Promise<AgentResult> {
   const startTime = Date.now();
+  const logger = {
+    debug: (...args: unknown[]) => {
+      if (baseContext.debugMode === true) console.debug(...args);
+    },
+    warn: (...args: unknown[]) => {
+      if (baseContext.debugMode === true) console.warn(...args);
+    },
+    error: (...args: unknown[]) => {
+      if (baseContext.debugMode === true) console.error(...args);
+    },
+  };
 
   // Empty input → no work, no LLM call.
   if (entries.length === 0) {
