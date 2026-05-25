@@ -1087,7 +1087,14 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
 
   if (context.gameState) {
     parts.push(`<current_game_state>`);
-    parts.push(JSON.stringify(context.gameState));
+    // Strip presentCharacters[].avatarPath before serialization: it is a UI display
+    // field (image path or inline data URL) the model never reads, and a single
+    // inlined data: URL can be megabytes of base64 - imported pre-refactor chats
+    // ship with full data URLs in this field and were blowing past 1M-token
+    // provider ceilings (issue #1188).
+    parts.push(
+      JSON.stringify(context.gameState, (key, value) => (key === "avatarPath" ? undefined : value)),
+    );
     parts.push(`</current_game_state>`);
   }
 
