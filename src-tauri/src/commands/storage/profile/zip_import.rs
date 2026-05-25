@@ -1,6 +1,6 @@
 use super::assets::{normalize_zip_entry_name, restore_profile_zip_assets};
 use super::{
-    import_profile_collections_with_restored_assets,
+    finish_profile_import_assets, import_profile_collections_with_restored_assets,
     legacy::import_legacy_profile_tables_with_restored_assets,
 };
 use crate::state::AppState;
@@ -30,9 +30,16 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
         .and_then(|value| value.get("files"))
         .or_else(|| data.get("assets"));
     if let Some(collections) = data.get("collections").and_then(Value::as_object) {
-        let restored_assets =
+        let mut restored_assets =
             restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
-        import_profile_collections_with_restored_assets(state, collections, restored_assets)
+        let restored_count = restored_assets.restored();
+        let result = import_profile_collections_with_restored_assets(
+            state,
+            collections,
+            restored_count,
+            || restored_assets.install(),
+        );
+        finish_profile_import_assets(restored_assets, result)
     } else {
         let tables = data
             .get("fileStorage")
@@ -43,9 +50,18 @@ pub(super) fn import_profile_zip(state: &AppState, path: &Path) -> AppResult<Val
                     "Profile ZIP must contain data.collections or data.fileStorage.tables",
                 )
             })?;
-        let restored_assets =
+        let mut restored_assets =
             restore_profile_zip_assets(state, &mut archive, &names, &profile_prefix, files)?;
-        import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
+        let restored_count = restored_assets.restored();
+        let staging_root = restored_assets.staging_root().map(Path::to_path_buf);
+        let result = import_legacy_profile_tables_with_restored_assets(
+            state,
+            tables,
+            restored_count,
+            staging_root.as_deref(),
+            || restored_assets.install(),
+        );
+        finish_profile_import_assets(restored_assets, result)
     }
 }
 

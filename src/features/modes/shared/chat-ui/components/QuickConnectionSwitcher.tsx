@@ -8,6 +8,8 @@ import { useUpdateChat, useChat } from "../../../../catalog/chats/index";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { filterLanguageGenerationConnections } from "../../../../../shared/lib/connection-filters";
 import { cn } from "../../../../../shared/lib/utils";
+import { boolish as isRandomPoolEnabled } from "../../../../../engine/generation/runtime-records";
+
 
 export function QuickConnectionSwitcher({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
@@ -23,7 +25,7 @@ export function QuickConnectionSwitcher({ className }: { className?: string }) {
   const isRandom = activeConnectionId === "random";
 
   const sorted = filterLanguageGenerationConnections(
-    (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string }>,
+    (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string | boolean | null }>,
   ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   const handleSwitch = useCallback(
@@ -120,7 +122,7 @@ export function QuickConnectionSwitcher({ className }: { className?: string }) {
           </div>
           <div className="overflow-y-auto p-1">
             {sorted.map((conn) => {
-              const inPool = conn.useForRandom === "true";
+              const inPool = isRandomPoolEnabled(conn.useForRandom);
               const isActive = activeConnectionId === conn.id;
               if (isRandom) {
                 return (

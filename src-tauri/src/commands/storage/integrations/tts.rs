@@ -208,7 +208,10 @@ async fn voices(state: &AppState) -> AppResult<Value> {
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|error| AppError::new("tts_client_error", error.to_string()))?
-        .get(format!("{base}/audio/voices"))
+        .get(openai_voices_url(
+            &base,
+            config.get("model").and_then(Value::as_str),
+        ))
         .headers(openai_headers(api_key)?)
         .send()
         .await;
@@ -415,6 +418,25 @@ fn configured_base_url(config: &Value) -> String {
         "pockettts" => "http://localhost:8000".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
+}
+
+/// Builds the OpenAI-compatible voice discovery endpoint.
+///
+/// Nonblank model values are trimmed and sent as `model` so multi-model
+/// providers can return the right catalog. If URL parsing fails, return the
+/// raw legacy endpoint and let the provider request fail through the existing
+/// fallback path.
+fn openai_voices_url(base: &str, model: Option<&str>) -> String {
+    let raw_url = format!("{base}/audio/voices");
+    let Ok(mut url) = reqwest::Url::parse(&raw_url) else {
+        return raw_url;
+    };
+
+    if let Some(model) = model.map(str::trim).filter(|value| !value.is_empty()) {
+        url.query_pairs_mut().append_pair("model", model);
+    }
+
+    url.to_string()
 }
 
 fn normalized_model(source: &str, base: &str, configured: &str) -> String {
@@ -689,4 +711,110 @@ fn optional_bearer_headers(api_key: &str) -> AppResult<reqwest::header::HeaderMa
         );
     }
     Ok(headers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-tts-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp TTS dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    async fn serve_model_gated_voices(expected_model: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test voice server should bind");
+        let address = listener
+            .local_addr()
+            .expect("test voice server address should be readable");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("test voice server should accept one request");
+            let mut buffer = [0_u8; 2048];
+            let bytes = stream
+                .read(&mut buffer)
+                .await
+                .expect("test voice server should read request");
+            let request = String::from_utf8_lossy(&buffer[..bytes]);
+            let path = request.lines().next().unwrap_or_default();
+            let encoded_model = expected_model.replace('/', "%2F");
+            let has_model = path.contains(&format!("model={encoded_model}"));
+            let (status, body) = if has_model {
+                ("200 OK", r#"{"voices":["af_heart"]}"#)
+            } else {
+                ("400 Bad Request", r#"{"error":"missing model"}"#)
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("test voice server should write response");
+        });
+        format!("http://{address}/v1")
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_voice_lookup_passes_configured_model() {
+        let state = test_state("openai-voices-model");
+        let model = "mlx-community/Kokoro-82M-bf16";
+        let base_url = serve_model_gated_voices(model).await;
+        state
+            .storage
+            .upsert_with_id(
+                "app-settings",
+                TTS_SETTINGS_KEY,
+                json!({
+                    "value": {
+                        "enabled": true,
+                        "source": "openai",
+                        "baseUrl": base_url,
+                        "apiKey": "",
+                        "model": model
+                    }
+                }),
+            )
+            .expect("TTS settings should be stored");
+
+        let result = voices(&state).await.expect("voice lookup should complete");
+
+        assert_eq!(result["fromProvider"], true);
+        assert_eq!(result["voices"], json!(["af_heart"]));
+    }
+
+    #[test]
+    fn openai_voices_url_encodes_configured_model() {
+        assert_eq!(
+            openai_voices_url(
+                "http://127.0.0.1:8081/v1",
+                Some(" mlx-community/Kokoro-82M-bf16 ")
+            ),
+            "http://127.0.0.1:8081/v1/audio/voices?model=mlx-community%2FKokoro-82M-bf16"
+        );
+    }
+
+    #[test]
+    fn openai_voices_url_omits_blank_model() {
+        assert_eq!(
+            openai_voices_url("http://127.0.0.1:8081/v1", Some("  ")),
+            "http://127.0.0.1:8081/v1/audio/voices"
+        );
+    }
 }

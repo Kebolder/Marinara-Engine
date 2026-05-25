@@ -150,6 +150,15 @@ async function saveUserMessage(
   });
 }
 
+function savedUserMessageForTimeline(saved: unknown, chatId: string): JsonRecord | null {
+  if (!isRecord(saved)) return null;
+  if (!readString(saved.id).trim()) return null;
+  if (readString(saved.chatId).trim() !== chatId) return null;
+  if (readString(saved.role).trim() !== "user") return null;
+  if (!readString(saved.content).trim()) return null;
+  return saved;
+}
+
 function requestMessages(input: StartGenerationInput): LlmMessage[] | null {
   if (!Array.isArray(input.messages) || input.messages.length === 0) return null;
   return input.messages
@@ -501,13 +510,23 @@ export async function* startGeneration(
 
   yield { type: "phase", data: "Saving message..." };
   const preparedUserInput = await prepareUserInput(deps.storage, input);
-  if (shouldSaveUserMessage(input, preparedUserInput)) {
-    await commitVisibleTrackerSnapshotSafely(deps.storage, chatId, await loadChatMessages(deps.storage, chatId));
+  const savesUserMessage = shouldSaveUserMessage(input, preparedUserInput);
+  let storedMessages: JsonRecord[] | null = null;
+  if (savesUserMessage) {
+    storedMessages = await loadChatMessages(deps.storage, chatId);
+    await commitVisibleTrackerSnapshotSafely(deps.storage, chatId, storedMessages);
   }
   const savedUserMessage = await saveUserMessage(deps.storage, input, preparedUserInput);
   if (savedUserMessage) yield { type: "user_message", data: savedUserMessage };
   const connection = await resolveGenerationConnection(deps.storage, chat, input);
-  const storedMessages = await loadChatMessages(deps.storage, chatId);
+  if (savesUserMessage) {
+    const savedTimelineMessage = savedUserMessageForTimeline(savedUserMessage, chatId);
+    storedMessages = savedTimelineMessage
+      ? [...(storedMessages ?? []), savedTimelineMessage]
+      : await loadChatMessages(deps.storage, chatId);
+  } else {
+    storedMessages = await loadChatMessages(deps.storage, chatId);
+  }
   const generationMessages = messagesBeforeRegenerationTarget(storedMessages, input.regenerateMessageId);
   const generationTrackerBaseline = await selectGenerationTrackerBaseline(
     deps.storage,

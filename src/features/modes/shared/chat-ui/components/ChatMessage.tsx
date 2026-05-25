@@ -45,7 +45,11 @@ import { useTranslate } from "../../../../../shared/hooks/use-translate";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { ttsService } from "../../../../../shared/lib/tts-service";
 import { useTTSConfig } from "../../../../../shared/hooks/use-tts";
-import { buildTTSMessageText, resolveTTSVoiceForSpeaker } from "../../../../../shared/lib/tts-dialogue";
+import {
+  buildTTSMessageText,
+  clientSidePlaybackRate,
+  resolveTTSVoiceForSpeaker,
+} from "../../../../../shared/lib/tts-dialogue";
 import { DIALOGUE_QUOTE_PATTERN_SOURCE, HTML_SAFE_DIALOGUE_QUOTE_PATTERN_SOURCE } from "../../../../../shared/lib/dialogue-quotes";
 import DOMPurify from "dompurify";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "../types";
@@ -165,8 +169,8 @@ interface ChatMessageProps {
 /** Regex to match a plain image URL as the entire content. */
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:gif|png|jpe?g|webp)(?:\?[^\s]*)?$/i;
 
-/** Regex to match <speaker="name">dialogue</speaker> tags. */
-const SPEAKER_TAG_RE = /<speaker="([^"]*)">([\s\S]*?)<\/speaker>/g;
+/** Regex to match <speaker>dialogue</speaker> and <speaker="name">dialogue</speaker> tags. */
+const SPEAKER_TAG_RE = /<speaker(?:="([^"]*)")?>([\s\S]*?)<\/speaker>/g;
 const INLINE_MARKDOWN_CONTAINER_RE =
   /\*\*\*[\s\S]+?\*\*\*|\*\*[\s\S]+?\*\*|__[\s\S]+?__|(?<!\*)\*(?!\*)[\s\S]+?(?<!\*)\*(?!\*)|==[\s\S]+?==|~~[\s\S]+?~~|(?<![_\w])_[^_]+?_(?![_\w])/g;
 
@@ -182,7 +186,9 @@ function renderWithSpeakerTags(
 ): ReactNode[] {
   const renderLine = (line: string, color = defaultDialogueColor) => highlightDialogue(line, color, boldDialogue);
 
-  if (!speakerColorMap || !SPEAKER_TAG_RE.test(text)) {
+  // Tag stripping is a side-effect of the loop, not the colour logic, so the loop
+  // must run whenever tags are present — otherwise `<speaker="…">` renders as text.
+  if (!SPEAKER_TAG_RE.test(text)) {
     return renderLine(text, defaultDialogueColor);
   }
   SPEAKER_TAG_RE.lastIndex = 0;
@@ -197,9 +203,9 @@ function renderWithSpeakerTags(
     if (match.index > lastIndex) {
       nodes.push(...renderLine(text.slice(lastIndex, match.index), defaultDialogueColor));
     }
-    const speakerName = match[1]!;
+    const speakerName = match[1]?.trim() ?? "";
     const dialogue = match[2]!;
-    const speakerColor = speakerColorMap.get(speakerName) ?? defaultDialogueColor;
+    const speakerColor = speakerName ? (speakerColorMap?.get(speakerName) ?? defaultDialogueColor) : defaultDialogueColor;
     // Render the dialogue content (without the tags) using the speaker's color
     nodes.push(<span key={`s${key++}`}>{renderLine(dialogue, speakerColor)}</span>);
     lastIndex = match.index + match[0].length;
@@ -491,7 +497,8 @@ function renderContent(
   // For HTML content, replace speaker tags with color-annotated spans (preserves per-character colors)
   const stripped = speakerColorMap
     ? normalized.replace(SPEAKER_TAG_RE, (_, name, dialogue) => {
-        const color = speakerColorMap.get(name as string);
+        const speakerName = typeof name === "string" ? name.trim() : "";
+        const color = speakerName ? speakerColorMap.get(speakerName) : undefined;
         return color ? `<span data-spk="${color}">${dialogue as string}</span>` : (dialogue as string);
       })
     : normalized.replace(SPEAKER_TAG_RE, "$2");
@@ -765,9 +772,13 @@ export const ChatMessage = memo(function ChatMessage({
       ttsService.stop();
     } else {
       if (!ttsSpeakText) return;
-      void ttsService.speak(ttsSpeakText, message.id, { speaker: ttsSpeakerName, voice: ttsVoice });
+      void ttsService.speak(ttsSpeakText, message.id, {
+        speaker: ttsSpeakerName,
+        voice: ttsVoice,
+        playbackRate: clientSidePlaybackRate(ttsConfig),
+      });
     }
-  }, [message.id, ttsSpeakText, ttsSpeakerName, ttsVoice]);
+  }, [message.id, ttsSpeakText, ttsSpeakerName, ttsVoice, ttsConfig]);
 
   const handlePauseResumeTTS = useCallback(() => {
     if (ttsService.getActiveId() !== message.id) return;

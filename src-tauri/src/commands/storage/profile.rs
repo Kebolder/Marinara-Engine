@@ -5,7 +5,7 @@ mod legacy;
 #[path = "profile/zip_import.rs"]
 mod zip_import;
 
-use self::assets::{profile_assets, restore_profile_assets};
+use self::assets::{profile_assets, restore_profile_assets, RestoredProfileAssets};
 use self::legacy::import_legacy_profile_tables;
 use self::zip_import::import_profile_zip;
 use super::shared::*;
@@ -136,28 +136,64 @@ fn import_profile_collections(
     data: &Map<String, Value>,
     collections: &Map<String, Value>,
 ) -> AppResult<Value> {
-    let restored_assets = restore_profile_assets(state, data.get("assets"))?;
-    import_profile_collections_with_restored_assets(state, collections, restored_assets)
+    let mut restored_assets = restore_profile_assets(state, data.get("assets"))?;
+    let restored_count = restored_assets.restored();
+    let result =
+        import_profile_collections_with_restored_assets(state, collections, restored_count, || {
+            restored_assets.install()
+        });
+    finish_profile_import_assets(restored_assets, result)
 }
 
-pub(super) fn import_profile_collections_with_restored_assets(
+pub(super) fn import_profile_collections_with_restored_assets<F>(
     state: &AppState,
     collections: &Map<String, Value>,
     restored_assets: usize,
-) -> AppResult<Value> {
+    install_assets: F,
+) -> AppResult<Value>
+where
+    F: FnOnce() -> AppResult<()>,
+{
     let mut imported = Map::new();
+    let mut replacements = Vec::new();
     for collection in PROFILE_COLLECTIONS {
         let rows = collections
             .get(*collection)
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        state.storage.replace_all(collection, rows.clone())?;
         imported.insert((*collection).to_string(), json!(rows.len()));
+        replacements.push((*collection, rows));
     }
+    state
+        .storage
+        .replace_all_many_and_then(replacements, install_assets)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))
+}
+
+fn finish_profile_import_assets(
+    restored_assets: RestoredProfileAssets,
+    result: AppResult<Value>,
+) -> AppResult<Value> {
+    match result {
+        Ok(value) => {
+            restored_assets.commit();
+            Ok(value)
+        }
+        Err(error) => {
+            if let Err(rollback_error) = restored_assets.rollback() {
+                return Err(AppError::new(
+                    "profile_import_rollback_failed",
+                    format!(
+                        "{error}; additionally failed to roll back profile assets: {rollback_error}"
+                    ),
+                ));
+            }
+            Err(error)
+        }
+    }
 }
 
 fn insert_profile_import_aliases(imported: &mut Map<String, Value>) {
@@ -175,4 +211,92 @@ fn profile_collections(state: &AppState) -> AppResult<Map<String, Value>> {
         );
     }
     Ok(collections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-profile-import-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp profile dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    #[test]
+    fn profile_import_rolls_back_collections_when_asset_install_fails() {
+        let state = test_state("asset-install-fails");
+        state
+            .storage
+            .replace_all("characters", vec![json!({ "id": "old-character" })])
+            .unwrap();
+
+        let mut collections = Map::new();
+        collections.insert("characters".to_string(), json!([{ "id": "new-character" }]));
+
+        let error =
+            import_profile_collections_with_restored_assets(&state, &collections, 0, || {
+                Err(AppError::new(
+                    "asset_install_failed",
+                    "asset install failed",
+                ))
+            })
+            .expect_err("asset install failure should reject the import");
+
+        assert_eq!(error.code, "asset_install_failed");
+        assert_eq!(
+            state.storage.list("characters").unwrap()[0]["id"],
+            "old-character"
+        );
+    }
+
+    #[test]
+    fn profile_import_legacy_file_storage_app_settings_key_sets_ui_id() {
+        let state = test_state("legacy-file-storage-app-settings");
+        state
+            .storage
+            .upsert_with_id(
+                "app-settings",
+                "ui",
+                json!({ "value": { "theme": "seeded" } }),
+            )
+            .expect("seeded ui settings should write");
+
+        import_profile(
+            &state,
+            json!({
+                "type": "marinara_profile",
+                "version": 1,
+                "data": {
+                    "fileStorage": {
+                        "tables": {
+                            "app_settings": [
+                                {
+                                    "key": "ui",
+                                    "value": { "theme": "imported" }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }),
+        )
+        .expect("legacy file-storage profile import should succeed");
+
+        let ui = state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .expect("imported ui settings should be addressable by id");
+        assert_eq!(ui["id"], "ui");
+        assert_eq!(ui["value"]["theme"], "imported");
+    }
 }

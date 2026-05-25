@@ -1,12 +1,17 @@
 use super::super::{
     game_state_snapshots,
-    shared::{materialize_message_swipe_fields, non_negative_i64_value},
+    shared::{
+        materialize_message_swipe_fields, non_negative_i64_value,
+        normalize_legacy_text_array_fields, normalize_legacy_text_bool_fields,
+        string_array_from_value,
+    },
 };
 use super::assets::{normalize_legacy_profile_asset_paths, restore_legacy_profile_json_assets};
-use super::insert_profile_import_aliases;
+use super::{finish_profile_import_assets, insert_profile_import_aliases};
 use crate::state::AppState;
 use marinara_core::AppResult;
 use serde_json::{json, Map, Value};
+use std::path::Path;
 
 const LEGACY_PROFILE_TABLES: &[(&str, &str)] = &[
     ("characters", "characters"),
@@ -61,19 +66,35 @@ pub(super) fn import_legacy_profile_tables(
     tables: &Map<String, Value>,
 ) -> AppResult<Value> {
     let files = data.get("fileStorage").and_then(|value| value.get("files"));
-    let restored_assets = restore_legacy_profile_json_assets(state, files)?;
-    import_legacy_profile_tables_with_restored_assets(state, tables, restored_assets)
+    let mut restored_assets = restore_legacy_profile_json_assets(state, files)?;
+    let restored_count = restored_assets.restored();
+    let staging_root = restored_assets.staging_root().map(Path::to_path_buf);
+    let result = import_legacy_profile_tables_with_restored_assets(
+        state,
+        tables,
+        restored_count,
+        staging_root.as_deref(),
+        || restored_assets.install(),
+    );
+    finish_profile_import_assets(restored_assets, result)
 }
 
-pub(super) fn import_legacy_profile_tables_with_restored_assets(
+pub(super) fn import_legacy_profile_tables_with_restored_assets<F>(
     state: &AppState,
     tables: &Map<String, Value>,
     restored_assets: usize,
-) -> AppResult<Value> {
+    staging_root: Option<&Path>,
+    install_assets: F,
+) -> AppResult<Value>
+where
+    F: FnOnce() -> AppResult<()>,
+{
     let mut imported = Map::new();
+    let mut replacements = Vec::new();
     for (table, collection) in LEGACY_PROFILE_TABLES {
         let mut rows = table_rows(tables, table);
         match *collection {
+            "app-settings" => normalize_legacy_app_settings(&mut rows),
             "lorebooks" => add_legacy_lorebook_links(&mut rows, tables),
             "chats" => add_legacy_chat_memories(&mut rows, tables),
             "messages" => add_legacy_message_swipes(&mut rows, tables),
@@ -81,11 +102,14 @@ pub(super) fn import_legacy_profile_tables_with_restored_assets(
             _ => {}
         }
         for row in &mut rows {
-            normalize_legacy_profile_asset_paths(state, row);
+            normalize_legacy_profile_asset_paths(state, staging_root, row);
         }
-        state.storage.replace_all(collection, rows.clone())?;
         imported.insert((*collection).to_string(), json!(rows.len()));
+        replacements.push((*collection, rows));
     }
+    state
+        .storage
+        .replace_all_many_and_then(replacements, install_assets)?;
     imported.insert("files".to_string(), json!(restored_assets));
     insert_profile_import_aliases(&mut imported);
     Ok(json!({ "success": true, "imported": imported }))
@@ -99,6 +123,21 @@ fn table_rows(tables: &Map<String, Value>, table: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn normalize_legacy_app_settings(rows: &mut [Value]) {
+    for row in rows {
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        let legacy_key = trimmed_string(object.get("key"));
+        if trimmed_string(object.get("id")).is_none() {
+            if let Some(key) = legacy_key {
+                object.insert("id".to_string(), Value::String(key));
+            }
+        }
+        object.remove("key");
+    }
+}
+
 fn add_legacy_lorebook_links(rows: &mut [Value], tables: &Map<String, Value>) {
     let character_links = table_rows(tables, "lorebook_character_links");
     let persona_links = table_rows(tables, "lorebook_persona_links");
@@ -109,29 +148,60 @@ fn add_legacy_lorebook_links(rows: &mut [Value], tables: &Map<String, Value>) {
         let Some(lorebook_id) = object.get("id").and_then(Value::as_str) else {
             continue;
         };
-        let mut character_ids =
+        let mut linked_character_ids =
             linked_ids(&character_links, "lorebookId", lorebook_id, "characterId");
-        let mut persona_ids = linked_ids(&persona_links, "lorebookId", lorebook_id, "personaId");
+        let mut linked_persona_ids =
+            linked_ids(&persona_links, "lorebookId", lorebook_id, "personaId");
         if let Some(character_id) = object
             .get("characterId")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
         {
-            push_unique(&mut character_ids, character_id);
+            push_unique(&mut linked_character_ids, character_id);
         }
         if let Some(persona_id) = object
             .get("personaId")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
         {
-            push_unique(&mut persona_ids, persona_id);
+            push_unique(&mut linked_persona_ids, persona_id);
         }
-        object
-            .entry("characterIds".to_string())
-            .or_insert_with(|| json!(character_ids));
-        object
-            .entry("personaIds".to_string())
-            .or_insert_with(|| json!(persona_ids));
+        // Normalize first - pre-refactor stored `tags`/`characterIds`/`personaIds`
+        // as TEXT columns (JSON-stringified arrays). Without this the lorebook
+        // editor crashes on `formTags.map is not a function`, and the junction
+        // links computed above would be discarded by `or_insert_with` whenever
+        // the row carried a text-encoded `"[]"` placeholder.
+        normalize_legacy_text_array_fields(
+            row,
+            &["tags", "characterIds", "personaIds"],
+        );
+        // Pre-refactor also stored bool columns as TEXT (`"false"` / `"true"`).
+        // Without coercion, the frontend reads `lorebook.isGlobal === "false"`
+        // as truthy and renders every scoped lorebook as global in the editor.
+        normalize_legacy_text_bool_fields(
+            row,
+            &[
+                "isGlobal",
+                "enabled",
+                "recursiveScanning",
+                "excludeFromVectorization",
+            ],
+        );
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        // Then union the (now array-shaped) row values with the link-table
+        // results so neither source is dropped.
+        let mut merged_character_ids = string_array_from_value(object.get("characterIds"));
+        for id in linked_character_ids {
+            push_unique(&mut merged_character_ids, &id);
+        }
+        object.insert("characterIds".to_string(), json!(merged_character_ids));
+        let mut merged_persona_ids = string_array_from_value(object.get("personaIds"));
+        for id in linked_persona_ids {
+            push_unique(&mut merged_persona_ids, &id);
+        }
+        object.insert("personaIds".to_string(), json!(merged_persona_ids));
     }
 }
 
@@ -296,6 +366,80 @@ fn diagnostic_string(value: Option<&Value>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-profile-legacy-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp profile dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    #[test]
+    fn legacy_app_settings_key_rows_import_as_settings_ids() {
+        let state = test_state("app-settings-key");
+        state
+            .storage
+            .upsert_with_id(
+                "app-settings",
+                "ui",
+                json!({ "value": { "theme": "seeded" } }),
+            )
+            .expect("seeded ui settings should write");
+        let mut tables = Map::new();
+        tables.insert(
+            "app_settings".to_string(),
+            json!([
+                {
+                    "key": "ui",
+                    "value": { "theme": "imported" },
+                    "updatedAt": "2026-05-24T00:00:00Z"
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+            .expect("legacy profile import should succeed");
+
+        let ui = state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .expect("imported ui settings should be addressable by id");
+        assert_eq!(ui["id"], "ui");
+        assert_eq!(ui["value"]["theme"], "imported");
+        assert!(!ui.as_object().unwrap().contains_key("key"));
+    }
+
+    #[test]
+    fn legacy_app_settings_blank_key_does_not_create_ui_id() {
+        let state = test_state("app-settings-blank-key");
+        let mut tables = Map::new();
+        tables.insert(
+            "app_settings".to_string(),
+            json!([
+                {
+                    "key": "  ",
+                    "value": { "theme": "not-ui" }
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+            .expect("legacy profile import should preserve malformed rows without matching ui");
+
+        assert!(state
+            .storage
+            .get("app-settings", "ui")
+            .expect("ui settings lookup should not fail")
+            .is_none());
+    }
 
     #[test]
     fn legacy_game_state_snapshot_maps_sqlite_field_names_to_tracker_rows() {

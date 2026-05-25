@@ -38,6 +38,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
+import { boolish } from "../../../../engine/generation/runtime-records";
 import { TTSConfigCard } from "../../../shell/settings/index";
 
 /** Provider → gradient color pair for connection icons. */
@@ -64,9 +65,10 @@ type ConnectionRowData = {
   name: string;
   provider: string;
   model: string;
-  useForRandom?: string;
+  useForRandom?: string | boolean | null;
   folderId?: string | null;
 };
+
 
 function ConnectionRow({
   conn,
@@ -86,7 +88,7 @@ function ConnectionRow({
   const updateConnection = useUpdateConnection();
   const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
 
-  const inRandomPool = conn.useForRandom === "true";
+  const inRandomPool = boolish(conn.useForRandom, false);
   const colors = PROVIDER_COLORS[conn.provider] ?? DEFAULT_COLOR;
 
   return (

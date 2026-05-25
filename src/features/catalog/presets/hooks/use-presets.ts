@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { previewGenerationPrompt } from "../../../../engine/generation/prompt-preview";
+import { boolish } from "../../../../engine/generation/runtime-records";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import type { PromptPreset, PromptGroup, PromptSection, ChoiceBlock, GenerationParameters, ChatMLMessage } from "../../../../engine/contracts/types/prompt";
@@ -169,7 +170,13 @@ export function useDefaultPreset() {
     queryKey: presetKeys.default(),
     queryFn: async () => {
       const presets = await storageApi.list<PromptPreset>("prompts");
-      return presets.find((preset) => (preset as PromptPreset & { default?: boolean }).isDefault || (preset as PromptPreset & { default?: boolean }).default) ?? null;
+      return (
+        presets.find(
+          (preset) =>
+            boolish((preset as PromptPreset & { default?: unknown }).isDefault, false) ||
+            boolish((preset as PromptPreset & { default?: unknown }).default, false),
+        ) ?? null
+      );
     },
     staleTime: 5 * 60_000,
   });

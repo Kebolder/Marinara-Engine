@@ -10,6 +10,7 @@ import type {
 import type { AgentResult, AgentContext, AgentResultType } from "../../contracts/types/agent";
 import { getDefaultAgentPrompt } from "../../contracts/constants/agent-prompts";
 import { DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS } from "../../contracts/types/agent";
+import { stripAvatarPathsReplacer } from "../strip-avatar-paths";
 const isDebugAgentsEnabled = () => false;
 const logger = {
   debug: (..._args: unknown[]) => {},
@@ -926,7 +927,7 @@ function buildAgentMessages(
         if (gs.playerStats) trackerSummary.playerStats = gs.playerStats;
         if (gs.personaStats?.length) trackerSummary.personaStats = gs.personaStats;
         if (Object.keys(trackerSummary).length > 0) {
-          content += `\n\n<committed_tracker_state>\n${JSON.stringify(trackerSummary)}\n</committed_tracker_state>`;
+          content += `\n\n<committed_tracker_state>\n${JSON.stringify(trackerSummary, stripAvatarPathsReplacer)}\n</committed_tracker_state>`;
         }
       }
 
@@ -1087,7 +1088,7 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
 
   if (context.gameState) {
     parts.push(`<current_game_state>`);
-    parts.push(JSON.stringify(context.gameState));
+    parts.push(JSON.stringify(context.gameState, stripAvatarPathsReplacer));
     parts.push(`</current_game_state>`);
   }
 

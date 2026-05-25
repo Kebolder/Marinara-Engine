@@ -1,5 +1,8 @@
 use super::*;
 
+const PROFILE_IMPORT_GUIDANCE: &str =
+    "Full profile exports must be imported with Import Profile in Settings -> Import. Use Import Profile (JSON/ZIP) instead.";
+
 pub(super) fn import_marinara_file(state: &AppState, body: Value) -> AppResult<Value> {
     let uploaded = decode_uploaded_file_value(
         body.get("file")
@@ -12,6 +15,9 @@ pub(super) fn import_marinara_file(state: &AppState, body: Value) -> AppResult<V
     }
 
     let names = read_zip_entry_names(&uploaded.bytes)?;
+    if zip_entry_name_case_insensitive(&names, "marinara-profile.json").is_some() {
+        return Err(AppError::invalid_input(PROFILE_IMPORT_GUIDANCE));
+    }
     const MAX_PACKAGE_ENTRIES: usize = 8;
     const MAX_DATA_JSON_BYTES: usize = 5 * 1024 * 1024;
     const MAX_AVATAR_BYTES: usize = 20 * 1024 * 1024;
@@ -424,6 +430,25 @@ fn import_marinara_lorebook(
     inherit_wrapper_timestamps(&mut lorebook_data, &data);
     remove_import_id(&mut lorebook_data);
     remove_fields(&mut lorebook_data, &["entries", "folders"]);
+    // Pre-refactor stored `tags`/`characterIds`/`personaIds` as TEXT columns
+    // (JSON-stringified arrays). Refactor expects real arrays — without this
+    // normalize step the lorebook editor crashes on `formTags.map is not a function`.
+    normalize_legacy_text_array_fields(
+        &mut lorebook_data,
+        &["tags", "characterIds", "personaIds"],
+    );
+    // Pre-refactor also stored bool columns as TEXT (`"false"` / `"true"`).
+    // Refactor reads these directly, so `lorebook.isGlobal === "false"` is
+    // truthy and the editor shows every scoped lorebook as global.
+    normalize_legacy_text_bool_fields(
+        &mut lorebook_data,
+        &[
+            "isGlobal",
+            "enabled",
+            "recursiveScanning",
+            "excludeFromVectorization",
+        ],
+    );
     let mut lorebook = with_entity_defaults("lorebooks", lorebook_data.clone());
     if let Some(image) = data
         .get("avatar")
@@ -678,8 +703,46 @@ pub(super) fn import_marinara_envelope(state: &AppState, envelope: Value) -> App
         "marinara_persona" => import_marinara_persona(state, data),
         "marinara_lorebook" => import_marinara_lorebook(state, object, data),
         "marinara_preset" => import_marinara_preset(state, object, data),
+        "marinara_profile" => Err(AppError::invalid_input(PROFILE_IMPORT_GUIDANCE)),
         _ => Err(AppError::invalid_input(format!(
             "Unknown Marinara import type: {import_type}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::AppState;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_state(label: &str) -> AppState {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("marinara-import-{label}-{nonce}"));
+        if path.exists() {
+            std::fs::remove_dir_all(&path).expect("stale temp import dir should be removable");
+        }
+        AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
+    }
+
+    #[test]
+    fn generic_marinara_import_directs_profile_exports_to_profile_import() {
+        let state = test_state("profile-envelope");
+        let error = import_marinara_envelope(
+            &state,
+            json!({
+                "type": "marinara_profile",
+                "version": 1,
+                "data": { "collections": {} }
+            }),
+        )
+        .expect_err("profile export should not go through generic Marinara import");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("Import Profile"));
+        assert!(!error.message.contains("Unknown Marinara import type"));
     }
 }

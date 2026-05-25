@@ -1,5 +1,6 @@
 pub mod app;
 pub(crate) mod builtins;
+pub(crate) mod connection_refs;
 pub mod http_dispatch;
 pub mod http_server;
 mod seed_defaults;
@@ -172,6 +173,7 @@ pub fn run() {
             storage_commands::media_commands::sprite_cleanup,
             storage_commands::media_commands::sprite_list,
             storage_commands::media_commands::sprite_upload,
+            storage_commands::media_commands::sprite_upload_bulk,
             storage_commands::media_commands::sprite_delete,
             storage_commands::media_commands::sprite_cleanup_saved,
             storage_commands::media_commands::sprite_cleanup_restore,

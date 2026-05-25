@@ -52,6 +52,11 @@ interface AgentDeps {
   integrations: IntegrationGateway;
 }
 
+interface ResolvedAgentsResult {
+  agents: ResolvedAgent[];
+  skippedResults: AgentResult[];
+}
+
 function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvider {
   return {
     maxTokensOverrideValue: null,
@@ -128,10 +133,10 @@ function normalizePhase(agent: JsonRecord): string {
   return phase.replace(/-/g, "_");
 }
 
-async function loadConnection(storage: StorageGateway, connectionId: string | null, fallback: JsonRecord) {
-  if (!connectionId) return fallback;
+async function loadConnection(storage: StorageGateway, connectionId: string | null): Promise<JsonRecord | null> {
+  if (!connectionId) return null;
   const connection = await storage.get<JsonRecord>("connections", connectionId);
-  return isRecord(connection) ? connection : fallback;
+  return isRecord(connection) ? connection : null;
 }
 
 async function loadAgentMemory(storage: StorageGateway, agentId: string, chatId: string): Promise<Record<string, unknown>> {
@@ -551,8 +556,27 @@ function parseMaybeJson(value: string): unknown {
   }
 }
 
-async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<ResolvedAgent[]> {
-  if (!chatAgentsEnabled(input)) return [];
+function skippedDanglingConnectionResult(agent: JsonRecord, connectionId: string): AgentResult {
+  const type = readString(agent.type || agent.agentType) || "agent";
+  const name = readString(agent.name) || type;
+  return {
+    agentId: readString(agent.id) || type,
+    agentType: type,
+    type: "context_injection",
+    data: {
+      code: "dangling_agent_connection",
+      connectionId,
+      agentName: name,
+    },
+    tokensUsed: 0,
+    durationMs: 0,
+    success: false,
+    error: `${name} references an API connection that no longer exists. Marinara skipped this agent for this turn. Open Agent settings and choose a valid connection.`,
+  };
+}
+
+async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<ResolvedAgentsResult> {
+  if (!chatAgentsEnabled(input)) return { agents: [], skippedResults: [] };
   const scopedAgentIds = chatActiveAgentIds(input);
   const rows = (await deps.storage.list<JsonRecord>("agents"))
     .filter((agent) => boolish(agent.enabled, false))
@@ -565,10 +589,23 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
     });
   const customTools = await loadCustomTools(deps.storage);
   const resolved: ResolvedAgent[] = [];
+  const skippedResults: AgentResult[] = [];
   for (const agent of rows) {
     const settings = agentSettings(agent);
-    const connectionId = readString(agent.connectionId).trim() || readString(input.connection.id).trim() || null;
-    const connection = await loadConnection(deps.storage, connectionId, input.connection);
+    const requestedConnectionId = readString(agent.connectionId).trim();
+    const fallbackConnectionId = readString(input.connection.id).trim() || null;
+    const connectionId = requestedConnectionId || fallbackConnectionId;
+    let connection: JsonRecord;
+    if (requestedConnectionId) {
+      const loadedConnection = await loadConnection(deps.storage, requestedConnectionId);
+      if (!loadedConnection) {
+        skippedResults.push(skippedDanglingConnectionResult(agent, requestedConnectionId));
+        continue;
+      }
+      connection = loadedConnection;
+    } else {
+      connection = input.connection;
+    }
     const model = readString(agent.model).trim() || readString(connection.model).trim();
     if (!model) continue;
     resolved.push({
@@ -585,7 +622,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       toolContext: buildAgentToolContext(deps, input, agent, settings, customTools),
     });
   }
-  return resolved;
+  return { agents: resolved, skippedResults };
 }
 
 async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<AgentContext> {
@@ -649,10 +686,13 @@ export async function createGenerationAgentRuntime(
   input: GenerationAgentRuntimeInput,
   onResult?: (result: AgentResult) => void,
 ): Promise<GenerationAgentRuntime> {
-  const agents = await resolveAgents(deps, input);
+  const { agents, skippedResults } = await resolveAgents(deps, input);
   const context = await buildAgentContext(deps, input);
-  const preResults: AgentResult[] = [];
+  const preResults: AgentResult[] = [...skippedResults];
   const agentData: Record<string, string> = {};
+  for (const result of skippedResults) {
+    onResult?.(result);
+  }
   const pipeline = createAgentPipeline(agents, context, (result) => {
     const text = resultText(result);
     if (text) agentData[result.agentType] = text;

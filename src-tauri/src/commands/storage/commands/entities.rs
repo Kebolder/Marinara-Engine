@@ -1,4 +1,4 @@
-use super::{avatars, game_state_snapshots, lorebook_images, shared};
+use super::{avatars, chats, game_state_snapshots, lorebook_images, shared};
 use crate::builtins::is_protected_record;
 use crate::state::AppState;
 use marinara_core::AppError;
@@ -113,7 +113,18 @@ pub fn storage_delete(
     state: State<'_, AppState>,
     entity: String,
     id: String,
+    force: Option<bool>,
 ) -> Result<Value, AppError> {
+    if entity == "connections" {
+        return crate::connection_refs::delete_connection(&state, &id, force.unwrap_or(false));
+    }
+    if entity == "chats" {
+        let existed = state.storage.get("chats", &id)?.is_some();
+        if existed {
+            chats::delete_chat_with_messages(&state, &id)?;
+        }
+        return Ok(json!({ "deleted": existed }));
+    }
     if is_protected_record(&entity, &id) {
         return Err(AppError::invalid_input(
             "Built-in Professor Mari cannot be deleted",

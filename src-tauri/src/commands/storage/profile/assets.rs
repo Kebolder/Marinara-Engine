@@ -6,11 +6,13 @@ use serde_json::{json, Value};
 use std::fs::{self, File};
 use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PROFILE_ASSET_DIRS: &[&str] = &[
     "avatars",
     "sprites",
     "backgrounds",
+    "gallery",
     "game-assets",
     "fonts",
     "knowledge-sources",
@@ -54,6 +56,191 @@ struct ProfileAssetRestore {
     source: ProfileAssetSource,
 }
 
+pub(super) struct RestoredProfileAssets {
+    restored: usize,
+    transaction: Option<ProfileAssetTransaction>,
+}
+
+struct ProfileAssetTransaction {
+    data_dir: PathBuf,
+    staging_root: PathBuf,
+    backup_root: PathBuf,
+    backed_up: Vec<&'static str>,
+    installed: Vec<&'static str>,
+    finished: bool,
+}
+
+impl RestoredProfileAssets {
+    pub(super) fn restored(&self) -> usize {
+        self.restored
+    }
+
+    /// Path where staged assets live before `install()` moves them into the
+    /// live data dir. Callers that normalize legacy asset paths during the
+    /// pre-install window need this so they can find the assets that have
+    /// just been staged but are not yet at `state.data_dir`.
+    pub(super) fn staging_root(&self) -> Option<&Path> {
+        self.transaction
+            .as_ref()
+            .map(|transaction| transaction.staging_root.as_path())
+    }
+
+    pub(super) fn install(&mut self) -> AppResult<()> {
+        if let Some(transaction) = self.transaction.as_mut() {
+            transaction.install()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn commit(mut self) {
+        if let Some(transaction) = self.transaction.take() {
+            transaction.commit();
+        }
+    }
+
+    pub(super) fn rollback(mut self) -> AppResult<()> {
+        if let Some(mut transaction) = self.transaction.take() {
+            transaction.rollback()?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RestoredProfileAssets {
+    fn drop(&mut self) {
+        if let Some(mut transaction) = self.transaction.take() {
+            let _ = transaction.rollback();
+        }
+    }
+}
+
+impl ProfileAssetTransaction {
+    fn new(data_dir: &Path) -> AppResult<Self> {
+        fs::create_dir_all(data_dir)?;
+        let staging_root = create_profile_import_temp_dir(data_dir, "staging")?;
+        let backup_root = match create_profile_import_temp_dir(data_dir, "backup") {
+            Ok(path) => path,
+            Err(error) => {
+                let _ = remove_path_if_exists(&staging_root);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            data_dir: data_dir.to_path_buf(),
+            staging_root,
+            backup_root,
+            backed_up: Vec::new(),
+            installed: Vec::new(),
+            finished: false,
+        })
+    }
+
+    fn stage_bytes(&self, relative: &Path, bytes: &[u8]) -> AppResult<()> {
+        write_profile_asset_in_root(&self.staging_root, relative, bytes)
+    }
+
+    fn install(&mut self) -> AppResult<()> {
+        if let Err(error) = self.install_inner() {
+            return match self.rollback() {
+                Ok(()) => Err(error),
+                Err(rollback_error) => Err(AppError::new(
+                    "profile_asset_rollback_failed",
+                    format!(
+                        "{error}; additionally failed to roll back profile assets: {rollback_error}"
+                    ),
+                )),
+            };
+        }
+        Ok(())
+    }
+
+    fn install_inner(&mut self) -> AppResult<()> {
+        for dir in PROFILE_ASSET_DIRS {
+            let target = self.data_dir.join(dir);
+            if !path_exists_no_follow(&target)? {
+                continue;
+            }
+            let backup = self.backup_root.join(dir);
+            if let Some(parent) = backup.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(&target, &backup)?;
+            self.backed_up.push(*dir);
+        }
+
+        for dir in PROFILE_ASSET_DIRS {
+            let source = self.staging_root.join(dir);
+            if !path_exists_no_follow(&source)? {
+                continue;
+            }
+            let target = self.data_dir.join(dir);
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::rename(&source, &target)?;
+            self.installed.push(*dir);
+        }
+
+        remove_path_if_exists(&self.staging_root)?;
+        Ok(())
+    }
+
+    fn commit(mut self) {
+        self.finished = true;
+        let _ = remove_path_if_exists(&self.staging_root);
+        let _ = remove_path_if_exists(&self.backup_root);
+    }
+
+    fn rollback(&mut self) -> AppResult<()> {
+        if self.finished {
+            return Ok(());
+        }
+        self.finished = true;
+        let mut first_error = None;
+        for dir in self.installed.iter().rev() {
+            let target = self.data_dir.join(dir);
+            if let Err(error) = remove_path_if_exists(&target) {
+                first_error.get_or_insert(error);
+            }
+        }
+        for dir in self.backed_up.iter().rev() {
+            let backup = self.backup_root.join(dir);
+            match path_exists_no_follow(&backup) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                    continue;
+                }
+            }
+            let target = self.data_dir.join(dir);
+            if let Some(parent) = target.parent() {
+                if let Err(error) = fs::create_dir_all(parent) {
+                    first_error.get_or_insert(AppError::from(error));
+                    continue;
+                }
+            }
+            if let Err(error) = fs::rename(&backup, &target) {
+                first_error.get_or_insert(AppError::from(error));
+            }
+        }
+        let _ = remove_path_if_exists(&self.staging_root);
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        let _ = remove_path_if_exists(&self.backup_root);
+        Ok(())
+    }
+}
+
+impl Drop for ProfileAssetTransaction {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.rollback();
+        }
+    }
+}
+
 pub(super) fn profile_assets(state: &AppState) -> AppResult<Vec<Value>> {
     let mut assets = Vec::new();
     for dir in PROFILE_ASSET_DIRS {
@@ -92,14 +279,14 @@ fn collect_profile_assets(root: &Path, relative: &Path, assets: &mut Vec<Value>)
 pub(super) fn restore_profile_assets(
     state: &AppState,
     raw_assets: Option<&Value>,
-) -> AppResult<usize> {
+) -> AppResult<RestoredProfileAssets> {
     restore_profile_json_assets(state, raw_assets, false)
 }
 
 pub(super) fn restore_legacy_profile_json_assets(
     state: &AppState,
     raw_assets: Option<&Value>,
-) -> AppResult<usize> {
+) -> AppResult<RestoredProfileAssets> {
     restore_profile_json_assets(state, raw_assets, true)
 }
 
@@ -107,7 +294,7 @@ fn restore_profile_json_assets(
     state: &AppState,
     raw_assets: Option<&Value>,
     allow_legacy_data_field: bool,
-) -> AppResult<usize> {
+) -> AppResult<RestoredProfileAssets> {
     restore_profile_json_assets_in_root(&state.data_dir, raw_assets, allow_legacy_data_field)
 }
 
@@ -115,28 +302,29 @@ fn restore_profile_json_assets_in_root(
     data_dir: &Path,
     raw_assets: Option<&Value>,
     allow_legacy_data_field: bool,
-) -> AppResult<usize> {
+) -> AppResult<RestoredProfileAssets> {
     let assets = decoded_profile_json_assets(raw_assets, allow_legacy_data_field)?;
-    clear_profile_asset_dirs(data_dir)?;
     let restored = assets.len();
+    let transaction = ProfileAssetTransaction::new(data_dir)?;
     for (relative, bytes) in assets {
-        write_profile_asset_in_root(data_dir, &relative, &bytes)?;
+        transaction.stage_bytes(&relative, &bytes)?;
     }
-    Ok(restored)
+    Ok(RestoredProfileAssets {
+        restored,
+        transaction: Some(transaction),
+    })
 }
 
 fn decoded_profile_json_assets(
     raw_assets: Option<&Value>,
     allow_legacy_data_field: bool,
 ) -> AppResult<Vec<(PathBuf, Vec<u8>)>> {
-    let Some(assets) = raw_assets.and_then(Value::as_array) else {
+    let Some(assets) = profile_asset_manifest(raw_assets)? else {
         return Ok(Vec::new());
     };
     let mut decoded = Vec::new();
-    for asset in assets {
-        let Some(path) = asset.get("path").and_then(Value::as_str) else {
-            continue;
-        };
+    for (index, asset) in assets.iter().enumerate() {
+        let path = profile_asset_manifest_path(asset, index)?;
         if is_legacy_cleanup_backup_asset_path(path) {
             continue;
         }
@@ -150,7 +338,9 @@ fn decoded_profile_json_assets(
             asset.get("base64").and_then(Value::as_str)
         };
         let Some(raw_data) = raw_data else {
-            continue;
+            return Err(AppError::invalid_input(format!(
+                "Profile asset {path} is missing base64 data"
+            )));
         };
         let bytes = decode_profile_asset_data(raw_data)?;
         decoded.push((relative, bytes));
@@ -164,17 +354,17 @@ pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
     names: &[String],
     profile_prefix: &str,
     raw_assets: Option<&Value>,
-) -> AppResult<usize> {
+) -> AppResult<RestoredProfileAssets> {
     let assets = decoded_profile_zip_assets(raw_assets, names, profile_prefix)?;
-    clear_profile_asset_dirs(&state.data_dir)?;
     let restored = assets.len();
+    let transaction = ProfileAssetTransaction::new(&state.data_dir)?;
     for asset in assets {
         match asset.source {
             ProfileAssetSource::Bytes(bytes) => {
-                write_profile_asset_in_root(&state.data_dir, &asset.relative, &bytes)?;
+                transaction.stage_bytes(&asset.relative, &bytes)?;
             }
             ProfileAssetSource::ZipEntry(entry_name) => {
-                let target = state.data_dir.join(asset.relative);
+                let target = transaction.staging_root.join(asset.relative);
                 if let Some(parent) = target.parent() {
                     fs::create_dir_all(parent)?;
                 }
@@ -189,7 +379,10 @@ pub(super) fn restore_profile_zip_assets<R: Read + Seek>(
             }
         }
     }
-    Ok(restored)
+    Ok(RestoredProfileAssets {
+        restored,
+        transaction: Some(transaction),
+    })
 }
 
 fn decoded_profile_zip_assets(
@@ -197,14 +390,12 @@ fn decoded_profile_zip_assets(
     names: &[String],
     profile_prefix: &str,
 ) -> AppResult<Vec<ProfileAssetRestore>> {
-    let Some(assets) = raw_assets.and_then(Value::as_array) else {
+    let Some(assets) = profile_asset_manifest(raw_assets)? else {
         return Ok(Vec::new());
     };
     let mut decoded = Vec::new();
-    for asset in assets {
-        let Some(path) = asset.get("path").and_then(Value::as_str) else {
-            continue;
-        };
+    for (index, asset) in assets.iter().enumerate() {
+        let path = profile_asset_manifest_path(asset, index)?;
         if is_legacy_cleanup_backup_asset_path(path) {
             continue;
         }
@@ -218,18 +409,44 @@ fn decoded_profile_zip_assets(
         } else if let Some(entry_name) = zip_asset_entry_name(names, profile_prefix, path) {
             ProfileAssetSource::ZipEntry(entry_name)
         } else {
-            continue;
+            return Err(AppError::invalid_input(format!(
+                "Profile ZIP is missing asset file: {path}"
+            )));
         };
         decoded.push(ProfileAssetRestore { relative, source });
     }
     Ok(decoded)
 }
 
-pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut Value) {
+fn profile_asset_manifest(raw_assets: Option<&Value>) -> AppResult<Option<&Vec<Value>>> {
+    match raw_assets {
+        None => Ok(None),
+        Some(Value::Array(assets)) => Ok(Some(assets)),
+        Some(_) => Err(AppError::invalid_input(
+            "Profile assets manifest must be an array",
+        )),
+    }
+}
+
+fn profile_asset_manifest_path(asset: &Value, index: usize) -> AppResult<&str> {
+    asset
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::invalid_input(format!("Profile asset entry {index} is missing path"))
+        })
+}
+
+pub(super) fn normalize_legacy_profile_asset_paths(
+    state: &AppState,
+    staging_root: Option<&Path>,
+    value: &mut Value,
+) {
     match value {
         Value::Object(object) => {
             for nested in object.values_mut() {
-                normalize_legacy_profile_asset_paths(state, nested);
+                normalize_legacy_profile_asset_paths(state, staging_root, nested);
             }
             for field in [
                 "avatar",
@@ -246,7 +463,7 @@ pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut
                 let Some(raw) = object.get(field).and_then(Value::as_str) else {
                     continue;
                 };
-                let Some(asset) = legacy_profile_asset_for_path(state, raw) else {
+                let Some(asset) = legacy_profile_asset_for_path(state, staging_root, raw) else {
                     continue;
                 };
                 object.insert(field.to_string(), Value::String(asset.value));
@@ -274,7 +491,7 @@ pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut
         }
         Value::Array(items) => {
             for item in items {
-                normalize_legacy_profile_asset_paths(state, item);
+                normalize_legacy_profile_asset_paths(state, staging_root, item);
             }
         }
         Value::String(raw) => {
@@ -286,7 +503,7 @@ pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut
                 return;
             }
             if let Ok(mut parsed) = serde_json::from_str::<Value>(raw) {
-                normalize_legacy_profile_asset_paths(state, &mut parsed);
+                normalize_legacy_profile_asset_paths(state, staging_root, &mut parsed);
                 if let Ok(serialized) = serde_json::to_string(&parsed) {
                     *raw = serialized;
                 }
@@ -296,12 +513,37 @@ pub(super) fn normalize_legacy_profile_asset_paths(state: &AppState, value: &mut
     }
 }
 
-fn legacy_profile_asset_for_path(state: &AppState, value: &str) -> Option<LegacyProfileAsset> {
+fn legacy_profile_asset_for_path(
+    state: &AppState,
+    staging_root: Option<&Path>,
+    value: &str,
+) -> Option<LegacyProfileAsset> {
     let relative = legacy_profile_asset_relative_path(value)?;
-    let absolute = state.data_dir.join(&relative);
-    if !absolute.is_file() {
+    // Profile imports stage the asset files under a temporary `staging_root`
+    // and only move them into `state.data_dir` at install time, which happens
+    // AFTER row normalization. Read from whichever location currently holds
+    // the file so legacy paths (e.g. `/api/avatars/file/<hash>.png`) get
+    // rewritten - and, for avatars, embedded as data URLs - during this pass
+    // instead of being left as broken URLs.
+    let staged_path = staging_root.map(|root| root.join(&relative));
+    let staged_present = staged_path
+        .as_ref()
+        .map(|path| path.is_file())
+        .unwrap_or(false);
+    let installed_path = state.data_dir.join(&relative);
+    let read_path = if staged_present {
+        staged_path
+            .as_ref()
+            .expect("staged_present implies staging_root is Some")
+            .clone()
+    } else if installed_path.is_file() {
+        installed_path.clone()
+    } else {
         return None;
-    }
+    };
+    // `absolute` is the post-install location stored on the row, so the
+    // reference stays valid after the staging transaction commits.
+    let absolute = installed_path;
     let filename = relative
         .file_name()
         .map(|value| value.to_string_lossy().to_string())
@@ -309,7 +551,10 @@ fn legacy_profile_asset_for_path(state: &AppState, value: &str) -> Option<Legacy
     let kind = legacy_profile_asset_kind(&relative);
     let value = match kind {
         LegacyProfileAssetKind::Avatar | LegacyProfileAssetKind::FileDataUrl => {
-            data_url_from_file(&absolute)?
+            // Read from `read_path` (staging or installed, whichever holds the
+            // bytes right now) - avatars are inlined as data URLs at this
+            // point, so the bytes need to actually be available.
+            data_url_from_file(&read_path)?
         }
         LegacyProfileAssetKind::Background => managed_asset_url(
             "marinara-background:",
@@ -431,18 +676,46 @@ fn write_profile_asset_in_root(data_dir: &Path, relative: &Path, bytes: &[u8]) -
     Ok(())
 }
 
-fn clear_profile_asset_dirs(data_dir: &Path) -> AppResult<()> {
-    for dir in PROFILE_ASSET_DIRS {
-        let path = data_dir.join(dir);
-        if !path.exists() {
-            continue;
+fn create_profile_import_temp_dir(data_dir: &Path, kind: &str) -> AppResult<PathBuf> {
+    for attempt in 0..100 {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let path = data_dir.join(format!(
+            ".profile-import-{kind}-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
         }
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_dir() {
-            fs::remove_dir_all(path)?;
-        } else {
-            fs::remove_file(path)?;
-        }
+    }
+    Err(AppError::new(
+        "profile_import_temp_error",
+        "Could not create a unique profile import staging directory",
+    ))
+}
+
+fn path_exists_no_follow(path: &Path) -> AppResult<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> AppResult<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
     }
     Ok(())
 }
@@ -603,7 +876,16 @@ mod tests {
         let restored =
             restore_profile_json_assets_in_root(&data_dir, Some(&assets), false).unwrap();
 
-        assert_eq!(restored, 2);
+        assert_eq!(restored.restored(), 2);
+        assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+        assert!(!data_dir.join("avatars/new.png").exists());
+
+        let mut restored = restored;
+        restored.install().unwrap();
+
         assert_eq!(
             fs::read(data_dir.join("avatars/new.png")).unwrap(),
             b"new avatar"
@@ -624,6 +906,7 @@ mod tests {
             b"keep"
         );
 
+        restored.commit();
         fs::remove_dir_all(data_dir).unwrap();
     }
 
@@ -646,6 +929,65 @@ mod tests {
             fs::read(data_dir.join("avatars/stale.png")).unwrap(),
             b"stale"
         );
+
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn profile_asset_restore_rolls_back_when_import_fails_later() {
+        let data_dir = temp_data_dir("rollback-assets");
+        fs::create_dir_all(data_dir.join("avatars")).unwrap();
+        fs::write(data_dir.join("avatars/stale.png"), b"stale").unwrap();
+        let assets = json!([
+            {
+                "path": "avatars/new.png",
+                "base64": general_purpose::STANDARD.encode(b"new avatar"),
+            }
+        ]);
+
+        let restored =
+            restore_profile_json_assets_in_root(&data_dir, Some(&assets), false).unwrap();
+        assert!(!data_dir.join("avatars/new.png").exists());
+        assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+
+        let mut restored = restored;
+        restored.install().unwrap();
+        assert_eq!(
+            fs::read(data_dir.join("avatars/new.png")).unwrap(),
+            b"new avatar"
+        );
+        assert!(!data_dir.join("avatars/stale.png").exists());
+
+        restored.rollback().unwrap();
+
+        assert_eq!(
+            fs::read(data_dir.join("avatars/stale.png")).unwrap(),
+            b"stale"
+        );
+        assert!(!data_dir.join("avatars/new.png").exists());
+
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn unfinished_profile_asset_transaction_cleans_staging_on_drop() {
+        let data_dir = temp_data_dir("drop-cleans-staging");
+        let staging_root;
+        let backup_root;
+        {
+            let transaction = ProfileAssetTransaction::new(&data_dir).unwrap();
+            staging_root = transaction.staging_root.clone();
+            backup_root = transaction.backup_root.clone();
+            transaction
+                .stage_bytes(Path::new("avatars/staged.png"), b"staged")
+                .unwrap();
+        }
+
+        assert!(!staging_root.exists());
+        assert!(!backup_root.exists());
 
         fs::remove_dir_all(data_dir).unwrap();
     }
@@ -700,5 +1042,40 @@ mod tests {
             }
             ProfileAssetSource::Bytes(_) => panic!("zip manifest should resolve to an entry"),
         }
+    }
+
+    #[test]
+    fn profile_json_assets_reject_manifest_entries_without_payload() {
+        let assets = json!([
+            {
+                "path": "avatars/missing-data.png",
+            }
+        ]);
+
+        let error = match decoded_profile_json_assets(Some(&assets), false) {
+            Ok(_) => panic!("missing JSON asset payload should reject the import"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("missing-data.png"));
+    }
+
+    #[test]
+    fn profile_zip_assets_reject_manifest_entries_without_matching_file() {
+        let assets = json!([
+            {
+                "path": "avatars/missing-from-zip.png",
+            }
+        ]);
+        let names = Vec::new();
+
+        let error = match decoded_profile_zip_assets(Some(&assets), &names, "") {
+            Ok(_) => panic!("missing ZIP asset entry should reject the import"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("missing-from-zip.png"));
     }
 }

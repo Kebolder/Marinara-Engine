@@ -355,6 +355,141 @@ mod tests {
             .expect_err("invalid character data should fail");
         assert_eq!(error.code, "invalid_input");
     }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_preserves_existing_arrays() {
+        let mut record = json!({ "tags": ["a", "b"] });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_parses_text_encoded_json_arrays() {
+        let mut record = json!({ "tags": "[\"a\",\"b\"]" });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_replaces_unparseable_string_with_empty() {
+        let mut record = json!({ "tags": "not-json" });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!([]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_replaces_non_array_json_string_with_empty() {
+        let mut record = json!({ "tags": "{\"oops\":true}" });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!([]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_replaces_scalar_with_empty() {
+        let mut record = json!({ "tags": 7 });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!([]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_replaces_null_with_empty() {
+        let mut record = json!({ "tags": null });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record["tags"], json!([]));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_leaves_missing_keys_alone() {
+        let mut record = json!({ "other": "value" });
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert!(!record.as_object().unwrap().contains_key("tags"));
+    }
+
+    #[test]
+    fn normalize_legacy_text_array_fields_ignores_non_object_records() {
+        let mut record = json!("scalar");
+        normalize_legacy_text_array_fields(&mut record, &["tags"]);
+        assert_eq!(record, json!("scalar"));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_preserves_existing_bools() {
+        let mut record = json!({ "isGlobal": true, "enabled": false });
+        normalize_legacy_text_bool_fields(&mut record, &["isGlobal", "enabled"]);
+        assert_eq!(record["isGlobal"], json!(true));
+        assert_eq!(record["enabled"], json!(false));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_coerces_text_true_and_false() {
+        let mut record = json!({ "isGlobal": "true", "enabled": "false" });
+        normalize_legacy_text_bool_fields(&mut record, &["isGlobal", "enabled"]);
+        assert_eq!(record["isGlobal"], json!(true));
+        assert_eq!(record["enabled"], json!(false));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_coerces_truthy_text_aliases() {
+        for alias in ["1", "yes", "on", "TRUE", "  Yes  "] {
+            let mut record = json!({ "flag": alias });
+            normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+            assert_eq!(record["flag"], json!(true), "alias {alias:?} should be true");
+        }
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_coerces_falsy_text_aliases() {
+        for alias in ["0", "no", "off", "FALSE", "  No  "] {
+            let mut record = json!({ "flag": alias });
+            normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+            assert_eq!(record["flag"], json!(false), "alias {alias:?} should be false");
+        }
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_defaults_unknown_string_to_false() {
+        let mut record = json!({ "flag": "maybe" });
+        normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+        assert_eq!(record["flag"], json!(false));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_coerces_zero_and_non_zero_numbers() {
+        let mut record = json!({ "off": 0, "on": 1, "neg": -3 });
+        normalize_legacy_text_bool_fields(&mut record, &["off", "on", "neg"]);
+        assert_eq!(record["off"], json!(false));
+        assert_eq!(record["on"], json!(true));
+        assert_eq!(record["neg"], json!(true));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_coerces_float_zero_and_non_zero() {
+        let mut record = json!({ "off": 0.0, "on": 1.5 });
+        normalize_legacy_text_bool_fields(&mut record, &["off", "on"]);
+        assert_eq!(record["off"], json!(false));
+        assert_eq!(record["on"], json!(true));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_defaults_null_to_false() {
+        let mut record = json!({ "flag": null });
+        normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+        assert_eq!(record["flag"], json!(false));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_leaves_missing_keys_alone() {
+        let mut record = json!({ "other": "value" });
+        normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+        assert!(!record.as_object().unwrap().contains_key("flag"));
+    }
+
+    #[test]
+    fn normalize_legacy_text_bool_fields_ignores_non_object_records() {
+        let mut record = json!("scalar");
+        normalize_legacy_text_bool_fields(&mut record, &["flag"]);
+        assert_eq!(record, json!("scalar"));
+    }
 }
 
 pub(crate) fn duplicate_record(state: &AppState, collection: &str, id: &str) -> AppResult<Value> {
@@ -412,6 +547,73 @@ pub(crate) fn string_array_from_value(value: Option<&Value>) -> Vec<String> {
             .collect(),
         Some(Value::String(raw)) => serde_json::from_str::<Vec<String>>(raw).unwrap_or_default(),
         _ => Vec::new(),
+    }
+}
+
+/// Replace any text-encoded boolean field on a record object with a real
+/// JSON boolean. The pre-refactor server stored bool columns as TEXT
+/// (`"true"` / `"false"` strings); the refactor frontend reads these
+/// directly, so `lorebook.isGlobal === "false"` evaluates truthy and every
+/// scoped lorebook renders as a global one. Called from the migration
+/// import paths to bridge that schema gap.
+pub(crate) fn normalize_legacy_text_bool_fields(record: &mut Value, fields: &[&str]) {
+    let Some(object) = record.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        let Some(entry) = object.get_mut(*field) else {
+            continue;
+        };
+        if entry.is_boolean() {
+            continue;
+        }
+        let coerced = match entry.as_str().map(str::trim).map(str::to_ascii_lowercase) {
+            Some(raw) if raw == "true" || raw == "1" || raw == "yes" || raw == "on" => true,
+            Some(raw) if raw == "false" || raw == "0" || raw == "no" || raw == "off" => false,
+            _ => match entry.as_i64() {
+                Some(n) => n != 0,
+                // NaN is unordered against 0.0, so the naive `n != 0.0` check
+                // would treat it as truthy. Short-circuit to false.
+                None => match entry.as_f64() {
+                    Some(n) if n.is_nan() => false,
+                    Some(n) => n != 0.0,
+                    None => false,
+                },
+            },
+        };
+        *entry = Value::Bool(coerced);
+    }
+}
+
+/// Replace any text-encoded JSON-array field on a record object with a real
+/// JSON array. The pre-refactor server stored `tags`, `characterIds`,
+/// `personaIds`, etc. as TEXT columns (a JSON-stringified array); the
+/// refactor expects an actual JSON array on every row, and the frontend
+/// crashes (`.map is not a function`) when it sees a string. Called from the
+/// migration import paths to bridge that schema gap.
+pub(crate) fn normalize_legacy_text_array_fields(record: &mut Value, fields: &[&str]) {
+    let Some(object) = record.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        let Some(entry) = object.get_mut(*field) else {
+            continue;
+        };
+        if entry.is_array() {
+            continue;
+        }
+        // String -> parse as JSON array, fall back to empty.
+        // Anything else (null, number, bool, object) -> empty array. Pre-refactor
+        // should only emit array or text-encoded array here; any other shape is a
+        // malformed legacy value that must not reach the editor as-is.
+        if let Some(raw) = entry.as_str() {
+            *entry = serde_json::from_str::<Value>(raw)
+                .ok()
+                .filter(Value::is_array)
+                .unwrap_or_else(|| json!([]));
+        } else {
+            *entry = json!([]);
+        }
     }
 }
 

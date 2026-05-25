@@ -2,6 +2,7 @@ import type { AgentContext, AgentResult } from "../../contracts/types/agent";
 import type { LorebookEntry } from "../../contracts/types/lorebook";
 import type { BaseLLMProvider } from "../../generation-core/llm/base-provider.js";
 import { executeAgent, type AgentExecConfig } from "../executor/agent-executor.js";
+import { stripAvatarPathsReplacer } from "../strip-avatar-paths.js";
 import {
   scanForActivatedEntries,
   type ScanMessage,
@@ -159,7 +160,7 @@ export function buildKnowledgeRouterQuery(context: AgentContext): string {
     .map((message) => message.content.trim())
     .filter(Boolean);
   if (context.chatSummary?.trim()) parts.unshift(context.chatSummary.trim());
-  if (context.gameState) parts.push(JSON.stringify(context.gameState));
+  if (context.gameState) parts.push(JSON.stringify(context.gameState, stripAvatarPathsReplacer));
   return parts.join("\n\n");
 }
 

@@ -1,6 +1,7 @@
 import type { LlmGateway } from "../../../capabilities/llm";
 import type { StorageGateway } from "../../../capabilities/storage";
 import { parseJsonArray, parseJsonObject } from "../../../core/json";
+import { boolish } from "../../../generation/runtime-records";
 import { parseGameJsonish } from "../../../shared/parsing-jsonish";
 import type { SceneAnalysis, SceneCreateRequest, SceneCreateResponse, SceneForkRequest, SceneForkResponse, SceneFullPlan, ScenePlanRequest, ScenePlanResponse } from "../../../contracts/types/scene";
 import {
@@ -587,6 +588,7 @@ function buildForkContinuityMessage(sceneMeta: JsonRecord): string | null {
   return ["Hidden continuity carried from the original scene branch.", "", ...lines].join("\n");
 }
 
+
 async function resolveConnectionId(
   storage: StorageGateway,
   chat: JsonRecord,
@@ -596,14 +598,15 @@ async function resolveConnectionId(
   const chatConnectionId = stringValue(chat.connectionId).trim();
   const connections = await storage.list<JsonRecord>("connections");
   if (chatConnectionId === "random") {
-    const pool = connections.filter((connection) => connection.useForRandom === true);
+    const pool = connections.filter((connection) => boolish(connection.useForRandom, false));
     const selected = pool[Math.floor(Math.random() * pool.length)];
     if (!selected?.id) throw new Error("No connections marked for the random pool");
     return stringValue(selected.id);
   }
   if (chatConnectionId) return chatConnectionId;
   const selected =
-    connections.find((connection) => connection.isDefault === true || connection.default === true) ?? connections[0];
+    connections.find((connection) => boolish(connection.isDefault, false) || boolish(connection.default, false)) ??
+    connections[0];
   const id = stringValue(selected?.id);
   if (!id) throw new Error("No connection configured");
   return id;

@@ -128,7 +128,7 @@ pnpm typecheck
 pnpm build
 pnpm check:architecture
 pnpm check:docs
-cargo check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml --workspace
 ```
 
 The combined check is:

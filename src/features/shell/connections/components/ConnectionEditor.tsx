@@ -459,7 +459,10 @@ export function ConnectionEditor() {
     ) {
       return;
     }
-    deleteConnection.mutate(connectionDetailId, { onSuccess: () => closeConnectionDetail() });
+    deleteConnection.mutate(connectionDetailId, {
+      onSuccess: () => closeConnectionDetail(),
+      onError: (err) => setSaveError(err instanceof Error ? err.message : "Delete failed"),
+    });
   }, [connectionDetailId, deleteConnection, closeConnectionDetail]);
 
   const handleTestConnection = useCallback(async () => {
