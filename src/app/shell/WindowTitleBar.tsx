@@ -154,14 +154,8 @@ export function WindowTitleBar({
           onMouseDown={startWindowDrag}
           onDoubleClick={toggleMaximizeFromDragRegion}
         >
-          <div data-tauri-drag-region className="mari-title-brand min-w-0">
-            <span className="mari-title-word mari-title-word-marinara">
-              Marinara
-            </span>
+          <div data-tauri-drag-region className="mari-title-brand mari-title-brand-compact min-w-0" aria-label="Marinara Engine">
             <img data-tauri-drag-region className="mari-title-icon" src="/favicon.png" alt="" draggable={false} />
-            <span className="mari-title-word mari-title-word-engine">
-              Engine
-            </span>
           </div>
         </div>
         <div
