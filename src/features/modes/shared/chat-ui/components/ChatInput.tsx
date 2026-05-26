@@ -162,7 +162,7 @@ export const ChatInput = memo(function ChatInput({
   const activeChat = useChatStore((s) => s.activeChat);
   const { generate } = useGenerate();
   const { applyToUserInput } = useApplyRegex();
-  const enterToSend = useUIStore((s) => s.enterToSendRP);
+  const enterToSend = useUIStore((s) => (mode === "conversation" ? s.enterToSendConvo : s.enterToSendRP));
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const showQuickRepliesMenu = useUIStore((s) => s.showQuickRepliesMenu);
   const showQuickReplyPostOnly = useUIStore((s) => s.showQuickReplyPostOnly);
