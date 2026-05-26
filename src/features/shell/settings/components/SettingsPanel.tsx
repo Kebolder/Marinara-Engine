@@ -981,12 +981,12 @@ function GeneralSettings() {
         <span className="text-xs">Messages per page</span>
         <DraftNumberInput
           value={messagesPerPage}
-          min={0}
+          min={1}
           max={500}
-          onCommit={(nextValue) => setMessagesPerPage(Math.max(0, Math.min(500, nextValue)))}
+          onCommit={(nextValue) => setMessagesPerPage(Math.max(1, Math.min(500, nextValue)))}
           className="w-16 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
         />
-        <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
+        <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages." />
       </label>
 
       <ToggleSetting

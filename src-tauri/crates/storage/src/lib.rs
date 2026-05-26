@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MESSAGE_REVERSE_READ_CHUNK_SIZE: u64 = 1024 * 1024;
+
 #[derive(Clone)]
 pub struct FileStorage {
     root: PathBuf,
@@ -72,6 +74,19 @@ impl FileStorage {
             .lock()
             .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
         self.read_message_ids_for_chat(chat_id)
+    }
+
+    pub fn list_messages_for_chat_page(
+        &self,
+        chat_id: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> AppResult<Vec<Value>> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        self.read_messages_for_chat_page(chat_id, limit, before)
     }
 
     pub fn get(&self, collection: &str, id: &str) -> AppResult<Option<Value>> {
@@ -301,6 +316,29 @@ impl FileStorage {
         let reader = BufReader::new(file);
         let mut deserializer = serde_json::Deserializer::from_reader(reader);
         Ok(deserializer.deserialize_seq(MessageIdRowsForChatVisitor { chat_id })?)
+    }
+
+    fn read_messages_for_chat_page(
+        &self,
+        chat_id: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> AppResult<Vec<Value>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let path = self.collection_path("messages")?;
+        if !path.exists() || fs::metadata(&path)?.len() == 0 {
+            return Ok(Vec::new());
+        }
+
+        if let Some(rows) = read_pretty_message_page_from_file(&path, chat_id, limit, before)? {
+            return Ok(rows);
+        }
+
+        let mut rows = self.read_messages_for_chat(chat_id)?;
+        apply_message_page(&mut rows, limit, before);
+        Ok(rows)
     }
 
     fn write_collection(&self, collection: &str, rows: &[Value]) -> AppResult<()> {
@@ -743,6 +781,170 @@ impl<'de, 'a> Visitor<'de> for MessageIdRowForChatVisitor<'a> {
     }
 }
 
+fn read_pretty_message_page_from_file(
+    path: &Path,
+    chat_id: &str,
+    limit: usize,
+    before: Option<&str>,
+) -> AppResult<Option<Vec<Value>>> {
+    let mut file = fs::File::open(path)?;
+    let mut position = file.metadata()?.len();
+    let before_cursor = before.map(parse_storage_message_cursor);
+    let mut rows_newest_first = Vec::new();
+    let mut record_lines_newest_first: Vec<Vec<u8>> = Vec::new();
+    let mut in_record = false;
+    let mut saw_record = false;
+
+    let mut carry = Vec::new();
+    while position > 0 {
+        let read_len = position.min(MESSAGE_REVERSE_READ_CHUNK_SIZE) as usize;
+        position -= read_len as u64;
+
+        let mut block = vec![0_u8; read_len];
+        file.seek(SeekFrom::Start(position))?;
+        file.read_exact(&mut block)?;
+        block.extend_from_slice(&carry);
+
+        let mut line_ranges = Vec::new();
+        let mut line_start = 0;
+        for (index, byte) in block.iter().enumerate() {
+            if *byte == b'\n' {
+                line_ranges.push(line_start..index);
+                line_start = index + 1;
+            }
+        }
+        line_ranges.push(line_start..block.len());
+
+        let first_line_is_partial = position > 0;
+        for line_index in (0..line_ranges.len()).rev() {
+            if first_line_is_partial && line_index == 0 {
+                continue;
+            }
+            let line = &block[line_ranges[line_index].clone()];
+            if !in_record {
+                if is_top_level_message_record_end(line) {
+                    saw_record = true;
+                    in_record = true;
+                    record_lines_newest_first.clear();
+                    record_lines_newest_first.push(line.to_vec());
+                }
+                continue;
+            }
+
+            record_lines_newest_first.push(line.to_vec());
+            if !is_top_level_message_record_start(line) {
+                continue;
+            }
+
+            let mut record_bytes = join_reverse_lines(&record_lines_newest_first);
+            strip_trailing_json_comma(&mut record_bytes);
+            let row: Value = serde_json::from_slice(&record_bytes)?;
+            if row.get("chatId").and_then(Value::as_str) == Some(chat_id)
+                && message_is_before_cursor(&row, before_cursor.as_ref())
+            {
+                rows_newest_first.push(row);
+                if rows_newest_first.len() >= limit {
+                    rows_newest_first.reverse();
+                    return Ok(Some(rows_newest_first));
+                }
+            }
+
+            in_record = false;
+            record_lines_newest_first.clear();
+        }
+
+        carry = if first_line_is_partial {
+            block[line_ranges[0].clone()].to_vec()
+        } else {
+            Vec::new()
+        };
+    }
+
+    if in_record || !saw_record {
+        return Ok(None);
+    }
+
+    rows_newest_first.reverse();
+    Ok(Some(rows_newest_first))
+}
+
+fn join_reverse_lines(lines_newest_first: &[Vec<u8>]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for line in lines_newest_first.iter().rev() {
+        if !bytes.is_empty() {
+            bytes.push(b'\n');
+        }
+        bytes.extend_from_slice(line);
+    }
+    bytes
+}
+
+fn is_top_level_message_record_start(line: &[u8]) -> bool {
+    trim_ascii_end(line) == b"  {"
+}
+
+fn is_top_level_message_record_end(line: &[u8]) -> bool {
+    matches!(trim_ascii_end(line), b"  }" | b"  },")
+}
+
+fn trim_ascii_end(bytes: &[u8]) -> &[u8] {
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    &bytes[..end]
+}
+
+fn strip_trailing_json_comma(bytes: &mut Vec<u8>) {
+    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
+        bytes.pop();
+    }
+    if bytes.last() == Some(&b',') {
+        bytes.pop();
+    }
+}
+
+fn parse_storage_message_cursor(cursor: &str) -> (String, Option<String>) {
+    let mut parts = cursor.splitn(2, '|');
+    let created_at = parts.next().unwrap_or_default().to_string();
+    let id = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    (created_at, id)
+}
+
+fn message_is_before_cursor(row: &Value, before: Option<&(String, Option<String>)>) -> bool {
+    let Some((before_created_at, before_id)) = before else {
+        return true;
+    };
+    let created_at = row.get("createdAt").and_then(Value::as_str).unwrap_or("");
+    let id = row.get("id").and_then(Value::as_str).unwrap_or("");
+    created_at < before_created_at.as_str()
+        || (created_at == before_created_at.as_str()
+            && before_id.as_deref().is_some_and(|cursor_id| id < cursor_id))
+}
+
+fn apply_message_page(rows: &mut Vec<Value>, limit: usize, before: Option<&str>) {
+    rows.sort_by(|a, b| {
+        let a_created_at = a.get("createdAt").and_then(Value::as_str).unwrap_or("");
+        let b_created_at = b.get("createdAt").and_then(Value::as_str).unwrap_or("");
+        let a_id = a.get("id").and_then(Value::as_str).unwrap_or("");
+        let b_id = b.get("id").and_then(Value::as_str).unwrap_or("");
+        a_created_at.cmp(b_created_at).then_with(|| a_id.cmp(b_id))
+    });
+
+    let before_cursor = before.map(parse_storage_message_cursor);
+    if before_cursor.is_some() {
+        rows.retain(|row| message_is_before_cursor(row, before_cursor.as_ref()));
+    }
+    if rows.len() > limit {
+        let keep_from = rows.len() - limit;
+        rows.drain(0..keep_from);
+    }
+}
+
 struct PendingCollectionReplacement {
     path: PathBuf,
     tmp: PathBuf,
@@ -968,6 +1170,62 @@ mod tests {
         let rows = storage.list_message_ids_for_chat("chat-a").unwrap();
 
         assert_eq!(rows, vec![json!({ "id": "a-1" }), json!({ "id": "a-2" })]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_messages_for_chat_page_returns_latest_matching_messages() {
+        let root = temp_storage_root("list-messages-for-chat-page");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "messages",
+                vec![
+                    json!({ "id": "a-1", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:01Z", "content": "first" }),
+                    json!({ "id": "b-1", "chatId": "chat-b", "createdAt": "2026-01-01T00:00:02Z", "content": "skip me" }),
+                    json!({ "id": "a-2", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:03Z", "content": "second" }),
+                    json!({ "id": "a-3", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:04Z", "content": "third" }),
+                ],
+            )
+            .unwrap();
+
+        let rows = storage
+            .list_messages_for_chat_page("chat-a", 2, None)
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "a-2");
+        assert_eq!(rows[1]["id"], "a-3");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_messages_for_chat_page_respects_before_cursor() {
+        let root = temp_storage_root("list-messages-for-chat-page-before");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "messages",
+                vec![
+                    json!({ "id": "a-1", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:01Z", "content": "first" }),
+                    json!({ "id": "a-2", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:02Z", "content": "second" }),
+                    json!({ "id": "a-3", "chatId": "chat-a", "createdAt": "2026-01-01T00:00:03Z", "content": "third" }),
+                    json!({ "id": "b-1", "chatId": "chat-b", "createdAt": "2026-01-01T00:00:04Z", "content": "skip me" }),
+                ],
+            )
+            .unwrap();
+
+        let rows = storage
+            .list_messages_for_chat_page("chat-a", 2, Some("2026-01-01T00:00:03Z|a-3"))
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "a-1");
+        assert_eq!(rows[1]["id"], "a-2");
 
         fs::remove_dir_all(root).unwrap();
     }

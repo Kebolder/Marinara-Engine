@@ -6,8 +6,19 @@ use serde_json::{json, Value};
 use tauri::State;
 
 #[tauri::command]
-pub fn storage_list(
+pub async fn storage_list(
     state: State<'_, AppState>,
+    entity: String,
+    options: Option<Value>,
+) -> Result<Value, AppError> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || storage_list_inner(&state, entity, options))
+        .await
+        .map_err(|error| AppError::new("task_join_error", error.to_string()))?
+}
+
+fn storage_list_inner(
+    state: &AppState,
     entity: String,
     options: Option<Value>,
 ) -> Result<Value, AppError> {
@@ -19,18 +30,19 @@ pub fn storage_list(
         ("messages", Some(filters))
             if filters.len() == 1 && filters.get("chatId").and_then(Value::as_str).is_some() =>
         {
-            filters
+            let chat_id = filters
                 .get("chatId")
                 .and_then(Value::as_str)
-                .map(|chat_id| {
-                    if message_id_projection_only(options.as_ref()) {
-                        state.storage.list_message_ids_for_chat(chat_id)
-                    } else {
-                        state.storage.list_messages_for_chat(chat_id)
-                    }
-                })
-                .transpose()?
-                .unwrap_or_else(Vec::new)
+                .unwrap_or_default();
+            if let Some((limit, before)) = message_page_options(options.as_ref()) {
+                state
+                    .storage
+                    .list_messages_for_chat_page(chat_id, limit, before.as_deref())?
+            } else if message_id_projection_only(options.as_ref()) {
+                state.storage.list_message_ids_for_chat(chat_id)?
+            } else {
+                state.storage.list_messages_for_chat(chat_id)?
+            }
         }
         (_, Some(filters)) if !filters.is_empty() => state.storage.list_where(&entity, filters)?,
         _ => state.storage.list(&entity)?,
@@ -107,6 +119,18 @@ fn message_id_projection_only(options: Option<&Value>) -> bool {
         return false;
     };
     fields.len() == 1 && fields.first().and_then(Value::as_str) == Some("id")
+}
+
+fn message_page_options(options: Option<&Value>) -> Option<(usize, Option<String>)> {
+    let options = options?;
+    let limit = options.get("limit").and_then(Value::as_u64)? as usize;
+    let before = options
+        .get("before")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    Some((limit, before))
 }
 
 #[tauri::command]

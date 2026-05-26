@@ -15,6 +15,7 @@ import { useChatStore } from "../../../../../shared/stores/chat.store";
 import type { CharacterMap, MessageWithSwipes, PersonaInfo } from "../types";
 
 type PersonaFallback = "active-persona" | "none";
+const DEFAULT_MESSAGE_PAGE_SIZE = 20;
 
 type UseChatSurfaceDataOptions = {
   activeChatId: string;
@@ -109,6 +110,8 @@ export function useChatSurfaceData({
   fallbackChatMode = "conversation",
   personaFallback = "active-persona",
 }: UseChatSurfaceDataOptions) {
+  const resolvedMessagePageSize =
+    Number.isFinite(messagePageSize) && messagePageSize > 0 ? Math.floor(messagePageSize) : DEFAULT_MESSAGE_PAGE_SIZE;
   const setActiveChatId = useChatStore((state) => state.setActiveChatId);
   const { data: chat, error: chatError } = useChat(activeChatId);
   const { data: allChats } = useChatSummaries();
@@ -119,7 +122,7 @@ export function useChatSurfaceData({
     hasNextPage,
     isFetchingNextPage,
     refetch: refetchMessages,
-  } = useChatMessages(activeChatId, messagePageSize, !!chat);
+  } = useChatMessages(activeChatId, resolvedMessagePageSize, !!chat);
   const { data: allCharacters } = useCharacters();
   const { data: allPersonas } = usePersonas();
 

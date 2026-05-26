@@ -117,12 +117,17 @@ fn storage_list(state: &AppState, args: &Map<String, Value>) -> AppResult<Value>
         ("messages", Some(filters))
             if filters.len() == 1 && filters.get("chatId").and_then(Value::as_str).is_some() =>
         {
-            filters
+            let chat_id = filters
                 .get("chatId")
                 .and_then(Value::as_str)
-                .map(|chat_id| state.storage.list_messages_for_chat(chat_id))
-                .transpose()?
-                .unwrap_or_else(Vec::new)
+                .unwrap_or_default();
+            if let Some((limit, before)) = message_page_options(options) {
+                state
+                    .storage
+                    .list_messages_for_chat_page(chat_id, limit, before.as_deref())?
+            } else {
+                state.storage.list_messages_for_chat(chat_id)?
+            }
         }
         (_, Some(filters)) if !filters.is_empty() => state.storage.list_where(entity, filters)?,
         _ => state.storage.list(entity)?,
@@ -173,6 +178,18 @@ fn storage_list(state: &AppState, args: &Map<String, Value>) -> AppResult<Value>
     }
 
     Ok(Value::Array(shared::project_list_rows(rows, options)))
+}
+
+fn message_page_options(options: Option<&Value>) -> Option<(usize, Option<String>)> {
+    let options = options?;
+    let limit = options.get("limit").and_then(Value::as_u64)? as usize;
+    let before = options
+        .get("before")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    Some((limit, before))
 }
 
 fn storage_get(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {

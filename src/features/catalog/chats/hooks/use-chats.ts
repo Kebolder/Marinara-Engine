@@ -18,6 +18,7 @@ import type { Chat, ChatMemoryChunk, ConversationNote, Message, MessageSwipe, Da
 export { chatKeys } from "../query-keys";
 
 const RECENT_MESSAGE_CONTENT_EDIT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_CHAT_MESSAGE_PAGE_SIZE = 20;
 
 interface RecentMessageContentEdit {
   chatId: string;
@@ -200,7 +201,7 @@ export function useChat(id: string | null) {
   });
 }
 
-export function useChatMessages(chatId: string | null, pageSize: number = 0, enabled = true) {
+export function useChatMessages(chatId: string | null, pageSize: number = DEFAULT_CHAT_MESSAGE_PAGE_SIZE, enabled = true) {
   return useInfiniteQuery({
     queryKey: chatKeys.messages(chatId ?? ""),
     queryFn: ({ pageParam, signal }) => {

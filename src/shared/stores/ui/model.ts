@@ -314,7 +314,7 @@ export interface UIState {
   showQuickReplyGuide: boolean;
   showQuickReplyImpersonate: boolean;
   confirmBeforeDelete: boolean;
-  /** Number of messages to load per page (0 = load all) */
+  /** Number of messages to load per page */
   messagesPerPage: number;
   /** Bold quoted dialogue in chat messages; color highlighting can still remain when this is off */
   boldDialogue: boolean;
