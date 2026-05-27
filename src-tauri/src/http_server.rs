@@ -18,7 +18,7 @@ use std::env;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path as FsPath, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -131,8 +131,30 @@ pub fn router(state: AppState) -> Router {
         .with_state(HttpState { app: state })
 }
 
-async fn health() -> Json<Value> {
-    Json(json!({ "ok": true, "runtime": "marinara-server" }))
+async fn health(State(state): State<HttpState>) -> Json<Value> {
+    let writable = probe_data_dir_writable(&state.app.data_dir.join("data")).await;
+    Json(json!({ "ok": true, "runtime": "marinara-server", "writable": writable }))
+}
+
+fn health_probe_filename() -> String {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(".marinara-health-{}-{suffix}.tmp", std::process::id())
+}
+
+async fn probe_data_dir_writable(data_dir: &FsPath) -> bool {
+    if tokio::fs::create_dir_all(data_dir).await.is_err() {
+        return false;
+    }
+
+    let path = data_dir.join(health_probe_filename());
+    if tokio::fs::write(&path, b"ok").await.is_err() {
+        return false;
+    }
+
+    tokio::fs::remove_file(&path).await.is_ok()
 }
 
 async fn managed_asset(
@@ -999,6 +1021,23 @@ mod tests {
             )
             .into_bytes(),
         }
+    }
+
+    #[tokio::test]
+    async fn health_probe_reports_writable_storage_and_cleans_up() {
+        let root =
+            std::env::temp_dir().join(format!("marinara-health-test-{}", health_probe_filename()));
+        std::fs::create_dir_all(&root).expect("health test directory should be created");
+
+        assert!(probe_data_dir_writable(&root).await);
+        assert_eq!(
+            std::fs::read_dir(&root)
+                .expect("health test directory should remain readable")
+                .count(),
+            0
+        );
+
+        std::fs::remove_dir_all(&root).expect("health test directory should be removed");
     }
 
     #[test]

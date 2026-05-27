@@ -957,7 +957,6 @@ export function AppShell() {
         className={cn(
           "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
           sidebarDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
-          sidebarOpen && "border-r border-[var(--sidebar-border)]/30",
           // Mobile: fixed overlay
           "max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:shadow-2xl max-md:pt-[env(safe-area-inset-top)]",
           !sidebarOpen && "max-md:w-0!",
@@ -969,19 +968,26 @@ export function AppShell() {
         </div>
       </aside>
       {!isMobile && sidebarOpen && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize left sidebar"
-          aria-valuemin={SIDEBAR_WIDTH_MIN}
-          aria-valuemax={SIDEBAR_WIDTH_MAX}
-          aria-valuenow={Math.round(liveSidebarWidth)}
-          tabIndex={0}
-          onMouseDown={startSidebarResize}
-          onKeyDown={adjustSidebarWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
-          style={{ left: sidebarOpen ? liveSidebarWidth : 0 }}
-        />
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 z-30 hidden w-px bg-[var(--sidebar-border)]/30 md:block"
+            style={{ left: liveSidebarWidth }}
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize left sidebar"
+            aria-valuemin={SIDEBAR_WIDTH_MIN}
+            aria-valuemax={SIDEBAR_WIDTH_MAX}
+            aria-valuenow={Math.round(liveSidebarWidth)}
+            tabIndex={0}
+            onMouseDown={startSidebarResize}
+            onKeyDown={adjustSidebarWidth}
+            className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+            style={{ left: liveSidebarWidth }}
+          />
+        </>
       )}
 
       <AnimatePresence initial={false}>{!isMobile && trackerPanelSurfaceAvailable && trackerPanelDesktop("left")}</AnimatePresence>
@@ -1098,7 +1104,6 @@ export function AppShell() {
           className={cn(
             "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
             rightPanelDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
-            rightPanelOpen && "border-l border-[var(--sidebar-border)]/30",
           )}
           style={{ width: rightPanelOpen ? liveRightPanelWidth : 0 }}
         >
@@ -1112,19 +1117,26 @@ export function AppShell() {
         </aside>
       )}
       {!isMobile && rightPanelOpen && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize right sidebar"
-          aria-valuemin={RIGHT_PANEL_WIDTH_MIN}
-          aria-valuemax={RIGHT_PANEL_WIDTH_MAX}
-          aria-valuenow={Math.round(liveRightPanelWidth)}
-          tabIndex={0}
-          onMouseDown={startRightPanelResize}
-          onKeyDown={adjustRightPanelWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
-          style={{ right: rightPanelOpen ? liveRightPanelWidth : 0 }}
-        />
+        <>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 z-30 hidden w-px bg-[var(--sidebar-border)]/30 md:block"
+            style={{ right: liveRightPanelWidth }}
+          />
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize right sidebar"
+            aria-valuemin={RIGHT_PANEL_WIDTH_MIN}
+            aria-valuemax={RIGHT_PANEL_WIDTH_MAX}
+            aria-valuenow={Math.round(liveRightPanelWidth)}
+            tabIndex={0}
+            onMouseDown={startRightPanelResize}
+            onKeyDown={adjustRightPanelWidth}
+            className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+            style={{ right: liveRightPanelWidth }}
+          />
+        </>
       )}
 
       {/* First-time onboarding tutorial */}

@@ -10,6 +10,7 @@ import { fontFileUrlFromPath } from "../shared/api/local-file-api";
 import { useUIStore } from "../shared/stores/ui.store";
 import { useChatSwitchEffects } from "./startup/chat-switch-effects";
 import { installRangeSliderSync } from "./startup/range-slider-sync";
+import { useRemoteRuntimeStartupHealthCheck } from "./startup/remote-runtime-health";
 
 function stripFontFamilyQuotes(family: string): string {
   const trimmed = family.trim();
@@ -46,6 +47,7 @@ export function App() {
   const fontFamily = useUIStore((s) => s.fontFamily);
 
   useChatSwitchEffects();
+  useRemoteRuntimeStartupHealthCheck();
 
   useEffect(() => installRangeSliderSync(), []);
 

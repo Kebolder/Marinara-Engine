@@ -31,6 +31,7 @@ import {
   resolveManagedLocalAssetUrl,
   userBackgroundUrl,
 } from "../../../../shared/api/local-file-api";
+import { checkRemoteRuntimeHealth, type RemoteRuntimeHealthCheck } from "../../../../shared/api/remote-runtime";
 import React, { useRef, useState, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import type { Theme } from "../../../../engine/contracts/types/theme";
@@ -102,6 +103,13 @@ type CustomFontFace = {
   style?: string;
   unicodeRange?: string;
 };
+
+type RemoteRuntimeHealthView =
+  | RemoteRuntimeHealthCheck
+  | {
+      status: "idle" | "checking";
+      message: string;
+    };
 
 const TABS = [
   { id: "general", label: "General" },
@@ -3212,7 +3220,77 @@ function AdvancedSettings() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
   const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
+  const remoteRuntimeSectionRef = useRef<HTMLDivElement>(null);
+  const remoteRuntimeHealthAbortRef = useRef<AbortController | null>(null);
+  const remoteRuntimeHealthCheckIdRef = useRef(0);
+  const [remoteRuntimeHealth, setRemoteRuntimeHealth] = useState<RemoteRuntimeHealthView>(() =>
+    remoteRuntimeUrl.trim()
+      ? { status: "idle", message: "Status checks when this section is visible." }
+      : { status: "unconfigured", message: "Embedded Tauri runtime in use." },
+  );
   const queryClient = useQueryClient();
+
+  const runRemoteRuntimeHealthCheck = useCallback(() => {
+    const url = remoteRuntimeUrl.trim();
+    remoteRuntimeHealthAbortRef.current?.abort();
+
+    if (!url) {
+      setRemoteRuntimeHealth({ status: "unconfigured", message: "Embedded Tauri runtime in use." });
+      return;
+    }
+
+    const checkId = remoteRuntimeHealthCheckIdRef.current + 1;
+    remoteRuntimeHealthCheckIdRef.current = checkId;
+    const controller = new AbortController();
+    remoteRuntimeHealthAbortRef.current = controller;
+    setRemoteRuntimeHealth({ status: "checking", message: "Checking remote runtime..." });
+
+    void checkRemoteRuntimeHealth(url, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted || remoteRuntimeHealthCheckIdRef.current !== checkId) return;
+        setRemoteRuntimeHealth(result);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || remoteRuntimeHealthCheckIdRef.current !== checkId) return;
+        setRemoteRuntimeHealth({
+          status: "unreachable",
+          message: error instanceof Error ? error.message : "Remote runtime health check failed.",
+        });
+      });
+  }, [remoteRuntimeUrl]);
+
+  useEffect(
+    () => () => {
+      remoteRuntimeHealthAbortRef.current?.abort();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!remoteRuntimeUrl.trim()) {
+      remoteRuntimeHealthAbortRef.current?.abort();
+      setRemoteRuntimeHealth({ status: "unconfigured", message: "Embedded Tauri runtime in use." });
+      return;
+    }
+
+    const element = remoteRuntimeSectionRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      runRemoteRuntimeHealthCheck();
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          runRemoteRuntimeHealthCheck();
+        }
+      },
+      { threshold: 0.25 },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [remoteRuntimeUrl, runRemoteRuntimeHealthCheck]);
 
   const backupsQuery = useQuery<ManagedBackup[]>({
     queryKey: ["backups"],
@@ -3333,6 +3411,15 @@ function AdvancedSettings() {
 
   const isClearing = clearAllData.isPending || expungeData.isPending;
   const isAllScopesSelected = selectedScopes.length === EXPUNGE_SCOPE_OPTIONS.length;
+  const remoteRuntimeHealthDotClass = cn(
+    "h-2 w-2 shrink-0 rounded-full",
+    remoteRuntimeHealth.status === "ok" && "bg-emerald-400",
+    remoteRuntimeHealth.status === "checking" && "animate-pulse bg-sky-400",
+    remoteRuntimeHealth.status === "not-writable" && "bg-amber-400",
+    (remoteRuntimeHealth.status === "invalid" || remoteRuntimeHealth.status === "unreachable") && "bg-rose-400",
+    (remoteRuntimeHealth.status === "idle" || remoteRuntimeHealth.status === "unconfigured") &&
+      "bg-[var(--muted-foreground)]/45",
+  );
 
   const toggleScope = (scope: ExpungeScope) => {
     setSelectedScopes((current) =>
@@ -3465,7 +3552,10 @@ function AdvancedSettings() {
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--secondary)]/35 p-2.5 ring-1 ring-[var(--border)]">
+        <div
+          ref={remoteRuntimeSectionRef}
+          className="flex flex-col gap-1.5 rounded-lg bg-[var(--secondary)]/35 p-2.5 ring-1 ring-[var(--border)]"
+        >
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium">Remote Runtime URL</span>
             <HelpTooltip text="Blank uses the embedded Tauri backend. Set this to a Marinara Rust server URL to route supported storage and generation calls through the remote runtime." />
@@ -3477,6 +3567,10 @@ function AdvancedSettings() {
             placeholder="http://127.0.0.1:8787"
             className="rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
           />
+          <div className="flex min-h-7 items-center gap-2 rounded-lg bg-[var(--background)]/55 px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/70">
+            <span className={remoteRuntimeHealthDotClass} aria-hidden="true" />
+            <span>{remoteRuntimeHealth.message}</span>
+          </div>
           <div className="text-[0.625rem] text-[var(--muted-foreground)]">
             Supports reverse-proxy Basic Auth with https://user:password@example.com.
           </div>

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUIStore } from "../stores/ui.store";
-import { cancelRemoteLlmStream, streamRemoteLlm } from "./remote-runtime";
+import { cancelRemoteLlmStream, checkRemoteRuntimeHealth, streamRemoteLlm } from "./remote-runtime";
 
 describe("remote LLM stream cancellation", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -152,6 +152,69 @@ describe("remote LLM stream cancellation", () => {
     await expect(consumeStream()).rejects.toMatchObject({
       message,
       status: 0,
+    });
+  });
+
+  it("does not fetch health when the remote runtime URL is blank", async () => {
+    await expect(checkRemoteRuntimeHealth("  ")).resolves.toEqual({
+      status: "unconfigured",
+      message: "Embedded Tauri runtime in use.",
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("checks remote health with normalized URL and reverse-proxy auth", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, runtime: "marinara-server", writable: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(checkRemoteRuntimeHealth("https://user:pass@example.com/runtime///")).resolves.toEqual({
+      status: "ok",
+      message: "Remote runtime is online and storage is writable.",
+      health: { ok: true, runtime: "marinara-server", writable: true },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("https://example.com/runtime/health", {
+      method: "GET",
+      headers: {
+        Authorization: "Basic dXNlcjpwYXNz",
+        accept: "application/json",
+        "X-Marinara-CSRF": "1",
+      },
+      signal: undefined,
+    });
+  });
+
+  it("reports a reachable runtime with unwritable storage", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, runtime: "marinara-server", writable: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(checkRemoteRuntimeHealth("http://127.0.0.1:8787")).resolves.toEqual({
+      status: "not-writable",
+      message: "Remote runtime is reachable, but its data storage is not writable.",
+      health: { ok: true, runtime: "marinara-server", writable: false },
+    });
+  });
+
+  it("reports invalid and unreachable remote runtimes", async () => {
+    await expect(checkRemoteRuntimeHealth("http://[bad")).resolves.toEqual({
+      status: "invalid",
+      message: "Remote Runtime URL is invalid.",
+    });
+
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(checkRemoteRuntimeHealth("http://127.0.0.1:8787")).resolves.toEqual({
+      status: "unreachable",
+      message: "Remote runtime is unreachable.",
     });
   });
 });

@@ -179,6 +179,19 @@ export type RuntimeTarget = {
   authorization?: string;
 };
 
+export type RemoteRuntimeHealthPayload = {
+  ok?: boolean;
+  runtime?: string;
+  writable?: boolean;
+};
+
+export type RemoteRuntimeHealthCheck =
+  | { status: "ok"; message: string; health: RemoteRuntimeHealthPayload }
+  | { status: "unconfigured"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "unreachable"; message: string; health?: RemoteRuntimeHealthPayload }
+  | { status: "not-writable"; message: string; health: RemoteRuntimeHealthPayload };
+
 function encodeBasicAuth(username: string, password: string): string {
   return `Basic ${btoa(`${decodeURIComponent(username)}:${decodeURIComponent(password)}`)}`;
 }
@@ -232,6 +245,64 @@ function readString(value: unknown): string {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export async function checkRemoteRuntimeHealth(
+  rawUrl: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<RemoteRuntimeHealthCheck> {
+  if (!rawUrl.trim()) {
+    return { status: "unconfigured", message: "Embedded Tauri runtime in use." };
+  }
+
+  let target: RuntimeTarget | null;
+  try {
+    target = normalizeRemoteRuntimeUrl(rawUrl);
+  } catch {
+    return { status: "invalid", message: "Remote Runtime URL is invalid." };
+  }
+
+  if (!target) {
+    return { status: "unconfigured", message: "Embedded Tauri runtime in use." };
+  }
+
+  try {
+    const response = await fetch(`${target.baseUrl}/health`, {
+      method: "GET",
+      headers: remoteHeaders(target, { accept: "application/json" }),
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      return { status: "unreachable", message: `Remote runtime returned ${response.status}.` };
+    }
+
+    const body = (await response.json().catch(() => null)) as RemoteRuntimeHealthPayload | null;
+    if (!body || typeof body !== "object" || body.ok !== true || body.runtime !== "marinara-server") {
+      return { status: "unreachable", message: "Remote runtime did not return a Marinara health response." };
+    }
+
+    if (body.writable !== true) {
+      return {
+        status: "not-writable",
+        message: "Remote runtime is reachable, but its data storage is not writable.",
+        health: body,
+      };
+    }
+
+    return {
+      status: "ok",
+      message: "Remote runtime is online and storage is writable.",
+      health: body,
+    };
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    return { status: "unreachable", message: "Remote runtime is unreachable." };
+  }
 }
 
 async function readRemoteError(response: Response): Promise<ApiError> {
