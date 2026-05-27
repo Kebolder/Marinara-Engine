@@ -1042,13 +1042,27 @@ function normalizeRole(value: unknown): "system" | "user" | "assistant" {
   return value === "system" || value === "assistant" ? value : "user";
 }
 
-function historyMessages(storedMessages: JsonRecord[], limit: number): ChatMLMessage[] {
+function messageStoredReasoning(message: JsonRecord): string {
+  const extra = parseRecord(message.extra);
+  const thinking = readString(extra.thinking ?? extra.reasoning ?? extra.reasoning_content).trim();
+  return thinking;
+}
+
+function historyMessageContent(message: JsonRecord, includePastReasoning: boolean): string {
+  const content = readString(message.content).trim();
+  if (!includePastReasoning || readString(message.role) !== "assistant") return content;
+  const thinking = messageStoredReasoning(message);
+  if (!thinking) return content;
+  return `${content}\n\n<provider_reasoning>\n${thinking}\n</provider_reasoning>`;
+}
+
+function historyMessages(storedMessages: JsonRecord[], limit: number, includePastReasoning = false): ChatMLMessage[] {
   return storedMessages
     .filter((message) => !hiddenFromAi(message))
     .slice(-limit)
     .map((message) => ({
       role: normalizeRole(message.role),
-      content: readString(message.content).trim(),
+      content: historyMessageContent(message, includePastReasoning),
       contextKind: "history" as const,
       characterId: readString(message.characterId).trim() || undefined,
       name: readString(message.name).trim() || undefined,
@@ -1244,7 +1258,10 @@ async function loadActivatedLore(
         const id = readString(book.id);
         // The refactor storage API has no path-style routes; use the
         // dedicated capability that filters lorebook-entries by lorebookId.
-        return id ? storage.listLorebookEntries<JsonRecord>(id) : [];
+        if (!id) return [];
+        const rows = await storage.listLorebookEntries<JsonRecord>(id);
+        if (!boolish(book.excludeFromVectorization, false)) return rows;
+        return rows.map((entry) => ({ ...entry, excludeFromVectorization: true }));
       }),
     )
   ).flat();
@@ -1346,7 +1363,8 @@ export async function assembleGenerationPrompt(
     normalizeWrapFormat(input.connection.wrapFormat) ??
     "xml";
   const historyLimit = Math.max(1, Math.min(300, readNumber(input.request.historyLimit, 80)));
-  const history = historyMessages(input.storedMessages, historyLimit);
+  const chatMeta = parseRecord(input.chat.metadata);
+  const history = historyMessages(input.storedMessages, historyLimit, chatMeta.excludePastReasoning === false);
   const macros = macroContext({
     chat: input.chat,
     connection: input.connection,

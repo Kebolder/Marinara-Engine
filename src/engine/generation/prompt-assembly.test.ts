@@ -314,6 +314,47 @@ describe("assembleGenerationPrompt strict roles", () => {
     ]);
   });
 
+  it("excludes stored reasoning from history by default", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: { id: "chat", mode: "roleplay", metadata: {} },
+      storedMessages: [
+        {
+          role: "assistant",
+          content: "Visible answer.",
+          extra: { thinking: "private chain of thought" },
+        },
+      ],
+      connection: {},
+      request: { ...request, promptPresetId: "" },
+      latestUserInput: "",
+    });
+
+    const history = assembly.messages.filter((message) => message.contextKind === "history");
+    expect(history[0]?.content).toBe("Visible answer.");
+    expect(history[0]?.content).not.toContain("private chain of thought");
+  });
+
+  it("can opt into replaying stored reasoning metadata in history", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: { id: "chat", mode: "roleplay", metadata: { excludePastReasoning: false } },
+      storedMessages: [
+        {
+          role: "assistant",
+          content: "Visible answer.",
+          extra: { thinking: "brief provider summary" },
+        },
+      ],
+      connection: {},
+      request: { ...request, promptPresetId: "" },
+      latestUserInput: "",
+    });
+
+    const history = assembly.messages.filter((message) => message.contextKind === "history");
+    expect(history[0]?.content).toContain("Visible answer.");
+    expect(history[0]?.content).toContain("<provider_reasoning>");
+    expect(history[0]?.content).toContain("brief provider summary");
+  });
+
   it("merges post-history system sections into the preceding user-side message", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithSections([

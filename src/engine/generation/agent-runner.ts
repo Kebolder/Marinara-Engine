@@ -482,8 +482,57 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   return { agents: resolved, skippedResults };
 }
 
+type SpotifyDjSourceType = "liked" | "playlist" | "artist" | "any";
+
+function normalizeSpotifyDjSourceType(value: unknown): SpotifyDjSourceType {
+  return value === "playlist" || value === "artist" || value === "any" ? value : "liked";
+}
+
+function cleanOptionalString(value: unknown): string | null {
+  const text = readString(value).trim();
+  return text || null;
+}
+
+function buildSpotifyDjConstraints(chatMode: string, chatMeta: JsonRecord): Record<string, unknown> {
+  const isGame = chatMode === "game";
+  const sourceType = normalizeSpotifyDjSourceType(
+    isGame ? chatMeta.gameSpotifySourceType : chatMeta.spotifySourceType,
+  );
+  const playlistId = cleanOptionalString(isGame ? chatMeta.gameSpotifyPlaylistId : chatMeta.spotifyPlaylistId);
+  const playlistName = cleanOptionalString(isGame ? chatMeta.gameSpotifyPlaylistName : chatMeta.spotifyPlaylistName);
+  const artist = cleanOptionalString(isGame ? chatMeta.gameSpotifyArtist : chatMeta.spotifyArtist);
+  const constraints: Record<string, unknown> = {
+    mode: isGame ? "game" : "roleplay",
+    replaceBuiltInMusic: isGame && chatMeta.gameUseSpotifyMusic === true,
+    sourceType,
+    playlistId: sourceType === "liked" ? "liked" : sourceType === "playlist" ? playlistId : null,
+    playlistName: sourceType === "playlist" ? playlistName : null,
+    artist: sourceType === "artist" ? artist : null,
+  };
+
+  if (sourceType === "liked") {
+    constraints.note =
+      "Use the user's Liked Songs first by calling spotify_get_playlist_tracks with playlistId='liked'. Search wider only when no fitting liked track exists.";
+  } else if (sourceType === "playlist") {
+    constraints.note = playlistId
+      ? "Use this configured playlist first by calling spotify_get_playlist_tracks with the provided playlistId. Search wider only if the playlist has no fitting track."
+      : "Playlist source is selected, but no playlist ID is configured. Call spotify_get_playlists to inspect available playlists, then fall back to Liked Songs if needed.";
+  } else if (sourceType === "artist") {
+    constraints.note = artist
+      ? `Search around this artist first. Prefer queries using artist:${artist}.`
+      : "Artist source is selected, but no artist is configured. Fall back to Liked Songs if needed.";
+  } else {
+    constraints.note =
+      "Spotify catalogue search is allowed. Still inspect current playback first and prefer the user's library when it fits.";
+  }
+
+  return constraints;
+}
+
 async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeInput): Promise<AgentContext> {
   const chatId = readString(input.chat.id);
+  const chatMode = readString(input.chat.mode || input.chat.chatMode, "roleplay");
+  const chatMeta = parseRecord(input.chat.metadata);
   const memoryRows = await Promise.all(
     (await deps.storage.list<JsonRecord>("agents"))
       .filter((agent) => readString(agent.id).trim())
@@ -492,9 +541,10 @@ async function buildAgentContext(deps: AgentDeps, input: GenerationAgentRuntimeI
   const memory = Object.assign({}, ...memoryRows);
   const secretPlotState = secretPlotStateFromMemory(memory);
   if (secretPlotState) memory._secretPlotState = secretPlotState;
+  memory._spotifyDjConstraints = buildSpotifyDjConstraints(chatMode, chatMeta);
   return {
     chatId,
-    chatMode: readString(input.chat.mode || input.chat.chatMode, "roleplay"),
+    chatMode,
     recentMessages: input.storedMessages
       .filter((message) => !hiddenFromAi(message))
       .slice(-60)

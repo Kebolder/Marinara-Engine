@@ -28,6 +28,21 @@ pub(crate) async fn vectorize_lorebook(
             Value::Array(rows) => rows,
             _ => Vec::new(),
         };
+    let lorebook = get_required(state, "lorebooks", lorebook_id)?;
+    if lorebook
+        .get("excludeFromVectorization")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(json!({
+            "success": true,
+            "lorebookId": lorebook_id,
+            "model": model,
+            "total": entries.len(),
+            "vectorized": 0,
+            "skipped": entries.len()
+        }));
+    }
     let total = entries
         .iter()
         .filter(|entry| {

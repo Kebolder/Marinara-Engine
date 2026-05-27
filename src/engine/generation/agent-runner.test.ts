@@ -237,6 +237,53 @@ describe("createGenerationAgentRuntime", () => {
     expect(results).toEqual(runtime.preResults);
   });
 
+  it("passes roleplay Spotify DJ source constraints to the Spotify agent", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "spotify-agent",
+            type: "spotify",
+            name: "Spotify DJ",
+            enabled: true,
+            phase: "post_processing",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Pick music.",
+            settings: { enabledTools: [] },
+          },
+        ]),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: {
+          id: "chat-a",
+          mode: "roleplay",
+          metadata: {
+            activeAgentIds: ["spotify"],
+            spotifySourceType: "artist",
+            spotifyArtist: "HOYO-MiX",
+          },
+        },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "The scene turns melancholy." }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    await runtime.runPost("The rain starts.");
+
+    const systemPrompt = calls[0]?.messages?.[0]?.content ?? "";
+    expect(systemPrompt).toContain("<spotify_dj_constraints>");
+    expect(systemPrompt).toContain('"sourceType":"artist"');
+    expect(systemPrompt).toContain('"artist":"HOYO-MiX"');
+  });
+
   it("advertises and executes script custom tools for tool-capable agents", async () => {
     const calls: LlmRequest[] = [];
     const runtime = await createGenerationAgentRuntime(
