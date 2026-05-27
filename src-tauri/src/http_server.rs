@@ -280,6 +280,7 @@ impl IntoResponse for HttpError {
         let status = match self.0.code.as_str() {
             "not_found" => StatusCode::NOT_FOUND,
             "invalid_input" => StatusCode::BAD_REQUEST,
+            "custom_tool_script_unsupported" => StatusCode::UNPROCESSABLE_ENTITY,
             "unsupported_command" => StatusCode::NOT_IMPLEMENTED,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
