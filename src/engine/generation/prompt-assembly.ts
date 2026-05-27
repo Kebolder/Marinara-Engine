@@ -87,6 +87,7 @@ export interface PromptAssemblyInput {
   request: JsonRecord;
   latestUserInput: string;
   agentData?: Record<string, string>;
+  embeddingSource?: { embed(texts: string[]): Promise<number[][] | null> } | null;
 }
 
 type PromptSectionRecord = JsonRecord & {
@@ -884,10 +885,11 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return denominator > 0 ? dot / denominator : 0;
 }
 
-function memoryVector(memory: JsonRecord): number[] | null {
+function memoryVector(memory: JsonRecord, expectedDims?: number): number[] | null {
   if (!Array.isArray(memory.embedding)) return null;
   const vector = memory.embedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return vector.length === MEMORY_EMBEDDING_DIMS ? vector : null;
+  if (expectedDims !== undefined) return vector.length === expectedDims ? vector : null;
+  return vector.length > 0 ? vector : null;
 }
 
 function truncateRecalledMemory(content: string, tokenBudget: number): string {
@@ -934,6 +936,7 @@ async function buildMemoryRecallBlock(
   chat: JsonRecord,
   latestUserInput: string,
   maxContext?: number,
+  embeddingSource?: { embed(texts: string[]): Promise<number[][] | null> } | null,
 ): Promise<string | null> {
   if (!memoryRecallEnabled(chat) || !latestUserInput.trim()) return null;
   const chatId = readString(chat.id).trim();
@@ -947,16 +950,26 @@ async function buildMemoryRecallBlock(
   }
   if (memories.length === 0) return null;
 
+  let semanticQueryVector: number[] | null = null;
+  try {
+    const sourceEmbedding = embeddingSource ? await embeddingSource.embed([latestUserInput]) : null;
+    const vector = sourceEmbedding?.[0]?.filter((value): value is number => Number.isFinite(value));
+    semanticQueryVector = vector?.length ? vector : null;
+  } catch {
+    semanticQueryVector = null;
+  }
   const queryVector = lexicalMemoryEmbedding(latestUserInput);
   const queryTokens = new Set(latestUserInput.toLowerCase().match(/[a-z0-9]{2,}/g) ?? []);
   const recalled = memories
     .map((memory) => {
       const content = readString(memory.content).trim();
       if (!content) return null;
-      const vector = memoryVector(memory) ?? lexicalMemoryEmbedding(content);
+      const providerVector = semanticQueryVector ? memoryVector(memory, semanticQueryVector.length) : null;
+      const vector = providerVector ?? memoryVector(memory, MEMORY_EMBEDDING_DIMS) ?? lexicalMemoryEmbedding(content);
+      const baseQueryVector = providerVector && semanticQueryVector ? semanticQueryVector : queryVector;
       const haystack = content.toLowerCase();
       const lexicalScore = Array.from(queryTokens).reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
-      const similarity = cosineSimilarity(queryVector, vector) + Math.min(0.2, lexicalScore * 0.025);
+      const similarity = cosineSimilarity(baseQueryVector, vector) + Math.min(0.2, lexicalScore * 0.025);
       return { content, similarity };
     })
     .filter((memory): memory is { content: string; similarity: number } => !!memory && memory.similarity > 0)
@@ -1345,6 +1358,7 @@ export async function assembleGenerationPrompt(
     input.chat,
     input.latestUserInput,
     readNumber(input.connection.maxContext, 0) || undefined,
+    input.embeddingSource,
   );
   const selectedPreset = await loadSelectedPromptPreset(storage, {
     chat: input.chat,

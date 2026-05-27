@@ -660,6 +660,46 @@ describe("assembleGenerationPrompt conversation scene awareness gates", () => {
     expect(prompt).not.toContain("<memories>");
   });
 
+  it("uses provider query embeddings for memory recall when available", async () => {
+    const base = storageWithSections([]);
+    const storage: StorageGateway = {
+      ...base,
+      listChatMemories: async <T,>() =>
+        [
+          {
+            id: "provider-hit",
+            content: "A memory found only by provider vector.",
+            embedding: [1, 0, 0],
+            embeddingSource: "provider",
+          },
+          {
+            id: "provider-miss",
+            content: "A memory with another vector.",
+            embedding: [0, 1, 0],
+            embeddingSource: "provider",
+          },
+        ] as T[],
+    };
+
+    const assembly = await assembleGenerationPrompt(storage, {
+      chat: {
+        id: "conversation-chat",
+        mode: "conversation",
+        characterIds: [],
+        metadata: {},
+      },
+      storedMessages: [{ role: "user", content: "fresh hello", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "" },
+      latestUserInput: "semantic-only query",
+      embeddingSource: { embed: async () => [[1, 0, 0]] },
+    });
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("A memory found only by provider vector.");
+    expect(prompt).not.toContain("A memory with another vector.");
+  });
+
   it("keeps normal conversation summaries when conversation cross-chat awareness is off", async () => {
     const assembly = await assembleGenerationPrompt(storageWithSections([]), {
       chat: {

@@ -120,6 +120,20 @@ function inputUserMessage(input: StartGenerationInput): string {
   return readString(input.message) || readString(input.userMessage);
 }
 
+function generationEmbeddingSource(llm: LlmGateway, connection: JsonRecord) {
+  if (!llm.embed) return null;
+  const connectionId = readString(connection.id).trim() || null;
+  const model = readString(connection.embeddingModel).trim() || null;
+  return {
+    embed: (texts: string[]) =>
+      llm.embed!({
+        texts,
+        connectionId,
+        model,
+      }),
+  };
+}
+
 function inputAttachments(input: StartGenerationInput): PromptAttachment[] {
   return Array.isArray(input.attachments) ? input.attachments.filter(isRecord).map((attachment) => attachment as PromptAttachment) : [];
 }
@@ -799,6 +813,7 @@ async function runGenerationAgentsForTarget(args: {
     connection,
     request: input,
     latestUserInput: "",
+    embeddingSource: generationEmbeddingSource(deps.llm, connection),
   });
   const results: AgentResult[] = [];
   const runtime = await createGenerationAgentRuntime(
@@ -949,6 +964,7 @@ export async function* startGeneration(
     connection,
     request: input,
     latestUserInput: preparedUserInput.content || inputUserMessage(input),
+    embeddingSource: generationEmbeddingSource(deps.llm, connection),
   });
   mirrorSavedUserMessageToDiscord({ deps, chat, input, prepared: preparedUserInput, persona: assembly.persona });
 
@@ -986,6 +1002,7 @@ export async function* startGeneration(
       request: input,
       latestUserInput: preparedUserInput.content || inputUserMessage(input),
       agentData: runtime?.agentData,
+      embeddingSource: generationEmbeddingSource(deps.llm, connection),
     });
     await consumePendingConnectedInfluences(deps.storage, chatForGeneration);
     prompt = withImageAttachments(
