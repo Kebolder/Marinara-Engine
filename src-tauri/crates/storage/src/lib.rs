@@ -76,6 +76,14 @@ impl FileStorage {
         self.read_message_ids_for_chat(chat_id)
     }
 
+    pub fn count_messages_for_chat(&self, chat_id: &str) -> AppResult<usize> {
+        let _guard = self
+            .lock
+            .write()
+            .map_err(|_| AppError::new("lock_error", "Storage lock poisoned"))?;
+        self.read_message_count_for_chat(chat_id)
+    }
+
     pub fn list_messages_for_chat_page(
         &self,
         chat_id: &str,
@@ -355,6 +363,20 @@ impl FileStorage {
                     Some(Value::Object(object))
                 })
                 .collect()),
+        }
+    }
+
+    fn read_message_count_for_chat(&self, chat_id: &str) -> AppResult<usize> {
+        let path = self.collection_path("messages")?;
+        if !path.exists() || fs::metadata(&path)?.len() == 0 {
+            return Ok(0);
+        }
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut deserializer = serde_json::Deserializer::from_reader(reader);
+        match deserializer.deserialize_seq(MessageCountForChatVisitor { chat_id }) {
+            Ok(count) => Ok(count),
+            Err(_) => Ok(self.read_messages_for_chat(chat_id)?.len()),
         }
     }
 
@@ -935,6 +957,78 @@ impl<'de, 'a> Visitor<'de> for MessageIdRowForChatVisitor<'a> {
     }
 }
 
+struct MessageCountForChatVisitor<'a> {
+    chat_id: &'a str,
+}
+
+impl<'de, 'a> Visitor<'de> for MessageCountForChatVisitor<'a> {
+    type Value = usize;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a messages JSON array")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut count = 0;
+        while let Some(matches_chat) = seq.next_element_seed(MessageCountForChatSeed {
+            chat_id: self.chat_id,
+        })? {
+            if matches_chat {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+}
+
+struct MessageCountForChatSeed<'a> {
+    chat_id: &'a str,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for MessageCountForChatSeed<'a> {
+    type Value = bool;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(MessageCountForChatRowVisitor {
+            chat_id: self.chat_id,
+        })
+    }
+}
+
+struct MessageCountForChatRowVisitor<'a> {
+    chat_id: &'a str,
+}
+
+impl<'de, 'a> Visitor<'de> for MessageCountForChatRowVisitor<'a> {
+    type Value = bool;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a message object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut matches_chat = false;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "chatId" {
+                let value = map.next_value::<Value>()?;
+                matches_chat = value.as_str() == Some(self.chat_id);
+            } else {
+                let _ = map.next_value::<serde::de::IgnoredAny>()?;
+            }
+        }
+        Ok(matches_chat)
+    }
+}
+
 fn read_pretty_message_page_from_file(
     path: &Path,
     chat_id: &str,
@@ -1500,6 +1594,29 @@ mod tests {
         let rows = storage.list_message_ids_for_chat("chat-a").unwrap();
 
         assert_eq!(rows, vec![json!({ "id": "a-1" }), json!({ "id": "a-2" })]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn count_messages_for_chat_counts_matching_rows_without_projection() {
+        let root = temp_storage_root("count-messages-for-chat");
+        let storage = FileStorage::new(&root).unwrap();
+
+        storage
+            .replace_all(
+                "messages",
+                vec![
+                    json!({ "id": "a-1", "chatId": "chat-a", "content": "first" }),
+                    json!({ "id": "b-1", "chatId": "chat-b", "content": "skip me" }),
+                    json!({ "id": "a-2", "chatId": "chat-a", "content": "second" }),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(storage.count_messages_for_chat("chat-a").unwrap(), 2);
+        assert_eq!(storage.count_messages_for_chat("chat-b").unwrap(), 1);
+        assert_eq!(storage.count_messages_for_chat("missing").unwrap(), 0);
 
         fs::remove_dir_all(root).unwrap();
     }

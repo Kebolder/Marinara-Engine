@@ -261,9 +261,7 @@ export function useChatMessages(chatId: string | null, pageSize: number = DEFAUL
 export function useChatMessageCount(chatId: string | null) {
   return useQuery({
     queryKey: chatKeys.messageCount(chatId ?? ""),
-    queryFn: async () => ({
-      count: (await storageApi.list<Pick<Message, "id">>("messages", { filters: { chatId }, fields: ["id"] })).length,
-    }),
+    queryFn: () => invokeTauri<{ count: number }>("chat_message_count", { chatId }),
     enabled: !!chatId,
     staleTime: 30_000,
     refetchOnWindowFocus: false,

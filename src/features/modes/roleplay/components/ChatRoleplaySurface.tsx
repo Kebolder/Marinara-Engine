@@ -787,7 +787,7 @@ export function ChatRoleplaySurface({
               <div
                 data-tracker-panel-anchor="roleplay-hud"
                 className={cn(
-                  "pointer-events-none relative z-40 items-center py-2 max-md:hidden",
+                  "pointer-events-none relative z-30 items-center py-2 max-md:hidden",
                   centerCompact ? "hidden" : "flex",
                 )}
                 style={{
@@ -872,7 +872,7 @@ export function ChatRoleplaySurface({
               <div
                 data-tracker-panel-anchor={centerCompact ? "roleplay-hud" : undefined}
                 className={cn(
-                  "pointer-events-auto relative z-40 w-full flex-col",
+                  "pointer-events-auto relative z-30 w-full flex-col",
                   centerCompact ? "flex" : "flex md:hidden",
                 )}
               >

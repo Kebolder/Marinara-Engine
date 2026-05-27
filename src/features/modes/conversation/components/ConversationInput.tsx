@@ -1499,7 +1499,12 @@ export function ConversationInput({
   const renderAttachButton = () => (
     <button
       onClick={() => fileInputRef.current?.click()}
-      className="rounded-lg p-1.5 text-foreground/40 transition-all hover:bg-foreground/10 hover:text-foreground/70 active:scale-90"
+      className={cn(
+        "rounded-lg p-1.5 transition-all active:scale-90",
+        attachments.length
+          ? "bg-foreground/10 text-foreground/75"
+          : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+      )}
       title="Attach file"
       aria-label="Attach file"
     >
@@ -1670,8 +1675,8 @@ export function ConversationInput({
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                 gifOpen
-                  ? "text-foreground bg-foreground/10"
-                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                  ? "bg-foreground/10 text-foreground/75"
+                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
               )}
               title="GIF"
             >
@@ -1696,8 +1701,8 @@ export function ConversationInput({
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                 emojiOpen
-                  ? "text-foreground bg-foreground/10"
-                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                  ? "bg-foreground/10 text-foreground/75"
+                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
               )}
               title="Emoji"
             >
@@ -1719,10 +1724,10 @@ export function ConversationInput({
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                 guideGenerations && hasInput
-                  ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:bg-[var(--primary)]/20"
+                  ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20 hover:bg-foreground/15"
                   : charPickerOpen
-                    ? "text-foreground bg-foreground/10"
-                    : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                    ? "bg-foreground/10 text-foreground/75"
+                    : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
               )}
               title={
                 guideGenerations && hasInput ? "Trigger character response (guided)" : "Trigger character response"
@@ -1740,7 +1745,7 @@ export function ConversationInput({
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
                 hasInput && !isTranslatingDraft
-                  ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                  ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
                   : "text-foreground/25",
               )}
               title="Translate draft"
@@ -1766,9 +1771,9 @@ export function ConversationInput({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               statusMenuOpen
-                ? "text-foreground bg-foreground/10"
+                ? "bg-foreground/10 text-foreground/75"
                 : activePersona
-                  ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                  ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
                   : "text-foreground/25",
             )}
             title={activePersona ? "Saved persona statuses" : "Choose a persona to save statuses"}
@@ -1790,9 +1795,9 @@ export function ConversationInput({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
               isActuallyGenerating
-                ? "text-foreground hover:opacity-80"
+                ? "text-foreground/75 hover:text-foreground/90"
                 : canSubmit && !isReadingAttachments
-                  ? "text-foreground hover:text-foreground/80 active:scale-90"
+                  ? "text-foreground/75 hover:text-foreground/90 active:scale-90"
                   : "text-foreground/20",
             )}
             title={sendButtonTitle}

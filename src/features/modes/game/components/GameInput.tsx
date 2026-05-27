@@ -506,7 +506,7 @@ export function GameInput({
           className={cn(
             "shrink-0 rounded-lg p-1.5 transition-all active:scale-90",
             attachments.length
-              ? "text-blue-400 hover:bg-foreground/10"
+              ? "bg-foreground/10 text-foreground/75"
               : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
           )}
           title="Attach files"
@@ -595,7 +595,7 @@ export function GameInput({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               emojiOpen
-                ? "text-foreground bg-foreground/10"
+                ? "bg-foreground/10 text-foreground/75"
                 : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
             title="Emoji"

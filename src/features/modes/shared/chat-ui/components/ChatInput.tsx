@@ -1268,7 +1268,7 @@ export const ChatInput = memo(function ChatInput({
           className={cn(
             "rounded-lg p-1.5 transition-all active:scale-90",
             attachments.length
-              ? "text-blue-400 hover:bg-foreground/10"
+              ? "bg-foreground/10 text-foreground/75"
               : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
           )}
           title="Attach files"
@@ -1313,7 +1313,7 @@ export const ChatInput = memo(function ChatInput({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               emojiOpen
-                ? "text-foreground bg-foreground/10"
+                ? "bg-foreground/10 text-foreground/75"
                 : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
             title="Emoji"
@@ -1337,9 +1337,9 @@ export const ChatInput = memo(function ChatInput({
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
               guideGenerations && hasInput
-                ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:bg-[var(--primary)]/20"
+                ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20 hover:bg-foreground/15"
                 : charPickerOpen
-                  ? "text-foreground bg-foreground/10"
+                  ? "bg-foreground/10 text-foreground/75"
                   : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
             title={guideGenerations && hasInput ? "Trigger character response (guided)" : "Trigger character response"}
@@ -1356,7 +1356,7 @@ export const ChatInput = memo(function ChatInput({
             className={cn(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200",
               hasInput && !isStreaming && !isTranslatingDraft
-                ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground active:scale-90"
+                ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70 active:scale-90"
                 : "text-foreground/25",
             )}
             title="Translate draft"
@@ -1393,9 +1393,9 @@ export const ChatInput = memo(function ChatInput({
           className={cn(
             "mari-chat-send-btn flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200",
             isStreaming
-              ? "text-foreground hover:opacity-80"
+              ? "text-foreground/75 hover:text-foreground/90"
               : (hasInput || attachments.length || canRetry || canContinue) && activeChatId && !isReadingAttachments
-                ? "text-foreground hover:text-foreground/80 active:scale-90"
+                ? "text-foreground/75 hover:text-foreground/90 active:scale-90"
                 : "text-foreground/20",
           )}
         >

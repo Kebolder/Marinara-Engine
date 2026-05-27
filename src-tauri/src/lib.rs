@@ -158,6 +158,7 @@ pub fn run() {
             storage_commands::chat_commands::chat_autonomous_unread_mark,
             storage_commands::chat_commands::chat_autonomous_unread_clear,
             storage_commands::chat_commands::chat_messages_bulk_delete,
+            storage_commands::chat_commands::chat_message_count,
             storage_commands::chat_commands::chat_branch,
             storage_commands::chat_commands::chat_message_swipes,
             storage_commands::chat_commands::chat_message_add_swipe,

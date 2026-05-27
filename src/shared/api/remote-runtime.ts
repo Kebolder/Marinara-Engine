@@ -126,6 +126,7 @@ const REMOTE_COMMANDS = new Set([
   "chat_notes_clear",
   "chat_group_delete",
   "chat_messages_bulk_delete",
+  "chat_message_count",
   "chat_branch",
   "chat_message_swipes",
   "chat_connect",

@@ -209,7 +209,7 @@ export function WindowTitleBar({
         </div>
         {spotifyPlayerEnabled && (
           <div
-            className="mari-titlebar-spotify hidden min-w-0 flex-[0_1_31rem] items-center px-2 md:flex"
+            className="mari-titlebar-spotify hidden min-w-0 flex-[0_1_31rem] items-center overflow-hidden px-2 md:flex"
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
           >

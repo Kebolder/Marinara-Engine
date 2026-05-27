@@ -424,6 +424,11 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             required_string(&args, "chatId")?,
             json!({ "messageIds": required_string_vec(&args, "messageIds")? }),
         ),
+        "chat_message_count" => Ok(json!({
+            "count": state
+                .storage
+                .count_messages_for_chat(required_string(&args, "chatId")?)?
+        })),
         "chat_branch" => chats::branch_chat(
             state,
             required_string(&args, "chatId")?,

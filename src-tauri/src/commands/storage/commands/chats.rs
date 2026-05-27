@@ -99,6 +99,11 @@ pub fn chat_messages_bulk_delete(
 }
 
 #[tauri::command]
+pub fn chat_message_count(state: State<'_, AppState>, chat_id: String) -> Result<Value, AppError> {
+    Ok(json!({ "count": state.storage.count_messages_for_chat(&chat_id)? }))
+}
+
+#[tauri::command]
 pub fn chat_branch(
     state: State<'_, AppState>,
     chat_id: String,
