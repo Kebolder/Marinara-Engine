@@ -484,6 +484,83 @@ describe("startGeneration chat summary fingerprint metadata", () => {
 });
 
 describe("startGeneration generation replay metadata", () => {
+  it("stores impersonate output as a generated user message with replay metadata", async () => {
+    const { deps, createChatMessage, streamedRequests } = generationDepsForChat({
+      chatPatch: {
+        characterIds: ["char-1"],
+        personaId: "persona-1",
+      },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+      personas: [{ id: "persona-1", name: "Chai" }],
+    });
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        userMessage: "a tiny answer",
+        impersonate: true,
+        impersonateBlockAgents: true,
+      }),
+    );
+
+    const userSave = createChatMessage.mock.calls.find(
+      ([, value]) => value.role === "user" && value.content === "Done.",
+    );
+    expect(userSave?.[1]).toMatchObject({
+      role: "user",
+      characterId: null,
+      content: "Done.",
+      extra: {
+        generationReplay: {
+          impersonate: true,
+          userMessage: "a tiny answer",
+          impersonateBlockAgents: true,
+        },
+      },
+    });
+    expect(createChatMessage.mock.calls.some(([, value]) => value.role === "assistant")).toBe(false);
+    expect((streamedRequests[0] as { messages: Array<{ role: string; content: string }> }).messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("Direction:\na tiny answer"),
+        }),
+      ]),
+    );
+  });
+
+  it("adds swipes when regenerating an impersonated user message", async () => {
+    const { deps, createChatMessage, addChatMessageSwipe, patchChatMessageExtra } = generationDepsForChat({
+      initialMessages: [
+        {
+          id: "impersonate-1",
+          chatId: "chat-1",
+          role: "user",
+          content: "Original impersonation.",
+          extra: {
+            chatSummaryFingerprint: null,
+            generationReplay: {
+              impersonate: true,
+              userMessage: "a tiny answer",
+            },
+          },
+        },
+      ],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "impersonate-1" }));
+
+    expect(createChatMessage).not.toHaveBeenCalled();
+    expect(addChatMessageSwipe).toHaveBeenCalledWith("chat-1", "impersonate-1", "Done.");
+    expect(patchChatMessageExtra).toHaveBeenCalledWith("impersonate-1", {
+      generationReplay: {
+        impersonate: true,
+        userMessage: "a tiny answer",
+      },
+      chatSummaryFingerprint: null,
+    });
+  });
+
   it("stores guided replay metadata on the generated assistant message", async () => {
     const { deps, createChatMessage } = generationDepsForChat();
 
