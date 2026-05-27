@@ -6,9 +6,10 @@ const cargoHome = process.env.CARGO_HOME || (process.env.HOME ? join(process.env
 const cargoBin = cargoHome ? join(cargoHome, "bin") : "";
 
 const env = { ...process.env };
+const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") || "PATH";
 
 if (cargoBin && existsSync(cargoBin)) {
-  env.PATH = [cargoBin, env.PATH].filter(Boolean).join(delimiter);
+  env[pathKey] = [cargoBin, env[pathKey]].filter(Boolean).join(delimiter);
 }
 
 const tauriBin = process.platform === "win32" ? "tauri.cmd" : "tauri";

@@ -271,7 +271,8 @@ jobs:
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           MARINARA_ANDROID_APPLICATION_ID: ${{ env.PREALPHA_ANDROID_APPLICATION_ID }}
           MARINARA_ANDROID_APP_NAME: ${{ env.PREALPHA_ANDROID_APP_NAME }}
-        run: pnpm tauri android build --debug --apk --ci --config "${{ env.PREALPHA_CONFIG }}"
+        # Keep Android on the generated source package from tauri.conf.json; Gradle applies the pre-alpha app id/name.
+        run: pnpm tauri android build --debug --apk --ci
 
       - name: Collect Android release assets
         shell: bash
