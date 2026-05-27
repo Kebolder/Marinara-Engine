@@ -291,6 +291,23 @@ function appendGameCardFields(parts: string[], card: JsonRecord | undefined): vo
     const text = readString(value).trim();
     if (text) parts.push(`${key}: ${text}`);
   }
+  const rpgStats = parseRecord(card.rpgStats);
+  const attributes = recordArray(rpgStats.attributes)
+    .map((attribute) => {
+      const name = readString(attribute.name).trim();
+      const value = readNumber(attribute.value, Number.NaN);
+      return name && Number.isFinite(value) ? `${name}: ${value}` : "";
+    })
+    .filter(Boolean);
+  if (attributes.length > 0) parts.push(`RPG Attributes: ${attributes.join(", ")}`);
+  const hp = parseRecord(rpgStats.hp);
+  const hpValue = readNumber(hp.value, Number.NaN);
+  const hpMax = readNumber(hp.max, Number.NaN);
+  if (Number.isFinite(hpValue) || Number.isFinite(hpMax)) {
+    parts.push(
+      `RPG HP: ${Number.isFinite(hpValue) ? hpValue : "?"}/${Number.isFinite(hpMax) ? hpMax : "?"}`,
+    );
+  }
 }
 
 function characterCardText(character: GenerationCharacterContext, gameCard?: JsonRecord): string {

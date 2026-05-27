@@ -210,7 +210,11 @@ fn base_url(provider: &str, configured: &str) -> String {
     match provider {
         "openai_chatgpt" => OPENAI_CHATGPT_CODEX_BASE_URL.to_string(),
         "anthropic" => "https://api.anthropic.com".to_string(),
-        "google" | "google_vertex" => "https://generativelanguage.googleapis.com".to_string(),
+        "google" => "https://generativelanguage.googleapis.com".to_string(),
+        "google_vertex" => {
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+                .to_string()
+        }
         "mistral" => "https://api.mistral.ai/v1".to_string(),
         "cohere" => "https://api.cohere.ai/compatibility/v1".to_string(),
         "openrouter" => "https://openrouter.ai/api/v1".to_string(),
@@ -2001,6 +2005,49 @@ mod tests {
         assert_eq!(
             redacted_endpoint("https://api.openai.com/v1/chat/completions"),
             "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn google_vertex_default_base_uses_aiplatform_endpoint() {
+        assert_eq!(
+            base_url("google_vertex", ""),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        );
+        assert_eq!(
+            google_vertex_endpoint(
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models",
+                "gemini-2.5-pro",
+                "generateContent",
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn google_top_k_zero_is_not_sent() {
+        let mut request = LlmRequest {
+            connection: LlmConnection {
+                provider: "google".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                api_key: String::new(),
+                base_url: String::new(),
+                openrouter_provider: None,
+                enable_caching: false,
+                caching_at_depth: None,
+                max_tokens_override: None,
+                claude_fast_mode: false,
+            },
+            messages: Vec::new(),
+            parameters: json!({ "topK": 0 }),
+            tools: Vec::new(),
+        };
+        assert!(should_send_top_k(&request));
+        assert!(param_i64(&request.parameters, &["topK", "top_k"]).filter(|value| *value > 0).is_none());
+        request.parameters = json!({ "topK": 40 });
+        assert_eq!(
+            param_i64(&request.parameters, &["topK", "top_k"]).filter(|value| *value > 0),
+            Some(40)
         );
     }
 

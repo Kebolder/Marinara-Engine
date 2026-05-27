@@ -212,7 +212,7 @@ Output format:
 }
 Prompt quality rules:
 1. Be specific about composition, lighting, mood, and camera angle.
-2. Include FULL physical descriptions of every character and the user's persona visible in the scene — hair color, eye color, build, skin tone, clothing, and any distinguishing features from their character/persona data. The image model has no memory; it needs every visual detail spelled out in the prompt.
+2. Include only visual physical traits for visible characters and the user's persona: hair color, eye color, build, skin tone, clothing, and distinguishing visible features. Do not paste full character/persona descriptions, personality, backstory, scenario, or relationship prose into the prompt. If avatar/reference images are attached, keep character wording concise and let the references carry exact likeness.
 3. Describe the environment and atmosphere with enough detail that an artist could paint it.
 4. Use art-style keywords for quality (e.g., "detailed", "dramatic lighting", "cinematic", "depth of field").
 5. NEVER include meta-instructions in the prompt (no "make it look good"). Only describe the image itself.`,

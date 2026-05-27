@@ -237,6 +237,55 @@ describe("createGenerationAgentRuntime", () => {
     expect(results).toEqual(runtime.preResults);
   });
 
+  it("merges connection generation parameters into agent LLM calls", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "agent-a",
+            type: "prose-guardian",
+            name: "Prose Guardian",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Add a concise style note.",
+          },
+        ]),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          model: "chat-model",
+          defaultParameters: {
+            topP: 0.42,
+            topK: 12,
+            reasoningEffort: "high",
+            assistantPrefill: "Here is the agent result:",
+          },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]?.parameters).toMatchObject({
+      temperature: 0.3,
+      maxTokens: 4096,
+      topP: 0.42,
+      topK: 12,
+      reasoningEffort: "high",
+      assistantPrefill: "Here is the agent result:",
+    });
+  });
+
   it("passes roleplay Spotify DJ source constraints to the Spotify agent", async () => {
     const calls: LlmRequest[] = [];
     const runtime = await createGenerationAgentRuntime(

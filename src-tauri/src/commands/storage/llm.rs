@@ -1069,7 +1069,10 @@ fn model_endpoint(provider: &str, base: &str, connection: &Value) -> String {
                 .and_then(Value::as_str)
                 .unwrap_or("")
         ),
-        "google_vertex" => format!("{base}/models"),
+        "google_vertex" => {
+            let base = base.trim_end_matches("/publishers/google/models");
+            format!("{base}/publishers/google/models")
+        }
         _ => format!("{base}/models"),
     }
 }
@@ -1092,7 +1095,10 @@ fn connection_base_url(connection: &Value) -> String {
 fn provider_default_base_url(provider: &str) -> &'static str {
     match provider {
         "anthropic" => "https://api.anthropic.com",
-        "google" | "google_vertex" => "https://generativelanguage.googleapis.com",
+        "google" => "https://generativelanguage.googleapis.com",
+        "google_vertex" => {
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        }
         "openrouter" => "https://openrouter.ai/api/v1",
         "xai" => "https://api.x.ai/v1",
         "ollama" => "http://127.0.0.1:11434",
@@ -1168,6 +1174,30 @@ mod tests {
                 .expect("test model server should write response");
         });
         format!("http://{address}/v1")
+    }
+
+    #[test]
+    fn google_vertex_model_lookup_uses_aiplatform_endpoint() {
+        assert_eq!(
+            provider_default_base_url("google_vertex"),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        );
+        assert_eq!(
+            model_endpoint(
+                "google_vertex",
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1",
+                &json!({}),
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models"
+        );
+        assert_eq!(
+            model_endpoint(
+                "google_vertex",
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models",
+                &json!({}),
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models"
+        );
     }
 
     #[tokio::test]

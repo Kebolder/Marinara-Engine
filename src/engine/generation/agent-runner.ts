@@ -21,6 +21,7 @@ import { matchCustomAgentActivation, type ActivationScanMessage } from "../agent
 import { createAgentPipeline, type AgentInjection, type ResolvedAgent } from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
+import { llmParameters } from "./context";
 import { loadAgentMemory, secretPlotStateFromMemory } from "./agent-memory-runtime";
 import {
   boolish,
@@ -91,7 +92,11 @@ interface AutomaticIntervalGate {
   runInterval: number;
 }
 
-function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvider {
+function llmProvider(
+  llm: LlmGateway,
+  connectionId: string | null,
+  baseParameters: Record<string, unknown>,
+): BaseLLMProvider {
   return {
     maxTokensOverrideValue: null,
     async chatComplete(messages: ChatMessage[], options: ChatCompleteOptions): Promise<ChatCompleteResult> {
@@ -105,15 +110,15 @@ function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvi
         tool_calls: Array.isArray(message.tool_calls) ? message.tool_calls : undefined,
       }));
       const toolCalls: LLMToolCall[] = [];
+      const parameters = { ...baseParameters };
+      if (typeof options.temperature === "number") parameters.temperature = options.temperature;
+      if (typeof options.maxTokens === "number") parameters.maxTokens = options.maxTokens;
       for await (const chunk of llm.stream(
         {
           connectionId,
           model: options.model,
           messages: requestMessages,
-          parameters: {
-            temperature: options.temperature,
-            maxTokens: options.maxTokens,
-          },
+          parameters,
           tools: options.tools as never,
         },
         options.signal,
@@ -464,6 +469,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
     }
     const model = readString(agent.model).trim() || readString(connection.model).trim();
     if (!model) continue;
+    const parameters = llmParameters(connection, {}, input.chat);
     customTools ??= await loadCustomTools(deps.storage);
     resolved.push({
       id: readString(agent.id) || readString(agent.type) || "agent",
@@ -473,7 +479,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       promptTemplate: readString(agent.promptTemplate),
       connectionId,
       settings,
-      provider: llmProvider(deps.llm, connectionId),
+      provider: llmProvider(deps.llm, connectionId, parameters),
       model,
       maxParallelJobs: typeof settings.maxParallelJobs === "number" ? settings.maxParallelJobs : undefined,
       toolContext: buildAgentToolContext(deps, input, agent, settings, customTools),

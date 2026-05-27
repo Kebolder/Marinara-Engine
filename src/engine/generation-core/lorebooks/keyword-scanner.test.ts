@@ -83,3 +83,56 @@ describe("scanForActivatedEntries vector exclusions", () => {
     expect(activated[0]?.matchedKeys).toEqual(["needle"]);
   });
 });
+
+describe("scanForActivatedEntries secondary keyword logic", () => {
+  it("honors AND secondary keys even when imported entries omitted the selective flag", () => {
+    const entries = [
+      lorebookEntry({
+        keys: ["dragon"],
+        secondaryKeys: ["cave"],
+        selective: false,
+        selectiveLogic: "and",
+      }),
+    ];
+
+    expect(scanForActivatedEntries([{ role: "user", content: "The dragon circles overhead." }], entries)).toHaveLength(
+      0,
+    );
+
+    expect(
+      scanForActivatedEntries([{ role: "user", content: "The dragon waits inside the cave." }], entries).map(
+        (entry) => entry.entry.id,
+      ),
+    ).toEqual(["entry"]);
+  });
+
+  it("honors OR and NOT secondary-key logic", () => {
+    const orEntry = lorebookEntry({
+      id: "or-entry",
+      keys: ["gate"],
+      secondaryKeys: ["silver", "gold"],
+      selectiveLogic: "or",
+    });
+    const notEntry = lorebookEntry({
+      id: "not-entry",
+      keys: ["gate"],
+      secondaryKeys: ["sealed"],
+      selectiveLogic: "not",
+    });
+
+    expect(
+      scanForActivatedEntries([{ role: "user", content: "The gold gate opens." }], [orEntry]).map(
+        (entry) => entry.entry.id,
+      ),
+    ).toEqual(["or-entry"]);
+    expect(scanForActivatedEntries([{ role: "user", content: "The bronze gate opens." }], [orEntry])).toHaveLength(0);
+    expect(scanForActivatedEntries([{ role: "user", content: "The sealed gate opens." }], [notEntry])).toHaveLength(
+      0,
+    );
+    expect(
+      scanForActivatedEntries([{ role: "user", content: "The quiet gate opens." }], [notEntry]).map(
+        (entry) => entry.entry.id,
+      ),
+    ).toEqual(["not-entry"]);
+  });
+});

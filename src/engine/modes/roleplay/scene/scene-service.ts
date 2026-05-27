@@ -28,6 +28,9 @@ const SCENE_GUIDELINES = [
   "- Treat this as a focused roleplay scene branched from the originating conversation.",
   "- Preserve character knowledge boundaries and relationship continuity from the origin chat.",
   "- The user controls their persona. Never decide their strategic choices or exact dialogue.",
+  "- Keep narration in third person unless the origin chat or requested scene explicitly uses another POV.",
+  "- Spoken dialogue must be wrapped in quotation marks. Do not leave spoken lines as bare prose.",
+  "- First messages should establish the scene and then hand the next meaningful choice back to the user.",
   "- Continue naturally until the scene concludes or returns to the origin conversation.",
 ].join("\n");
 
@@ -74,6 +77,7 @@ export async function planRoleplayScene(
             "You are a scene planner for Marinara roleplay.",
             "Return only one JSON object with fields name, description, scenario, firstMessage, background, characterIds, systemPrompt, rating, relationshipHistory, and participationGuide.",
             "The name must start with Scene:. The rating must be sfw or nsfw. Use only character IDs from the provided list.",
+            "Write firstMessage in the origin chat's narration style. If characters speak, use quotation marks.",
           ].join("\n"),
         },
         {

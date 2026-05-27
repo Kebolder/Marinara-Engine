@@ -117,6 +117,7 @@ import {
   useApplyChatPreset,
   useImportChatPreset,
   useSetActiveChatPreset,
+  sanitizeChatPresetSettings,
 } from "../../../../catalog/chat-presets/index";
 import type { AgentPhase } from "../../../../../engine/contracts/types/agent";
 import type { Chat, ChatMode, ChatMemoryChunk, ConversationNote } from "../../../../../engine/contracts/types/chat";
@@ -1386,11 +1387,11 @@ export function ChatSettingsDrawer({
     : null;
 
   const snapshotCurrentPresetSettings = useCallback((): ChatPresetSettings => {
-    return {
+    return sanitizeChatPresetSettings({
       connectionId: chat.connectionId ?? null,
       promptPresetId: isConversation ? null : (chat.promptPresetId ?? null),
       metadata: { ...metadata },
-    };
+    });
   }, [chat.connectionId, chat.promptPresetId, isConversation, metadata]);
 
   const handleSelectPreset = (id: string) => {

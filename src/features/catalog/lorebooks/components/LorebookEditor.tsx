@@ -596,8 +596,8 @@ export function LorebookEditor() {
   const canReorderFolders = showFolderGrouping && folders.length > 1 && !reorderFolders.isPending;
 
   // Keyword-test verdicts: for each entry, would the debounced preview text
-  // activate it? Honors useRegex / matchWholeWords / caseSensitive / selective
-  // + secondaryKeys + selectiveLogic / enabled / constant. Skips runtime gates
+  // activate it? Honors useRegex / matchWholeWords / caseSensitive /
+  // secondaryKeys + selectiveLogic / enabled / constant. Skips runtime gates
   // that have no meaning outside a live chat (timing, probability, character
   // filters, semantic embeddings, recursive scan, group selection).
   // Logic mirrors the original lorebook keyword scanner —
@@ -619,7 +619,7 @@ export function LorebookEditor() {
       };
       const { matched } = testPrimaryKeys(entry.keys, text, opts);
       if (!matched) continue;
-      if (entry.selective && entry.secondaryKeys.length > 0) {
+      if (entry.secondaryKeys.length > 0) {
         if (!testSecondaryKeys(entry.secondaryKeys, text, entry.selectiveLogic, opts)) continue;
       }
       result.set(entry.id, "matched");

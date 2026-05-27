@@ -389,10 +389,11 @@ function WidgetCard({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const accent = widget.accent ?? "#a78bfa";
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
+  const { locked, toggleLocked, x, y, panelRef, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
 
   return (
     <motion.div
+      ref={panelRef}
       drag={!locked}
       dragMomentum={false}
       dragElastic={0}

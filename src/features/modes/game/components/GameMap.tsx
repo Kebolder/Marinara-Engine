@@ -482,7 +482,7 @@ export function GameMapPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [stateHovered, setStateHovered] = useState(false);
   const [mapZoom, setMapZoom] = useState(1);
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, "map");
+  const { locked, toggleLocked, x, y, panelRef, handleDragEnd } = useDraggablePanel(chatId, "map");
   const mapOptions = buildMapOptions(map, maps);
   const selectedMapId = viewedMapId ?? getMapId(map);
   const activeMap = activeMapId == null || selectedMapId === activeMapId;
@@ -524,6 +524,7 @@ export function GameMapPanel({
 
   return (
     <motion.div
+      ref={panelRef}
       data-tour="game-map"
       data-game-skip-bg-nav="true"
       drag={!locked}

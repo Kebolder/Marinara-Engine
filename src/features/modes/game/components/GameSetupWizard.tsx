@@ -262,10 +262,33 @@ const GAME_LANGUAGE_LOOKUP = new Map(
   }),
 );
 
+const GAME_SETUP_LANGUAGE_STORAGE_KEY = "marinara-game-setup-language";
+
 function normalizeGameLanguage(language: string): string {
   const trimmed = language.trim();
   if (!trimmed) return "";
   return GAME_LANGUAGE_LOOKUP.get(trimmed.toLowerCase()) ?? trimmed;
+}
+
+function readRememberedGameLanguage(): string {
+  if (typeof window === "undefined") return "English";
+  try {
+    const stored = window.localStorage.getItem(GAME_SETUP_LANGUAGE_STORAGE_KEY);
+    return stored ? normalizeGameLanguage(stored) || "English" : "English";
+  } catch {
+    return "English";
+  }
+}
+
+function rememberGameLanguage(language: string): void {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeGameLanguage(language);
+  if (!normalized) return;
+  try {
+    window.localStorage.setItem(GAME_SETUP_LANGUAGE_STORAGE_KEY, normalized);
+  } catch {
+    // Best-effort preference only.
+  }
 }
 
 export function GameSetupWizard({ error, onComplete, onCancel, isLoading, characters }: GameSetupWizardProps) {
@@ -307,7 +330,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
   const [lbSearch, setLbSearch] = useState("");
   const [enableCustomWidgets, setEnableCustomWidgets] = useState(true);
-  const [language, setLanguage] = useState("English");
+  const [language, setLanguage] = useState(readRememberedGameLanguage);
   const [startMuted, setStartMuted] = useState(false);
   const [expandedLearnedOptions, setExpandedLearnedOptions] = useState<Record<LearnedOptionGroup, boolean>>({
     genres: false,
@@ -490,11 +513,16 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const canStart = !!gmConnectionId;
   const normalizedLanguage = normalizeGameLanguage(language);
 
+  useEffect(() => {
+    rememberGameLanguage(language);
+  }, [language]);
+
   const handleComplete = () => {
     if (isLoading || !canStart) return;
     if (startMuted) {
       useGameAssetStore.getState().setAudioMuted(true);
     }
+    rememberGameLanguage(normalizedLanguage);
     rememberGameSetupOptions(
       {
         genres: filterCustomLearnedValues(genres, GENRES),

@@ -466,6 +466,53 @@ describe("assembleGenerationPrompt connected conversation notes", () => {
   });
 });
 
+describe("assembleGenerationPrompt game character sheets", () => {
+  it("includes RPG stats from game character cards in the GM context", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSectionsAndCharacters([], [
+        {
+          id: "char-a",
+          data: {
+            name: "Aster",
+            description: "A careful scout.",
+          },
+        },
+      ]),
+      {
+        chat: {
+          id: "game-chat",
+          mode: "game",
+          characterIds: ["char-a"],
+          metadata: {
+            gameSetupConfig: { genre: "Fantasy", setting: "Ruins", tone: "Tense", difficulty: "Normal" },
+            gameCharacterCards: [
+              {
+                name: "Aster",
+                class: "Scout",
+                rpgStats: {
+                  attributes: [
+                    { name: "Strength", value: 8 },
+                    { name: "Dexterity", value: 16 },
+                  ],
+                  hp: { value: 18, max: 24 },
+                },
+              },
+            ],
+          },
+        },
+        storedMessages: [{ role: "user", content: "What happens?", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "What happens?",
+      },
+    );
+
+    const joined = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(joined).toContain("RPG Attributes: Strength: 8, Dexterity: 16");
+    expect(joined).toContain("RPG HP: 18/24");
+  });
+});
+
 describe("assembleGenerationPrompt lorebook game-state gates", () => {
   const gatedEntry = {
     id: "entry-1",

@@ -93,6 +93,10 @@ import type { PartyDialogueLine, CombatSummary, GameMap, GameActiveState, DiceRo
 import type { GameState } from "../../../../engine/contracts/types/game-state";
 import type { SceneAnalysis, SceneIllustrationRequest, SceneSegmentEffect, SceneSpotifyTrackCandidate, SceneSpotifyTrackSelection } from "../../../../engine/contracts/types/scene";
 import { scoreMusic, scoreAmbient } from "../../../../engine/shared/scoring/music-score";
+import {
+  applyMapUpdateCommandsToMeta,
+  parseMapUpdateCommands,
+} from "../../../../engine/modes/game/world/map-position.service";
 import { GameNarration } from "./GameNarration";
 import { formatNarration } from "../lib/game-narration-format";
 import { GameInput } from "./GameInput";
@@ -1008,6 +1012,13 @@ function removeInventoryUnit<T extends { name: string; quantity: number }>(items
   }
 
   return removed ? updated : items;
+}
+
+function removeInventoryStack<T extends { name: string; quantity: number }>(items: T[], itemName: string): T[] {
+  const normalizedName = itemName.trim().toLowerCase();
+  if (!normalizedName) return items;
+  const updated = items.filter((item) => item.name.trim().toLowerCase() !== normalizedName);
+  return updated.length === items.length ? items : updated;
 }
 
 function addInventoryUnit<T extends { name: string; quantity: number }>(items: T[], itemName: string): T[] {
@@ -3454,6 +3465,27 @@ export function GameSurface({
     );
 
     const tags = parseGmTags(msg.content);
+    const mapUpdateCommands = parseMapUpdateCommands(msg.content);
+    if (mapUpdateCommands.length > 0) {
+      const nextMeta = applyMapUpdateCommandsToMeta(chatMeta, mapUpdateCommands);
+      if (nextMeta !== chatMeta) {
+        const nextMaps = Array.isArray(nextMeta.gameMaps) ? (nextMeta.gameMaps as GameMap[]) : [];
+        const nextActiveMapId = typeof nextMeta.activeGameMapId === "string" ? nextMeta.activeGameMapId : null;
+        if (nextMaps.length > 0) {
+          useGameModeStore.getState().setMaps(nextMaps, nextActiveMapId);
+        }
+        updateChatMetadata
+          .mutateAsync({
+            id: activeChatId,
+            gameMap: nextMeta.gameMap,
+            gameMaps: nextMeta.gameMaps,
+            activeGameMapId: nextMeta.activeGameMapId,
+          })
+          .catch((error) => {
+            console.warn("Failed to persist map update commands", error);
+          });
+      }
+    }
     const directAddressMode = latestAssistantDirectAddressMode;
     const suppressInteractiveCommands = interruptedInteractiveCommandKeysRef.current.has(
       interactiveCommandKey(activeChatId, msg.id),
@@ -4997,6 +5029,70 @@ export function GameSurface({
             chatId: activeChatId,
             type: "item",
             data: { item: itemName, action: "removed", quantity: 1 },
+          })
+          .catch(() => {});
+
+        setInventoryNotifications([`You removed ${itemName}.`]);
+        if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+        notificationTimerRef.current = setTimeout(() => setInventoryNotifications([]), 4000);
+        toast.success(`Removed ${itemName} from inventory.`);
+      } catch (error) {
+        if (patchedGameState && currentPlayerStats) {
+          await patchVisibleGameState("playerStats", currentPlayerStats).catch(() => {});
+        }
+        const message = error instanceof Error ? error.message : `Failed to remove ${itemName} from inventory.`;
+        toast.error(message);
+      }
+    },
+    [activeChatId, inventoryItems, patchVisibleGameState, updateChatMetadata],
+  );
+
+  const handleClearInventoryItem = useCallback(
+    async (itemName: string) => {
+      if (!activeChatId) return;
+
+      const updatedInventory = removeInventoryStack(inventoryItems, itemName);
+      if (updatedInventory === inventoryItems) {
+        toast.error(`${itemName} is no longer in your inventory.`);
+        return;
+      }
+
+      const removedQuantity =
+        inventoryItems.find((item) => item.name.trim().toLowerCase() === itemName.trim().toLowerCase())?.quantity ?? 1;
+      const currentGameState = useGameStateStore.getState().current;
+      const currentPlayerStats = currentGameState?.chatId === activeChatId ? currentGameState.playerStats : null;
+      const nextPlayerStats = currentPlayerStats
+        ? (() => {
+            const updatedDetailedInventory = removeInventoryStack(currentPlayerStats.inventory, itemName);
+            return updatedDetailedInventory === currentPlayerStats.inventory
+              ? currentPlayerStats
+              : { ...currentPlayerStats, inventory: updatedDetailedInventory };
+          })()
+        : null;
+      const shouldPatchGameState =
+        Boolean(currentGameState?.chatId === activeChatId) &&
+        Boolean(currentPlayerStats) &&
+        nextPlayerStats !== currentPlayerStats;
+      let patchedGameState = false;
+
+      try {
+        if (shouldPatchGameState && nextPlayerStats) {
+          patchedGameState = true;
+          await patchVisibleGameState("playerStats", nextPlayerStats);
+        }
+
+        await updateChatMetadata.mutateAsync({
+          id: activeChatId,
+          gameInventory: updatedInventory,
+        });
+
+        setInventoryItems(updatedInventory);
+
+        gameApi
+          .addJournalEntry({
+            chatId: activeChatId,
+            type: "item",
+            data: { item: itemName, action: "removed", quantity: removedQuantity },
           })
           .catch(() => {});
 
@@ -8529,6 +8625,7 @@ export function GameSurface({
                 onAddItem={handleAddInventoryItem}
                 onRenameItem={handleRenameInventoryItem}
                 onRemoveItem={handleRemoveInventoryItem}
+                onClearItem={handleClearInventoryItem}
                 onIncrementItem={handleIncrementInventoryItem}
                 onReorderItem={handleReorderInventoryItem}
                 canInteract={sessionInteractive && narrationDone && !isStreaming}

@@ -17,6 +17,7 @@ const DEFAULT_NANOGPT_BASE_URL: &str = "https://nano-gpt.com/api/v1";
 const DEFAULT_BLOCKENTROPY_BASE_URL: &str = "https://api.blockentropy.ai";
 const DEFAULT_RUNPOD_BASE_URL: &str = "https://api.runpod.ai/v2";
 const NOVELAI_V4_PROMPT_HINT: &str = "NovelAI V4/V4.5 prompts support roughly 512 T5 tokens and reject most Unicode prompt characters; try a shorter ASCII prompt without emoji or non-Latin text.";
+const NOVELAI_V4_PROMPT_CHAR_LIMIT: usize = 1800;
 const COMFYUI_PLACEHOLDER_REFERENCE_BASE64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
@@ -2248,7 +2249,7 @@ fn prepare_novelai_prompt(value: &str, field_name: &str, model: &str) -> AppResu
             "NovelAI {field_name} contains only unsupported V4/V4.5 prompt characters. {NOVELAI_V4_PROMPT_HINT}"
         )));
     }
-    Ok(sanitized)
+    Ok(truncate_novelai_v4_prompt(&sanitized))
 }
 
 fn sanitize_novelai_v4_prompt(value: &str) -> String {
@@ -2271,6 +2272,46 @@ fn sanitize_novelai_v4_prompt(value: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+fn truncate_novelai_v4_prompt(value: &str) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(NOVELAI_V4_PROMPT_CHAR_LIMIT).collect();
+    if chars.next().is_none() {
+        return value.to_string();
+    }
+    truncated
+        .trim_end_matches(&[',', ' ', '\n', '\r', '\t'][..])
+        .to_string()
+}
+
+fn image_provider_json_error(json: &Value) -> Option<String> {
+    let direct = [
+        json.pointer("/error/message").and_then(Value::as_str),
+        json.pointer("/error").and_then(Value::as_str),
+        json.pointer("/message").and_then(Value::as_str),
+        json.pointer("/detail").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty());
+    if let Some(message) = direct {
+        return Some(message.to_string());
+    }
+    json.get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| {
+            errors.iter().find_map(|entry| {
+                entry
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+        .map(str::to_string)
 }
 
 async fn parse_novelai_image_response(
@@ -2305,6 +2346,12 @@ async fn parse_novelai_image_response(
     if let Ok(json) = serde_json::from_slice::<Value>(&bytes) {
         if let Some(result) = parse_image_json(client, &json).await {
             return Ok(result);
+        }
+        if let Some(error) = image_provider_json_error(&json) {
+            return Err(AppError::new(
+                "image_provider_error",
+                format!("NovelAI returned no image data: {}", sanitize_error(&error)),
+            ));
         }
     }
     Err(AppError::new(
@@ -2384,5 +2431,31 @@ mod tests {
             json!("refs: first.png, second.png, placeholder.png")
         );
         assert_eq!(resolved["invalid"], json!("%reference_image_name_00%"));
+    }
+
+    #[test]
+    fn novelai_v4_prompt_sanitization_trims_unicode_and_caps_length() {
+        let prompt = format!("{} {}", "夜".repeat(20), "beautiful cinematic portrait, ".repeat(200));
+        let sanitized = prepare_novelai_prompt(&prompt, "prompt", "nai-diffusion-4-5-full")
+            .expect("mixed prompt should sanitize");
+
+        assert!(sanitized.is_ascii());
+        assert!(sanitized.chars().count() <= NOVELAI_V4_PROMPT_CHAR_LIMIT);
+        assert!(!sanitized.ends_with(','));
+    }
+
+    #[tokio::test]
+    async fn novelai_json_error_is_reported() {
+        let client = http_client(1).expect("client should build");
+        let error = parse_novelai_image_response(
+            &client,
+            br#"{"error":{"message":"prompt is too long"}}"#.to_vec(),
+            "application/json",
+        )
+        .await
+        .expect_err("json error payload should fail");
+
+        assert_eq!(error.code, "image_provider_error");
+        assert!(error.message.contains("prompt is too long"));
     }
 }
