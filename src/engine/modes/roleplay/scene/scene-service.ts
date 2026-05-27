@@ -3,6 +3,7 @@ import type { StorageGateway } from "../../../capabilities/storage";
 import { parseJsonArray, parseJsonObject } from "../../../core/json";
 import { boolish } from "../../../generation/runtime-records";
 import { parseGameJsonish } from "../../../shared/parsing-jsonish";
+import { readString as stringValue } from "../../../shared/value-readers";
 import type { SceneAnalysis, SceneCreateRequest, SceneCreateResponse, SceneForkRequest, SceneForkResponse, SceneFullPlan, ScenePlanRequest, ScenePlanResponse } from "../../../contracts/types/scene";
 import {
   copyTrackerSnapshotsForRebasedMessages,
@@ -731,10 +732,6 @@ function parseObject(raw: string): JsonRecord {
 
 function stringArray(value: unknown): string[] {
   return parseJsonArray<string>(value).filter((item) => typeof item === "string" && item.trim().length > 0);
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
 
 function isRecord(value: unknown): value is JsonRecord {
