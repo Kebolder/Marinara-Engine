@@ -243,6 +243,9 @@ fn storage_update_inner(
     id: String,
     patch: Value,
 ) -> Result<Value, AppError> {
+    if entity == "messages" {
+        return shared::patch_message_update(state, &id, patch);
+    }
     state.storage.patch(
         &entity,
         &id,

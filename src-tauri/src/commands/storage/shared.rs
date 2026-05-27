@@ -144,6 +144,58 @@ pub(crate) fn normalize_update_patch(collection: &str, patch: Value) -> AppResul
     Ok(Value::Object(object))
 }
 
+pub(crate) fn patch_message_update(
+    state: &AppState,
+    message_id: &str,
+    patch: Value,
+) -> AppResult<Value> {
+    let normalized = normalize_update_patch("messages", patch)?;
+    state
+        .storage
+        .patch_with("messages", message_id, normalized, |message, patch| {
+            sync_message_patch_content_to_active_swipe(message, patch);
+            Ok(())
+        })
+}
+
+pub(crate) fn sync_message_patch_content_to_active_swipe(
+    message: &mut Map<String, Value>,
+    patch: &Map<String, Value>,
+) {
+    if patch.contains_key("swipes") {
+        return;
+    }
+    let Some(content) = patch
+        .get("content")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return;
+    };
+    let active_index = patch
+        .get("activeSwipeIndex")
+        .or_else(|| message.get("activeSwipeIndex"))
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    let Some(swipes) = message.get_mut("swipes").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if swipes.is_empty() {
+        return;
+    }
+    let active_index = active_index.min(swipes.len().saturating_sub(1));
+    match swipes.get_mut(active_index) {
+        Some(Value::Object(swipe)) => {
+            swipe.insert("content".to_string(), Value::String(content));
+        }
+        Some(swipe) => {
+            *swipe = json!({ "content": content });
+        }
+        None => {}
+    }
+}
+
 pub(crate) fn normalize_typed_json_fields(
     collection: &str,
     object: &mut Map<String, Value>,
@@ -510,6 +562,26 @@ pub(crate) fn with_entity_defaults(collection: &str, body: Value) -> AppResult<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempRoot(PathBuf);
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn temp_root(test_name: &str) -> TempRoot {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        TempRoot(std::env::temp_dir().join(format!(
+            "marinara-storage-{test_name}-{suffix}"
+        )))
+    }
 
     #[test]
     fn character_update_patch_preserves_object_data() {
@@ -540,6 +612,70 @@ mod tests {
                 .expect_err("invalid character data should fail");
             assert_eq!(error.code, "invalid_input");
         }
+    }
+
+    #[test]
+    fn message_content_update_patch_updates_active_swipe_content() {
+        let root = temp_root("message-edit-active-swipe");
+        let state = AppState::from_data_dir(&root.0, Vec::new()).expect("state should initialize");
+        state
+            .storage
+            .create(
+                "messages",
+                with_entity_defaults(
+                    "messages",
+                    json!({
+                        "id": "message-1",
+                        "chatId": "chat-1",
+                        "role": "user",
+                        "content": "original active",
+                        "activeSwipeIndex": 1,
+                        "swipes": [
+                            { "content": "first swipe" },
+                            { "content": "original active" }
+                        ]
+                    }),
+                )
+                .expect("message defaults should apply"),
+            )
+            .expect("message should be created");
+
+        let mut updated =
+            patch_message_update(&state, "message-1", json!({ "content": "edited active" }))
+                .expect("message should update");
+        materialize_message_swipe_fields(&mut updated);
+
+        assert_eq!(updated["content"], json!("edited active"));
+        assert_eq!(updated["activeSwipeIndex"], json!(1));
+        assert_eq!(updated["swipes"][0]["content"], json!("first swipe"));
+        assert_eq!(updated["swipes"][1]["content"], json!("edited active"));
+    }
+
+    #[test]
+    fn message_content_update_patch_does_not_invent_missing_swipes() {
+        let root = temp_root("message-edit-no-swipes");
+        let state = AppState::from_data_dir(&root.0, Vec::new()).expect("state should initialize");
+        state
+            .storage
+            .create(
+                "messages",
+                json!({
+                    "id": "message-1",
+                    "chatId": "chat-1",
+                    "role": "user",
+                    "content": "legacy content",
+                    "extra": {}
+                }),
+            )
+            .expect("message should be created");
+
+        let mut updated =
+            patch_message_update(&state, "message-1", json!({ "content": "edited legacy" }))
+                .expect("message should update");
+        materialize_message_swipe_fields(&mut updated);
+
+        assert_eq!(updated["content"], json!("edited legacy"));
+        assert!(updated.get("swipes").is_none());
     }
 
     #[test]

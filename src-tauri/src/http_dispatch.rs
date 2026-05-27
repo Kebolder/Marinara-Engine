@@ -802,6 +802,9 @@ fn storage_create(state: &AppState, args: &Map<String, Value>) -> AppResult<Valu
 fn storage_update(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
     let entity = required_string(args, "entity")?;
     let id = required_string(args, "id")?;
+    if entity == "messages" {
+        return shared::patch_message_update(state, id, optional_value(args, "patch"));
+    }
     state.storage.patch(
         entity,
         id,
