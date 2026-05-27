@@ -137,35 +137,38 @@ export function ToolEditor() {
     return { type: "object", properties, required };
   }, [localParams]);
 
-  const handleSave = useCallback(async () => {
-    if (!toolDetailId) return;
+  // Returns true on persisted save, false on any validation or mutation failure.
+  // Callers that auto-close on save (Save & close) must gate the close on this
+  // result so a failed save does not discard the user's unsaved edits.
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    if (!toolDetailId) return false;
     setSaveError(null);
 
     if (!localName.trim()) {
       setSaveError("Tool name is required.");
-      return;
+      return false;
     }
     if (!/^[a-z][a-z0-9_]*$/.test(localName)) {
       setSaveError("Tool name must be lowercase snake_case (e.g. my_tool).");
-      return;
+      return false;
     }
     if (!localDesc.trim()) {
       setSaveError("Description is required.");
-      return;
+      return false;
     }
     if (localExecType === "script") {
       setSaveError(
         "Pick \"Convert to Webhook\" or \"Convert to Static Result\" before saving — legacy script tools cannot run in this build.",
       );
-      return;
+      return false;
     }
     if (localExecType === "static" && !localStaticResult.trim()) {
       setSaveError("Static result is required for a static custom tool.");
-      return;
+      return false;
     }
     if (localExecType === "webhook" && !localWebhookUrl.trim()) {
       setSaveError("Webhook URL is required for a webhook custom tool.");
-      return;
+      return false;
     }
     const payload = {
       name: localName,
@@ -191,8 +194,10 @@ export function ToolEditor() {
       setDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save tool");
+      return false;
     }
   }, [
     toolDetailId,
@@ -319,8 +324,8 @@ export function ToolEditor() {
             </button>
             <button
               onClick={async () => {
-                await handleSave();
-                closeToolDetail();
+                const saved = await handleSave();
+                if (saved) closeToolDetail();
               }}
               className="rounded-lg bg-amber-500/20 px-3 py-1 hover:bg-amber-500/30"
             >
