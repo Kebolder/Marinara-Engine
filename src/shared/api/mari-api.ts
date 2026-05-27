@@ -1,6 +1,17 @@
-import type { MariEntryRequest, MariGatewayResponse, MariMessage } from "../../engine/mari/mari-entry";
+import type {
+  MariApplyStagedChangesResult,
+  MariApprovalOutcome,
+  MariApprovalRequest,
+  MariEntryAction,
+  MariEntryRequest,
+  MariGatewayResponse,
+  MariMessage,
+  MariTraceEvent,
+} from "../../engine/mari/mari-entry";
+import { Channel } from "@tauri-apps/api/core";
 import { EMPTY_MARI_COMPACTION, type MariCompactionState } from "../../engine/mari/mari-history";
 import { storageApi } from "./storage-api";
+import { remoteRuntimeTarget } from "./remote-runtime";
 import { invokeTauri } from "./tauri-client";
 
 const PROFESSOR_MARI_SETTINGS_ID = "professor-mari";
@@ -19,7 +30,20 @@ type StoredMessageRecord = {
   role?: unknown;
   content?: unknown;
   createdAt?: unknown;
+  trace?: unknown;
 };
+
+export type MariStreamEvent =
+  | { type: "trace"; event: MariTraceEvent }
+  | { type: "approval_request"; approval: MariApprovalRequest }
+  | {
+      type: "approval_resolved";
+      approvalId: string;
+      approved: boolean;
+      outcome?: MariApprovalOutcome;
+      applied?: MariApplyStagedChangesResult;
+      error?: string;
+    };
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value === "string") {
@@ -57,16 +81,38 @@ function normalizeCompaction(value: unknown): MariCompactionState {
   };
 }
 
+function normalizeTrace(value: unknown): MariTraceEvent[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const trace = value
+    .filter((event): event is Record<string, unknown> => !!event && typeof event === "object" && !Array.isArray(event))
+    .map((event) => ({
+      type: typeof event.type === "string" ? event.type : "event",
+      ...(typeof event.label === "string" ? { label: event.label } : {}),
+      ...(typeof event.summary === "string" ? { summary: event.summary } : {}),
+      ...(typeof event.tool === "string" ? { tool: event.tool } : {}),
+      ...(typeof event.status === "string" ? { status: event.status } : {}),
+      ...(typeof event.startedAt === "string" ? { startedAt: event.startedAt } : {}),
+      ...(typeof event.finishedAt === "string" ? { finishedAt: event.finishedAt } : {}),
+      ...(typeof event.approvalId === "string" ? { approvalId: event.approvalId } : {}),
+      ...(typeof event.content === "string" ? { content: event.content } : {}),
+      ...("arguments" in event ? { arguments: event.arguments } : {}),
+      ...("result" in event ? { result: event.result } : {}),
+      ...(typeof event.error === "string" ? { error: event.error } : {}),
+      ...(Array.isArray(event.toolCalls) ? { toolCalls: event.toolCalls } : {}),
+    }));
+  return trace.length > 0 ? trace : undefined;
+}
+
 function normalizeMariMessage(record: StoredMessageRecord): MariMessage | null {
   const role = record.role === "assistant" ? "assistant" : record.role === "user" ? "user" : null;
   const id = typeof record.id === "string" && record.id.trim() ? record.id : null;
   const content = typeof record.content === "string" ? record.content : null;
   const createdAt = typeof record.createdAt === "string" && record.createdAt.trim() ? record.createdAt : null;
   if (!role || !id || content === null || !createdAt) return null;
-  return { id, role, content, createdAt };
+  return { id, role, content, createdAt, ...(normalizeTrace(record.trace) ? { trace: normalizeTrace(record.trace) } : {}) };
 }
 
-function createMariMessage(message: { role: "user" | "assistant"; content: string }): MariMessage {
+function createMariMessage(message: { role: "user" | "assistant"; content: string; trace?: MariTraceEvent[] }): MariMessage {
   const nonce =
     globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return {
@@ -74,6 +120,7 @@ function createMariMessage(message: { role: "user" | "assistant"; content: strin
     role: message.role,
     content: message.content,
     createdAt: new Date().toISOString(),
+    ...(message.trace?.length ? { trace: message.trace } : {}),
   };
 }
 
@@ -103,9 +150,24 @@ async function saveSettingsPatch(patch: Record<string, unknown>): Promise<Record
 }
 
 export const mariApi = {
-  prompt: (request: MariEntryRequest) =>
-    invokeTauri<MariGatewayResponse>("professor_mari_prompt", {
+  prompt: (request: MariEntryRequest, onEvent: (event: MariStreamEvent) => void = () => undefined) => {
+    if (remoteRuntimeTarget()) {
+      return invokeTauri<MariGatewayResponse>("professor_mari_prompt", { request });
+    }
+    const channel = new Channel<MariStreamEvent>(onEvent);
+    return invokeTauri<MariGatewayResponse>("professor_mari_prompt", {
       request,
+      onEvent: channel,
+    });
+  },
+  applyStagedChanges: (action: MariEntryAction) =>
+    invokeTauri<MariApplyStagedChangesResult>("professor_mari_apply_staged_changes", {
+      action,
+    }),
+  resolveApproval: (approvalId: string, approved: boolean) =>
+    invokeTauri<{ resolved: boolean; approvalId: string; approved: boolean }>("professor_mari_resolve_approval", {
+      approvalId,
+      approved,
     }),
   preferences: {
     get: async (): Promise<ProfessorMariPreferences> => {
@@ -128,7 +190,7 @@ export const mariApi = {
         compaction: normalizeCompaction(settings),
       };
     },
-    appendMessage: async (message: { role: "user" | "assistant"; content: string }): Promise<MariMessage> => {
+    appendMessage: async (message: { role: "user" | "assistant"; content: string; trace?: MariTraceEvent[] }): Promise<MariMessage> => {
       const settings = await readSettingsValue();
       const nextMessage = createMariMessage(message);
       await saveSettingsPatch({

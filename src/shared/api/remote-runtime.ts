@@ -169,6 +169,7 @@ const REMOTE_COMMANDS = new Set([
   "llm_stream_cancel",
   "llm_list_models",
   "professor_mari_prompt",
+  "professor_mari_apply_staged_changes",
   "update_check",
   "update_apply",
 ]);

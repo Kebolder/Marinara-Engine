@@ -31,7 +31,7 @@ For code changes, final responses must include behavior changed, primary files/m
 - `src/app`: React bootstrap, shell layout, app providers, startup effects, top bars, sidebars, and panel composition.
 - `src/features/shell/mari`: Professor Mari's standalone assistant UI surface.
 - `src/engine/mari`: TypeScript request/response contract for the Professor Mari entrypoint.
-- `src-tauri/src/commands/storage/mari.rs`: Privileged Professor Mari agent execution, tool definitions, codebase search/read/edit access, and extension/custom-agent creation.
+- `src-tauri/src/commands/storage/mari.rs` and `src-tauri/src/commands/storage/mari/*.rs`: Privileged Professor Mari agent execution, Bashkit virtual creative-library workspace, staged storage actions, tool traces, and approval-gated write flow. Current merge base intentionally does not include codebase search/read/edit or extension/custom-agent tools in this backend yet.
 - `src/shared/api/mari-api.ts`: Focused frontend runtime wrapper for the Professor Mari command.
 - `src/engine`: React-free product behavior and mode orchestration.
 - `src/features`: React UI packages. Shell tools live in `src/features/shell`, catalog/resource editors live in `src/features/catalog`, mode surfaces live in `src/features/modes`, shared runtime UI lives in `src/features/runtime`.

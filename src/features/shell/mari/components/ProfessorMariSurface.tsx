@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronUp, CircleUser, FileText, Link, Plus, Send, X } from "lucide-react";
-import { runProfessorMariEntry, type MariMessage } from "../../../../engine/mari/mari-entry";
+import {
+  normalizeMariApprovalOutcome,
+  normalizeMariApprovalRequest,
+  runProfessorMariEntry,
+  type MariApprovalRequest,
+  type MariMessage,
+  type MariTraceEvent,
+} from "../../../../engine/mari/mari-entry";
 import {
   compactProfessorMariHistory,
   EMPTY_MARI_COMPACTION,
@@ -99,6 +107,7 @@ function toConversationMessage(message: MariMessage): Message {
 }
 
 export function ProfessorMariSurface() {
+  const queryClient = useQueryClient();
   const { data: rawConnections } = useConnections();
   const { data: rawPersonas } = usePersonas();
   const convoGradient = useUIStore((s) => s.convoGradient);
@@ -118,6 +127,10 @@ export function ProfessorMariSurface() {
   const [connectionSetupPromptOpen, setConnectionSetupPromptOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [liveTrace, setLiveTrace] = useState<MariTraceEvent[]>([]);
+  const [pendingApproval, setPendingApproval] = useState<MariApprovalRequest | null>(null);
+  const [resolvingApproval, setResolvingApproval] = useState<"approve" | "reject" | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -126,7 +139,13 @@ export function ProfessorMariSurface() {
   const connectionSelectionTouchedRef = useRef(false);
   const personaSelectionTouchedRef = useRef(false);
   const preferencesReady = preferencesLoaded;
-  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending && historyLoaded && preferencesReady;
+  const canSend =
+    (draft.trim().length > 0 || attachments.length > 0) &&
+    !sending &&
+    !pendingApproval &&
+    !resolvingApproval &&
+    historyLoaded &&
+    preferencesReady;
   const connections = useMemo(
     () =>
       filterLanguageGenerationConnections((rawConnections ?? []) as MariConnection[]).sort((a, b) =>
@@ -190,7 +209,7 @@ export function ProfessorMariSurface() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, sendError]);
+  }, [messages.length, sendError, liveTrace.length, pendingApproval?.id, approvalError]);
 
   useEffect(() => {
     let active = true;
@@ -321,6 +340,10 @@ export function ProfessorMariSurface() {
       setDraft("");
       setAttachments([]);
       setSendError(null);
+      setLiveTrace([]);
+      setPendingApproval(null);
+      setApprovalError(null);
+      setResolvingApproval(null);
       setSending(true);
       try {
         await mariApi.history.reset();
@@ -356,6 +379,10 @@ export function ProfessorMariSurface() {
     setDraft("");
     setAttachments([]);
     setSendError(null);
+    setLiveTrace([]);
+    setPendingApproval(null);
+    setApprovalError(null);
+    setResolvingApproval(null);
     setSending(true);
     requestAnimationFrame(() => inputRef.current?.focus());
     try {
@@ -403,17 +430,65 @@ export function ProfessorMariSurface() {
             content: attachment.content,
           })),
         },
-        mariApi,
+        {
+          prompt: (request) =>
+            mariApi.prompt(request, (event) => {
+              if (event.type === "trace") {
+                setLiveTrace((current) => [...current, event.event]);
+                return;
+              }
+              if (event.type === "approval_request") {
+                const approval = normalizeMariApprovalRequest(event.approval);
+                if (approval) {
+                  setPendingApproval(approval);
+                  setApprovalError(null);
+                  setResolvingApproval(null);
+                }
+                return;
+              }
+              if (event.type === "approval_resolved") {
+                const outcome = normalizeMariApprovalOutcome(event.outcome);
+                const applied = event.applied ?? outcome?.applied ?? null;
+                if (event.approved && applied && applied.applied > 0) {
+                  void queryClient.invalidateQueries();
+                }
+                setPendingApproval((current) => (current?.id === event.approvalId ? null : current));
+                setResolvingApproval(null);
+                setApprovalError(event.error ?? outcome?.error ?? null);
+              }
+            }),
+        },
       );
-      const assistant = await mariApi.history.appendMessage({ role: "assistant", content: response.content });
-      setMessages((current) => [...current, assistant]);
+      const assistant = await mariApi.history.appendMessage({
+        role: "assistant",
+        content: response.content,
+        trace: response.trace,
+      });
+      setMessages((current) => [...current, { ...assistant, createdAt: response.createdAt || assistant.createdAt }]);
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Professor Mari failed to respond.");
+      setPendingApproval(null);
+      setResolvingApproval(null);
       setSending(false);
       return;
     }
+    setPendingApproval(null);
+    setResolvingApproval(null);
+    setLiveTrace([]);
     setSending(false);
     requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const resolvePendingApproval = async (approved: boolean) => {
+    if (!pendingApproval || resolvingApproval) return;
+    setResolvingApproval(approved ? "approve" : "reject");
+    setApprovalError(null);
+    try {
+      await mariApi.resolveApproval(pendingApproval.id, approved);
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : "Professor Mari failed to resolve the approval.");
+      setResolvingApproval(null);
+    }
   };
 
   const openConnectionsPanel = () => {
@@ -488,7 +563,16 @@ export function ProfessorMariSurface() {
             );
           })}
           {sending && (
-            <div className="px-4 py-2 text-xs text-[var(--muted-foreground)]">Professor Mari is thinking...</div>
+            <MariToolActivity events={liveTrace} />
+          )}
+          {pendingApproval && (
+            <MariApprovalCard
+              approval={pendingApproval}
+              resolving={resolvingApproval}
+              error={approvalError}
+              onApprove={() => void resolvePendingApproval(true)}
+              onReject={() => void resolvePendingApproval(false)}
+            />
           )}
           {sendError && <div className="px-4 py-2 text-xs text-red-500">{sendError}</div>}
           <div ref={messagesEndRef} className="h-1" />
@@ -679,6 +763,99 @@ export function ProfessorMariSurface() {
         </div>
       </div>
     </section>
+  );
+}
+
+function MariToolActivity({ events }: { events: MariTraceEvent[] }) {
+  const latest = events.slice(-4);
+  return (
+    <div className="px-4 py-2">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--card)]/80 px-3 py-2 text-xs text-[var(--muted-foreground)] shadow-sm">
+        <div className="mb-1 font-semibold text-[var(--foreground)]">Professor Mari is thinking...</div>
+        {latest.length > 0 ? (
+          <div className="space-y-1">
+            {latest.map((event, index) => (
+              <div key={`${event.type}-${event.tool ?? "model"}-${index}`} className="flex min-w-0 items-center gap-2">
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    event.status === "error" ? "bg-red-400" : event.status === "waiting" ? "bg-amber-400" : "bg-sky-400",
+                  )}
+                />
+                <span className="truncate">
+                  {event.label ?? event.tool ?? event.type}
+                  {event.summary ? ` — ${event.summary}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div>Preparing the virtual workspace...</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MariApprovalCard({
+  approval,
+  resolving,
+  error,
+  onApprove,
+  onReject,
+}: {
+  approval: MariApprovalRequest;
+  resolving: "approve" | "reject" | null;
+  error: string | null;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const changeCount = approval.action.changes.length;
+  const storageActionCount = approval.action.storageActions.length;
+  return (
+    <div className="px-4 py-2">
+      <div className="rounded-xl border border-amber-400/40 bg-[var(--card)] px-3 py-3 text-xs text-[var(--foreground)] shadow-lg shadow-amber-500/10">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="font-semibold">Approve Professor Mari's workspace changes?</div>
+            <div className="mt-1 text-[var(--muted-foreground)]">
+              {approval.label ?? approval.tool ?? "Tool call"} wants to save {changeCount} file change
+              {changeCount === 1 ? "" : "s"} as {storageActionCount} storage action
+              {storageActionCount === 1 ? "" : "s"}.
+            </div>
+            {approval.action.changes.length > 0 && (
+              <div className="mt-2 max-h-32 overflow-y-auto rounded-lg bg-foreground/5 p-2 font-mono text-[0.6875rem] text-[var(--muted-foreground)]">
+                {approval.action.changes.slice(0, 6).map((change) => (
+                  <div key={`${change.op}-${change.path}`} className="truncate">
+                    {change.op}: {change.path}
+                  </div>
+                ))}
+                {approval.action.changes.length > 6 && <div>...and {approval.action.changes.length - 6} more</div>}
+              </div>
+            )}
+            {error && <div className="mt-2 text-red-500">{error}</div>}
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={onReject}
+              disabled={!!resolving}
+              className="inline-flex h-8 items-center justify-center rounded-lg border border-[var(--border)] px-3 font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-foreground/10 disabled:opacity-50"
+            >
+              {resolving === "reject" ? "Rejecting..." : "Reject"}
+            </button>
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={!!resolving}
+              className="inline-flex h-8 items-center justify-center rounded-lg bg-amber-500 px-3 font-semibold text-white transition-colors hover:bg-amber-400 disabled:opacity-50"
+            >
+              {resolving === "approve" ? "Approving..." : "Approve"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

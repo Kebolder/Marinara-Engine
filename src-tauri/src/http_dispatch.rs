@@ -547,6 +547,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         }
         "llm_stream_cancel" => llm_stream_cancel(state, &args),
         "professor_mari_prompt" => mari::professor_mari_prompt(state, optional_value(&args, "request")).await,
+        "professor_mari_apply_staged_changes" => {
+            mari::professor_mari_apply_staged_changes(state, optional_value(&args, "action"))
+        }
         "update_check" => updates::check_updates().await,
         "update_apply" => updates::apply_update(optional_value(&args, "input")),
         _ => Err(AppError::new(

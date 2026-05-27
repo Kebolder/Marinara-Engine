@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 
 use crate::seed_defaults::seed_bundled_defaults;
 use crate::storage_commands::shared::normalize_typed_json_fields;
@@ -19,6 +19,7 @@ pub struct AppState {
     pub data_dir: PathBuf,
     pub resource_dir: Option<PathBuf>,
     llm_stream_cancellations: Arc<Mutex<LlmStreamCancellations>>,
+    mari_approvals: Arc<Mutex<HashMap<String, oneshot::Sender<bool>>>>,
 }
 
 #[derive(Default)]
@@ -65,6 +66,7 @@ impl AppState {
             data_dir,
             resource_dir,
             llm_stream_cancellations: Arc::new(Mutex::new(LlmStreamCancellations::default())),
+            mari_approvals: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -126,6 +128,50 @@ impl AppState {
         if let Ok(mut cancellations) = self.llm_stream_cancellations.lock() {
             cancellations.active.remove(stream_id);
             cancellations.pending.remove(stream_id);
+        }
+    }
+
+    pub fn register_mari_approval(&self, approval_id: &str) -> AppResult<oneshot::Receiver<bool>> {
+        let mut approvals = self.mari_approvals.lock().map_err(|_| {
+            AppError::new(
+                "mari_approval_error",
+                "Professor Mari approval registry is unavailable",
+            )
+        })?;
+        if approvals.contains_key(approval_id) {
+            return Err(AppError::invalid_input(format!(
+                "Professor Mari approval {approval_id} is already pending"
+            )));
+        }
+        let (tx, rx) = oneshot::channel();
+        approvals.insert(approval_id.to_string(), tx);
+        Ok(rx)
+    }
+
+    pub fn resolve_mari_approval(&self, approval_id: &str, approved: bool) -> AppResult<bool> {
+        let mut approvals = self.mari_approvals.lock().map_err(|_| {
+            AppError::new(
+                "mari_approval_error",
+                "Professor Mari approval registry is unavailable",
+            )
+        })?;
+        let Some(sender) = approvals.remove(approval_id) else {
+            return Err(AppError::invalid_input(format!(
+                "Professor Mari approval {approval_id} is not pending"
+            )));
+        };
+        sender.send(approved).map_err(|_| {
+            AppError::new(
+                "mari_approval_error",
+                "Professor Mari approval listener is no longer available",
+            )
+        })?;
+        Ok(true)
+    }
+
+    pub fn cancel_mari_approval(&self, approval_id: &str) {
+        if let Ok(mut approvals) = self.mari_approvals.lock() {
+            approvals.remove(approval_id);
         }
     }
 
