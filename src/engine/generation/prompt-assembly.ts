@@ -1505,7 +1505,7 @@ export async function assembleGenerationPrompt(
   });
   const strictRoleFormatting =
     boolish(promptParameters?.strictRoleFormatting, true) &&
-    (chatMode === "roleplay" || chatMode === "visual_novel");
+    chatMode === "roleplay";
   messages = strictRoleFormatting ? enforceStrictRoles(messages) : mergeAdjacentMessages(messages);
   if (!strictRoleFormatting && boolish(promptParameters?.squashSystemMessages, false)) {
     messages = squashLeadingSystemMessages(messages);

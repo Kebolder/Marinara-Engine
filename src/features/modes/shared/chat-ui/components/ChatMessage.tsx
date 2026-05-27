@@ -716,7 +716,7 @@ export const ChatMessage = memo(function ChatMessage({
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isNarrator = message.role === "narrator";
-  const isRoleplay = chatMode === "roleplay" || chatMode === "visual_novel";
+  const isRoleplay = chatMode === "roleplay";
   const {
     chatFontSize,
     chatFontColor,

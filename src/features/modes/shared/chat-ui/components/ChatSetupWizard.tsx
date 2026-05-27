@@ -860,9 +860,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: lorebooks } = useLorebooks();
 
   // Chat-settings presets for the shortcut view
-  const chatPresetMode = (
-    (chat as unknown as { mode?: string }).mode === "visual_novel" ? "roleplay" : "roleplay"
-  ) as ChatMode;
+  const chatPresetMode = "roleplay" as ChatMode;
   const { data: chatPresetsData } = useChatPresets(chatPresetMode);
   const chatPresetList = useMemo(() => (chatPresetsData ?? []) as ChatPreset[], [chatPresetsData]);
   const applyChatPreset = useApplyChatPreset();

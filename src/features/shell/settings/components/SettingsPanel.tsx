@@ -714,6 +714,10 @@ function GeneralSettings() {
   const setGameAutoPlayDelay = useUIStore((s) => s.setGameAutoPlayDelay);
   const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
   const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
+  const imagePromptIncludeAppearances = useUIStore((s) => s.imagePromptIncludeAppearances);
+  const setImagePromptIncludeAppearances = useUIStore((s) => s.setImagePromptIncludeAppearances);
+  const imagePromptFormat = useUIStore((s) => s.imagePromptFormat);
+  const setImagePromptFormat = useUIStore((s) => s.setImagePromptFormat);
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
   const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
   const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
@@ -1105,8 +1109,25 @@ function GeneralSettings() {
             label="Expose image prompts before sending"
             checked={reviewImagePromptsBeforeSend}
             onChange={setReviewImagePromptsBeforeSend}
-            help="Shows generated image prompts for review before sending Game assets, character or persona avatars, and sprite generations to the image provider."
+            help="Shows generated image prompts for review before sending Game assets, character or persona avatars, sprites, and chat selfies to the image provider."
           />
+          <ToggleSetting
+            label="Include card appearances"
+            checked={imagePromptIncludeAppearances}
+            onChange={setImagePromptIncludeAppearances}
+            help="Allows character and persona appearance text to be included when Marinara asks for image prompts."
+          />
+          <label className="flex flex-col gap-1.5 rounded-xl bg-[var(--background)]/50 p-3 ring-1 ring-[var(--border)]">
+            <span className="text-xs font-medium text-[var(--foreground)]">Prompt wording</span>
+            <select
+              value={imagePromptFormat}
+              onChange={(event) => setImagePromptFormat(event.target.value === "tags" ? "tags" : "descriptive")}
+              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+            >
+              <option value="descriptive">Proper descriptions</option>
+              <option value="tags">Tags</option>
+            </select>
+          </label>
 
           <ImageDimensionRow
             label="Backgrounds"

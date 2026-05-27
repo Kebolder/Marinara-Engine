@@ -4,8 +4,8 @@
 
 import type { GenerationGuideSource } from "../../shared/text/generation-guide.js";
 
-/** The four primary chat modes the engine supports. */
-export type ChatMode = "conversation" | "roleplay" | "visual_novel" | "game";
+/** The primary chat modes the engine supports. */
+export type ChatMode = "conversation" | "roleplay" | "game";
 export type SpotifySourceType = "liked" | "playlist" | "artist" | "any";
 
 /** How a multi-character (group) chat is handled. */

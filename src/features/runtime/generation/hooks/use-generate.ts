@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { retryGenerationAgents, startGeneration } from "../../../../engine/generation/start-generation";
@@ -23,6 +23,7 @@ import { llmApi } from "../../../../shared/api/llm-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { integrationGateway } from "../../../../shared/api/integration-gateway";
 import { ApiError } from "../../../../shared/api/api-errors";
+import { requestImagePromptReview } from "../../../../shared/components/ui/ImagePromptReviewHost";
 import { useAgentStore, type PendingCardUpdate } from "../../../../shared/stores/agent.store";
 import { toAgentFailure } from "../../../../shared/lib/agent-failures";
 import { useChatStore } from "../../../../shared/stores/chat.store";
@@ -38,6 +39,7 @@ import {
 } from "../../../../engine/generation/generation-replay";
 import { readNonNegativeInteger } from "../../../../engine/generation/runtime-records";
 import type { AgentDebugEntry } from "../../../../engine/contracts/types/agent";
+import type { IntegrationGateway } from "../../../../engine/capabilities/integrations";
 
 export type GenerateArgs = GenerationReplayInput & {
   chatId: string;
@@ -64,6 +66,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function readPositiveNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function resolveUserTimeZone(): string {
@@ -935,6 +941,44 @@ export async function runGenerationWithUi(
 
 export function useGenerate() {
   const queryClient = useQueryClient();
+  const reviewedIntegrationGateway = useMemo<IntegrationGateway>(
+    () => ({
+      ...integrationGateway,
+      image: {
+        generate: async <T = unknown>(input: Record<string, unknown>) => {
+          const kind = readString(input.kind).trim();
+          if (kind !== "selfie" || !useUIStore.getState().reviewImagePromptsBeforeSend) {
+            return integrationGateway.image.generate<T>(input);
+          }
+
+          const prompt = readString(input.prompt).trim();
+          if (!prompt) return integrationGateway.image.generate<T>(input);
+
+          const id = readString(input.reviewId).trim() || `selfie-${Date.now()}`;
+          const overrides = await requestImagePromptReview([
+            {
+              id,
+              kind: "selfie",
+              title: readString(input.reviewTitle).trim() || "Conversation selfie",
+              prompt,
+              negativePrompt: readString(input.negativePrompt).trim(),
+              width: readPositiveNumber(input.width, 512),
+              height: readPositiveNumber(input.height, 768),
+            },
+          ]);
+          if (!overrides) throw new Error("Selfie generation cancelled.");
+
+          const override = overrides.find((item) => item.id === id) ?? overrides[0];
+          return integrationGateway.image.generate<T>({
+            ...input,
+            prompt: override?.prompt ?? prompt,
+            negativePrompt: override?.negativePrompt ?? input.negativePrompt,
+          });
+        },
+      },
+    }),
+    [],
+  );
 
   const generate = useCallback(
     async (args: GenerateArgs): Promise<boolean> => {
@@ -960,10 +1004,14 @@ export function useGenerate() {
         adjustedArgs,
         (streamArgs, signal) =>
           startGeneration(
-            { storage: storageApi, llm: llmApi, integrations: integrationGateway },
+            { storage: storageApi, llm: llmApi, integrations: reviewedIntegrationGateway },
             {
               ...streamArgs,
               userTimeZone: resolveUserTimeZone(),
+              imagePromptSettings: {
+                includeAppearances: useUIStore.getState().imagePromptIncludeAppearances,
+                format: useUIStore.getState().imagePromptFormat,
+              },
               debugMode: useUIStore.getState().debugMode,
               debugSink: (entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) =>
                 useAgentStore.getState().addDebugEntry(entry),
@@ -986,7 +1034,7 @@ export function useGenerate() {
         },
       );
     },
-    [queryClient],
+    [queryClient, reviewedIntegrationGateway],
   );
 
   const retryAgents = useCallback(

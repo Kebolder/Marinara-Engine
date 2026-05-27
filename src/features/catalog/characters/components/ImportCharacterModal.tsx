@@ -5,9 +5,16 @@ import { useState, useRef } from "react";
 import { Modal } from "../../../../shared/components/ui/Modal";
 import { Download, FileJson, Image, CheckCircle, XCircle, Loader2, BookOpen } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { cacheCharacterListRecordFromResult, characterKeys } from "../hooks/use-characters";
+import {
+  cacheCharacterListRecordFromResult,
+  characterKeys,
+  useCharacters,
+  useDeleteCharacter,
+  useUpdateCharacter,
+} from "../hooks/use-characters";
 import { lorebookKeys } from "../../lorebooks/index";
 import { importApi } from "../../../../shared/api/import-api";
+import { storageApi } from "../../../../shared/api/storage-api";
 import {
   inspectCharacterFilesForEmbeddedLorebooks,
   type EmbeddedLorebookImportPreview,
@@ -30,6 +37,7 @@ type ImportResultRow = {
 };
 
 type TagImportMode = "all" | "none" | "existing";
+type CharacterRow = Record<string, unknown> & { id?: string; name?: string; data?: unknown; comment?: string; avatarPath?: string };
 
 const TAG_IMPORT_OPTIONS: Array<{ value: TagImportMode; label: string; description: string }> = [
   { value: "all", label: "All tags", description: "Keep source tags." },
@@ -37,8 +45,35 @@ const TAG_IMPORT_OPTIONS: Array<{ value: TagImportMode; label: string; descripti
   { value: "existing", label: "Existing only", description: "Keep tags already in Marinara." },
 ];
 
+function readString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function characterData(row: CharacterRow | null | undefined): Record<string, unknown> {
+  return readRecord(row?.data);
+}
+
+function characterDisplayName(row: CharacterRow | null | undefined): string {
+  return readString(row?.name) || readString(characterData(row).name) || "Unnamed character";
+}
+
 export function ImportCharacterModal({ open, onClose }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const { data: rawCharacters } = useCharacters(open);
+  const updateCharacter = useUpdateCharacter();
+  const deleteCharacter = useDeleteCharacter();
   const [status, setStatus] = useState<"idle" | "loading" | "done">("idle");
   const [results, setResults] = useState<ImportResultRow[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -48,7 +83,47 @@ export function ImportCharacterModal({ open, onClose }: Props) {
     previews: EmbeddedLorebookImportPreview[];
   } | null>(null);
   const [tagImportMode, setTagImportMode] = useState<TagImportMode>("all");
+  const [importMode, setImportMode] = useState<"new" | "update">("new");
+  const [targetCharacterId, setTargetCharacterId] = useState("");
   const qc = useQueryClient();
+  const characters = (rawCharacters ?? []) as CharacterRow[];
+
+  const updateImportedCharacterInPlace = async (imported: unknown, importedName: string) => {
+    if (!targetCharacterId) throw new Error("Choose a character to update.");
+    const target = characters.find((character) => character.id === targetCharacterId);
+    if (!target?.id) throw new Error("Target character not found.");
+    const importedRow = imported && typeof imported === "object" && !Array.isArray(imported) ? (imported as CharacterRow) : null;
+    const importedData = characterData(importedRow);
+    if (Object.keys(importedData).length === 0) throw new Error("Imported character record did not include card data.");
+
+    const targetData = characterData(target);
+    await storageApi.create("character-versions", {
+      characterId: target.id,
+      data: targetData,
+      comment: readString(target.comment),
+      avatarPath: target.avatarPath ?? null,
+      version: readString(targetData.character_version, "current"),
+      source: "import",
+      reason: `Before in-place import from ${importedName}`,
+    });
+
+    const patch: Parameters<typeof updateCharacter.mutateAsync>[0] = {
+      id: target.id,
+      data: importedData,
+      comment: readString(importedRow?.comment),
+      versionSource: "import",
+      versionReason: `Imported updated card from ${importedName}`,
+    };
+    if (readString(importedRow?.avatarPath).trim()) patch.avatarPath = readString(importedRow?.avatarPath);
+    await updateCharacter.mutateAsync(patch);
+
+    const importedId = readString(importedRow?.id);
+    if (importedId && importedId !== target.id) {
+      await deleteCharacter.mutateAsync(importedId);
+    }
+
+    return characterDisplayName(target);
+  };
 
   const isZipFile = async (file: File): Promise<boolean> => {
     if (file.size < 4) return false;
@@ -58,6 +133,28 @@ export function ImportCharacterModal({ open, onClose }: Props) {
 
   const handleFiles = async (files: File[], importEmbeddedLorebook?: boolean) => {
     if (files.length === 0) return;
+    if (importMode === "update" && !targetCharacterId) {
+      setResults([
+        {
+          filename: files.length === 1 ? files[0]!.name : `${files.length} files`,
+          success: false,
+          message: "Choose a character to update first.",
+        },
+      ]);
+      setStatus("done");
+      return;
+    }
+    if (importMode === "update" && files.length !== 1) {
+      setResults([
+        {
+          filename: `${files.length} files`,
+          success: false,
+          message: "Update existing accepts one character file at a time.",
+        },
+      ]);
+      setStatus("done");
+      return;
+    }
     setStatus("loading");
     setResults([]);
     setPendingLorebookChoice(null);
@@ -121,7 +218,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
         return;
       }
 
-      if (stCharacterFiles.length > 0 && importEmbeddedLorebook === undefined) {
+      if (importMode !== "update" && stCharacterFiles.length > 0 && importEmbeddedLorebook === undefined) {
         const previews = await inspectCharacterFilesForEmbeddedLorebooks(stCharacterFiles);
         if (previews.length > 0) {
           setPendingLorebookChoice({ files, previews });
@@ -134,6 +231,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
       let importedCharacterMissingCacheRecord = false;
 
       if (stCharacterFiles.length > 0) {
+        const shouldImportEmbeddedLorebook = importMode === "update" ? false : (importEmbeddedLorebook ?? true);
         const form = new FormData();
         for (const file of stCharacterFiles) {
           form.append("files", file);
@@ -147,7 +245,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             })),
           ),
         );
-        form.append("importEmbeddedLorebook", String(importEmbeddedLorebook ?? true));
+        form.append("importEmbeddedLorebook", String(shouldImportEmbeddedLorebook));
         form.append("tagImportMode", tagImportMode);
 
         const batchResult = await importApi.stCharacterBatch<{
@@ -157,6 +255,7 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             success: boolean;
             name?: string;
             error?: string;
+            character?: unknown;
             lorebook?: { lorebookId?: string };
             embeddedLorebook?: { hasEmbeddedLorebook?: boolean; skipped?: boolean; entries?: number };
           }>;
@@ -165,8 +264,18 @@ export function ImportCharacterModal({ open, onClose }: Props) {
         for (const result of batchResult.results) {
           if (result.lorebook?.lorebookId) importedLorebook = true;
           if (result.success) {
-            const cached = cacheCharacterListRecordFromResult(qc, result);
-            if (!cached) importedCharacterMissingCacheRecord = true;
+            if (importMode === "update") {
+              const updatedName = await updateImportedCharacterInPlace(result.character, result.name ?? result.filename);
+              nextResults.push({
+                filename: result.filename,
+                success: true,
+                message: `Updated "${updatedName}" from "${result.name ?? result.filename}"`,
+              });
+              continue;
+            } else {
+              const cached = cacheCharacterListRecordFromResult(qc, result);
+              if (!cached) importedCharacterMissingCacheRecord = true;
+            }
           }
           nextResults.push({
             filename: result.filename,
@@ -200,8 +309,18 @@ export function ImportCharacterModal({ open, onClose }: Props) {
           });
 
           if (result.success) {
-            const cached = cacheCharacterListRecordFromResult(qc, result);
-            if (!cached) importedCharacterMissingCacheRecord = true;
+            if (importMode === "update") {
+              const updatedName = await updateImportedCharacterInPlace(result.character, result.name ?? item.file.name);
+              nextResults.push({
+                filename: item.file.name,
+                success: true,
+                message: `Updated "${updatedName}" from "${result.name ?? item.file.name}"`,
+              });
+              continue;
+            } else {
+              const cached = cacheCharacterListRecordFromResult(qc, result);
+              if (!cached) importedCharacterMissingCacheRecord = true;
+            }
           }
           nextResults.push({
             filename: item.file.name,
@@ -234,8 +353,18 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             },
           });
           if (result.success) {
-            const cached = cacheCharacterListRecordFromResult(qc, result);
-            if (!cached) importedCharacterMissingCacheRecord = true;
+            if (importMode === "update") {
+              const updatedName = await updateImportedCharacterInPlace(result.character, result.name ?? file.name);
+              nextResults.push({
+                filename: file.name,
+                success: true,
+                message: `Updated "${updatedName}" from "${result.name ?? file.name}"`,
+              });
+              continue;
+            } else {
+              const cached = cacheCharacterListRecordFromResult(qc, result);
+              if (!cached) importedCharacterMissingCacheRecord = true;
+            }
           }
           nextResults.push({
             filename: file.name,
@@ -316,6 +445,8 @@ export function ImportCharacterModal({ open, onClose }: Props) {
     setResults([]);
     setPendingLorebookChoice(null);
     setTagImportMode("all");
+    setImportMode("new");
+    setTargetCharacterId("");
     setDropError(null);
     setDragOver(false);
   };
@@ -373,6 +504,71 @@ export function ImportCharacterModal({ open, onClose }: Props) {
             </div>
           </div>
         )}
+
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/40 p-3">
+          <div className="mb-2">
+            <p className="text-xs font-semibold text-[var(--foreground)]">Import target</p>
+            <p className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+              Import as a new card, or update one existing character while keeping its chat links.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label
+              className={`cursor-pointer rounded-lg border px-3 py-2 transition-colors ${
+                importMode === "new"
+                  ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                  : "border-[var(--border)] bg-[var(--background)]/40 hover:border-[var(--muted-foreground)]"
+              }`}
+            >
+              <input
+                type="radio"
+                name="characterImportMode"
+                value="new"
+                checked={importMode === "new"}
+                onChange={() => setImportMode("new")}
+                className="sr-only"
+              />
+              <span className="block text-xs font-medium text-[var(--foreground)]">New copy</span>
+              <span className="mt-1 block text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                Create separate imported characters.
+              </span>
+            </label>
+            <label
+              className={`cursor-pointer rounded-lg border px-3 py-2 transition-colors ${
+                importMode === "update"
+                  ? "border-[var(--primary)] bg-[var(--primary)]/10"
+                  : "border-[var(--border)] bg-[var(--background)]/40 hover:border-[var(--muted-foreground)]"
+              }`}
+            >
+              <input
+                type="radio"
+                name="characterImportMode"
+                value="update"
+                checked={importMode === "update"}
+                onChange={() => setImportMode("update")}
+                className="sr-only"
+              />
+              <span className="block text-xs font-medium text-[var(--foreground)]">Update existing</span>
+              <span className="mt-1 block text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                Save the current card to version history first.
+              </span>
+            </label>
+          </div>
+          {importMode === "update" && (
+            <select
+              value={targetCharacterId}
+              onChange={(event) => setTargetCharacterId(event.target.value)}
+              className="mt-3 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+            >
+              <option value="">Choose character to update</option>
+              {characters.map((character) => (
+                <option key={character.id} value={character.id}>
+                  {characterDisplayName(character)}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--secondary)]/40 p-3">
           <div className="mb-2 flex items-center justify-between gap-2">

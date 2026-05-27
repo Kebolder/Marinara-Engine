@@ -16,10 +16,12 @@ import {
   SIDEBAR_WIDTH_MIN,
   useUIStore,
 } from "../../shared/stores/ui.store";
+import type { TrackerPanelSizeProfile } from "../../shared/stores/ui.store";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { useBackgroundAutonomousPolling } from "../../features/modes/conversation/index";
 import { useClearAutonomousUnread } from "../../features/catalog/chats/index";
 import { useIdleDetection } from "../../shared/hooks/use-idle-detection";
+import { ImagePromptReviewHost } from "../../shared/components/ui/ImagePromptReviewHost";
 import { cn } from "../../shared/lib/utils";
 import { parseChatMetadata } from "../../shared/lib/chat-display";
 import { getDetailRouteView } from "./detail-route-registry";
@@ -57,6 +59,18 @@ const OnboardingTutorial = lazy(() =>
 
 function clampWidth(width: number, min: number, max: number) {
   return Math.max(min, Math.min(max, width));
+}
+
+function getMobileTrackerPanelWidthForProfile(profile: TrackerPanelSizeProfile) {
+  switch (profile) {
+    case "compact":
+      return "min(4.5rem, 24vw)";
+    case "expanded":
+      return "min(24rem, 82vw)";
+    case "standard":
+    default:
+      return "min(18rem, 62vw)";
+  }
 }
 
 const PANEL_RESIZE_STEP = 16;
@@ -203,6 +217,7 @@ export function AppShell() {
   const liveSidebarWidth = sidebarDragWidth ?? sidebarWidth;
   const liveRightPanelWidth = rightPanelDragWidth ?? rightPanelWidth;
   const trackerPanelWidth = getTrackerPanelWidthForProfile(trackerPanelSizeProfile);
+  const mobileTrackerPanelWidth = getMobileTrackerPanelWidthForProfile(trackerPanelSizeProfile);
 
   // Track mobile breakpoint for right-panel animation strategy
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -652,13 +667,17 @@ export function AppShell() {
   ]);
 
   const trackerPanelChatAvoidance =
-    !isMobile && trackerPanelAnchoredForMotion && trackerPanelSurfaceAvailable
-      ? Math.round(trackerPanelWidth * 0.62)
-      : 0;
+    trackerPanelAnchoredForMotion && trackerPanelSurfaceAvailable
+      ? isMobile
+        ? "var(--tracker-panel-mobile-width)"
+        : `${Math.round(trackerPanelWidth * 0.62)}px`
+      : "0px";
   const trackerPanelHudClearance =
-    !isMobile && trackerPanelAnchoredForMotion && trackerPanelHideHudWidgets && trackerPanelSurfaceAvailable
-      ? trackerPanelWidth + TRACKER_PANEL_HUD_GAP
-      : 0;
+    trackerPanelAnchoredForMotion && trackerPanelHideHudWidgets && trackerPanelSurfaceAvailable
+      ? isMobile
+        ? "var(--tracker-panel-mobile-width)"
+        : `${trackerPanelWidth + TRACKER_PANEL_HUD_GAP}px`
+      : "0px";
   const activeMobilePanel = isMobile
     ? rightPanelOpen
       ? "right"
@@ -668,6 +687,7 @@ export function AppShell() {
           ? "sidebar"
           : null
     : null;
+  const activeMobileOverlayPanel = activeMobilePanel === "tracker" ? null : activeMobilePanel;
 
   const closeActiveMobilePanel = useCallback(() => {
     if (activeMobilePanel === "right") closeRightPanel();
@@ -731,9 +751,9 @@ export function AppShell() {
     setInert(sidebarPanelRef.current, activeMobilePanel !== "sidebar");
     setInert(mobileTrackerPanelRef.current, activeMobilePanel !== "tracker");
     setInert(mobileRightPanelRef.current, activeMobilePanel !== "right");
-    setInert(headerRef.current, activeMobilePanel !== null);
-    setInert(mainRef.current, activeMobilePanel !== null);
-  }, [activeMobilePanel, isMobile]);
+    setInert(headerRef.current, activeMobileOverlayPanel !== null);
+    setInert(mainRef.current, activeMobileOverlayPanel !== null);
+  }, [activeMobileOverlayPanel, activeMobilePanel, isMobile]);
 
   useEffect(() => {
     if (!hasCompletedOnboarding) return;
@@ -748,11 +768,10 @@ export function AppShell() {
   }, [hasCompletedOnboarding, syncMobilePanelInert]);
 
   useEffect(() => {
-    if (!hasCompletedOnboarding || !isMobile || !activeMobilePanel) return;
+    if (!hasCompletedOnboarding || !isMobile || !activeMobileOverlayPanel) return;
 
     const getPanel = () => {
-      if (activeMobilePanel === "right") return mobileRightPanelRef.current;
-      if (activeMobilePanel === "tracker") return mobileTrackerPanelRef.current;
+      if (activeMobileOverlayPanel === "right") return mobileRightPanelRef.current;
       return sidebarPanelRef.current;
     };
 
@@ -775,8 +794,7 @@ export function AppShell() {
 
       if (event.key === "Escape") {
         event.preventDefault();
-        if (activeMobilePanel === "right") closeRightPanel();
-        else if (activeMobilePanel === "tracker") setTrackerPanelOpen(false);
+        if (activeMobileOverlayPanel === "right") closeRightPanel();
         else setSidebarOpen(false);
         return;
       }
@@ -818,7 +836,7 @@ export function AppShell() {
         previous.focus();
       }
     };
-  }, [activeMobilePanel, closeRightPanel, hasCompletedOnboarding, isMobile, setSidebarOpen, setTrackerPanelOpen]);
+  }, [activeMobileOverlayPanel, closeRightPanel, hasCompletedOnboarding, isMobile, setSidebarOpen]);
 
   const trackerPanelDesktop = (side: "left" | "right") =>
     trackerPanelVisible && trackerPanelSide === side ? (
@@ -897,11 +915,12 @@ export function AppShell() {
           <div className="y2k-star-md hidden md:block" style={{ top: "45%", left: "50%", animationDelay: "2.2s" }} />
         </>
       )}
+      <ImagePromptReviewHost />
 
       <header
         ref={headerRef}
         data-component="AppChrome"
-        aria-hidden={activeMobilePanel ? true : undefined}
+        aria-hidden={activeMobileOverlayPanel ? true : undefined}
         className="mari-app-chrome relative z-40 flex shrink-0 flex-col overflow-visible"
       >
         <WindowTitleBar
@@ -973,7 +992,7 @@ export function AppShell() {
         data-tour="chat-area"
         data-component="CenterContent"
         aria-label="Main content"
-        aria-hidden={activeMobilePanel ? true : undefined}
+        aria-hidden={activeMobileOverlayPanel ? true : undefined}
         className="@container mari-main relative flex min-w-0 flex-1 flex-col overflow-hidden"
       >
         <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -996,10 +1015,11 @@ export function AppShell() {
             }
             style={
               {
-                "--tracker-chat-avoid-left": `${trackerPanelSide === "left" ? trackerPanelChatAvoidance : 0}px`,
-                "--tracker-chat-avoid-right": `${trackerPanelSide === "right" ? trackerPanelChatAvoidance : 0}px`,
-                "--tracker-panel-hud-clear-left": `${trackerPanelSide === "left" ? trackerPanelHudClearance : 0}px`,
-                "--tracker-panel-hud-clear-right": `${trackerPanelSide === "right" ? trackerPanelHudClearance : 0}px`,
+                "--tracker-panel-mobile-width": mobileTrackerPanelWidth,
+                "--tracker-chat-avoid-left": trackerPanelSide === "left" ? trackerPanelChatAvoidance : "0px",
+                "--tracker-chat-avoid-right": trackerPanelSide === "right" ? trackerPanelChatAvoidance : "0px",
+                "--tracker-panel-hud-clear-left": trackerPanelSide === "left" ? trackerPanelHudClearance : "0px",
+                "--tracker-panel-hud-clear-right": trackerPanelSide === "right" ? trackerPanelHudClearance : "0px",
               } as CSSProperties
             }
           >
@@ -1014,14 +1034,6 @@ export function AppShell() {
 
       <AnimatePresence initial={false}>{!isMobile && trackerPanelSurfaceAvailable && trackerPanelDesktop("right")}</AnimatePresence>
 
-      {/* Mobile tracker panel backdrop */}
-      {trackerPanelVisible && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
-          onClick={() => setTrackerPanelOpen(false)}
-        />
-      )}
-
       {/* Mobile tracker panel */}
       {isMobile && (
         <AnimatePresence mode="wait">
@@ -1035,13 +1047,12 @@ export function AppShell() {
               transition={{ type: "spring", damping: 28, stiffness: 350 }}
               data-component="TrackerDataSidebarMobile"
               aria-label="Tracker data panel"
-              aria-modal="true"
-              role="dialog"
-              tabIndex={-1}
+              role="complementary"
               className={cn(
-                "mari-tracker-panel fixed! inset-y-0 z-50 w-[calc(100vw-0.5rem)] max-w-[24rem] overflow-hidden bg-[var(--background)]/65 pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl",
+                "mari-tracker-panel fixed! inset-y-0 z-30 overflow-hidden bg-[var(--background)]/65 pt-[env(safe-area-inset-top)] shadow-2xl backdrop-blur-xl",
                 trackerPanelSide === "left" ? "left-0" : "right-0",
               )}
+              style={{ width: mobileTrackerPanelWidth }}
             >
               <Suspense fallback={<SidePanelFallback />}>
                 <TrackerDataSidebar fillHeight />

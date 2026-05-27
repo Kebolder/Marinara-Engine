@@ -4583,6 +4583,40 @@ export function GameSurface({
   startGameResetRef.current = startGame.reset;
   startSessionResetRef.current = startSession.reset;
 
+  const handleMapChange = useCallback(
+    async (updatedMap: GameMap) => {
+      if (!activeChatId) return;
+
+      const updatedMapId = getGameMapId(updatedMap);
+      const viewedId = effectiveViewedMapId ?? updatedMapId;
+      const sourceMaps = availableMaps.length > 0 ? availableMaps : [updatedMap];
+      let replaced = false;
+      const nextMaps = sourceMaps.map((map, index) => {
+        const mapId = getGameMapId(map, index);
+        if (!replaced && (map === viewedMap || mapId === viewedId || mapId === updatedMapId)) {
+          replaced = true;
+          return updatedMap;
+        }
+        return map;
+      });
+      if (!replaced) nextMaps.push(updatedMap);
+
+      const nextActiveMapId = activeMapId ?? updatedMapId ?? getGameMapId(nextMaps[0] ?? null);
+      const nextActiveMap =
+        nextMaps.find((map, index) => getGameMapId(map, index) === nextActiveMapId) ?? nextMaps[0] ?? null;
+
+      await updateChatMetadata.mutateAsync({
+        id: activeChatId,
+        gameMap: nextActiveMap,
+        gameMaps: nextMaps,
+        activeGameMapId: nextActiveMapId,
+      });
+      useGameModeStore.getState().setMaps(nextMaps, nextActiveMapId);
+      toast.success("Map location updated.");
+    },
+    [activeChatId, activeMapId, availableMaps, effectiveViewedMapId, updateChatMetadata, viewedMap],
+  );
+
   useEffect(() => {
     createGameResetRef.current();
     gameSetupResetRef.current();
@@ -8058,6 +8092,7 @@ export function GameSurface({
                       activeMapId={activeMapId}
                       viewedMapId={effectiveViewedMapId}
                       onViewedMapChange={handleViewedMapChange}
+                      onMapChange={handleMapChange}
                       onMove={handleMapMove}
                       selectedPosition={viewedMapIsActive ? (pendingMapMove?.position ?? null) : null}
                       onGenerateMap={handleGenerateMap}
@@ -8077,6 +8112,7 @@ export function GameSurface({
                       activeMapId={activeMapId}
                       viewedMapId={effectiveViewedMapId}
                       onViewedMapChange={handleViewedMapChange}
+                      onMapChange={handleMapChange}
                       onMove={handleMapMove}
                       selectedPosition={viewedMapIsActive ? (pendingMapMove?.position ?? null) : null}
                       onGenerateMap={handleGenerateMap}

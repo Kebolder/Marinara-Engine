@@ -189,8 +189,6 @@ const MODE_INTROS: Record<ChatMode, string> = {
     "Plain chat — no roleplay or game systems built in; autonomous messaging and other tools are optional below.",
   roleplay:
     "Plain roleplay surface — no built-in dice, combat, or GM pipeline; sprites, world-state tracking, and other helpers are available as optional agents below.",
-  visual_novel:
-    "Sprite- and background-driven roleplay — expressions, world state, and CYOA choices are available as optional agents below.",
   game: "Full Game Master with built-in dice, combat, encounters, world state, and session/map tracking — the Scene Analysis toggle below adds optional cinematic visuals (backgrounds, music, weather).",
 };
 
@@ -300,10 +298,11 @@ export function ChatSettingsDrawer({
   const { data: characterGroups } = useCharacterGroups();
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
-  const chatMode = (chat as unknown as { mode?: string }).mode ?? "roleplay";
+  const chatMode: ChatMode =
+    chat.mode === "conversation" || chat.mode === "roleplay" || chat.mode === "game" ? chat.mode : "roleplay";
   const isConversation = chatMode === "conversation";
   const isGame = chatMode === "game";
-  const isRoleplayMode = chatMode === "roleplay" || chatMode === "visual_novel";
+  const isRoleplayMode = chatMode === "roleplay";
   const { data: currentPromptPresetFull } = usePresetFull(isConversation ? null : (chat.promptPresetId ?? null));
   const { data: connections } = useConnections();
   const imageConnectionsList = useMemo(
@@ -1175,7 +1174,7 @@ export function ChatSettingsDrawer({
   const [gameSpotifyArtistDraft, setGameSpotifyArtistDraft] = useState(gameSpotifyArtist);
 
   // ── Chat Settings Presets ──
-  const presetMode = (chatMode === "visual_novel" ? "roleplay" : chatMode) as ChatMode;
+  const presetMode = chatMode;
   const { data: chatPresets } = useChatPresets(presetMode);
   const saveChatPreset = useSaveChatPresetSettings();
   const duplicateChatPreset = useDuplicateChatPreset();

@@ -19,6 +19,7 @@ export type VisualTheme = "default" | "sillytavern";
 export type HudPosition = "top" | "left" | "right";
 export type TrackerPanelSide = "left" | "right";
 export type TrackerThoughtBubbleDisplay = "inline" | "floating";
+export type ImagePromptFormat = "descriptive" | "tags";
 export const TRACKER_TEMPERATURE_UNITS = TEMPERATURE_UNITS;
 export type TrackerTemperatureUnit = TemperatureUnit;
 export const TRACKER_PANEL_SIZE_PROFILES = ["compact", "standard", "expanded"] as const;
@@ -332,6 +333,10 @@ export interface UIState {
   gameAutoPlayDelay: number;
   /** When true, generated game image prompts are shown for review before provider calls are sent. */
   reviewImagePromptsBeforeSend: boolean;
+  /** When true, character/persona appearance text is allowed into generated image prompts. */
+  imagePromptIncludeAppearances: boolean;
+  /** Preferred prompt wording for image prompt generation. */
+  imagePromptFormat: ImagePromptFormat;
   imageBackgroundWidth: number;
   imageBackgroundHeight: number;
   imagePortraitWidth: number;
@@ -549,6 +554,8 @@ export interface UIState {
   setGameTextSpeed: (v: number) => void;
   setGameAutoPlayDelay: (v: number) => void;
   setReviewImagePromptsBeforeSend: (v: boolean) => void;
+  setImagePromptIncludeAppearances: (v: boolean) => void;
+  setImagePromptFormat: (format: ImagePromptFormat) => void;
   setImageBackgroundDimensions: (width: number, height: number) => void;
   setImagePortraitDimensions: (width: number, height: number) => void;
   setImageSelfieDimensions: (width: number, height: number) => void;

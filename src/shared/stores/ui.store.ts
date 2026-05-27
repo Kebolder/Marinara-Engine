@@ -36,6 +36,7 @@ import type {
   FontSize,
   GameDialogueDisplayMode,
   HudPosition,
+  ImagePromptFormat,
   Panel,
   QuoteFormat,
   RoleplayAvatarStyle,
@@ -79,6 +80,7 @@ export type {
   GameSetupLearnedOptions,
   GameSetupRememberedText,
   HudPosition,
+  ImagePromptFormat,
   Panel,
   QuoteFormat,
   RoleplayAvatarStyle,
@@ -146,6 +148,8 @@ export const useUIStore = create<UIState>()(
       gameTextSpeed: 50,
       gameAutoPlayDelay: 3000,
       reviewImagePromptsBeforeSend: false,
+      imagePromptIncludeAppearances: true,
+      imagePromptFormat: "descriptive" as ImagePromptFormat,
       imageBackgroundWidth: 1280,
       imageBackgroundHeight: 720,
       imagePortraitWidth: 1024,
@@ -391,6 +395,8 @@ export const useUIStore = create<UIState>()(
       setGameTextSpeed: (v) => set({ gameTextSpeed: Math.max(1, Math.min(100, v)) }),
       setGameAutoPlayDelay: (v) => set({ gameAutoPlayDelay: Math.max(200, Math.min(10000, Math.round(v))) }),
       setReviewImagePromptsBeforeSend: (v) => set({ reviewImagePromptsBeforeSend: v }),
+      setImagePromptIncludeAppearances: (v) => set({ imagePromptIncludeAppearances: v }),
+      setImagePromptFormat: (format) => set({ imagePromptFormat: format }),
       setImageBackgroundDimensions: (width, height) =>
         set({
           imageBackgroundWidth: clampImageDimension(width),

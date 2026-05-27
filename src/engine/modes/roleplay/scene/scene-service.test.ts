@@ -156,6 +156,51 @@ describe("createRoleplayScene folderId inheritance", () => {
     expect(payloads).toHaveLength(1);
     expect(payloads[0]?.folderId).toBeNull();
   });
+
+  it("carries forward the previous scene agent and tool options", async () => {
+    const storage = recordingStorage({
+      "origin-3": {
+        id: "origin-3",
+        name: "Origin",
+        mode: "roleplay",
+        characterIds: ["char-a"],
+        folderId: null,
+        groupId: null,
+        personaId: null,
+        promptPresetId: null,
+        connectionId: null,
+        metadata: {
+          activeAgentIds: ["old-agent"],
+          lastRoleplaySceneOptions: {
+            enableAgents: true,
+            activeAgentIds: ["expression", "spotify"],
+            enableTools: true,
+            activeToolIds: ["roll_dice"],
+            spotifySourceType: "playlist",
+            spotifyPlaylistId: "playlist-1",
+          },
+        },
+      },
+    });
+
+    const input: SceneCreateRequest = {
+      originChatId: "origin-3",
+      initiatorCharId: null,
+      plan: makePlan({ characterIds: ["char-a"] }),
+      connectionId: null,
+    };
+
+    await createRoleplayScene(storage.gateway, input);
+
+    const payloads = createdChatPayloads(storage);
+    const metadata = payloads[0]?.metadata as JsonRecord;
+    expect(metadata.enableAgents).toBe(true);
+    expect(metadata.activeAgentIds).toEqual(["expression", "spotify"]);
+    expect(metadata.enableTools).toBe(true);
+    expect(metadata.activeToolIds).toEqual(["roll_dice"]);
+    expect(metadata.spotifySourceType).toBe("playlist");
+    expect(metadata.spotifyPlaylistId).toBe("playlist-1");
+  });
 });
 
 describe("forkRoleplayScene folderId inheritance", () => {

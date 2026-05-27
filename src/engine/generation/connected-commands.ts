@@ -42,6 +42,11 @@ export interface ConnectedCommandResult {
   suppressAssistantMessage?: boolean;
 }
 
+type ImagePromptSettings = {
+  includeAppearances?: boolean;
+  format?: "descriptive" | "tags";
+};
+
 function parseData(row: JsonRecord | null | undefined): JsonRecord {
   const raw = row?.data;
   if (typeof raw === "string") {
@@ -252,14 +257,18 @@ async function buildSelfiePrompt(args: {
   chat: JsonRecord;
   commandContext?: string;
   characterId: string | null;
+  imagePromptSettings?: ImagePromptSettings;
 }): Promise<{ prompt: string; characterName: string }> {
   const character = args.characterId ? await args.storage.get<JsonRecord>("characters", args.characterId) : null;
   const data = parseData(character ?? undefined);
   const characterName = nameOf(character ?? {}) || readString(data.name, "character") || "character";
-  const appearance =
-    readString(parseRecord(data.extensions).appearance).trim() ||
-    readString(data.appearance).trim() ||
-    readString(data.description).trim();
+  const includeAppearances = args.imagePromptSettings?.includeAppearances !== false;
+  const promptFormat = args.imagePromptSettings?.format === "tags" ? "tags" : "descriptive";
+  const appearance = includeAppearances
+    ? readString(parseRecord(data.extensions).appearance).trim() ||
+      readString(data.appearance).trim() ||
+      readString(data.description).trim()
+    : "";
   const metadata = parseRecord(args.chat.metadata);
   const positive =
     readString(metadata.selfiePositivePrompt).trim() ||
@@ -272,6 +281,10 @@ async function buildSelfiePrompt(args: {
     charName: characterName,
     selfieTagsBlock: selfieTagsBlock(positive),
   });
+  const formatInstruction =
+    promptFormat === "tags"
+      ? "Write the final image prompt as concise comma-separated image tags. Put the subject, outfit, expression, pose, camera, and quality tags first."
+      : "Write the final image prompt as a clear natural-language description suitable for an image model.";
   const userPrompt = args.commandContext
     ? `Context for the selfie: ${args.commandContext}`
     : `Generate a casual selfie of ${characterName} based on the current conversation context.`;
@@ -289,6 +302,7 @@ async function buildSelfiePrompt(args: {
               `Character: ${characterName}`,
               appearance ? `Appearance: ${appearance}` : "",
               positive ? `Required image tags: ${positive}` : "",
+              formatInstruction,
               userPrompt,
             ]
               .filter(Boolean)
@@ -305,7 +319,9 @@ async function buildSelfiePrompt(args: {
       `selfie of ${characterName}`,
       appearance,
       args.commandContext,
-      "casual camera angle, expressive face, detailed lighting",
+      promptFormat === "tags"
+        ? "selfie, casual camera angle, expressive face, detailed lighting"
+        : "casual camera angle, expressive face, detailed lighting",
       positive,
     ]
       .filter((part) => readString(part).trim())
@@ -323,6 +339,7 @@ async function generateSelfie(args: {
   command: Extract<CharacterCommand, { type: "selfie" }>;
   events: ConnectedCommandEvent[];
   assistantAttachments: JsonRecord[];
+  imagePromptSettings?: ImagePromptSettings;
 }): Promise<boolean> {
   const metadata = parseRecord(args.chat.metadata);
   const imageConnectionId = readString(metadata.imageGenConnectionId).trim();
@@ -344,6 +361,7 @@ async function generateSelfie(args: {
       chat: args.chat,
       commandContext: args.command.context,
       characterId,
+      imagePromptSettings: args.imagePromptSettings,
     });
     const negativePrompt = readString(metadata.selfieNegativePrompt).trim();
     const size = parseSelfieSize(metadata.selfieResolution);
@@ -355,6 +373,9 @@ async function generateSelfie(args: {
       model?: string;
     }>({
       connectionId: imageConnectionId,
+      kind: "selfie",
+      reviewId: `selfie:${readString(args.chat.id)}:${characterId ?? "active"}`,
+      reviewTitle: `Selfie: ${characterName}`,
       prompt,
       negativePrompt: negativePrompt || undefined,
       width: size.width,
@@ -580,6 +601,7 @@ async function executeCommand(
   events: ConnectedCommandEvent[],
   assistantAttachments: JsonRecord[],
   visibleContent: string,
+  imagePromptSettings?: ImagePromptSettings,
 ): Promise<{ name: string; suppressSourceMessage?: boolean } | null> {
   const chatId = readString(chat.id);
   switch (command.type) {
@@ -770,6 +792,7 @@ async function executeCommand(
         command,
         events,
         assistantAttachments,
+        imagePromptSettings,
       }))
         ? { name: "selfie" }
         : null;
@@ -787,6 +810,7 @@ export async function persistConnectedCommandTags(
   integrations?: IntegrationGateway,
   llm?: LlmGateway,
   llmConnectionId?: string | null,
+  imagePromptSettings?: ImagePromptSettings,
 ): Promise<ConnectedCommandResult> {
   const createdNotes: JsonRecord[] = [];
   const pendingNoteWrites: Array<{ chatId: string; note: JsonRecord }> = [];
@@ -809,6 +833,7 @@ export async function persistConnectedCommandTags(
       events,
       assistantAttachments,
       parsed.cleanContent,
+      imagePromptSettings,
     ).catch(() => null);
     if (executed) {
       executedCommands.push(executed.name);

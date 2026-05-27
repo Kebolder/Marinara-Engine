@@ -26,7 +26,7 @@ import { ChatRoleplaySurface } from "./ChatRoleplaySurface";
 
 type RoleplayModeRouteProps = {
   activeChatId: string;
-  fallbackChatMode?: "roleplay" | "visual_novel";
+  fallbackChatMode?: "roleplay";
 };
 
 function parseMessageExtraRecord(value: unknown): Record<string, unknown> {
@@ -151,7 +151,7 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
   });
   useChatTtsAutoplay({
     chatId: activeChatId,
-    mode: data.chatMode === "visual_novel" ? "visual_novel" : "roleplay",
+    mode: "roleplay",
     messages: data.messages,
     characterMap: data.characterMap,
     isStreaming: timeline.isStreaming,
@@ -172,7 +172,7 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
     content: message.content,
   }));
   const isSceneChat = data.chatMeta.sceneStatus === "active" || Boolean(data.chatMeta.sceneOriginChatId);
-  const isRoleplay = data.chatMode === "roleplay" || data.chatMode === "visual_novel";
+  const isRoleplay = data.chatMode === "roleplay";
   const expressionAvatarsEnabled =
     isRoleplay && data.chatMeta.expressionAvatarsEnabled === true && expressionAgentEnabled && data.chatCharIds.length > 0;
   const expressionAvatarCharacterIds = useMemo(() => {

@@ -100,14 +100,6 @@ const MODE_CONFIG: Record<
     bg: "linear-gradient(135deg, #eb8951, #d97530)",
     description: "Immersive roleplay with characters, game state tracking, and world simulation.",
   },
-  visual_novel: {
-    icon: <Theater size="0.875rem" />,
-    label: "Visual Novel",
-    shortLabel: "VN",
-    bg: "linear-gradient(135deg, #e15c8c, #c94776)",
-    description: "A full game experience with backgrounds, sprites, text boxes, and choices.",
-    comingSoon: true,
-  },
   game: {
     icon: <Theater size="0.875rem" />,
     label: "Game",

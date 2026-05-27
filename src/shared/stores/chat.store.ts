@@ -89,7 +89,7 @@ interface ChatState {
   /** Targeted setup intent for a newly created chat. */
   newChatSetupIntent: NewChatSetupIntent | null;
   /** Pending new-chat mode for first-run connection setup gating. */
-  pendingNewChatMode: Exclude<ChatMode, "visual_novel"> | null;
+  pendingNewChatMode: ChatMode | null;
   /** Per-chat draft input text so typing isn't lost when navigating away. */
   inputDrafts: Map<string, string>;
   /** Current chat input */
@@ -141,7 +141,7 @@ interface ChatState {
   setShouldOpenWizard: (v: boolean, chatId?: string) => void;
   setShouldOpenWizardInShortcutMode: (v: boolean, chatId?: string) => void;
   consumeNewChatSetupIntent: (chatId: string) => NewChatSetupIntent | null;
-  setPendingNewChatMode: (mode: Exclude<ChatMode, "visual_novel"> | null) => void;
+  setPendingNewChatMode: (mode: ChatMode | null) => void;
   setInputDraft: (chatId: string, text: string) => void;
   clearInputDraft: (chatId: string) => void;
   setCurrentInput: (text: string) => void;

@@ -10,7 +10,7 @@ import { useChatStore } from "../../../../../shared/stores/chat.store";
 import type { CharacterMap, MessageWithSwipes } from "../types";
 import { useStreamingTTS } from "./use-streaming-tts";
 
-type ChatTtsAutoplayMode = "conversation" | "roleplay" | "visual_novel";
+type ChatTtsAutoplayMode = "conversation" | "roleplay";
 
 type UseChatTtsAutoplayOptions = {
   chatId: string | null;
@@ -43,9 +43,9 @@ export function useChatTtsAutoplay({ chatId, mode, messages, characterMap, isStr
   modeRef.current = mode;
   const prevIsStreamingRef = useRef(false);
   const streamingTTSEnabled = Boolean(
-    ttsConfig?.enabled &&
+      ttsConfig?.enabled &&
       ttsConfig.autoplayStreaming &&
-      (mode === "roleplay" || mode === "visual_novel" ? ttsConfig.autoplayRP : ttsConfig.autoplayConvo),
+      (mode === "roleplay" ? ttsConfig.autoplayRP : ttsConfig.autoplayConvo),
   );
   const fallbackTTSMessage = findLastAssistantMessage(messages);
   const streamingFallbackCharacterId =
@@ -92,8 +92,7 @@ export function useChatTtsAutoplay({ chatId, mode, messages, characterMap, isStr
     if (!config?.enabled) return;
 
     const currentMode = modeRef.current;
-    const shouldAutoplay =
-      currentMode === "roleplay" || currentMode === "visual_novel" ? config.autoplayRP : config.autoplayConvo;
+    const shouldAutoplay = currentMode === "roleplay" ? config.autoplayRP : config.autoplayConvo;
     if (!shouldAutoplay) return;
     if (config.autoplayStreaming) return;
 

@@ -85,6 +85,10 @@ export interface StartGenerationInput extends JsonRecord {
    * A persisted per-chat `metadata.promptTimeZone` takes precedence.
    */
   userTimeZone?: string;
+  imagePromptSettings?: {
+    includeAppearances?: boolean;
+    format?: "descriptive" | "tags";
+  };
   debugMode?: boolean;
   debugSink?: AgentContext["debugSink"];
 }
@@ -1057,6 +1061,7 @@ export async function* startGeneration(
       deps.integrations,
       deps.llm,
       readString(connection.id) || input.connectionId || null,
+      input.imagePromptSettings,
     );
     for (const event of connected.events) yield event;
     const saved = connected.suppressAssistantMessage
@@ -1144,6 +1149,7 @@ export async function* startGeneration(
     deps.integrations,
     deps.llm,
     readString(connection.id) || input.connectionId || null,
+    input.imagePromptSettings,
   );
   for (const event of connected.events) yield event;
   const saved = connected.suppressAssistantMessage

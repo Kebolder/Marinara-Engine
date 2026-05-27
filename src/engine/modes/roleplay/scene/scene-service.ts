@@ -128,6 +128,7 @@ export async function createRoleplayScene(
     ...stringArray(originMeta.activeLorebookIds),
     ...stringArray(originChat.activeLorebookIds),
   ].filter((id, index, ids) => ids.indexOf(id) === index);
+  const inheritedSceneOptions = sceneCarryoverOptions(originMeta);
   const sceneSystemPrompt = [plan.systemPrompt, SCENE_GUIDELINES].filter((part) => part.trim()).join("\n\n");
 
   const metadata: JsonRecord = {
@@ -140,6 +141,7 @@ export async function createRoleplayScene(
     sceneRelationshipHistory: plan.relationshipHistory ?? null,
     sceneConversationContext,
     activeLorebookIds: inheritedActiveLorebookIds,
+    ...inheritedSceneOptions,
     sceneRating: plan.rating === "nsfw" ? "nsfw" : "sfw",
     sceneStatus: "active",
     enableMemoryRecall: true,
@@ -220,6 +222,7 @@ export async function abandonRoleplayScene(
   const sceneMeta = parseJsonObject(sceneChat.metadata);
   const originChatId = stringValue(sceneMeta.sceneOriginChatId);
   if (!originChatId) throw new Error("Not a scene chat");
+  await rememberLastSceneOptions(storage, originChatId, sceneChat);
   await cleanOriginScenePointers(storage, originChatId);
   await deleteChatWithMessages(storage, input.sceneChatId);
   return { originChatId };
@@ -530,6 +533,7 @@ async function appendSceneMemory(
 ): Promise<void> {
   const originChat = await requireChat(storage, originChatId);
   const originMeta = parseJsonObject(originChat.metadata);
+  const sceneChat = await requireChat(storage, sceneChatId);
   const previous = Array.isArray(originMeta.roleplaySceneHistory) ? originMeta.roleplaySceneHistory : [];
   const next = [
     ...previous.filter((entry) => parseJsonObject(entry).sceneChatId !== sceneChatId),
@@ -542,6 +546,17 @@ async function appendSceneMemory(
   await patchChatMetadata(storage, originChatId, {
     roleplaySceneHistory: next,
     lastRoleplaySceneSummary: summary,
+    lastRoleplaySceneOptions: sceneCarryoverOptions(parseJsonObject(sceneChat.metadata)),
+  });
+}
+
+async function rememberLastSceneOptions(
+  storage: StorageGateway,
+  originChatId: string,
+  sceneChat: JsonRecord,
+): Promise<void> {
+  await patchChatMetadata(storage, originChatId, {
+    lastRoleplaySceneOptions: sceneCarryoverOptions(parseJsonObject(sceneChat.metadata)),
   });
 }
 
@@ -661,6 +676,48 @@ function sanitizeSceneAnalysis(parsed: JsonRecord): SceneAnalysis {
 
 function copyOptional(source: JsonRecord, keys: string[]): JsonRecord {
   return Object.fromEntries(keys.filter((key) => key in source).map((key) => [key, source[key]]));
+}
+
+const SCENE_CARRYOVER_METADATA_KEYS = [
+  "agentOverrides",
+  "enableTools",
+  "expressionAvatarsEnabled",
+  "spriteSide",
+  "spotifySourceType",
+  "spotifyPlaylistId",
+  "spotifyPlaylistName",
+  "spotifyArtist",
+  "spotifyVolume",
+  "spotifyMood",
+] as const;
+
+function sceneCarryoverSource(originMeta: JsonRecord): JsonRecord {
+  const lastSceneOptions = parseJsonObject(originMeta.lastRoleplaySceneOptions);
+  return Object.keys(lastSceneOptions).length > 0 ? lastSceneOptions : originMeta;
+}
+
+function sceneCarryoverOptions(originMeta: JsonRecord): JsonRecord {
+  const source = sceneCarryoverSource(originMeta);
+  const options = copyOptional(source, [...SCENE_CARRYOVER_METADATA_KEYS]);
+  const activeAgentIds = stringArray(source.activeAgentIds);
+  const activeToolIds = stringArray(source.activeToolIds);
+  if (source.enableAgents === false) {
+    options.enableAgents = false;
+  } else if (activeAgentIds.length > 0) {
+    options.activeAgentIds = activeAgentIds;
+    options.enableAgents = true;
+  } else if (typeof source.enableAgents === "boolean") {
+    options.enableAgents = source.enableAgents;
+  }
+  if (source.enableTools === false) {
+    options.enableTools = false;
+  } else if (activeToolIds.length > 0) {
+    options.activeToolIds = activeToolIds;
+    options.enableTools = true;
+  } else if (typeof source.enableTools === "boolean") {
+    options.enableTools = source.enableTools;
+  }
+  return options;
 }
 
 function parseObject(raw: string): JsonRecord {

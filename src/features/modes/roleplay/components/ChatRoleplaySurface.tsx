@@ -91,7 +91,7 @@ const AuthorNotesPanel = lazy(async () => {
 const PANEL_BACKDROP =
   "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
 const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
-  "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
+  "pl-[var(--tracker-chat-avoid-left)] pr-[var(--tracker-chat-avoid-right)] transition-[padding] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]";
 const PANEL_CONTAINER =
   "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
 

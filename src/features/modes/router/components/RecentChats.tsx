@@ -20,11 +20,6 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; bg: string; label: str
     bg: "linear-gradient(135deg, #eb8951, #d97530)",
     label: "Roleplay",
   },
-  visual_novel: {
-    icon: <BookOpen size="0.375rem" />,
-    bg: "linear-gradient(135deg, #e15c8c, #c94776)",
-    label: "Game",
-  },
 };
 
 export function RecentChats() {

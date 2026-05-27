@@ -86,6 +86,8 @@ export function partializeUiState(state: UIState) {
     gameTextSpeed: state.gameTextSpeed,
     gameAutoPlayDelay: state.gameAutoPlayDelay,
     reviewImagePromptsBeforeSend: state.reviewImagePromptsBeforeSend,
+    imagePromptIncludeAppearances: state.imagePromptIncludeAppearances,
+    imagePromptFormat: state.imagePromptFormat,
     imageBackgroundWidth: state.imageBackgroundWidth,
     imageBackgroundHeight: state.imageBackgroundHeight,
     imagePortraitWidth: state.imagePortraitWidth,
@@ -177,6 +179,8 @@ export function migrateUiState(persistedState: unknown): Partial<UIState> {
   persisted.trackerPanelSectionOrder = normalizeTrackerPanelSectionOrder(persisted.trackerPanelSectionOrder);
   persisted.summaryPopoverSettings = normalizeSummaryPopoverSettings(persisted.summaryPopoverSettings);
   persisted.quoteFormat = normalizeQuoteFormat(persisted.quoteFormat);
+  persisted.imagePromptIncludeAppearances = persisted.imagePromptIncludeAppearances !== false;
+  persisted.imagePromptFormat = persisted.imagePromptFormat === "tags" ? "tags" : "descriptive";
   persisted.userStatusManual = persisted.userStatusManual === "dnd" ? "dnd" : "active";
   persisted.userStatus = persisted.userStatusManual === "dnd" ? "dnd" : "active";
   delete persisted.trackerPanelWidth;

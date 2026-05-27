@@ -130,7 +130,7 @@ fn seed_related_prompt_rows_if_missing(
 }
 
 fn seed_default_chat_presets(storage: &FileStorage) -> AppResult<()> {
-    for mode in ["conversation", "roleplay", "visual_novel"] {
+    for mode in ["conversation", "roleplay", "game"] {
         let id = format!("default-chat-preset-{mode}");
         if storage.get("chat-presets", &id)?.is_none() {
             let has_mode_rows = storage
