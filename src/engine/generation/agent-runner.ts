@@ -1,6 +1,8 @@
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS,
+  DEFAULT_AGENT_TOOLS,
+  getDefaultBuiltInAgentSettings,
   type AgentContext,
   type AgentResult,
 } from "../contracts/types/agent";
@@ -43,6 +45,7 @@ export interface GenerationAgentRuntimeInput {
   chat: JsonRecord;
   connection: JsonRecord;
   storedMessages: JsonRecord[];
+  cadenceMessages?: JsonRecord[];
   characters: GenerationCharacterContext[];
   persona: GenerationPersonaContext | null;
   activatedLorebookEntries: Array<{ id: string; name: string; content: string; tag: string }>;
@@ -76,6 +79,16 @@ interface ResolvedAgentsResult {
 const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 const ILLUSTRATOR_AGENT_TYPE = "illustrator";
 const MAX_ASSISTANT_RUN_INTERVAL = 100;
+const MAX_CUSTOM_AGENT_USER_RUN_INTERVAL = 200;
+type AutomaticIntervalMessageRole = "assistant" | "user";
+
+interface AutomaticIntervalGate {
+  agentId: string;
+  agentType: string;
+  messageRole: AutomaticIntervalMessageRole;
+  includePendingMessage: boolean;
+  runInterval: number;
+}
 
 function llmProvider(llm: LlmGateway, connectionId: string | null): BaseLLMProvider {
   return {
@@ -189,19 +202,93 @@ function isBuiltInAgent(agent: JsonRecord): boolean {
   return BUILT_IN_AGENT_TYPES.has(type);
 }
 
+function builtInAgentType(agent: JsonRecord): string {
+  return readString(agent.type || agent.agentType).trim();
+}
+
+function builtInAgentMeta(type: string) {
+  return BUILT_IN_AGENTS.find((agent) => agent.id === type) ?? null;
+}
+
+function builtInAgentFallback(type: string): JsonRecord | null {
+  const meta = builtInAgentMeta(type);
+  if (!meta) return null;
+  const settings = {
+    ...getDefaultBuiltInAgentSettings(type),
+    enabledTools: DEFAULT_AGENT_TOOLS[type] ?? [],
+  };
+  return {
+    id: `builtin:${type}`,
+    type,
+    name: meta.name,
+    description: meta.description,
+    enabled: true,
+    phase: meta.phase,
+    connectionId: null,
+    promptTemplate: "",
+    settings,
+  };
+}
+
 function positiveInteger(value: unknown, fallback: number, max: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
-function automaticAssistantIntervalAgentType(input: GenerationAgentRuntimeInput, type: string): string | null {
+function automaticIntervalGate(
+  input: GenerationAgentRuntimeInput,
+  id: string,
+  type: string,
+  settings: Record<string, unknown>,
+  builtInAgent: boolean,
+): AutomaticIntervalGate | null {
   if (input.agentTypes && input.agentTypes.size > 0) return null;
-  return type === ILLUSTRATOR_AGENT_TYPE ? type : null;
+  if (type === ILLUSTRATOR_AGENT_TYPE) {
+    const fallback = positiveInteger(
+      BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[type],
+      5,
+      MAX_ASSISTANT_RUN_INTERVAL,
+    );
+    const runInterval = positiveInteger(settings.runInterval, fallback, MAX_ASSISTANT_RUN_INTERVAL);
+    return runInterval > 1
+      ? {
+          agentId: id,
+          agentType: type,
+          messageRole: "assistant",
+          includePendingMessage: true,
+          runInterval,
+        }
+      : null;
+  }
+  if (!builtInAgent) {
+    const runInterval = positiveInteger(settings.runInterval, 1, MAX_CUSTOM_AGENT_USER_RUN_INTERVAL);
+    return runInterval > 1
+      ? {
+          agentId: id,
+          agentType: type,
+          messageRole: "user",
+          includePendingMessage: false,
+          runInterval,
+        }
+      : null;
+  }
+  return null;
 }
 
 function runAgentType(run: JsonRecord): string {
   return readString(run.agentType || run.type).trim();
+}
+
+function runAgentId(run: JsonRecord): string {
+  return readString(run.agentId || run.agentConfigId).trim();
+}
+
+function runMatchesAgent(run: JsonRecord, agentType: string, agentId: string): boolean {
+  const type = runAgentType(run);
+  if (type) return type === agentType;
+  const id = runAgentId(run);
+  return !!agentId && id === agentId;
 }
 
 function illustratorRunCountsTowardInterval(run: JsonRecord): boolean {
@@ -215,7 +302,8 @@ function illustratorRunCountsTowardInterval(run: JsonRecord): boolean {
 
 function messageIndexById(input: GenerationAgentRuntimeInput): Map<string, number> {
   const indexes = new Map<string, number>();
-  input.storedMessages.forEach((message, index) => {
+  const messages = input.cadenceMessages ?? input.storedMessages;
+  messages.forEach((message, index) => {
     const id = readString(message.id).trim();
     if (id) indexes.set(id, index);
   });
@@ -227,12 +315,13 @@ function intervalAnchorRun(
   input: GenerationAgentRuntimeInput,
   chatId: string,
   agentType: string,
+  agentId: string,
 ): JsonRecord | null {
   const indexes = messageIndexById(input);
   return (
     runs
       .filter((run) => readString(run.chatId).trim() === chatId)
-      .filter((run) => runAgentType(run) === agentType)
+      .filter((run) => runMatchesAgent(run, agentType, agentId))
       .filter((run) => boolish(run.success, false))
       .filter((run) => agentType !== ILLUSTRATOR_AGENT_TYPE || illustratorRunCountsTowardInterval(run))
       .map((run) => ({ run, messageIndex: indexes.get(readString(run.messageId).trim()) ?? -1 }))
@@ -242,37 +331,40 @@ function intervalAnchorRun(
   );
 }
 
-function assistantMessagesSinceRun(input: GenerationAgentRuntimeInput, messageId: string): number | null {
-  const index = input.storedMessages.findIndex((message) => readString(message.id).trim() === messageId);
+function visibleMessagesSinceRun(
+  input: GenerationAgentRuntimeInput,
+  messageId: string,
+  role: AutomaticIntervalMessageRole,
+): number | null {
+  const messages = input.cadenceMessages ?? input.storedMessages;
+  const index = messages.findIndex((message) => readString(message.id).trim() === messageId);
   if (index < 0) return null;
-  return input.storedMessages
+  return messages
     .slice(index + 1)
     .filter((message) => !hiddenFromAi(message))
-    .filter((message) => readString(message.role).trim() === "assistant").length;
+    .filter((message) => readString(message.role).trim() === role).length;
 }
 
-async function automaticAssistantIntervalAllowsRun(
+async function automaticIntervalAllowsRun(
   storage: StorageGateway,
   input: GenerationAgentRuntimeInput,
-  agentType: string,
-  settings: Record<string, unknown>,
+  gate: AutomaticIntervalGate,
 ): Promise<boolean> {
-  const fallback = positiveInteger(
-    BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[agentType],
-    agentType === ILLUSTRATOR_AGENT_TYPE ? 5 : 1,
-    MAX_ASSISTANT_RUN_INTERVAL,
-  );
-  const runInterval = positiveInteger(settings.runInterval, fallback, MAX_ASSISTANT_RUN_INTERVAL);
-  if (runInterval <= 1) return true;
   const chatId = readString(input.chat.id).trim();
   if (!chatId) return true;
-  const lastRun = intervalAnchorRun(await storage.list<JsonRecord>("agent-runs"), input, chatId, agentType);
+  const lastRun = intervalAnchorRun(
+    await storage.list<JsonRecord>("agent-runs"),
+    input,
+    chatId,
+    gate.agentType,
+    gate.agentId,
+  );
   if (!lastRun) return true;
   const messageId = readString(lastRun.messageId).trim();
   if (!messageId) return true;
-  const assistantMessagesSince = assistantMessagesSinceRun(input, messageId);
-  if (assistantMessagesSince === null) return true;
-  return assistantMessagesSince + 1 >= runInterval;
+  const messagesSince = visibleMessagesSinceRun(input, messageId, gate.messageRole);
+  if (messagesSince === null) return true;
+  return messagesSince + (gate.includePendingMessage ? 1 : 0) >= gate.runInterval;
 }
 
 // Tool-runtime helpers live in ./tools-runtime.ts and are imported above.
@@ -302,7 +394,7 @@ function buildAgentToolContext(
       if (BUILT_IN_TOOL_MAP.has(toolName)) {
         return stringifyToolResult(await executeBuiltInTool(deps, input, agent, call));
       }
-      return customToolExecutor(deps.integrations, call);
+      return customToolExecutor(deps.integrations, call, customTools.get(toolName));
     },
   };
 }
@@ -338,31 +430,42 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   if (!chatAgentsEnabled(input)) return { agents: [], skippedResults: [] };
   const scopedAgentIds = chatActiveAgentIds(input);
   const activationMessages = activationScanMessages(input);
-  const rows = (await deps.storage.list<JsonRecord>("agents"))
-    .filter((agent) => boolish(agent.enabled, false))
-    .filter((agent) => {
-      const type = readString(agent.type || agent.agentType);
-      const id = readString(agent.id);
-      if ((!input.agentTypes || input.agentTypes.size === 0) && type === "lorebook-keeper") return false;
-      if (scopedAgentIds.size > 0 && !scopedAgentIds.has(type) && !scopedAgentIds.has(id)) return false;
-      if (!input.agentTypes || input.agentTypes.size === 0) return true;
-      return input.agentTypes.has(type);
-    });
+  const requestedAgentTypes = input.agentTypes ?? null;
+  const explicitAgentTypes = requestedAgentTypes ?? scopedAgentIds;
+  const rows = (await deps.storage.list<JsonRecord>("agents")).filter((agent) => {
+    const type = builtInAgentType(agent);
+    const id = readString(agent.id);
+    const requestedExplicitly = requestedAgentTypes && (requestedAgentTypes.has(type) || requestedAgentTypes.has(id));
+    const scopedToChat = scopedAgentIds.size > 0 && (scopedAgentIds.has(type) || scopedAgentIds.has(id));
+    if (!requestedExplicitly && (!requestedAgentTypes || requestedAgentTypes.size === 0) && type === "lorebook-keeper") {
+      return false;
+    }
+    if (requestedAgentTypes && requestedAgentTypes.size > 0) return Boolean(requestedExplicitly);
+    if (scopedAgentIds.size > 0) return scopedToChat;
+    return boolish(agent.enabled, false);
+  });
+  const resolvedBuiltInTypes = new Set(rows.map(builtInAgentType).filter((type) => BUILT_IN_AGENT_TYPES.has(type)));
+  const fallbackRows = [...explicitAgentTypes]
+    .filter((type) => BUILT_IN_AGENT_TYPES.has(type))
+    .filter((type) => !resolvedBuiltInTypes.has(type))
+    .filter((type) => requestedAgentTypes || type !== "lorebook-keeper")
+    .map(builtInAgentFallback)
+    .filter((agent): agent is JsonRecord => !!agent);
+  rows.push(...fallbackRows);
   let customTools: Map<string, CustomToolRecord> | null = null;
   const resolved: ResolvedAgent[] = [];
   const skippedResults: AgentResult[] = [];
   for (const agent of rows) {
     const type = readString(agent.type || agent.agentType) || "agent";
+    const id = readString(agent.id) || type;
     const settings = agentSettings(agent);
-    if (!input.bypassCustomAgentActivation && !isBuiltInAgent(agent)) {
+    const builtInAgent = isBuiltInAgent(agent);
+    if (!input.bypassCustomAgentActivation && !builtInAgent) {
       const activation = matchCustomAgentActivation(settings, activationMessages);
       if (activation.configured && !activation.matched) continue;
     }
-    const assistantIntervalAgentType = automaticAssistantIntervalAgentType(input, type);
-    if (
-      assistantIntervalAgentType &&
-      !(await automaticAssistantIntervalAllowsRun(deps.storage, input, assistantIntervalAgentType, settings))
-    ) {
+    const intervalGate = automaticIntervalGate(input, id, type, settings, builtInAgent);
+    if (intervalGate && !(await automaticIntervalAllowsRun(deps.storage, input, intervalGate))) {
       continue;
     }
     const requestedConnectionId = readString(agent.connectionId).trim();

@@ -273,6 +273,52 @@ describe("assembleGenerationPrompt strict roles", () => {
   });
 });
 
+describe("assembleGenerationPrompt connected conversation notes", () => {
+  it("injects durable notes and unconsumed influences into linked roleplay prompts", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "roleplay-1",
+        mode: "roleplay",
+        connectedChatId: "conversation-1",
+        notes: [
+          {
+            id: "note-1",
+            type: "note",
+            content: "[12:01] Remember that Mari hates being underestimated.",
+            targetChatId: "roleplay-1",
+          },
+          {
+            id: "influence-1",
+            type: "influence",
+            content: "Let the next scene reveal the locked lab door.",
+            targetChatId: "roleplay-1",
+            consumed: false,
+          },
+          {
+            id: "influence-2",
+            type: "influence",
+            content: "This one was already spent.",
+            targetChatId: "roleplay-1",
+            consumed: true,
+          },
+        ],
+      },
+      storedMessages: [{ role: "user", content: "What do I see?", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "", strictRoleFormatting: false },
+      latestUserInput: "What do I see?",
+    });
+
+    const joined = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(joined).toContain("<conversation_notes>");
+    expect(joined).toContain("- Remember that Mari hates being underestimated.");
+    expect(joined).not.toContain("[12:01] Remember");
+    expect(joined).toContain("<ooc_influences>");
+    expect(joined).toContain("- Let the next scene reveal the locked lab door.");
+    expect(joined).not.toContain("This one was already spent.");
+  });
+});
+
 describe("assembleGenerationPrompt lorebook game-state gates", () => {
   const gatedEntry = {
     id: "entry-1",

@@ -6,6 +6,7 @@ import { scanForActivatedEntries, type ActivatedEntry } from "../generation-core
 import { wrapContent } from "../generation-core/prompt/format-engine";
 import { mergeAdjacentMessages, squashLeadingSystemMessages } from "../generation-core/prompt/merger";
 import { applyRegexScriptsToPromptMessages } from "../generation-core/regex/regex-application";
+import { stripConversationPromptTimestamps } from "../modes/chat/core/summaries/transcript-sanitize";
 import { resolveMacros, type MacroContext } from "../shared/macros/macro-engine";
 import { normalizeUserTimeZone } from "../shared/time/timezone";
 import type { GameActiveState, GameCampaignPlan, GameMap, GameNpc, HudWidget, SessionSummary } from "../contracts/types/game";
@@ -18,6 +19,7 @@ import {
   boolish,
   hiddenFromAi,
   isRecord,
+  parseArray,
   parseRecord,
   readNumber,
   readString,
@@ -863,6 +865,70 @@ async function buildMemoryRecallBlock(
   ].join("\n");
 }
 
+function connectedNoteTargetsChat(note: JsonRecord, chatId: string): boolean {
+  const targetChatId = readString(note.targetChatId).trim();
+  return !targetChatId || targetChatId === chatId;
+}
+
+function connectedPromptLines(notes: JsonRecord[], type: "note" | "influence", chatId: string): string[] {
+  return notes
+    .filter((note) => readString(note.type) === type && connectedNoteTargetsChat(note, chatId))
+    .filter((note) => type !== "influence" || !boolish(note.consumed, false))
+    .map((note) => stripConversationPromptTimestamps(readString(note.content).trim()))
+    .filter((content) => content.length > 0)
+    .map((content) => `- ${content}`);
+}
+
+function buildConnectedConversationBlocks(chat: JsonRecord): ChatMLMessage[] {
+  const chatId = readString(chat.id).trim();
+  const mode = readString(chat.mode || chat.chatMode, "conversation");
+  const meta = parseRecord(chat.metadata);
+  if (!chatId || (mode !== "roleplay" && mode !== "game") || !readString(chat.connectedChatId).trim()) return [];
+  if (readString(meta.sceneStatus) === "active") return [];
+  const notes = parseArray(chat.notes).filter(isRecord);
+  if (notes.length === 0) return [];
+
+  const blocks: ChatMLMessage[] = [];
+  const influenceLines = connectedPromptLines(notes, "influence", chatId);
+  if (influenceLines.length > 0) {
+    blocks.push({
+      role: "system",
+      contextKind: "prompt",
+      content: [
+        "<ooc_influences>",
+        mode === "game"
+          ? "The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside the game. Use them to steer the next scene, NPC reactions, objectives, or world state when appropriate. Do not mention them explicitly as OOC in the narrative."
+          : "The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside of the roleplay. Weave them naturally into the story. Do not mention them explicitly as OOC in the narrative.",
+        ...influenceLines,
+        "</ooc_influences>",
+      ].join("\n"),
+    });
+  }
+
+  const noteLines = connectedPromptLines(notes, "note", chatId);
+  if (noteLines.length > 0) {
+    blocks.push({
+      role: "system",
+      contextKind: "prompt",
+      content: [
+        "<conversation_notes>",
+        mode === "game"
+          ? "Durable notes from a connected conversation. These persist across every turn until the user clears them and represent ongoing truth: character knowledge, world facts, and recurring dynamics. Use them to inform NPC behavior, world state, and scene framing without calling them notes in the narrative."
+          : "Durable notes from a connected conversation. These persist across every turn until the user clears them and represent things the character has been told to remember about themselves, the user, or the world. Use them to inform behavior, knowledge, and reactions naturally without calling them notes in the narrative.",
+        ...noteLines,
+        "</conversation_notes>",
+      ].join("\n"),
+    });
+  }
+  return blocks;
+}
+
+function insertBeforeLastUser(messages: ChatMLMessage[], blocks: ChatMLMessage[]): void {
+  if (blocks.length === 0) return;
+  const insertAt = messages.map((message) => message.role).lastIndexOf("user");
+  messages.splice(insertAt >= 0 ? insertAt : messages.length, 0, ...blocks);
+}
+
 function normalizeRole(value: unknown): "system" | "user" | "assistant" {
   return value === "system" || value === "assistant" ? value : "user";
 }
@@ -1250,6 +1316,8 @@ export async function assembleGenerationPrompt(
       contextKind: "prompt",
     });
   }
+
+  insertBeforeLastUser(messages, buildConnectedConversationBlocks(input.chat));
 
   messages = injectAtDepth(messages, processedLore.depthEntries);
   const regexScripts = await storage.list<JsonRecord>("regex-scripts");

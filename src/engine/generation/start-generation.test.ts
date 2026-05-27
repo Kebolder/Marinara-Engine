@@ -38,6 +38,7 @@ function generationDepsForChat(options: {
   agents?: Record<string, unknown>[];
   agentRuns?: Record<string, unknown>[];
   initialMessages?: Record<string, unknown>[];
+  connectionPatch?: Record<string, unknown>;
 } = {}) {
   const chat = {
     id: "chat-1",
@@ -51,6 +52,7 @@ function generationDepsForChat(options: {
     id: "connection-1",
     model: "test-model",
     defaultParameters: {},
+    ...(options.connectionPatch ?? {}),
   };
   const initialMessages = options.initialMessages ?? [
     { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" },
@@ -197,6 +199,7 @@ describe("startGeneration chat message loading", () => {
     );
 
     expect(listChatMessages).toHaveBeenCalledTimes(1);
+    expect(listChatMessages).toHaveBeenCalledWith("chat-1", { limit: 100 });
     expect(streamedRequests).toHaveLength(1);
     expect(streamedRequests[0]).toMatchObject({
       messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: "hello" })]),
@@ -248,6 +251,68 @@ describe("startGeneration chat message loading", () => {
     expect(streamedRequests).toHaveLength(1);
     expect(streamedRequests[0]).toMatchObject({
       messages: expect.arrayContaining([expect.objectContaining({ role: "user", content: "hello" })]),
+    });
+  });
+
+  it("merges stored chat and game generation parameters into the LLM request", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "game" },
+      connectionPatch: {
+        defaultParameters: {
+          temperature: 0.2,
+          maxTokens: 512,
+          customParameters: { provider: { seed: 7, base: true } },
+        },
+      },
+      chatMetadata: {
+        gameSetupConfig: {
+          generationParameters: {
+            maxTokens: 1200,
+            topP: 0.9,
+            customParameters: { provider: { setup: true } },
+          },
+        },
+        gameGenerationParameters: {
+          topK: 40,
+          customParameters: { provider: { game: true } },
+        },
+        chatParameters: {
+          temperature: 0.7,
+          customParameters: { provider: { chat: true } },
+        },
+      },
+    });
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        userMessage: "advance",
+        impersonateBlockAgents: true,
+        parameters: {
+          frequencyPenalty: 0.2,
+          customParameters: { provider: { request: true } },
+        },
+      }),
+    );
+
+    expect(streamedRequests[0]).toMatchObject({
+      parameters: {
+        temperature: 0.7,
+        maxTokens: 1200,
+        topP: 0.9,
+        topK: 40,
+        frequencyPenalty: 0.2,
+        customParameters: {
+          provider: {
+            seed: 7,
+            base: true,
+            setup: true,
+            game: true,
+            chat: true,
+            request: true,
+          },
+        },
+      },
     });
   });
 });
@@ -358,7 +423,7 @@ describe("startGeneration generation replay metadata", () => {
   });
 
   it("applies stored assistant replay metadata for direct engine regenerates", async () => {
-    const { deps, streamedRequests } = generationDepsForChat({
+    const { deps, listChatMessages, streamedRequests } = generationDepsForChat({
       initialMessages: [
         { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
         {
@@ -379,6 +444,7 @@ describe("startGeneration generation replay metadata", () => {
 
     await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "assistant-1" }));
 
+    expect(listChatMessages).toHaveBeenCalledWith("chat-1", undefined);
     expect(streamedRequests[0]).toMatchObject({
       messages: expect.arrayContaining([
         expect.objectContaining({ role: "user", content: "Keep the reply clipped." }),
@@ -520,6 +586,47 @@ describe("startGeneration automatic Illustrator cadence", () => {
     await drainGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "continue" }));
 
     expect(streamedRequests).toHaveLength(2);
+  });
+});
+
+describe("startGeneration automatic custom agent cadence", () => {
+  it("checks custom cadence against the full timeline during regenerations", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatMetadata: { enableAgents: true },
+      agents: [
+        {
+          id: "custom-agent",
+          type: "custom-scene-scout",
+          name: "Scene Scout",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Watch for scene keywords.",
+          settings: { resultType: "context_injection", runInterval: 5 },
+        },
+      ],
+      agentRuns: [
+        {
+          id: "run-1",
+          chatId: "chat-1",
+          messageId: "assistant-1",
+          agentType: "custom-scene-scout",
+          resultType: "context_injection",
+          resultData: { text: "old note" },
+          success: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      initialMessages: [
+        { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
+        { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "first reply", extra: {} },
+      ],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "assistant-1" }));
+
+    expect(streamedRequests).toHaveLength(1);
   });
 });
 

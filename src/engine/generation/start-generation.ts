@@ -7,7 +7,7 @@ import type { StorageGateway } from "../capabilities/storage";
 import type { GenerationGuideSource } from "../shared/text/generation-guide";
 import { activeCharacterIds, assertChatHasActiveCharacters, assertRequestedCharacterIsActive } from "./active-characters";
 import { createGenerationAgentRuntime } from "./agent-runner";
-import { persistConnectedCommandTags } from "./connected-commands";
+import { consumePendingConnectedInfluences, persistConnectedCommandTags } from "./connected-commands";
 import type { LLMToolCall } from "../generation-core/llm/base-provider";
 import {
   buildMainToolDefinitions,
@@ -37,7 +37,17 @@ import { assembleGenerationPrompt, chatSummaryForGeneration } from "./prompt-ass
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
 import { chatSummaryFingerprintMatches, fingerprintChatSummary } from "../shared/text/chat-summary-fingerprint";
 import { applyRuntimeRegexScripts } from "./regex-runtime";
-import { boolish, hiddenFromAi, isRecord, nowIso, parseRecord, readString, stringArray, type JsonRecord } from "./runtime-records";
+import {
+  boolish,
+  hiddenFromAi,
+  isRecord,
+  nowIso,
+  parseRecord,
+  readNumber,
+  readString,
+  stringArray,
+  type JsonRecord,
+} from "./runtime-records";
 import {
   commitTrackerSnapshotForTarget,
   createTrackerSnapshotReadContext,
@@ -331,6 +341,12 @@ function requestMessages(input: StartGenerationInput): LlmMessage[] | null {
       content: readString(message.content).trim(),
     }))
     .filter((message) => message.content.length > 0);
+}
+
+function generationMessageLoadOptions(input: StartGenerationInput): Parameters<StorageGateway["listChatMessages"]>[1] {
+  if (readString(input.regenerateMessageId).trim()) return undefined;
+  const historyLimit = Math.max(1, Math.min(300, readNumber(input.historyLimit, 80)));
+  return { limit: Math.max(40, Math.min(340, historyLimit + 20)) };
 }
 
 function withImageAttachments(messages: LlmMessage[], images: string[]): LlmMessage[] {
@@ -754,6 +770,7 @@ async function runGenerationAgentsForTarget(args: {
       chat: chatForAgents,
       connection,
       storedMessages: contextMessages,
+      cadenceMessages: storedMessages,
       characters: assembly.characters,
       persona: assembly.persona,
       activatedLorebookEntries: assembly.activatedLorebookEntries,
@@ -856,9 +873,10 @@ export async function* startGeneration(
   yield { type: "phase", data: "Saving message..." };
   const preparedUserInput = await prepareUserInput(deps.storage, input);
   const savesUserMessage = shouldSaveUserMessage(input, preparedUserInput);
+  const messageLoadOptions = generationMessageLoadOptions(input);
   let storedMessages: JsonRecord[] | null = null;
   if (savesUserMessage) {
-    storedMessages = await loadChatMessages(deps.storage, chatId);
+    storedMessages = await loadChatMessages(deps.storage, chatId, messageLoadOptions);
     await commitVisibleTrackerSnapshotSafely(deps.storage, chatId, storedMessages);
   }
   const savedUserMessage = await saveUserMessage(deps.storage, input, preparedUserInput);
@@ -868,9 +886,9 @@ export async function* startGeneration(
     const savedTimelineMessage = savedUserMessageForTimeline(savedUserMessage, chatId);
     storedMessages = savedTimelineMessage
       ? [...(storedMessages ?? []), savedTimelineMessage]
-      : await loadChatMessages(deps.storage, chatId);
+      : await loadChatMessages(deps.storage, chatId, messageLoadOptions);
   } else {
-    storedMessages = await loadChatMessages(deps.storage, chatId);
+    storedMessages = await loadChatMessages(deps.storage, chatId, messageLoadOptions);
   }
   const generationMessages = messagesBeforeRegenerationTarget(storedMessages, input.regenerateMessageId);
   const generationTrackerBaseline = await selectGenerationTrackerBaseline(
@@ -906,6 +924,7 @@ export async function* startGeneration(
             chat: chatForGeneration,
             connection,
             storedMessages: generationMessages,
+            cadenceMessages: storedMessages,
             characters: assembly.characters,
             persona: assembly.persona,
             activatedLorebookEntries: assembly.activatedLorebookEntries,
@@ -930,6 +949,7 @@ export async function* startGeneration(
       latestUserInput: preparedUserInput.content || inputUserMessage(input),
       agentData: runtime?.agentData,
     });
+    await consumePendingConnectedInfluences(deps.storage, chatForGeneration);
     prompt = withImageAttachments(
       [
         ...assembly.messages,
@@ -957,6 +977,7 @@ export async function* startGeneration(
       deps,
       connection,
       input,
+      chat: chatForGeneration,
       baseMessages,
       mainTools,
       toolRuntimeInput,
@@ -1048,6 +1069,7 @@ export async function* startGeneration(
     deps,
     connection,
     input,
+    chat: chatForGeneration,
     baseMessages: baseMessagesDirect,
     mainTools: mainToolsDirect,
     toolRuntimeInput: toolRuntimeInputDirect,
@@ -1140,12 +1162,13 @@ async function* streamMainGenerationLoop(args: {
   deps: GenerationEngineDeps;
   connection: JsonRecord;
   input: StartGenerationInput;
+  chat: JsonRecord;
   baseMessages: LlmMessage[];
   mainTools: MainToolDefinitions | null;
   toolRuntimeInput: ToolRuntimeInput;
   signal: AbortSignal | undefined;
 }): AsyncGenerator<GenerationEvent, { content: string; usage: unknown }> {
-  const { deps, connection, input, baseMessages, mainTools, toolRuntimeInput, signal } = args;
+  const { deps, connection, input, chat, baseMessages, mainTools, toolRuntimeInput, signal } = args;
   let content = "";
   const usages: unknown[] = [];
   const conversation: LlmMessage[] = [...baseMessages];
@@ -1161,7 +1184,7 @@ async function* streamMainGenerationLoop(args: {
         connectionId: readString(connection.id) || input.connectionId,
         model: readString(connection.model) || undefined,
         messages: conversation,
-        parameters: llmParameters(connection, input),
+        parameters: llmParameters(connection, input, chat),
         tools: mainTools?.toolDefs,
       },
       signal,

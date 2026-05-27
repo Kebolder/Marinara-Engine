@@ -424,6 +424,7 @@ export function ChatSettingsDrawer({
     (metadata.enableAgents ? 1 : 0) + (gameLorebookKeeperEnabled ? 1 : 0) + (gameUseSpotifyMusic ? 1 : 0);
   const spriteCharacterIds: string[] = Array.isArray(metadata.spriteCharacterIds) ? metadata.spriteCharacterIds : [];
   const spriteDisplayModes = normalizeSpriteDisplayModes(metadata.spriteDisplayModes);
+  const expressionAvatarsEnabled = metadata.expressionAvatarsEnabled === true;
   const spritePosition: "left" | "right" = metadata.spritePosition === "right" ? "right" : "left";
   const spriteScale = normalizeSpriteDisplayValue(metadata.spriteScale, roleplaySpriteScale, 0.5, 1.75);
   const spriteOpacity = normalizeSpriteDisplayValue(metadata.spriteOpacity, 1, 0.15, 1);
@@ -3980,6 +3981,40 @@ export function ChatSettingsDrawer({
 
                     <SpriteDisplayModeToggle modes={spriteDisplayModes} onToggle={toggleSpriteDisplayMode} />
 
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateMeta.mutate({ id: chat.id, expressionAvatarsEnabled: !expressionAvatarsEnabled })
+                      }
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                        expressionAvatarsEnabled
+                          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                          : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[0.6875rem] font-medium">Expression Avatars</span>
+                        <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                          Replace message avatars with the selected expression sprite and hide duplicate portrait
+                          sprites.
+                        </p>
+                      </div>
+                      <div
+                        className={cn(
+                          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                          expressionAvatarsEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                            expressionAvatarsEnabled && "translate-x-3.5",
+                          )}
+                        />
+                      </div>
+                    </button>
+
                     {chatSpriteSubjects.length === 0 ? (
                       <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                         Add characters to this chat or choose a persona first to enable sprite selection.
@@ -5906,7 +5941,11 @@ function AdvancedParametersSection({
       </button>
       {expanded && (
         <div className="px-4 pb-3 space-y-3">
-          <GenerationParametersFields value={effectiveParams} onChange={setParameters} />
+          <GenerationParametersFields
+            value={effectiveParams}
+            onChange={setParameters}
+            showOpenRouterServiceTier={conn?.provider === "openrouter"}
+          />
           {/* Save as Default for Connection */}
           {connectionId && connectionId !== "random" && (
             <button

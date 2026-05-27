@@ -904,13 +904,21 @@ export const gameApi = {
   async startGame(data: { chatId: string }): Promise<StartGameResponse> {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
+    const sessionStatus = typeof meta.gameSessionStatus === "string" ? meta.gameSessionStatus : "ready";
     const recentMessages = await listMessages(data.chatId, 40).catch(() => []);
     const hasExistingGmTurn = recentMessages.some((message) => {
       if (message.role !== "assistant") return false;
       if (typeof message.content !== "string" || !message.content.trim()) return false;
       return asRecord(message.extra).hiddenFromAi !== true;
     });
-    if (meta.gameSessionStatus === "active" && hasExistingGmTurn) {
+    if (sessionStatus === "active" && hasExistingGmTurn) {
+      return { status: "active", alreadyStarted: true };
+    }
+    if (sessionStatus !== "ready" && sessionStatus !== "active") {
+      throw new Error(`Cannot start game: status is "${sessionStatus}", expected "ready"`);
+    }
+    if (hasExistingGmTurn) {
+      await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
       return { status: "active", alreadyStarted: true };
     }
     await patchChatMetadata(data.chatId, { gameSessionStatus: "active", gameActiveState: "exploration" });

@@ -1022,6 +1022,11 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
         if request.connection.enable_caching && model_contains(request, "claude") {
             body["cache_control"] = json!({ "type": "ephemeral" });
         }
+        if let Some(service_tier) = param_string(parameters, &["serviceTier", "service_tier"])
+            .filter(|value| value == "flex" || value == "priority")
+        {
+            body["service_tier"] = json!(service_tier);
+        }
     }
     if let Some(extra) = parameters
         .get("customParameters")
