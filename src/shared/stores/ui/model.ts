@@ -324,6 +324,8 @@ export interface UIState {
   speechToTextEnabled: boolean;
   /** When true, show the global Spotify mini player in the app chrome. */
   spotifyPlayerEnabled: boolean;
+  /** When true, allow the rare Chibi Professor Mari scroll toast to register. */
+  chibiProfessorMariEnabled: boolean;
   /** Optional remote Rust runtime URL. Blank uses the embedded Tauri backend. */
   remoteRuntimeUrl: string;
   /** Mobile Spotify widget collapsed state. */
@@ -526,6 +528,7 @@ export interface UIState {
   setTrimIncompleteModelOutput: (v: boolean) => void;
   setSpeechToTextEnabled: (v: boolean) => void;
   setSpotifyPlayerEnabled: (v: boolean) => void;
+  setChibiProfessorMariEnabled: (v: boolean) => void;
   setRemoteRuntimeUrl: (v: string) => void;
   setSpotifyMobileWidgetCollapsed: (v: boolean) => void;
   setSpotifyMobileWidgetPosition: (position: FloatingWidgetPosition) => void;
