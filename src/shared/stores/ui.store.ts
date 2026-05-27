@@ -161,6 +161,7 @@ export const useUIStore = create<UIState>()(
       trimIncompleteModelOutput: false,
       speechToTextEnabled: false,
       spotifyPlayerEnabled: false,
+      chibiProfessorMariEnabled: true,
       remoteRuntimeUrl: "",
       spotifyMobileWidgetCollapsed: true,
       spotifyMobileWidgetPosition: { x: 16, y: 96 },
@@ -410,6 +411,7 @@ export const useUIStore = create<UIState>()(
       setTrimIncompleteModelOutput: (v) => set({ trimIncompleteModelOutput: v }),
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
       setSpotifyPlayerEnabled: (v) => set({ spotifyPlayerEnabled: v }),
+      setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
       setRemoteRuntimeUrl: (v) => set({ remoteRuntimeUrl: v.trim() }),
       setSpotifyMobileWidgetCollapsed: (v) => set({ spotifyMobileWidgetCollapsed: v }),
       setSpotifyMobileWidgetPosition: (position) =>

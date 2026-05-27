@@ -730,6 +730,8 @@ function GeneralSettings() {
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
   const spotifyPlayerEnabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const setSpotifyPlayerEnabled = useUIStore((s) => s.setSpotifyPlayerEnabled);
+  const chibiProfessorMariEnabled = useUIStore((s) => s.chibiProfessorMariEnabled);
+  const setChibiProfessorMariEnabled = useUIStore((s) => s.setChibiProfessorMariEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const setIntuitiveSwipeNavigation = useUIStore((s) => s.setIntuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
@@ -841,6 +843,13 @@ function GeneralSettings() {
         checked={spotifyPlayerEnabled}
         onChange={setSpotifyPlayerEnabled}
         help="Shows a compact Spotify player in the top bar on desktop and as a draggable floating widget on mobile. Requires the Spotify DJ agent to be connected."
+      />
+
+      <ToggleSetting
+        label="Chibi Professor Mari visits"
+        checked={chibiProfessorMariEnabled}
+        onChange={setChibiProfessorMariEnabled}
+        help="Allows the rare Chibi Professor Mari scroll toast to appear. Turn this off to prevent the easter egg from registering while you use the app."
       />
 
       {/* Streaming Speed */}

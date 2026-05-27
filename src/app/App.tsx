@@ -4,6 +4,7 @@ import { AppShell } from "./shell/AppShell";
 import { ModalRenderer } from "./shell/ModalRenderer";
 import { CustomThemeInjector } from "./providers/CustomThemeInjector";
 import { AppDialogRenderer } from "../shared/components/ui/AppDialogRenderer";
+import { ChibiProfessorMariEasterEgg } from "../shared/components/ui/ChibiProfessorMariEasterEgg";
 import { fontsApi } from "../shared/api/settings-assets-api";
 import { fontFileUrlFromPath } from "../shared/api/local-file-api";
 import { useUIStore } from "../shared/stores/ui.store";
@@ -120,6 +121,7 @@ export function App() {
       <AppShell />
       <ModalRenderer />
       <AppDialogRenderer />
+      <ChibiProfessorMariEasterEgg />
       <Toaster
         position="bottom-right"
         theme={theme}
