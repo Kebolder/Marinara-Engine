@@ -351,6 +351,7 @@ function withImageAttachments(messages: LlmMessage[], images: string[]): LlmMess
 
 function directiveMessages(
   input: StartGenerationInput,
+  chat: JsonRecord,
   characters: GenerationCharacterContext[],
   prepared: PreparedUserInput,
   options: { continueAssistantResponse?: boolean } = {},
@@ -370,7 +371,9 @@ function directiveMessages(
   }
 
   const forCharacterId = readString(input.forCharacterId).trim();
-  if (forCharacterId) {
+  const isNonConversationGroup = readString(chat.mode || chat.chatMode) !== "conversation" && stringArray(chat.characterIds).length > 1;
+  const addGroupTurnPrompt = !isNonConversationGroup || parseRecord(chat.metadata).groupTurnPromptEnabled !== false;
+  if (forCharacterId && addGroupTurnPrompt) {
     const character = characters.find((candidate) => candidate.id === forCharacterId);
     messages.push({
       role: "user",
@@ -921,7 +924,7 @@ export async function* startGeneration(
     prompt = withImageAttachments(
       [
         ...assembly.messages,
-        ...directiveMessages(input, assembly.characters, preparedUserInput, { continueAssistantResponse }),
+        ...directiveMessages(input, chat, assembly.characters, preparedUserInput, { continueAssistantResponse }),
       ],
       preparedUserInput.images,
     );
@@ -1014,7 +1017,7 @@ export async function* startGeneration(
   }
 
   prompt = withImageAttachments(
-    [...(prompt ?? []), ...directiveMessages(input, assembly.characters, preparedUserInput, { continueAssistantResponse })],
+    [...(prompt ?? []), ...directiveMessages(input, chat, assembly.characters, preparedUserInput, { continueAssistantResponse })],
     preparedUserInput.images,
   );
   yield { type: "phase", data: "Calling model..." };

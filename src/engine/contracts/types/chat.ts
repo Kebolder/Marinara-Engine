@@ -167,6 +167,8 @@ export interface ChatMetadata {
   groupResponseOrder?: GroupResponseOrder;
   /** Character IDs attached to this chat but muted/excluded from generation. */
   inactiveCharacterIds?: string[];
+  /** When true/omitted, individual group turns append a responding-character instruction to the prompt. */
+  groupTurnPromptEnabled?: boolean;
   /** Characters with visible roleplay sprites enabled for this chat. */
   spriteCharacterIds?: string[];
   /** Which sprite file families the roleplay Expression Engine may display. */

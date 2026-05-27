@@ -324,8 +324,9 @@ export function AgentEditor() {
   // Lorebook Keeper agent — run interval setting
   const isLorebookKeeperAgent = agentDetailId === "lorebook-keeper" || dbConfig?.type === "lorebook-keeper";
 
-  // Narrative Director agent — run interval setting
+  // Narrative Director / Illustrator agent cadence
   const isDirectorAgent = agentDetailId === "director" || dbConfig?.type === "director";
+  const isIllustratorAgent = agentDetailId === "illustrator" || dbConfig?.type === "illustrator";
 
   // Chat Summary agent — uses "Triggers After" instead of context size
   const isChatSummaryAgent = agentDetailId === "chat-summary" || dbConfig?.type === "chat-summary";
@@ -1276,12 +1277,16 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Run Interval (Narrative Director) ── */}
-          {isDirectorAgent && (
+          {/* Run Interval (Narrative Director / Illustrator) */}
+          {(isDirectorAgent || isIllustratorAgent) && (
             <FieldGroup
               label="Run Interval"
               icon={<Clock size="0.875rem" className="text-[var(--primary)]" />}
-              help="How many assistant messages between each Narrative Director intervention. Higher values make the director less aggressive. Set to 1 to run every message."
+              help={
+                isIllustratorAgent
+                  ? "How many assistant messages between allowed Illustrator image generations. Set to 1 to allow it every message."
+                  : "How many assistant messages between each Narrative Director intervention. Higher values make the director less aggressive. Set to 1 to run every message."
+              }
             >
               <div className="flex items-center gap-3">
                 <input
@@ -1300,7 +1305,9 @@ export function AgentEditor() {
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">messages</span>
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                The director only jumps in once every N assistant messages instead of steering every reply. Default: 5.
+                {isIllustratorAgent
+                  ? "The Illustrator can only create a new image once every N assistant messages. If it decides not to draw, the timer does not reset. Default: 5."
+                  : "The director only jumps in once every N assistant messages instead of steering every reply. Default: 5."}
               </p>
             </FieldGroup>
           )}

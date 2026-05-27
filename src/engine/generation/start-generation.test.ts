@@ -122,6 +122,12 @@ async function drainGeneration(stream: AsyncGenerator<unknown>) {
   }
 }
 
+const illustratorDrawData = {
+  shouldGenerate: true,
+  reason: "Important visual beat",
+  prompt: "moonlit tavern confrontation",
+};
+
 describe("startGeneration concluded roleplay guard", () => {
   it("rejects concluded roleplay scenes before saving user messages", async () => {
     const { deps, createChatMessage } = depsForChat({
@@ -367,6 +373,50 @@ describe("startGeneration generation replay metadata", () => {
   });
 });
 
+describe("startGeneration automatic Illustrator cadence", () => {
+  it("counts the pending assistant response when enforcing the run interval", async () => {
+    const messages = Array.from({ length: 5 }, (_, index) => ({
+      id: `assistant-${index + 1}`,
+      chatId: "chat-1",
+      role: "assistant",
+      content: `Assistant message ${index + 1}`,
+    }));
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatMetadata: { enableAgents: true },
+      agents: [
+        {
+          id: "illustrator-agent",
+          type: "illustrator",
+          name: "Illustrator",
+          enabled: true,
+          phase: "post_processing",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Return JSON.",
+          settings: { runInterval: 5 },
+        },
+      ],
+      agentRuns: [
+        {
+          id: "run-1",
+          chatId: "chat-1",
+          messageId: "assistant-1",
+          agentType: "illustrator",
+          resultType: "image_prompt",
+          resultData: illustratorDrawData,
+          success: true,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      initialMessages: messages,
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "continue" }));
+
+    expect(streamedRequests).toHaveLength(2);
+  });
+});
+
 describe("startGeneration Discord mirror", () => {
   it("mirrors saved user and assistant messages when a chat has a Discord webhook", async () => {
     const mirrorMessage = mockDiscordMirror();
@@ -420,6 +470,35 @@ describe("startGeneration Discord mirror", () => {
     await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "assistant-1" }));
 
     expect(mirrorMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("startGeneration group turn prompt toggle", () => {
+  it("keeps target character instructions enabled by default for non-conversation group chats", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", characterIds: ["char-1", "char-2"] },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", forCharacterId: "char-1", impersonateBlockAgents: true }));
+
+    expect((streamedRequests[0] as { messages: Array<{ content: string }> }).messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: "[Generation instruction: respond as Marina.]" })]),
+    );
+  });
+
+  it("omits target character instructions when non-conversation group turn prompts are disabled", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", characterIds: ["char-1", "char-2"] },
+      chatMetadata: { groupTurnPromptEnabled: false },
+      characters: [{ id: "char-1", data: { name: "Marina" } }],
+    });
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", forCharacterId: "char-1", impersonateBlockAgents: true }));
+
+    expect((streamedRequests[0] as { messages: Array<{ content: string }> }).messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: "[Generation instruction: respond as Marina.]" })]),
+    );
   });
 });
 
