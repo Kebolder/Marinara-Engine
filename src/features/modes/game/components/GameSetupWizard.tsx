@@ -47,18 +47,36 @@ interface GameSetupWizardProps {
   ) => void;
   onCancel: () => void;
   isLoading: boolean;
-  characters: Array<{
-    id: string;
-    name: string;
-    comment?: string | null;
-    avatarUrl?: string | null;
-    avatarCrop?: AvatarCropValue | null;
-  }>;
 }
 
 interface PersonaDisplayInfo {
   name: string;
   comment?: string | null;
+}
+
+type CharacterLibraryRow = {
+  id: string;
+  data?: Record<string, unknown> | null;
+  comment?: string | null;
+  avatarPath?: string | null;
+};
+
+type SetupCharacterInfo = {
+  id: string;
+  name: string;
+  comment?: string | null;
+  avatarUrl?: string | null;
+  avatarCrop?: AvatarCropValue | null;
+};
+
+function parseAvatarCropValue(raw: unknown): AvatarCropValue | null {
+  if (typeof raw === "string") {
+    return parseAvatarCropJson(raw);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  return parseAvatarCropJson(JSON.stringify(raw));
 }
 
 function CharacterAvatar({
@@ -291,7 +309,7 @@ function rememberGameLanguage(language: string): void {
   }
 }
 
-export function GameSetupWizard({ error, onComplete, onCancel, isLoading, characters: linkedCharacters }: GameSetupWizardProps) {
+export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: GameSetupWizardProps) {
   const [step, setStep] = useState(0);
   const [gameName, setGameName] = useState("");
   const [genres, setGenres] = useState<string[]>(["Fantasy"]);
@@ -345,8 +363,8 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const forgetGameSetupOption = useUIStore((s) => s.forgetGameSetupOption);
 
   const { data: connectionsList } = useConnections();
+  const { data: charactersList, isLoading: charactersLoading, isError: charactersError } = useCharacters();
   const { data: personasList } = usePersonas();
-  const { data: rawCharacters, isLoading: isCharactersLoading } = useCharacters(step === 1);
   const { data: lorebooksList } = useLorebooks();
   const spotifyPlaylistsQuery = useQuery({
     queryKey: ["spotify", "playlists", 50],
@@ -396,56 +414,32 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
       }>) ?? [],
     [personasList],
   );
-  const characters = useMemo(() => {
-    const fromLibrary = ((rawCharacters ?? []) as Array<{
-      id: string;
-      data: unknown;
-      comment?: string | null;
-      avatarPath?: string | null;
-    }>).map((character) => {
-      const display = parseCharacterDisplayData({
-        data: character.data,
-        comment: character.comment,
-      });
-      const data =
-        character.data && typeof character.data === "object" && !Array.isArray(character.data)
-          ? (character.data as Record<string, unknown>)
-          : {};
-      const extensions =
-        data.extensions && typeof data.extensions === "object" && !Array.isArray(data.extensions)
-          ? (data.extensions as Record<string, unknown>)
-          : {};
-      const rawCrop = extensions.avatarCrop;
-      const avatarCrop =
-        typeof rawCrop === "string"
-          ? parseAvatarCropJson(rawCrop)
-          : rawCrop && typeof rawCrop === "object" && !Array.isArray(rawCrop)
-            ? (rawCrop as AvatarCropValue)
-            : null;
-      return {
-        id: character.id,
-        name: display.name,
-        comment: display.comment,
-        avatarUrl: character.avatarPath ?? null,
-        avatarCrop,
-      };
-    });
 
-    const byId = new Map<string, GameSetupWizardProps["characters"][number]>(
-      fromLibrary.map((character) => [character.id, character]),
-    );
-    for (const character of linkedCharacters) {
-      if (!byId.has(character.id)) {
-        byId.set(character.id, {
-          ...character,
-          comment: character.comment ?? null,
-          avatarUrl: character.avatarUrl ?? null,
-          avatarCrop: character.avatarCrop ?? null,
-        });
-      }
-    }
-    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [linkedCharacters, rawCharacters]);
+  const characters = useMemo<SetupCharacterInfo[]>(
+    () =>
+      ((charactersList as CharacterLibraryRow[] | undefined) ?? []).map((character) => {
+        const display = parseCharacterDisplayData({ data: character.data ?? {}, comment: character.comment });
+        const extensions =
+          character.data && typeof character.data === "object" && !Array.isArray(character.data)
+            ? (character.data.extensions as Record<string, unknown> | undefined)
+            : undefined;
+        const rawAvatarCrop = extensions?.avatarCrop;
+        return {
+          id: character.id,
+          name: display.name,
+          comment: display.comment,
+          avatarUrl: character.avatarPath ?? undefined,
+          avatarCrop: parseAvatarCropValue(rawAvatarCrop),
+        };
+      }),
+    [charactersList],
+  );
+
+  const emptyCharacterMessage = charactersLoading
+    ? "Loading characters..."
+    : charactersError
+      ? "Characters could not be loaded."
+      : "No characters found.";
 
   const lorebooks = useMemo(
     () => (lorebooksList as Array<{ id: string; name: string; enabled?: boolean }>) ?? [],
@@ -1002,7 +996,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                     ))}
                     {filteredGmCharacters.length === 0 && (
                       <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                        {isCharactersLoading ? "Loading characters..." : characters.length === 0 ? "No characters found." : "No matches."}
+                        {characters.length === 0 ? emptyCharacterMessage : "No matches."}
                       </p>
                     )}
                   </div>
@@ -1089,11 +1083,11 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                   })}
                   {filteredPartyCharacters.length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {isCharactersLoading
-                        ? "Loading characters..."
-                        : characters.length === 0
-                          ? "No characters found. Create characters first."
-                          : "No matches."}
+                      {characters.length === 0
+                        ? charactersLoading || charactersError
+                          ? emptyCharacterMessage
+                          : "No characters found. Create characters first."
+                        : "No matches."}
                     </p>
                   )}
                 </div>

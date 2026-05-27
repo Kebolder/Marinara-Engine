@@ -7452,7 +7452,6 @@ export function GameSurface({
             useGameModeStore.getState().setSetupActive(false);
           }}
           isLoading={createGame.isPending || gameSetup.isPending}
-          characters={characters}
         />
         <GameJsonRepairModal
           request={jsonRepairRequest}
