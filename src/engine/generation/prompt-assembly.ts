@@ -488,10 +488,27 @@ function markerConfig(section: PromptSectionRecord): MarkerConfig | null {
   return null;
 }
 
+function resolveLiveHostTimeZone(): string | undefined {
+  try {
+    return normalizeUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch {
+    return undefined;
+  }
+}
+
 function resolvePromptTimeZone(chat: JsonRecord, request: JsonRecord): string | undefined {
+  // Preference order: persisted per-chat override → caller-supplied input →
+  // live host resolution. The live fallback guarantees that every
+  // startGeneration entry point (chat hook, game-turn service, background
+  // autonomous chats, prompt-preview UI, future callers) resolves prompt-time
+  // macros in the user's local zone even when the caller forgot to plumb
+  // `userTimeZone` through the input contract. Engine code runs in the user's
+  // Tauri webview, so `Intl` always reflects the user's OS.
   const persisted = normalizeUserTimeZone(parseRecord(chat.metadata).promptTimeZone);
   if (persisted) return persisted;
-  return normalizeUserTimeZone(request.userTimeZone);
+  const fromInput = normalizeUserTimeZone(request.userTimeZone);
+  if (fromInput) return fromInput;
+  return resolveLiveHostTimeZone();
 }
 
 function macroContext(input: {

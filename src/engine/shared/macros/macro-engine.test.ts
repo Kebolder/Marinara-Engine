@@ -57,4 +57,15 @@ describe("resolveMacros time macros", () => {
     expect(resolveMacros("{{time}}", ctx)).toBe(formatZonedTime(fixed));
     expect(resolveMacros("{{weekday}}", ctx)).toBe(getZonedWeekdayName(fixed));
   });
+
+  it("{{datetime}} also falls back to host-local rather than UTC when no timezone is provided", () => {
+    const ctx = baseContext();
+    const datetime = resolveMacros("{{datetime}}", ctx);
+    // Pre-fix-pass 2 this returned `Date.toISOString()` (UTC, ends in `Z`),
+    // splitting {{datetime}} away from {{date}}/{{time}} for any caller that
+    // skipped the input plumbing. Post-fix it emits a numeric offset and
+    // never the UTC Z stamp.
+    expect(datetime).toMatch(/[+-]\d{2}:\d{2}$/);
+    expect(datetime).not.toMatch(/Z$/);
+  });
 });

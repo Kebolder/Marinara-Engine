@@ -67,11 +67,11 @@ function readString(value: unknown, fallback = ""): string {
 }
 
 function resolveUserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
-  } catch {
-    return "";
-  }
+  // Engine has its own live-host fallback in resolvePromptTimeZone, so this is
+  // explicit-intent plumbing rather than a load-bearing source of truth.
+  // Kept so non-default callers (e.g. remote runtime in future) can override
+  // via the `userTimeZone` input field.
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
 function streamRevealChunkLength(speed: number, pendingLength: number): number {

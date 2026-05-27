@@ -71,9 +71,13 @@ export function formatZonedTime(date: Date, timeZone?: string): string {
 }
 
 export function formatZonedIsoDateTime(date: Date, timeZone?: string): string {
-  if (!timeZone) return date.toISOString();
+  // Keep the no-zone fallback consistent with formatZonedDate and
+  // formatZonedTime, which delegate to Intl with `timeZone: undefined` (i.e.
+  // host-local). Falling back to `date.toISOString()` here would resolve in
+  // UTC, splitting {{datetime}} away from {{date}}/{{time}} for any caller
+  // that doesn't explicitly thread a zone.
   const parts = getZonedDateParts(date, timeZone);
-  const offsetMinutes = zonedOffsetMinutes(date, timeZone);
+  const offsetMinutes = timeZone ? zonedOffsetMinutes(date, timeZone) : -date.getTimezoneOffset();
   const sign = offsetMinutes >= 0 ? "+" : "-";
   const absMinutes = Math.abs(offsetMinutes);
   const offsetHours = String(Math.floor(absMinutes / 60)).padStart(2, "0");
