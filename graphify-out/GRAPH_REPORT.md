@@ -1,16 +1,16 @@
-# Graph Report - Marinara-Engine  (2026-05-28)
+# Graph Report - Marinara-Engine-issue-1467  (2026-05-28)
 
 ## Corpus Check
-- 850 files · ~2,819,313 words
+- 850 files · ~2,820,164 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 10359 nodes · 22456 edges · 450 communities (417 shown, 33 thin omitted)
+- 10360 nodes · 22458 edges · 450 communities (417 shown, 33 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 274 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a65ac742`
+- Built from commit: `f02cf3ca`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -437,8 +437,8 @@
 6. `parseRecord()` - 78 edges
 7. `assets` - 72 edges
 8. `invokeTauri()` - 65 edges
-9. `FileStorage` - 52 edges
-10. `dispatch()` - 52 edges
+9. `storageApi` - 52 edges
+10. `FileStorage` - 52 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `executeScriptCustomTool()` --calls--> `runner`  [INFERRED]
@@ -447,10 +447,10 @@
   src-tauri/src/commands/storage/integrations/spotify.rs → src-tauri/crates/core/src/lib.rs
 - `import_persona_avatar_file()` --calls--> `modified_at()`  [INFERRED]
   src-tauri/src/commands/storage/imports/bulk_imports.rs → src-tauri/src/commands/storage/imports/access.rs
-- `ensure_url_allowed()` --calls--> `is_allowed_outbound_url()`  [INFERRED]
-  src-tauri/crates/llm/src/lib.rs → src-tauri/crates/security/src/lib.rs
-- `issue_folder_token()` --calls--> `new_id()`  [INFERRED]
-  src-tauri/src/commands/storage/imports/access.rs → src-tauri/crates/core/src/lib.rs
+- `ShellLoadingFallback()` --calls--> `cn()`  [EXTRACTED]
+  src/app/shell/AppShell.tsx → src/shared/lib/utils.ts
+- `MountOnceWhenOpened()` --calls--> `cn()`  [EXTRACTED]
+  src/app/shell/AppShell.tsx → src/shared/lib/utils.ts
 
 ## Communities (450 total, 33 thin omitted)
 
@@ -779,8 +779,8 @@ Cohesion: 0.12
 Nodes (33): collect_profile_assets(), create_profile_import_temp_dir(), data_url_from_file(), decode_profile_asset_data(), decoded_profile_json_assets(), decoded_profile_zip_assets(), is_legacy_cleanup_backup_asset_path(), legacy_cleanup_backup_asset_paths_do_not_reject_profile_assets() (+25 more)
 
 ### Community 81 - "Community 81"
-Cohesion: 0.11
-Nodes (18): cleanNpcDisplayName(), dedupeAdjacentInventoryEntries(), dedupeNpcInteractions(), GameJournal(), InventoryView(), isDuplicateInventoryEntry(), Journal, JournalEntry (+10 more)
+Cohesion: 0.10
+Nodes (19): chat, cleanNpcDisplayName(), dedupeAdjacentInventoryEntries(), dedupeNpcInteractions(), GameJournal(), InventoryView(), isDuplicateInventoryEntry(), Journal (+11 more)
 
 ### Community 82 - "Community 82"
 Cohesion: 0.10
@@ -1971,7 +1971,7 @@ Cohesion: 0.14
 Nodes (15): CombatEndScreen(), CombatLog(), EncounterConfig(), EncounterErrorBoundary, EncounterModal(), EncounterModalInner(), EnemyCard(), HPBar() (+7 more)
 
 ## Knowledge Gaps
-- **3208 isolated node(s):** `composite`, `skipLibCheck`, `module`, `moduleResolution`, `allowSyntheticDefaultImports` (+3203 more)
+- **3208 isolated node(s):** `arrowParens`, `endOfLine`, `printWidth`, `semi`, `singleQuote` (+3203 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **33 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -1979,12 +1979,12 @@ Nodes (15): CombatEndScreen(), CombatLog(), EncounterConfig(), EncounterErrorBou
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `cn()` connect `Community 18` to `Community 384`, `Community 1`, `Community 2`, `Community 3`, `Community 4`, `Community 5`, `Community 128`, `Community 9`, `Community 12`, `Community 13`, `Community 143`, `Community 144`, `Community 145`, `Community 19`, `Community 20`, `Community 21`, `Community 22`, `Community 151`, `Community 25`, `Community 153`, `Community 29`, `Community 30`, `Community 33`, `Community 34`, `Community 163`, `Community 418`, `Community 37`, `Community 170`, `Community 43`, `Community 45`, `Community 50`, `Community 51`, `Community 179`, `Community 59`, `Community 192`, `Community 64`, `Community 197`, `Community 70`, `Community 198`, `Community 72`, `Community 76`, `Community 77`, `Community 78`, `Community 81`, `Community 210`, `Community 89`, `Community 220`, `Community 93`, `Community 96`, `Community 105`, `Community 106`, `Community 109`, `Community 111`, `Community 112`, `Community 117`, `Community 119`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
+  _High betweenness centrality (0.065) - this node is a cross-community bridge._
 - **Why does `useUIStore` connect `Community 111` to `Community 384`, `Community 1`, `Community 2`, `Community 4`, `Community 5`, `Community 9`, `Community 12`, `Community 13`, `Community 143`, `Community 15`, `Community 19`, `Community 20`, `Community 21`, `Community 22`, `Community 151`, `Community 154`, `Community 29`, `Community 30`, `Community 31`, `Community 33`, `Community 34`, `Community 35`, `Community 164`, `Community 37`, `Community 49`, `Community 51`, `Community 179`, `Community 57`, `Community 187`, `Community 189`, `Community 64`, `Community 70`, `Community 72`, `Community 89`, `Community 93`, `Community 97`, `Community 229`, `Community 106`, `Community 112`, `Community 117`, `Community 127`?**
-  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
 - **Why does `get_required()` connect `Community 41` to `Community 32`, `Community 71`, `Community 103`, `Community 7`, `Community 14`, `Community 47`, `Community 113`, `Community 17`, `Community 91`?**
-  _High betweenness centrality (0.009) - this node is a cross-community bridge._
-- **What connects `composite`, `skipLibCheck`, `module` to the rest of the system?**
+  _High betweenness centrality (0.010) - this node is a cross-community bridge._
+- **What connects `arrowParens`, `endOfLine`, `printWidth` to the rest of the system?**
   _3241 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.004395604395604396 - nodes in this community are weakly interconnected._
