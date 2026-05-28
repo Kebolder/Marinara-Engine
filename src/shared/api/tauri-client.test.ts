@@ -68,6 +68,28 @@ describe("invokeTauri remote runtime routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["tts_config", undefined],
+    ["tts_update_config", { config: { enabled: true } }],
+    ["tts_voices", undefined],
+    ["tts_speak", { input: { text: "hello" } }],
+    ["translate_text_command", { input: { text: "bonjour", provider: "google", targetLanguage: "en" } }],
+  ])("routes remote-capable integration command %s to the configured remote runtime", async (command, args) => {
+    useUIStore.setState({ remoteRuntimeUrl: "https://remote.example/runtime" });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await expect(invokeTauri(command, args)).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://remote.example/runtime/api/invoke",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ command, args: args ?? null }),
+      }),
+    );
+    expect(tauriInvoke).not.toHaveBeenCalled();
+  });
+
   it("preserves Retry-After metadata from remote runtime 429 responses", async () => {
     useUIStore.setState({ remoteRuntimeUrl: "https://remote.example/runtime" });
     fetchMock.mockResolvedValueOnce(
