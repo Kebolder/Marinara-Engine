@@ -160,8 +160,8 @@
     "semantic_hash": ""
   },
   "src-tauri/tauri.conf.json": {
-    "mtime": 1779919487.678176,
-    "ast_hash": "6a8d473e583ff74c4c0de2f30e43d773",
+    "mtime": 1779975237.8437154,
+    "ast_hash": "aa88e92e5711a30bf804dc1a39efa625",
     "semantic_hash": ""
   },
   "src-tauri/build.rs": {
@@ -170,8 +170,8 @@
     "semantic_hash": ""
   },
   "src-tauri/tauri.prealpha.conf.json": {
-    "mtime": 1779919487.6783743,
-    "ast_hash": "3390ad5c4011f3142b3ea0ecaf84a5b6",
+    "mtime": 1779975237.8440766,
+    "ast_hash": "ba7debed6df03c84cff5fa509b1ed6b1",
     "semantic_hash": ""
   },
   "src-tauri/crates/llm/src/lib.rs": {
@@ -2935,8 +2935,8 @@
     "semantic_hash": ""
   },
   "src/shared/lib/url-blob.ts": {
-    "mtime": 1779835633.8782463,
-    "ast_hash": "50ddcc6f077eaa4ec5a7d503d2bc8680",
+    "mtime": 1779975237.7680802,
+    "ast_hash": "3d737fbc0fe77c94d6be7f9babef3e4c",
     "semantic_hash": ""
   },
   "src/shared/lib/backgrounds.ts": {
@@ -2975,8 +2975,8 @@
     "semantic_hash": ""
   },
   "src/shared/api/llm-api.ts": {
-    "mtime": 1779888320.0399852,
-    "ast_hash": "27c4f13169dbfa302ee54c670c2dfe82",
+    "mtime": 1779975237.8451068,
+    "ast_hash": "874f6e1d31a01eafad60d6dabc692240",
     "semantic_hash": ""
   },
   "src/shared/api/tauri-client.ts": {
@@ -3070,8 +3070,8 @@
     "semantic_hash": ""
   },
   "src/shared/api/tauri-client.test.ts": {
-    "mtime": 1779961565.0024629,
-    "ast_hash": "ef31722c9adfbbfdb6f456f1d1ab045c",
+    "mtime": 1779975237.767277,
+    "ast_hash": "1dff86e1ec08cfd4cf8a55a1dd8b3c8b",
     "semantic_hash": ""
   },
   "src/shared/api/integration-utility-api.ts": {
@@ -5715,8 +5715,8 @@
     "semantic_hash": ""
   },
   "scripts/patch-graphify-portable-paths.mjs": {
-    "mtime": 1779961269.187975,
-    "ast_hash": "b081d59426ada98bea1f2b81cafca1cd",
+    "mtime": 1779975237.7650888,
+    "ast_hash": "6cc08a7beec19f80cdeade846ef42067",
     "semantic_hash": ""
   },
   "src/shared/api/tts-api.test.ts": {
@@ -5747,6 +5747,21 @@
   "src/engine/generation-core/llm/inline-thinking.test.ts": {
     "mtime": 1779971101.6211128,
     "ast_hash": "43f6ec8f267d07e4e5519e83bbff9745",
+    "semantic_hash": ""
+  },
+  "src/shared/lib/url-blob.test.ts": {
+    "mtime": 1779975237.7677326,
+    "ast_hash": "9dab228350fef57d300c2a02af7acafa",
+    "semantic_hash": ""
+  },
+  "src/shared/api/url-binary-api.ts": {
+    "mtime": 1779975237.767534,
+    "ast_hash": "80c519d1a7692649508837ad1c838480",
+    "semantic_hash": ""
+  },
+  "src/shared/api/url-binary-api.test.ts": {
+    "mtime": 1779975237.7674124,
+    "ast_hash": "0a5053606931c4a6c59680b6888112e0",
     "semantic_hash": ""
   }
 }

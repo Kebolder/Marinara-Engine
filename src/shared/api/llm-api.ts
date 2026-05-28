@@ -9,6 +9,22 @@ function createStreamId(): string {
   return `llm-stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+const activeTauriStreamIds = new Set<string>();
+let unloadCancellationInstalled = false;
+
+function cancelActiveTauriStreams() {
+  for (const streamId of activeTauriStreamIds) {
+    void ignoreLlmStreamCancelFailure("tauri", streamId, invokeTauri("llm_stream_cancel", { streamId }));
+  }
+}
+
+function installUnloadCancellation() {
+  if (unloadCancellationInstalled || typeof window === "undefined") return;
+  unloadCancellationInstalled = true;
+  window.addEventListener("pagehide", cancelActiveTauriStreams);
+  window.addEventListener("beforeunload", cancelActiveTauriStreams);
+}
+
 export const llmApi: LlmGateway = {
   complete: (request: LlmRequest) =>
     invokeTauri("llm_complete", {
@@ -44,6 +60,8 @@ export const llmApi: LlmGateway = {
       }
       return;
     }
+    installUnloadCancellation();
+    activeTauriStreamIds.add(streamId);
     const queue: LlmChunk[] = [];
     let completed = false;
     let failure: unknown = null;
@@ -97,6 +115,7 @@ export const llmApi: LlmGateway = {
       if (failure) throw failure;
     } finally {
       signal?.removeEventListener("abort", abort);
+      activeTauriStreamIds.delete(streamId);
     }
   },
   listModels: (connectionId?: string | null) =>
