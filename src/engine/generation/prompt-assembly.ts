@@ -13,7 +13,14 @@ import { resolveMacros, type MacroContext } from "../shared/macros/macro-engine"
 import { collapseExcessBlankLines } from "../shared/text/newlines";
 import { cleanPromptText, stripPromptComments } from "../shared/text/prompt-comments";
 import { normalizeUserTimeZone } from "../shared/time/timezone";
-import type { GameActiveState, GameCampaignPlan, GameMap, GameNpc, HudWidget, SessionSummary } from "../contracts/types/game";
+import type {
+  GameActiveState,
+  GameCampaignPlan,
+  GameMap,
+  GameNpc,
+  HudWidget,
+  SessionSummary,
+} from "../contracts/types/game";
 import { buildGmFormatReminder, buildGmSystemPrompt, type GmPromptContext } from "../modes/game/prompts/gm-prompts";
 import { fingerprintChatSummary } from "../shared/text/chat-summary-fingerprint";
 import { activeCharacterIds } from "./active-characters";
@@ -151,7 +158,9 @@ function normalizeWrapFormat(value: unknown): WrapFormat | null {
 function normalizedSelectionValue(value: unknown, block?: PromptChoiceBlockRecord): string | null {
   if (Array.isArray(value)) {
     const values = value
-      .map((entry) => (typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean" ? String(entry) : ""))
+      .map((entry) =>
+        typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean" ? String(entry) : "",
+      )
       .filter(Boolean);
     if (values.length === 0) return null;
     if (boolish(block?.randomPick, false)) {
@@ -317,9 +326,7 @@ function appendGameCardFields(parts: string[], card: JsonRecord | undefined): vo
   const hpValue = readNumber(hp.value, Number.NaN);
   const hpMax = readNumber(hp.max, Number.NaN);
   if (Number.isFinite(hpValue) || Number.isFinite(hpMax)) {
-    parts.push(
-      `RPG HP: ${Number.isFinite(hpValue) ? hpValue : "?"}/${Number.isFinite(hpMax) ? hpMax : "?"}`,
-    );
+    parts.push(`RPG HP: ${Number.isFinite(hpValue) ? hpValue : "?"}/${Number.isFinite(hpMax) ? hpMax : "?"}`);
   }
 }
 
@@ -486,16 +493,11 @@ async function buildGamePromptMessages(
     weatherContext,
     playerNotes: readString(meta.gamePlayerNotes).trim() || undefined,
     hudWidgets,
-    hasSceneModel: !!(
-      readString(meta.gameSceneConnectionId).trim() ||
-      readString(setup.sceneConnectionId).trim()
-    ),
+    hasSceneModel: !!(readString(meta.gameSceneConnectionId).trim() || readString(setup.sceneConnectionId).trim()),
     playerMoved: true,
     turnNumber: input.storedMessages.filter((message) => readString(message.role) === "user").length + 1,
     moraleContext:
-      meta.gameMorale == null
-        ? undefined
-        : `Current party morale: ${readNumber(meta.gameMorale, 50)} / 100.`,
+      meta.gameMorale == null ? undefined : `Current party morale: ${readNumber(meta.gameMorale, 50)} / 100.`,
     playerInventory: normalizeGameInventory(meta.gameInventory),
     language: readString(setup.language).trim() || undefined,
   };
@@ -503,7 +505,9 @@ async function buildGamePromptMessages(
   let systemPrompt = buildGmSystemPrompt(gmCtx);
   const customGmPrompt = readString(meta.customGmPrompt).trim();
   if (customGmPrompt) systemPrompt = `${systemPrompt}\n\n${customGmPrompt}`;
-  const extraPrompt = readString(meta.gameExtraPrompt).trim().replace(/<\/?special_instructions>/gi, "");
+  const extraPrompt = readString(meta.gameExtraPrompt)
+    .trim()
+    .replace(/<\/?special_instructions>/gi, "");
   if (extraPrompt) systemPrompt = `${systemPrompt}\n\n<special_instructions>\n${extraPrompt}\n</special_instructions>`;
   systemPrompt = mergeGameLoreIntoPrompt(systemPrompt, worldBefore, worldAfter);
 
@@ -579,6 +583,34 @@ async function loadPromptPresetRecord(storage: StorageGateway, presetId: string)
   return prompts.find((prompt) => readString(prompt.id).trim() === presetId) ?? null;
 }
 
+async function loadPromptPresetBundle(
+  storage: StorageGateway,
+  presetId: string,
+): Promise<{ preset: JsonRecord; sections: PromptSectionRecord[]; choiceBlocks: PromptChoiceBlockRecord[] } | null> {
+  const full = await storage.promptFull?.<JsonRecord>(presetId).catch(() => null);
+  if (full && isRecord(full.preset)) {
+    const sections = Array.isArray(full.sections)
+      ? full.sections.filter(isRecord).sort(bySortOrder)
+      : await loadPromptSections(storage, presetId);
+    const choiceBlocks = Array.isArray(full.choiceBlocks)
+      ? full.choiceBlocks.filter(isRecord).sort(bySortOrder)
+      : await loadPromptChoiceBlocks(storage, presetId);
+    return {
+      preset: full.preset,
+      sections: sections as PromptSectionRecord[],
+      choiceBlocks: choiceBlocks as PromptChoiceBlockRecord[],
+    };
+  }
+
+  const preset = await loadPromptPresetRecord(storage, presetId);
+  if (!preset) return null;
+  const [sections, choiceBlocks] = await Promise.all([
+    loadPromptSections(storage, presetId),
+    loadPromptChoiceBlocks(storage, presetId),
+  ]);
+  return { preset, sections, choiceBlocks };
+}
+
 async function loadSelectedPromptPreset(
   storage: StorageGateway,
   input: {
@@ -593,13 +625,9 @@ async function loadSelectedPromptPreset(
 
   for (const candidate of candidates) {
     const presetId = candidate.id;
-    const preset = await loadPromptPresetRecord(storage, presetId);
-    if (!preset) continue;
-
-    const [sections, choiceBlocks] = await Promise.all([
-      loadPromptSections(storage, presetId),
-      loadPromptChoiceBlocks(storage, presetId),
-    ]);
+    const bundle = await loadPromptPresetBundle(storage, presetId);
+    if (!bundle) continue;
+    const { preset, sections, choiceBlocks } = bundle;
     const blocksByName = new Map(
       choiceBlocks
         .map((block) => [readString(block.variableName).trim(), block] as const)
@@ -608,7 +636,7 @@ async function loadSelectedPromptPreset(
     const metadata = parseRecord(input.chat.metadata);
     const explicitVariables = stringRecord(input.chat.promptVariables ?? input.chat.variableValues);
     const chatPresetId = readString(input.chat.promptPresetId).trim();
-    const chatChoices = chatPresetId === presetId ? metadata.presetChoices ?? input.chat.presetChoices : null;
+    const chatChoices = chatPresetId === presetId ? (metadata.presetChoices ?? input.chat.presetChoices) : null;
     const mode = readString(input.chat.mode || input.chat.chatMode, "conversation");
 
     return {
@@ -796,11 +824,7 @@ function characterMarkerFields(marker: MarkerConfig | null): string[] {
   return fields?.length ? fields : [...DEFAULT_CHARACTER_MARKER_FIELDS];
 }
 
-function renderNamedFields(
-  entries: Array<[string, string | undefined]>,
-  wrapFormat: WrapFormat,
-  depth = 1,
-): string {
+function renderNamedFields(entries: Array<[string, string | undefined]>, wrapFormat: WrapFormat, depth = 1): string {
   return entries
     .map(([label, value]) => {
       const trimmed = readString(value).trim();
@@ -866,14 +890,17 @@ function renderJsonBlock(label: string, value: unknown): string {
   return `${label}:\n${JSON.stringify(record, null, 2).slice(0, 4000)}`;
 }
 
-function fallbackSystemPrompt(input: PromptAssemblyInput, args: {
-  characters: GenerationCharacterContext[];
-  persona: GenerationPersonaContext | null;
-  worldBefore: string;
-  worldAfter: string;
-  summary: string | null;
-  wrapFormat: WrapFormat;
-}): string {
+function fallbackSystemPrompt(
+  input: PromptAssemblyInput,
+  args: {
+    characters: GenerationCharacterContext[];
+    persona: GenerationPersonaContext | null;
+    worldBefore: string;
+    worldAfter: string;
+    summary: string | null;
+    wrapFormat: WrapFormat;
+  },
+): string {
   const mode = readString(input.chat.mode || input.chat.chatMode, "conversation");
   const meta = parseRecord(input.chat.metadata);
   const common = [
@@ -921,7 +948,11 @@ function shouldForceRoleplaySummaryIntoSystem(chat: JsonRecord): boolean {
   return mode === "roleplay" || meta.sceneStatus === "active";
 }
 
-function appendSummaryToSystemPrompt(messages: ChatMLMessage[], summary: string | null, wrapFormat: WrapFormat): boolean {
+function appendSummaryToSystemPrompt(
+  messages: ChatMLMessage[],
+  summary: string | null,
+  wrapFormat: WrapFormat,
+): boolean {
   const trimmed = summary?.trim();
   if (!trimmed) return false;
 
@@ -1010,7 +1041,9 @@ export function chatSummaryForGeneration(chat: JsonRecord): string | null {
     meta.weekSummaries,
     includeSceneSummary ? meta.lastRoleplaySceneSummary : null,
   ]
-    .map((value) => (typeof value === "string" ? value : isRecord(value) || Array.isArray(value) ? JSON.stringify(value) : ""))
+    .map((value) =>
+      typeof value === "string" ? value : isRecord(value) || Array.isArray(value) ? JSON.stringify(value) : "",
+    )
     .filter((value) => value.trim().length > 0);
   return parts.length > 0 ? parts.join("\n\n") : null;
 }
@@ -1061,7 +1094,9 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 function memoryVector(memory: JsonRecord, expectedDims?: number): number[] | null {
   if (!Array.isArray(memory.embedding)) return null;
-  const vector = memory.embedding.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const vector = memory.embedding.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
   if (expectedDims !== undefined) return vector.length === expectedDims ? vector : null;
   return vector.length > 0 ? vector : null;
 }
@@ -1142,7 +1177,10 @@ async function buildMemoryRecallBlock(
       const vector = providerVector ?? memoryVector(memory, MEMORY_EMBEDDING_DIMS) ?? lexicalMemoryEmbedding(content);
       const baseQueryVector = providerVector && semanticQueryVector ? semanticQueryVector : queryVector;
       const haystack = content.toLowerCase();
-      const lexicalScore = Array.from(queryTokens).reduce((score, token) => score + (haystack.includes(token) ? 1 : 0), 0);
+      const lexicalScore = Array.from(queryTokens).reduce(
+        (score, token) => score + (haystack.includes(token) ? 1 : 0),
+        0,
+      );
       const similarity = cosineSimilarity(baseQueryVector, vector) + Math.min(0.2, lexicalScore * 0.025);
       return { content, similarity };
     })
@@ -1295,7 +1333,10 @@ function promptMessageWithRole(message: ChatMLMessage, role: "user" | "assistant
   return next;
 }
 
-function scopedIndividualGroupTarget(input: PromptAssemblyInput, characters: GenerationCharacterContext[]): string | null {
+function scopedIndividualGroupTarget(
+  input: PromptAssemblyInput,
+  characters: GenerationCharacterContext[],
+): string | null {
   const chatMode = readString(input.chat.mode || input.chat.chatMode);
   if (chatMode !== "roleplay" || characters.length <= 1 || input.request.impersonate === true) return null;
   const metadata = parseRecord(input.chat.metadata);
@@ -1391,7 +1432,9 @@ function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {
 
 function collapseToSingleUserMessage(messages: ChatMLMessage[]): ChatMLMessage[] {
   const content = messages
-    .map((message) => (message.role === "user" ? message.content : `[${message.role.toUpperCase()}]\n${message.content}`))
+    .map((message) =>
+      message.role === "user" ? message.content : `[${message.role.toUpperCase()}]\n${message.content}`,
+    )
     .filter((content) => content.trim())
     .join("\n\n");
   return content ? [{ role: "user", content, contextKind: "prompt" }] : [];
@@ -1438,13 +1481,20 @@ function normalizeLorebookEntry(entry: JsonRecord): LorebookEntry {
     activationConditions: Array.isArray(entry.activationConditions) ? entry.activationConditions : [],
     schedule: isRecord(entry.schedule) ? (entry.schedule as unknown as LorebookEntry["schedule"]) : null,
     excludeFromVectorization: boolish(entry.excludeFromVectorization, false),
-    embedding: Array.isArray(entry.embedding) ? entry.embedding.filter((item): item is number => typeof item === "number") : null,
-    additionalMatchingSources: stringArray(entry.additionalMatchingSources) as LorebookEntry["additionalMatchingSources"],
+    embedding: Array.isArray(entry.embedding)
+      ? entry.embedding.filter((item): item is number => typeof item === "number")
+      : null,
+    additionalMatchingSources: stringArray(
+      entry.additionalMatchingSources,
+    ) as LorebookEntry["additionalMatchingSources"],
     characterFilterMode: readString(entry.characterFilterMode, "any") as LorebookEntry["characterFilterMode"],
     characterFilterIds: stringArray(entry.characterFilterIds),
     characterTagFilterMode: readString(entry.characterTagFilterMode, "any") as LorebookEntry["characterTagFilterMode"],
     characterTagFilters: stringArray(entry.characterTagFilters),
-    generationTriggerFilterMode: readString(entry.generationTriggerFilterMode, "any") as LorebookEntry["generationTriggerFilterMode"],
+    generationTriggerFilterMode: readString(
+      entry.generationTriggerFilterMode,
+      "any",
+    ) as LorebookEntry["generationTriggerFilterMode"],
     generationTriggerFilters: stringArray(entry.generationTriggerFilters),
     createdAt: readString(entry.createdAt),
     updatedAt: readString(entry.updatedAt),
@@ -1502,10 +1552,12 @@ async function loadActivatedLore(
   const meta = parseRecord(chat.metadata);
   const gameState = parseRecord(chat.gameState ?? meta.gameState);
   return scanForActivatedEntries(
-    storedMessages.filter((message) => !hiddenFromAi(message)).map((message) => ({
-      role: readString(message.role, "user"),
-      content: readString(message.content),
-    })),
+    storedMessages
+      .filter((message) => !hiddenFromAi(message))
+      .map((message) => ({
+        role: readString(message.role, "user"),
+        content: readString(message.content),
+      })),
     entries,
     { activeCharacterIds, activeCharacterTags, generationTriggers: ["chat", readString(chat.mode)], gameState },
   );
@@ -1552,7 +1604,7 @@ function sectionContent(args: {
       return [args.worldBefore, args.worldAfter].filter(Boolean).join("\n\n");
     case "agent_data":
       return args.marker.agentType
-        ? args.agentData[args.marker.agentType] ?? ""
+        ? (args.agentData[args.marker.agentType] ?? "")
         : Object.entries(args.agentData)
             .map(([type, text]) => `${type}: ${text}`)
             .join("\n\n");
@@ -1728,9 +1780,7 @@ export async function assembleGenerationPrompt(
     messages = scopeIndividualGroupHistoryRoles(messages, individualGroupTarget);
   }
   const previewMessages = previewMessagesForPrompt(messages);
-  const strictRoleFormatting =
-    boolish(promptParameters?.strictRoleFormatting, true) &&
-    chatMode === "roleplay";
+  const strictRoleFormatting = boolish(promptParameters?.strictRoleFormatting, true) && chatMode === "roleplay";
   messages = strictRoleFormatting ? enforceStrictRoles(messages) : mergeAdjacentMessages(messages);
   if (!strictRoleFormatting && boolish(promptParameters?.squashSystemMessages, false)) {
     messages = squashLeadingSystemMessages(messages);

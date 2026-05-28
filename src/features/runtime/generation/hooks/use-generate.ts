@@ -385,55 +385,69 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
   switch (result.agentType) {
     case "continuity": {
       const issues = Array.isArray(data.issues) ? data.issues : [];
-      return issues
-        .map((issue) => parseMaybeRecord(issue).description)
-        .filter((description): description is string => typeof description === "string" && description.trim().length > 0)
-        .join("\n") || null;
+      return (
+        issues
+          .map((issue) => parseMaybeRecord(issue).description)
+          .filter(
+            (description): description is string => typeof description === "string" && description.trim().length > 0,
+          )
+          .join("\n") || null
+      );
     }
     case "prompt-reviewer": {
       const issues = Array.isArray(data.issues) ? data.issues : [];
       if (issues.length === 0) return readString(data.summary, "Prompt looks good");
-      return issues
-        .map((issue) => parseMaybeRecord(issue).description)
-        .filter((description): description is string => typeof description === "string" && description.trim().length > 0)
-        .join("\n") || null;
+      return (
+        issues
+          .map((issue) => parseMaybeRecord(issue).description)
+          .filter(
+            (description): description is string => typeof description === "string" && description.trim().length > 0,
+          )
+          .join("\n") || null
+      );
     }
     case "director":
     case "prose-guardian":
     case "chat-summary":
     case "secret-plot-driver":
-      return readString(data.text).trim() || (result.agentType === "secret-plot-driver" ? "Secret plotline active." : null);
+      return (
+        readString(data.text).trim() || (result.agentType === "secret-plot-driver" ? "Secret plotline active." : null)
+      );
     case "quest": {
       const updates = Array.isArray(data.updates) ? data.updates : [];
-      return updates
-        .map((update) => readString(parseMaybeRecord(update).questName).trim())
-        .filter(Boolean)
-        .join("\n") || null;
+      return (
+        updates
+          .map((update) => readString(parseMaybeRecord(update).questName).trim())
+          .filter(Boolean)
+          .join("\n") || null
+      );
     }
     case "expression": {
       const expressions = Array.isArray(data.expressions) ? data.expressions : [];
-      return expressions
-        .map((entry) => {
-          const record = parseMaybeRecord(entry);
-          const name = readString(record.characterName).trim();
-          const expression = readString(record.expression).trim();
-          return name && expression ? `${name}: ${expression}` : "";
-        })
-        .filter(Boolean)
-        .join("\n") || null;
+      return (
+        expressions
+          .map((entry) => {
+            const record = parseMaybeRecord(entry);
+            const name = readString(record.characterName).trim();
+            const expression = readString(record.expression).trim();
+            return name && expression ? `${name}: ${expression}` : "";
+          })
+          .filter(Boolean)
+          .join("\n") || null
+      );
     }
     case "world-state": {
-      const parts = [data.location, data.time, data.weather]
-        .map((part) => readString(part).trim())
-        .filter(Boolean);
+      const parts = [data.location, data.time, data.weather].map((part) => readString(part).trim()).filter(Boolean);
       return parts.length ? parts.join(" - ") : null;
     }
     case "character-tracker": {
       const present = Array.isArray(data.presentCharacters) ? data.presentCharacters : [];
-      return present
-        .map((entry) => readString(parseMaybeRecord(entry).name).trim())
-        .filter(Boolean)
-        .join(", ") || null;
+      return (
+        present
+          .map((entry) => readString(parseMaybeRecord(entry).name).trim())
+          .filter(Boolean)
+          .join(", ") || null
+      );
     }
     case "background": {
       const chosen = readString(data.chosen).trim();
@@ -441,15 +455,17 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
     }
     case "echo-chamber": {
       const reactions = Array.isArray(data.reactions) ? data.reactions : [];
-      return reactions
-        .map((entry) => {
-          const record = parseMaybeRecord(entry);
-          const name = readString(record.characterName).trim();
-          const reaction = readString(record.reaction).trim();
-          return name && reaction ? `${name}: ${reaction}` : "";
-        })
-        .filter(Boolean)
-        .join("\n") || null;
+      return (
+        reactions
+          .map((entry) => {
+            const record = parseMaybeRecord(entry);
+            const name = readString(record.characterName).trim();
+            const reaction = readString(record.reaction).trim();
+            return name && reaction ? `${name}: ${reaction}` : "";
+          })
+          .filter(Boolean)
+          .join("\n") || null
+      );
     }
     case "spotify": {
       const action = readString(data.action);
@@ -476,18 +492,22 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
       return data.shouldGenerate === true ? readString(data.reason, "Generating scene illustration") : null;
     case "lorebook-keeper": {
       const updates = Array.isArray(data.updates) ? data.updates : [];
-      return updates
-        .map((entry) => readString(parseMaybeRecord(entry).entryName).trim())
-        .filter(Boolean)
-        .join("\n") || null;
+      return (
+        updates
+          .map((entry) => readString(parseMaybeRecord(entry).entryName).trim())
+          .filter(Boolean)
+          .join("\n") || null
+      );
     }
     case "editor": {
       const changes = Array.isArray(data.changes) ? data.changes : [];
       if (changes.length === 0) return "No edits needed";
-      return changes
-        .map((entry) => readString(parseMaybeRecord(entry).description).trim())
-        .filter(Boolean)
-        .join("\n") || null;
+      return (
+        changes
+          .map((entry) => readString(parseMaybeRecord(entry).description).trim())
+          .filter(Boolean)
+          .join("\n") || null
+      );
     }
     case "html":
       return readString(data.text, "HTML formatting active");
@@ -658,7 +678,9 @@ function parsePresentCharacter(value: unknown): PresentCharacter | null {
     outfit: readNullableString(record.outfit),
     avatarPath: readNullableString(record.avatarPath),
     customFields,
-    stats: Array.isArray(record.stats) ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat) : [],
+    stats: Array.isArray(record.stats)
+      ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat)
+      : [],
     thoughts: readNullableString(record.thoughts),
   };
 }
@@ -697,9 +719,7 @@ function gameStatePatchFromAgentResult(result: AgentResult, chatId: string): Rec
     const playerStats: PlayerStats = { ...(existingPlayerStats ?? createEmptyPlayerStats()) };
     if (Object.prototype.hasOwnProperty.call(data, "status")) playerStats.status = readString(data.status).trim();
     if (Array.isArray(data.inventory)) {
-      playerStats.inventory = data.inventory
-        .map(parseInventoryItem)
-        .filter((item): item is InventoryItem => !!item);
+      playerStats.inventory = data.inventory.map(parseInventoryItem).filter((item): item is InventoryItem => !!item);
     }
     const patch: Record<string, unknown> = { playerStats };
     if (Array.isArray(data.stats)) {
@@ -803,9 +823,7 @@ async function applyAgentResultEffects(
   agentStore.addResult(result.agentId || result.agentType, result);
 
   if (!result.success) {
-    agentStore.addFailedAgentFailure(
-      toAgentFailure({ agentType: result.agentType, agentName, error: result.error }),
-    );
+    agentStore.addFailedAgentFailure(toAgentFailure({ agentType: result.agentType, agentName, error: result.error }));
     return;
   }
   const bubble = formatAgentBubble(result, agentName);
@@ -895,6 +913,7 @@ export async function runGenerationWithUi(
   useAgentStore.getState().setProcessing(true);
 
   let received = "";
+  let receivedThinking = false;
   let revealedLength = 0;
   let pendingReveal = "";
   let revealTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1016,6 +1035,13 @@ export async function runGenerationWithUi(
           break;
         case "thinking":
           if (typeof event.data === "string") {
+            if (!receivedThinking) {
+              receivedThinking = true;
+              const state = useChatStore.getState();
+              state.setTypingCharacterName(null);
+              state.setGenerationPhase("Thinking...");
+              state.setMariPhase(chatId, "thinking");
+            }
             useChatStore.getState().appendThinkingBuffer(event.data, chatId);
           }
           break;
@@ -1043,7 +1069,9 @@ export async function runGenerationWithUi(
           }
           break;
         case "agent_result":
-          runDeferredGenerationWork("agent result effects", () => applyAgentResultEffects(queryClient, chatId, event.data));
+          runDeferredGenerationWork("agent result effects", () =>
+            applyAgentResultEffects(queryClient, chatId, event.data),
+          );
           break;
         case "cross_post": {
           const data = parseMaybeRecord(event.data);
@@ -1166,8 +1194,11 @@ export function useGenerate() {
         if (!regenerateMessageId || !chatId) return args;
 
         const cachedMessages = queryClient.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
-        const cachedMessage = cachedMessages?.pages.flat().find((message) => readString(message.id) === regenerateMessageId);
-        const storedMessage = cachedMessage ?? (await storageApi.get<Message>("messages", regenerateMessageId).catch(() => null));
+        const cachedMessage = cachedMessages?.pages
+          .flat()
+          .find((message) => readString(message.id) === regenerateMessageId);
+        const storedMessage =
+          cachedMessage ?? (await storageApi.get<Message>("messages", regenerateMessageId).catch(() => null));
         if (!storedMessage || readString(storedMessage.chatId).trim() !== chatId) return args;
         const replay = readGenerationReplay(storedMessage?.extra);
         if (!replay) return args;
@@ -1239,7 +1270,9 @@ export function useGenerate() {
           { chatId, agentTypes, options: { ...(options ?? {}), bypassActivation: options?.bypassActivation ?? true } },
         );
         for (const result of results) {
-          runDeferredGenerationWork("agent retry result effects", () => applyAgentResultEffects(queryClient, chatId, result));
+          runDeferredGenerationWork("agent retry result effects", () =>
+            applyAgentResultEffects(queryClient, chatId, result),
+          );
         }
         runDeferredGenerationWork("agent retry refresh", async () => {
           await refreshGameStateFromStorage(chatId);

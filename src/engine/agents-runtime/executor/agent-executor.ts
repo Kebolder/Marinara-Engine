@@ -9,7 +9,12 @@ import type {
 } from "../../generation-core/llm/base-provider.js";
 import type { AgentResult, AgentContext, AgentResultType } from "../../contracts/types/agent";
 import { getDefaultAgentPrompt } from "../../contracts/constants/agent-prompts";
-import { DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS } from "../../contracts/types/agent";
+import {
+  DEFAULT_AGENT_CONTEXT_SIZE,
+  DEFAULT_AGENT_MAX_TOKENS,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
+} from "../../contracts/types/agent";
 import { createAgentRuntimeDebug, type AgentRuntimeDebugEntry } from "../debug.js";
 import { stripAvatarPathsReplacer } from "../strip-avatar-paths";
 
@@ -433,7 +438,9 @@ export async function executeAgentBatch(
     const systemPrompt = buildBatchSystemPrompt(configs, context);
     // Batch uses the max contextSize among its members
     const batchContextSize = Math.max(...configs.map((c) => normalizeAgentContextSize(c.settings.contextSize)));
-    const messages = buildAgentMessages(systemPrompt, context, "__batch__", batchContextSize);
+    const messages = buildAgentMessages(systemPrompt, context, "__batch__", batchContextSize, {
+      finalInstruction: buildBatchFinalInstruction(configs),
+    });
 
     // Each agent reserves its own configured output budget. The context fitter
     // may still reduce this further if the prompt needs more room.
@@ -464,10 +471,20 @@ export async function executeAgentBatch(
     logger.debug(`\n[agent-batch] ═══ BATCH PROMPT — [${configs.map((c) => c.type).join(", ")}] — ${model} ═══`);
     for (const msg of messages) {
       logger.debug(`[agent-batch] [${msg.role}] ${msg.content}`);
-      emit({ level: "debug", phase: configs[0]!.phase, message: "batch-prompt-message", args: [msg.role, msg.content] });
+      emit({
+        level: "debug",
+        phase: configs[0]!.phase,
+        message: "batch-prompt-message",
+        args: [msg.role, msg.content],
+      });
     }
     logger.debug(`[agent-batch] ═══ END BATCH PROMPT — temperature=${temperature} maxTokens=${batchMaxTokens} ═══\n`);
-    emit({ level: "debug", phase: configs[0]!.phase, message: "batch-prompt-end", args: [temperature, batchMaxTokens] });
+    emit({
+      level: "debug",
+      phase: configs[0]!.phase,
+      message: "batch-prompt-end",
+      args: [temperature, batchMaxTokens],
+    });
 
     // Use streaming (onToken) to keep the connection alive — avoids proxy
     // timeouts (e.g. Cloudflare 524) on large batch responses.
@@ -604,6 +621,14 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   );
 
   return parts.join("\n");
+}
+
+function buildBatchFinalInstruction(configs: AgentExecConfig[]): string {
+  return [
+    "Now return the requested outputs.",
+    `Output all ${configs.length} result blocks using the exact agent IDs: ${configs.map((config) => config.type).join(", ")}.`,
+    "Use the required formats from the system instructions. JSON agents must return valid JSON without markdown fences. Do not add text outside the result blocks.",
+  ].join("\n");
 }
 
 /**
@@ -960,6 +985,7 @@ function buildAgentMessages(
   context: AgentContext,
   agentType: string,
   contextSize = 5,
+  options: { finalInstruction?: string } = {},
 ): ChatMessage[] {
   // ── 1. System message — already contains <role>, <lore>, <agents>, and extras ──
   const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
@@ -1048,9 +1074,11 @@ function buildAgentMessages(
     finalParts.push(`</agent_results>`);
   }
 
-  if (finalParts.length > 0) {
-    finalParts.push("\nNow return the requested format(s).");
-    const finalContent = finalParts.join("\n");
+  const finalInstruction =
+    options.finalInstruction ?? (finalParts.length > 0 ? "Now return the requested format(s)." : "");
+  if (finalParts.length > 0 || finalInstruction) {
+    if (finalInstruction) finalParts.push(`\n${finalInstruction}`);
+    const finalContent = finalParts.join("\n").trim();
     const last = messages[messages.length - 1]!;
     if (last.role === "user") {
       messages[messages.length - 1] = { ...last, content: last.content + "\n\n" + finalContent };

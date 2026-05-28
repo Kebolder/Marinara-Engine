@@ -65,6 +65,7 @@ function promptSnapshotToPeekPromptData(value: unknown): PeekPromptData | null {
   return {
     messages,
     parameters: snapshot.parameters ?? null,
+    promptPresetId: readString(snapshot.promptPresetId).trim() || null,
     generationInfo: readRecord(snapshot.generationInfo) as PeekPromptData["generationInfo"],
   };
 }

@@ -646,10 +646,12 @@ describe("startGeneration chat message loading", () => {
     const snapshot = extra.generationPromptSnapshot as {
       messages: Array<{ role: string; content: string }>;
       parameters: Record<string, unknown>;
+      promptPresetId?: string | null;
     };
 
     expect(snapshot.messages).toEqual(JSON.parse(JSON.stringify(request.messages)));
     expect(snapshot.parameters).toEqual(request.parameters);
+    expect(snapshot.promptPresetId).toBe("preset-1");
     expect(snapshot.messages.map((message) => message.content).join("\n")).toContain("Preset rules.");
     expect(snapshot.messages.map((message) => message.content).join("\n")).not.toContain("Done.");
     expect(extra.generationPromptSnapshotsBySwipe).toMatchObject({ "0": snapshot });

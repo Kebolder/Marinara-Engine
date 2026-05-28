@@ -7,6 +7,7 @@ export type PeekPromptData = {
   messages: PeekPromptMessage[];
   previewMessages?: PeekPromptMessage[];
   parameters: unknown;
+  promptPresetId?: string | null;
   generationInfo?: {
     model?: string;
     provider?: string;

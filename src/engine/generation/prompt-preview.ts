@@ -18,6 +18,7 @@ export interface PromptPreviewResult {
   messages: ChatMLMessage[];
   previewMessages: ChatMLMessage[];
   parameters: Partial<GenerationParameters> | Record<string, unknown>;
+  promptPresetId: string | null;
   messageCount: number;
   generationInfo: {
     model?: string;
@@ -93,6 +94,7 @@ export async function previewGenerationPrompt(
     messages: assembly.messages,
     previewMessages: assembly.previewMessages,
     parameters,
+    promptPresetId: assembly.promptPresetId,
     messageCount: assembly.messages.length,
     generationInfo: {
       model: readString(connection.model) || undefined,

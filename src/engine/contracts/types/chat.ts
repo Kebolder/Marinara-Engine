@@ -483,6 +483,7 @@ export interface GenerationPromptSnapshot {
   parameters: Record<string, unknown>;
   tools?: unknown[] | null;
   generationInfo?: GenerationPromptSnapshotInfo | null;
+  promptPresetId?: string | null;
   createdAt?: string;
 }
 

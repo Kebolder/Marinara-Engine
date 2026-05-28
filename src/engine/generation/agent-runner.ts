@@ -18,19 +18,16 @@ import type {
   LLMToolDefinition,
 } from "../generation-core/llm/base-provider";
 import { matchCustomAgentActivation, type ActivationScanMessage } from "../agents-runtime/activation";
-import { createAgentPipeline, type AgentInjection, type ResolvedAgent } from "../agents-runtime/pipeline/agent-pipeline";
+import {
+  createAgentPipeline,
+  type AgentInjection,
+  type ResolvedAgent,
+} from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
 import { llmParameters } from "./context";
 import { loadAgentMemory, secretPlotStateFromMemory } from "./agent-memory-runtime";
-import {
-  boolish,
-  hiddenFromAi,
-  isRecord,
-  parseRecord,
-  readString,
-  type JsonRecord,
-} from "./runtime-records";
+import { boolish, hiddenFromAi, isRecord, parseRecord, readString, type JsonRecord } from "./runtime-records";
 import {
   BUILT_IN_TOOL_MAP,
   builtInToolDefinition,
@@ -239,11 +236,7 @@ function automaticIntervalGate(
 ): AutomaticIntervalGate | null {
   if (input.agentTypes && input.agentTypes.size > 0) return null;
   if (type === ILLUSTRATOR_AGENT_TYPE) {
-    const fallback = positiveInteger(
-      BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[type],
-      5,
-      MAX_ASSISTANT_RUN_INTERVAL,
-    );
+    const fallback = positiveInteger(BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[type], 5, MAX_ASSISTANT_RUN_INTERVAL);
     const runInterval = positiveInteger(settings.runInterval, fallback, MAX_ASSISTANT_RUN_INTERVAL);
     return runInterval > 1
       ? {
@@ -320,8 +313,10 @@ function intervalAnchorRun(
       .filter((run) => agentType !== ILLUSTRATOR_AGENT_TYPE || illustratorRunCountsTowardInterval(run))
       .map((run) => ({ run, messageIndex: indexes.get(readString(run.messageId).trim()) ?? -1 }))
       .filter((entry) => entry.messageIndex >= 0)
-      .sort((a, b) => b.messageIndex - a.messageIndex || readString(b.run.createdAt).localeCompare(readString(a.run.createdAt)))[0]
-      ?.run ?? null
+      .sort(
+        (a, b) =>
+          b.messageIndex - a.messageIndex || readString(b.run.createdAt).localeCompare(readString(a.run.createdAt)),
+      )[0]?.run ?? null
   );
 }
 
@@ -372,10 +367,10 @@ function buildAgentToolContext(
 ): AgentToolContext | undefined {
   if (!chatToolsEnabled(input)) return undefined;
   const scopedToolIds = chatActiveToolIds(input);
-  const selectedNames = enabledToolNames(settings).filter((name) => scopedToolIds.size === 0 || scopedToolIds.has(name));
-  const selectedBuiltIns = selectedNames
-    .map(builtInToolDefinition)
-    .filter((tool): tool is LLMToolDefinition => !!tool);
+  const selectedNames = enabledToolNames(settings).filter(
+    (name) => scopedToolIds.size === 0 || scopedToolIds.has(name),
+  );
+  const selectedBuiltIns = selectedNames.map(builtInToolDefinition).filter((tool): tool is LLMToolDefinition => !!tool);
   const selectedCustomTools = selectedNames
     .map((name) => customTools.get(name))
     .filter((tool): tool is CustomToolRecord => !!tool && !BUILT_IN_TOOL_MAP.has(tool.name));
@@ -423,7 +418,11 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
     const id = readString(agent.id);
     const requestedExplicitly = requestedAgentTypes && (requestedAgentTypes.has(type) || requestedAgentTypes.has(id));
     const scopedToChat = scopedAgentIds.size > 0 && (scopedAgentIds.has(type) || scopedAgentIds.has(id));
-    if (!requestedExplicitly && (!requestedAgentTypes || requestedAgentTypes.size === 0) && type === "lorebook-keeper") {
+    if (
+      !requestedExplicitly &&
+      (!requestedAgentTypes || requestedAgentTypes.size === 0) &&
+      type === "lorebook-keeper"
+    ) {
       return false;
     }
     if (requestedAgentTypes && requestedAgentTypes.size > 0) return Boolean(requestedExplicitly);
@@ -482,7 +481,6 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       settings,
       provider: llmProvider(deps.llm, connectionId, parameters),
       model,
-      maxParallelJobs: typeof settings.maxParallelJobs === "number" ? settings.maxParallelJobs : undefined,
       toolContext: buildAgentToolContext(deps, input, agent, settings, customTools),
     });
   }
@@ -502,9 +500,7 @@ function cleanOptionalString(value: unknown): string | null {
 
 function buildSpotifyDjConstraints(chatMode: string, chatMeta: JsonRecord): Record<string, unknown> {
   const isGame = chatMode === "game";
-  const sourceType = normalizeSpotifyDjSourceType(
-    isGame ? chatMeta.gameSpotifySourceType : chatMeta.spotifySourceType,
-  );
+  const sourceType = normalizeSpotifyDjSourceType(isGame ? chatMeta.gameSpotifySourceType : chatMeta.spotifySourceType);
   const playlistId = cleanOptionalString(isGame ? chatMeta.gameSpotifyPlaylistId : chatMeta.spotifyPlaylistId);
   const playlistName = cleanOptionalString(isGame ? chatMeta.gameSpotifyPlaylistName : chatMeta.spotifyPlaylistName);
   const artist = cleanOptionalString(isGame ? chatMeta.gameSpotifyArtist : chatMeta.spotifyArtist);

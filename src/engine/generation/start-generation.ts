@@ -129,7 +129,10 @@ const DEFAULT_LOREBOOK_KEEPER_RUN_INTERVAL = BUILT_IN_AGENT_RUN_INTERVAL_DEFAULT
 const CONTINUE_ASSISTANT_RESPONSE_INSTRUCTION =
   "[Generation instruction: continue from the latest assistant message. Do not repeat or summarize the previous response; pick up naturally from where it stopped.]";
 
-type MainGenerationPromptSnapshot = Pick<GenerationPromptSnapshot, "messages" | "parameters" | "tools">;
+type MainGenerationPromptSnapshot = Pick<
+  GenerationPromptSnapshot,
+  "messages" | "parameters" | "tools" | "promptPresetId"
+>;
 
 function abortGenerationError(): Error {
   return Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
@@ -772,6 +775,7 @@ function buildSavedGenerationPromptSnapshot(args: {
     messages: args.promptSnapshot.messages.map(clonePromptMessage),
     parameters: isRecord(parameters) ? parameters : {},
     ...(tools?.length ? { tools } : {}),
+    promptPresetId: args.promptSnapshot.promptPresetId ?? null,
     generationInfo: {
       model: readString(args.connection.model) || undefined,
       provider: readString(args.connection.provider) || undefined,
@@ -1433,6 +1437,7 @@ export async function* startGeneration(
       chat: chatForGeneration,
       parameters: llmParameters(connection, input, chatForGeneration, assembly.parameters),
       baseMessages,
+      promptPresetId: assembly.promptPresetId,
       mainTools,
       toolRuntimeInput,
       signal,
@@ -1558,6 +1563,7 @@ export async function* startGeneration(
     chat: chatForGeneration,
     parameters: llmParameters(connection, input, chatForGeneration, assembly.parameters),
     baseMessages: baseMessagesDirect,
+    promptPresetId: assembly.promptPresetId,
     mainTools: mainToolsDirect,
     toolRuntimeInput: toolRuntimeInputDirect,
     signal,
@@ -1677,6 +1683,7 @@ async function* streamMainGenerationLoop(args: {
   chat: JsonRecord;
   parameters: Record<string, unknown>;
   baseMessages: LlmMessage[];
+  promptPresetId?: string | null;
   mainTools: MainToolDefinitions | null;
   toolRuntimeInput: ToolRuntimeInput;
   signal: AbortSignal | undefined;
@@ -1684,7 +1691,18 @@ async function* streamMainGenerationLoop(args: {
   GenerationEvent,
   { content: string; thinking: string; usage: unknown; promptSnapshot: MainGenerationPromptSnapshot | null }
 > {
-  const { deps, connection, input, chat, parameters, baseMessages, mainTools, toolRuntimeInput, signal } = args;
+  const {
+    deps,
+    connection,
+    input,
+    chat,
+    parameters,
+    baseMessages,
+    promptPresetId,
+    mainTools,
+    toolRuntimeInput,
+    signal,
+  } = args;
   let content = "";
   let thinking = "";
   const usages: unknown[] = [];
@@ -1717,6 +1735,7 @@ async function* streamMainGenerationLoop(args: {
     promptSnapshot = {
       messages: requestMessages.map(clonePromptMessage),
       parameters: cloneSerializableValue(requestParameters),
+      promptPresetId: promptPresetId ?? null,
       ...(requestTools?.length ? { tools: cloneSerializableValue(requestTools) } : {}),
     };
 

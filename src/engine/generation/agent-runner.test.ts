@@ -4,27 +4,30 @@ import type { LlmGateway, LlmRequest } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
 import { createGenerationAgentRuntime } from "./agent-runner";
 
-function storage(rows: Record<string, unknown>[], collections: Record<string, Record<string, unknown>[]> = {}): StorageGateway {
+function storage(
+  rows: Record<string, unknown>[],
+  collections: Record<string, Record<string, unknown>[]> = {},
+): StorageGateway {
   return {
-    list: async <T,>(entity: string) => (entity === "agents" ? rows : (collections[entity] ?? [])) as T[],
-    get: async <T,>() => null as T | null,
-    create: async <T,>() => ({}) as T,
-    update: async <T,>() => ({}) as T,
+    list: async <T>(entity: string) => (entity === "agents" ? rows : (collections[entity] ?? [])) as T[],
+    get: async <T>() => null as T | null,
+    create: async <T>() => ({}) as T,
+    update: async <T>() => ({}) as T,
     delete: async () => ({ deleted: true }),
     listChatMessages: async () => [],
-    createChatMessage: async <T,>() => ({}) as T,
-    updateChatMessage: async <T,>() => ({}) as T,
+    createChatMessage: async <T>() => ({}) as T,
+    updateChatMessage: async <T>() => ({}) as T,
     deleteChatMessage: async () => ({ deleted: true }),
-    patchChatMessageExtra: async <T,>() => ({}) as T,
-    addChatMessageSwipe: async <T,>() => ({}) as T,
-    patchChatMetadata: async <T,>() => ({}) as T,
-    patchChatSummaries: async <T,>() => ({}) as T,
+    patchChatMessageExtra: async <T>() => ({}) as T,
+    addChatMessageSwipe: async <T>() => ({}) as T,
+    patchChatMetadata: async <T>() => ({}) as T,
+    patchChatSummaries: async <T>() => ({}) as T,
     listChatMemories: async () => [],
-    getWorldState: async <T,>() => null as T | null,
-    saveTrackerSnapshot: async <T,>() => ({}) as T,
+    getWorldState: async <T>() => null as T | null,
+    saveTrackerSnapshot: async <T>() => ({}) as T,
     listLorebookEntries: async () => [],
     createLorebookEntries: async () => [],
-    promptFull: async <T,>() => null as T | null,
+    promptFull: async <T>() => null as T | null,
   };
 }
 
@@ -48,6 +51,32 @@ function countingLlm(calls: unknown[], responseText = "ok"): LlmGateway {
     },
     async complete() {
       return responseText;
+    },
+    async listModels() {
+      return [];
+    },
+  };
+}
+
+function batchingAwareLlm(calls: LlmRequest[]): LlmGateway {
+  return {
+    async *stream(request) {
+      calls.push(request);
+      const systemPrompt = request.messages[0]?.content ?? "";
+      if (systemPrompt.includes("collection of 2 specialized agents")) {
+        yield {
+          type: "token",
+          text: [
+            '<result agent="prose-guardian">Keep the prose direct.</result>',
+            '<result agent="director">[Director\'s note: Add a ticking clock.]</result>',
+          ].join("\n"),
+        };
+        return;
+      }
+      yield { type: "token", text: "single agent fallback" };
+    },
+    async complete() {
+      return "single agent fallback";
     },
     async listModels() {
       return [];
@@ -108,8 +137,7 @@ function integrationWithCustomTool(
   const empty = async <T = unknown>() => ({}) as T;
   return {
     customTools: {
-      execute: async <T = unknown>(input: { toolName: string; arguments: unknown }) =>
-        (await execute(input)) as T,
+      execute: async <T = unknown>(input: { toolName: string; arguments: unknown }) => (await execute(input)) as T,
     },
     spotify: {
       player: empty,
@@ -284,6 +312,70 @@ describe("createGenerationAgentRuntime", () => {
       reasoningEffort: "high",
       assistantPrefill: "Here is the agent result:",
     });
+  });
+
+  it("batches same-connection phase agents into one request even when maxParallelJobs is configured", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "agent-a",
+            type: "prose-guardian",
+            name: "Prose Guardian",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Return a prose note.",
+            settings: { maxParallelJobs: 4 },
+          },
+          {
+            id: "agent-b",
+            type: "director",
+            name: "Director",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Return a director note.",
+            settings: { maxParallelJobs: 4 },
+          },
+        ]),
+        llm: batchingAwareLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a", "agent-b"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preResults).toHaveLength(2);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.parameters).toMatchObject({ maxTokens: 8192 });
+    expect(calls[0]?.messages[0]?.content).toContain("<agents>");
+    expect(calls[0]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("Output all 2 result blocks"),
+    });
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "prose-guardian",
+        agentName: "Prose Guardian",
+        text: "Keep the prose direct.",
+      },
+      {
+        agentType: "director",
+        agentName: "Director",
+        text: "[Director's note: Add a ticking clock.]",
+      },
+    ]);
   });
 
   it("passes roleplay Spotify DJ source constraints to the Spotify agent", async () => {
