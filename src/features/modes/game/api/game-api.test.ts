@@ -149,6 +149,86 @@ describe("gameApi.setupGame response contract", () => {
   });
 });
 
+describe("gameApi metadata mutation response contracts", () => {
+  beforeEach(() => {
+    Object.values(storageApiMock).forEach((fn) => fn.mockReset());
+  });
+
+  function mockChat(initial: Chat) {
+    let chat = initial;
+    storageApiMock.get.mockImplementation(async (entity: string, id: string) => {
+      if (entity === "chats" && id === chat.id) return chat;
+      return null;
+    });
+    storageApiMock.update.mockImplementation(async (entity: string, id: string, patch: Record<string, unknown>) => {
+      if (entity !== "chats" || id !== chat.id) return null;
+      const patchMetadata =
+        patch.metadata && typeof patch.metadata === "object" && !Array.isArray(patch.metadata)
+          ? (patch.metadata as Record<string, unknown>)
+          : {};
+      chat = {
+        ...chat,
+        ...patch,
+        metadata: {
+          ...((chat.metadata ?? {}) as Record<string, unknown>),
+          ...patchMetadata,
+        },
+      } as Chat;
+      return chat;
+    });
+    return () => chat;
+  }
+
+  it("returns the active session chat when starting a game", async () => {
+    const readChat = mockChat({
+      id: "chat-game",
+      name: "Game",
+      mode: "game",
+      characterIds: [],
+      metadata: {
+        gameSessionStatus: "ready",
+      },
+    } as unknown as Chat);
+    storageApiMock.list.mockImplementation(async (entity: string) => {
+      if (entity === "messages") return [];
+      return [];
+    });
+
+    const result = await gameApi.startGame({ chatId: "chat-game" });
+
+    expect(result.sessionChat).toBe(readChat());
+    expect(result.sessionChat.metadata).toMatchObject({
+      gameSessionStatus: "active",
+      gameActiveState: "exploration",
+    });
+  });
+
+  it("returns the updated session chat when map generation persists map metadata", async () => {
+    mockChat({
+      id: "chat-game",
+      name: "Game",
+      mode: "game",
+      characterIds: [],
+      metadata: {
+        gameSessionStatus: "active",
+      },
+    } as unknown as Chat);
+
+    const result = await gameApi.generateMap({
+      chatId: "chat-game",
+      locationType: "Forest",
+      context: "misty trail",
+    });
+
+    expect(result.sessionChat.id).toBe("chat-game");
+    expect(result.sessionChat.metadata).toMatchObject({
+      gameMap: result.map,
+      gameMaps: [result.map],
+      activeGameMapId: result.activeGameMapId,
+    });
+  });
+});
+
 describe("gameApi.startSession folderId inheritance", () => {
   beforeEach(() => {
     Object.values(storageApiMock).forEach((fn) => fn.mockReset());

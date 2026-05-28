@@ -39,6 +39,7 @@ export interface SetupResponse {
 export interface StartGameResponse {
   status: string;
   alreadyStarted?: boolean;
+  sessionChat: Chat;
 }
 
 export interface StartSessionResponse {
@@ -49,12 +50,14 @@ export interface StartSessionResponse {
 
 export interface SessionSummaryResponse {
   summary: SessionSummary;
+  sessionChat: Chat;
 }
 
 export interface RegenerateSessionLorebookResponse {
   sessionNumber: number;
   lorebookId: string;
   entryCount: number;
+  sessionChat: Chat;
 }
 
 export interface UpdateCampaignProgressionResponse {
@@ -80,6 +83,7 @@ export interface MapResponse {
   map: GameMap;
   maps?: GameMap[];
   activeGameMapId?: string | null;
+  sessionChat: Chat;
 }
 
 export interface GameJournalResponse {
@@ -102,6 +106,7 @@ export interface GameAssetGenerationResult {
   fallbackBackground: string | null;
   generatedIllustration: { tag: string; segment?: number } | null;
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
+  sessionChat?: Chat;
 }
 
 type ImagePromptSettings = {
@@ -987,17 +992,17 @@ export const gameApi = {
       return asRecord(message.extra).hiddenFromAi !== true;
     });
     if (sessionStatus === "active" && hasExistingGmTurn) {
-      return { status: "active", alreadyStarted: true };
+      return { status: "active", alreadyStarted: true, sessionChat: chat };
     }
     if (sessionStatus !== "ready" && sessionStatus !== "active") {
       throw new Error(`Cannot start game: status is "${sessionStatus}", expected "ready"`);
     }
     if (hasExistingGmTurn) {
-      await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
-      return { status: "active", alreadyStarted: true };
+      const sessionChat = await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
+      return { status: "active", alreadyStarted: true, sessionChat };
     }
-    await patchChatMetadata(data.chatId, { gameSessionStatus: "active", gameActiveState: "exploration" });
-    return { status: "active", alreadyStarted: false };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameSessionStatus: "active", gameActiveState: "exploration" });
+    return { status: "active", alreadyStarted: false, sessionChat };
   },
 
   async startSession(data: { gameId: string; connectionId?: string }): Promise<StartSessionResponse> {
@@ -1118,13 +1123,13 @@ export const gameApi = {
       ? [...(meta.gamePreviousSessionSummaries as SessionSummary[])]
       : [];
     const nextSummaries = summaries.filter((item) => item.sessionNumber !== sessionNumber).concat(summary);
-    await patchChatMetadata(data.chatId, {
+    const sessionChat = await patchChatMetadata(data.chatId, {
       gameSessionStatus: "concluded",
       gamePreviousSessionSummaries: nextSummaries,
       gameCampaignProgression: campaignProgression,
       gameCharacterCards: characterCards,
     });
-    return { summary };
+    return { summary, sessionChat };
   },
 
   async regenerateSessionLorebook(data: {
@@ -1185,11 +1190,11 @@ export const gameApi = {
       });
       entryCount += 1;
     }
-    await patchChatMetadata(data.chatId, {
+    const sessionChat = await patchChatMetadata(data.chatId, {
       gameSessionLorebookId: lorebook.id,
       gameSessionLorebookEntryCount: entryCount,
     });
-    return { sessionNumber: data.sessionNumber, lorebookId: lorebook.id, entryCount };
+    return { sessionNumber: data.sessionNumber, lorebookId: lorebook.id, entryCount, sessionChat };
   },
 
   async updateCampaignProgression(data: {
@@ -1290,16 +1295,16 @@ export const gameApi = {
     const meta = chatMeta(await getChat(data.chatId));
     const previousState = (meta.gameActiveState as GameActiveState | undefined) ?? "exploration";
     const newState = validateTransition(previousState, data.newState);
-    await patchChatMetadata(data.chatId, { gameActiveState: newState });
-    return { previousState, newState };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameActiveState: newState });
+    return { previousState, newState, sessionChat };
   },
 
   async generateMap(data: { chatId: string; locationType: string; context: string }): Promise<MapResponse> {
     const map = defaultGameMap(data.locationType || "Area", data.context || "");
     const chat = await getChat(data.chatId);
     const meta = withActiveGameMapMeta(chatMeta(chat), map);
-    await patchChatMetadata(data.chatId, meta);
-    return { map, maps: [map], activeGameMapId: map.id ?? null };
+    const sessionChat = await patchChatMetadata(data.chatId, meta);
+    return { map, maps: [map], activeGameMapId: map.id ?? null, sessionChat };
   },
 
   async moveOnMap(data: { chatId: string; position: { x: number; y: number } | string; mapId?: string | null }): Promise<MapResponse> {
@@ -1309,17 +1314,18 @@ export const gameApi = {
     const current = (maps.find((map) => map.id === data.mapId) ?? (meta.gameMap as GameMap | undefined) ?? defaultGameMap()) as GameMap;
     const map = { ...current, partyPosition: data.position } as GameMap;
     const nextMeta = withActiveGameMapMeta(meta, map);
-    await patchChatMetadata(data.chatId, nextMeta);
+    const sessionChat = await patchChatMetadata(data.chatId, nextMeta);
     return {
       map,
       maps: Array.isArray(nextMeta.gameMaps) ? (nextMeta.gameMaps as GameMap[]) : [map],
       activeGameMapId: typeof nextMeta.activeGameMapId === "string" ? nextMeta.activeGameMapId : (map.id ?? null),
+      sessionChat,
     };
   },
 
   async updateWidgets(data: { chatId: string; widgets: HudWidget[] }) {
-    await patchChatMetadata(data.chatId, { gameWidgetState: data.widgets });
-    return { ok: true };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameWidgetState: data.widgets });
+    return { ok: true, sessionChat };
   },
 
   async gameSessions(gameId: string): Promise<Chat[]> {
@@ -1378,21 +1384,22 @@ export const gameApi = {
     return { drops: generateLootTable(Math.max(0, Math.min(10, data.count ?? 1)), data.difficulty ?? "normal") };
   },
 
-  async advanceTime(data: { chatId: string; action: string }): Promise<{ time: GameTime; formatted: string }> {
+  async advanceTime(data: { chatId: string; action: string }): Promise<{ time: GameTime; formatted: string; sessionChat: Chat }> {
     const meta = chatMeta(await getChat(data.chatId));
     const time = advanceGameTime(gameTimeFromMeta(meta), data.action);
     const formatted = formatGameTime(time);
-    await patchChatMetadata(data.chatId, { gameTime: time, gameTimeFormatted: formatted });
-    return { time, formatted };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameTime: time, gameTimeFormatted: formatted });
+    return { time, formatted, sessionChat };
   },
 
-  async updateWeather(data: { chatId: string; action: string; location?: string; season?: string; type?: string }): Promise<{ changed: boolean; weather: WeatherState }> {
+  async updateWeather(data: { chatId: string; action: string; location?: string; season?: string; type?: string }): Promise<{ changed: boolean; weather: WeatherState; sessionChat: Chat }> {
+    const chat = await getChat(data.chatId);
     const forced = data.type
       ? ({ type: data.type, temperature: 20, description: "", wind: "calm", visibility: "clear" } as WeatherState)
       : generateWeather(inferBiome(data.location ?? ""), (data.season as any) ?? "summer");
     const changed = Boolean(data.type) || Math.random() < (data.action === "travel" ? 0.35 : data.action === "rest_long" ? 0.6 : data.action === "explore" ? 0.2 : 0.08);
-    if (changed) await patchChatMetadata(data.chatId, { gameWeather: forced });
-    return { changed, weather: forced };
+    const sessionChat = changed ? await patchChatMetadata(data.chatId, { gameWeather: forced }) : chat;
+    return { changed, weather: forced, sessionChat };
   },
 
   async rollEncounter(data: { action: string; location?: string; difficulty?: string; partySize?: number }) {
@@ -1406,15 +1413,15 @@ export const gameApi = {
     const meta = chatMeta(chat);
     const npcs = Array.isArray(meta.gameNpcs) ? (meta.gameNpcs as GameNpc[]) : [];
     const result = processReputationActions(npcs, data.actions);
-    await patchChatMetadata(data.chatId, { gameNpcs: result.npcs });
-    return { npcs: result.npcs, changes: result.changes };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameNpcs: result.npcs });
+    return { npcs: result.npcs, changes: result.changes, sessionChat };
   },
 
-  async addJournalEntry(data: { chatId: string; type: string; data: Record<string, unknown> }): Promise<{ journal: Journal }> {
+  async addJournalEntry(data: { chatId: string; type: string; data: Record<string, unknown> }): Promise<{ journal: Journal; sessionChat: Chat }> {
     const chat = await getChat(data.chatId);
     const journal = applyJournalEntry(journalFromMeta(chatMeta(chat)), data.type, data.data);
-    await patchChatMetadata(data.chatId, { gameJournal: journal });
-    return { journal };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameJournal: journal });
+    return { journal, sessionChat };
   },
 
   async getJournal(chatId: string): Promise<GameJournalResponse> {
@@ -1429,8 +1436,8 @@ export const gameApi = {
   },
 
   async updateNotes(chatId: string, notes: string) {
-    await patchChatMetadata(chatId, { gamePlayerNotes: notes });
-    return { ok: true };
+    const sessionChat = await patchChatMetadata(chatId, { gamePlayerNotes: notes });
+    return { ok: true, sessionChat };
   },
 
   async listCheckpoints(chatId: string) {
@@ -1703,12 +1710,14 @@ export const gameApi = {
     const chatId = String(record.chatId);
     const chat = await getChat(chatId);
     const meta = chatMeta(chat);
+    let sessionChat = chat;
     if (!meta.enableSpriteGeneration) {
       return {
         generatedBackground: null,
         fallbackBackground: null,
         generatedIllustration: null,
         generatedNpcAvatars: [],
+        sessionChat,
       };
     }
     const imageConnectionId =
@@ -1736,7 +1745,7 @@ export const gameApi = {
         const key = typeof record.backgroundTag === "string" ? record.backgroundTag : "generated-background";
         const tag = await uploadGeneratedAsset("backgrounds", "generated", generatedAssetSlug(key), image.base64, image.mimeType);
         generatedBackground = tag;
-        await patchChatMetadata(chatId, { gameSceneBackground: tag });
+        sessionChat = await patchChatMetadata(chatId, { gameSceneBackground: tag });
       } else if (item.kind === "illustration") {
         const illustration = asRecord(record.illustration);
         const key =
@@ -1777,10 +1786,10 @@ export const gameApi = {
           } as GameNpc);
         }
       }
-      await patchChatMetadata(chatId, { gameNpcs: npcs });
+      sessionChat = await patchChatMetadata(chatId, { gameNpcs: npcs });
     }
 
-    return { generatedBackground, fallbackBackground: null, generatedIllustration, generatedNpcAvatars };
+    return { generatedBackground, fallbackBackground: null, generatedIllustration, generatedNpcAvatars, sessionChat };
   },
 };
 
