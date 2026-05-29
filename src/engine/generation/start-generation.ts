@@ -890,6 +890,13 @@ function spriteExpressionsFromAgentResults(results: AgentResult[]): Record<strin
   return Object.keys(expressions).length > 0 ? expressions : null;
 }
 
+function assertVisibleGeneratedContent(content: string, attachments?: JsonRecord[]): void {
+  if (content.trim() || (attachments?.length ?? 0) > 0) return;
+  throw new Error(
+    "Generation produced no visible assistant response. Your message was kept; retry or adjust the provider.",
+  );
+}
+
 function normalizeCyoaChoices(value: unknown): CyoaChoice[] {
   const data = parseRecord(value);
   const rawChoices = Array.isArray(data.choices) ? data.choices : Array.isArray(value) ? value : [];
@@ -986,6 +993,7 @@ async function saveAssistantMessage(args: {
   const regenerateMessageId = readString(args.input.regenerateMessageId).trim();
   const generationReplay = buildGenerationReplay(args.input);
   const content = collapseExcessBlankLines(args.content);
+  assertVisibleGeneratedContent(content, args.attachments);
   const thinking = collapseExcessBlankLines(readString(args.thinking).trim());
   const promptSnapshot = buildSavedGenerationPromptSnapshot({
     connection: args.connection,

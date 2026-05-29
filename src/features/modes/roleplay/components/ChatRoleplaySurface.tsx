@@ -94,8 +94,8 @@ const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
 const PANEL_CONTAINER =
   "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
 
-function WeatherEffectsConnected() {
-  const gs = useGameStateStore((s) => s.current);
+function WeatherEffectsConnected({ chatId }: { chatId: string | null }) {
+  const gs = useGameStateStore((s) => (chatId && s.current?.chatId === chatId ? s.current : null));
   return (
     <Suspense fallback={null}>
       <WeatherEffects weather={gs?.weather ?? null} timeOfDay={gs?.time ?? null} />
@@ -744,10 +744,7 @@ export function ChatRoleplaySurface({
     [activeChatCharIds, characterMap],
   );
   const overlaySpriteDisplayModes = useMemo(
-    () =>
-      expressionAvatarsEnabled
-        ? spriteDisplayModes.filter((mode) => mode !== "expressions")
-        : spriteDisplayModes,
+    () => (expressionAvatarsEnabled ? spriteDisplayModes.filter((mode) => mode !== "expressions") : spriteDisplayModes),
     [expressionAvatarsEnabled, spriteDisplayModes],
   );
   const showSpriteOverlay =
@@ -765,7 +762,7 @@ export function ChatRoleplaySurface({
         <CrossfadeBackground url={chatBackground} blurPx={chatBackgroundBlur} />
         <div className="rpg-overlay absolute inset-0" />
         <div className="rpg-vignette pointer-events-none absolute inset-0" />
-        {weatherEffects && addonsReady && <WeatherEffectsConnected />}
+        {weatherEffects && addonsReady && <WeatherEffectsConnected chatId={activeChatId} />}
         {showSpriteOverlay && addonsReady && (
           <Suspense fallback={null}>
             <SpriteOverlay

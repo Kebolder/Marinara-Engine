@@ -1340,8 +1340,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/roleplay/components/ChatRoleplaySurface.tsx": {
-    "mtime": 1779961269.1994233,
-    "ast_hash": "f91551fe8032dbda6196a071dc40020d",
+    "mtime": 1780039246.5170124,
+    "ast_hash": "bd75523047635f5b804630a9d10e08b9",
     "semantic_hash": ""
   },
   "src/features/modes/roleplay/components/RoleplayHUDInventoryTrackerSection.tsx": {
@@ -3940,8 +3940,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/agent-runner.ts": {
-    "mtime": 1780037888.8851674,
-    "ast_hash": "c1b3ab1634fa495373cad7428f120411",
+    "mtime": 1780039328.8634565,
+    "ast_hash": "4a79b69e3509977ac9eb603fe9cc3a8e",
     "semantic_hash": ""
   },
   "src/engine/generation/makers.ts": {
@@ -3950,8 +3950,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/agent-runner.test.ts": {
-    "mtime": 1780036895.2288847,
-    "ast_hash": "25380b4b00a631287a180bf4104144ab",
+    "mtime": 1780039247.7672997,
+    "ast_hash": "a13c3dd3667705bafbadd4cef84aee52",
     "semantic_hash": ""
   },
   "src/engine/generation/generate-route-utils.test.ts": {
@@ -3970,8 +3970,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.ts": {
-    "mtime": 1780038653.7382803,
-    "ast_hash": "e04e53bb59170fbbd6786593f8572acd",
+    "mtime": 1780039247.0864644,
+    "ast_hash": "718d60e07489cb7b0cc3b34e213ab6f8",
     "semantic_hash": ""
   },
   "src/engine/generation/agent-memory-runtime.ts": {
@@ -4010,8 +4010,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.test.ts": {
-    "mtime": 1780038653.738135,
-    "ast_hash": "0b930faf975ba6544f7599350dbc2cce",
+    "mtime": 1780039030.1453142,
+    "ast_hash": "a2ae9c5545ffda3ad5da83dee2010532",
     "semantic_hash": ""
   },
   "src/engine/generation/active-characters.ts": {

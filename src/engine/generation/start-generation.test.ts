@@ -287,6 +287,26 @@ describe("startGeneration chat message loading", () => {
     });
   });
 
+  it("does not persist a blank assistant message when the provider only returns thinking", async () => {
+    const { deps, createChatMessage } = generationDepsForChat();
+    deps.llm.stream = vi.fn(async function* () {
+      yield { type: "thinking" as const, text: "private reasoning only" };
+    });
+
+    await expect(
+      drainGeneration(
+        startGeneration(deps, {
+          chatId: "chat-1",
+          userMessage: "hello",
+          impersonateBlockAgents: true,
+        }),
+      ),
+    ).rejects.toThrow("Generation produced no visible assistant response");
+
+    expect(createChatMessage.mock.calls.some(([, value]) => value.role === "assistant")).toBe(false);
+    expect(createChatMessage.mock.calls.filter(([, value]) => value.role === "user")).toHaveLength(1);
+  });
+
   it("reuses the pre-commit messages and appends the saved user message for normal sends", async () => {
     const { deps, listChatMessages, streamedRequests } = generationDepsForChat();
 
