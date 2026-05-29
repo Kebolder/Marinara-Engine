@@ -68,7 +68,10 @@ fn truncate_for_discord(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
         return value.to_string();
     }
-    let prefix = value.chars().take(limit.saturating_sub(3)).collect::<String>();
+    let prefix = value
+        .chars()
+        .take(limit.saturating_sub(3))
+        .collect::<String>();
     format!("{prefix}...")
 }
 
@@ -93,9 +96,9 @@ fn is_valid_discord_webhook_url(raw: &str) -> bool {
     !id.is_empty()
         && id.chars().all(|character| character.is_ascii_digit())
         && !token.is_empty()
-        && token
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+        && token.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
 }
 
 #[cfg(test)]
@@ -110,9 +113,15 @@ mod tests {
         assert!(is_valid_discord_webhook_url(
             "https://discordapp.com/api/webhooks/123456789/token_AB-12"
         ));
-        assert!(!is_valid_discord_webhook_url("http://discord.com/api/webhooks/123/token"));
-        assert!(!is_valid_discord_webhook_url("https://example.com/api/webhooks/123/token"));
-        assert!(!is_valid_discord_webhook_url("https://discord.com/api/webhooks/notnumeric/token"));
+        assert!(!is_valid_discord_webhook_url(
+            "http://discord.com/api/webhooks/123/token"
+        ));
+        assert!(!is_valid_discord_webhook_url(
+            "https://example.com/api/webhooks/123/token"
+        ));
+        assert!(!is_valid_discord_webhook_url(
+            "https://discord.com/api/webhooks/notnumeric/token"
+        ));
     }
 
     #[test]

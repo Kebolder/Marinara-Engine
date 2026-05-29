@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pruneGraphifyOutOfScopeEntries, readGraphifyScopeConfig } from "./graphify-scope.mjs";
 
 const python = process.env.PYTHON ?? "python";
 
@@ -33,6 +34,8 @@ function readFilesUnder(dir) {
   }
   return files;
 }
+
+const graphifyScopeScrub = pruneGraphifyOutOfScopeEntries(process.cwd(), readGraphifyScopeConfig());
 
 const packageDir = runPython([
   "-c",
@@ -751,9 +754,10 @@ try {
   );
 
   const output = readFilesUnder(join(tempRoot, "graphify-out")).join("\n");
-  const leakPattern = /\/Users\/|\/tmp|private\/var|graphify-path-test|users_|tmp_graphify|private_tmp/;
+  const leakPattern =
+    /\/Users\/|\/tmp|private\/var|graphify-path-test|users_|tmp_graphify|private_tmp|codex-shared-scratch|(^|[\\/])\.git([\\/]|$)|(^|[^A-Za-z0-9_.-])scratch[\\/]|(^|[\\/])\.codex-scratchpads([\\/]|$)/i;
   if (leakPattern.test(output)) {
-    throw new Error("Graphify path portability check found machine-local path tokens.");
+    throw new Error("Graphify path portability check found machine-local or private scratch path tokens.");
   }
 } catch (error) {
   throw error;
@@ -761,4 +765,23 @@ try {
   rmSync(tempRoot, { recursive: true, force: true });
 }
 
+if (
+  graphifyScopeScrub.cacheFiles ||
+  graphifyScopeScrub.manifestEntries ||
+  graphifyScopeScrub.statIndexEntries ||
+  graphifyScopeScrub.graphNodes ||
+  graphifyScopeScrub.graphLinks ||
+  graphifyScopeScrub.graphHyperedges
+) {
+  console.log(
+    [
+      "Scrubbed Graphify out-of-scope state:",
+      `removed ${graphifyScopeScrub.cacheFiles} cache file(s),`,
+      `${graphifyScopeScrub.manifestEntries + graphifyScopeScrub.statIndexEntries} manifest/stat-index entry(s),`,
+      `${graphifyScopeScrub.graphNodes} graph node(s),`,
+      `${graphifyScopeScrub.graphLinks} graph link(s),`,
+      `and ${graphifyScopeScrub.graphHyperedges} graph hyperedge(s).`,
+    ].join(" "),
+  );
+}
 console.log(`Patched Graphify portable path handling in ${packageDir}`);

@@ -401,6 +401,27 @@ pub(crate) async fn connection_auth_check(state: &AppState, id: &str) -> AppResu
     }
 }
 
+pub(crate) async fn connection_diagnose_claude_subscription(
+    state: &AppState,
+    id: &str,
+) -> AppResult<Value> {
+    let connection = get_required(state, "connections", id)?;
+    if connection.get("provider").and_then(Value::as_str) != Some("claude_subscription") {
+        return Err(AppError::invalid_input(
+            "Not a Claude (Subscription) connection",
+        ));
+    }
+    let model = connection
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let fast_mode = connection
+        .get("claudeFastMode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    marinara_llm::diagnose_claude_subscription_model(model, fast_mode)
+}
+
 async fn check_connection_without_generation(connection: &Value) -> AppResult<String> {
     let provider = connection
         .get("provider")

@@ -25,13 +25,20 @@ import type {
   LLMToolDefinition,
 } from "../generation-core/llm/base-provider";
 import { matchCustomAgentActivation, type ActivationScanMessage } from "../agents-runtime/activation";
+import { executeKnowledgeRetrieval } from "../agents-runtime/knowledge/knowledge-retrieval";
+import { executeKnowledgeRouter } from "../agents-runtime/knowledge/knowledge-router";
 import {
   createAgentPipeline,
   type AgentInjection,
   type ResolvedAgent,
 } from "../agents-runtime/pipeline/agent-pipeline";
 import type { AgentToolContext } from "../agents-runtime/executor/agent-executor";
+import type { LorebookEntry } from "../contracts/types/lorebook";
 import type { GenerationCharacterContext, GenerationPersonaContext } from "./prompt-assembly";
+import {
+  lorebookEntryPassesContextFilters,
+  type GameStateForScanning,
+} from "../generation-core/lorebooks/keyword-scanner";
 import { buildSpriteExpressionChoices } from "../modes/game/prompts/sprite.service";
 import { llmParameters } from "./context";
 import { loadAgentMemory, secretPlotStateFromMemory } from "./agent-memory-runtime";
@@ -40,6 +47,7 @@ import {
   hiddenFromAi,
   isRecord,
   parseRecord,
+  readNumber,
   readString,
   stringArray,
   type JsonRecord,
@@ -71,6 +79,7 @@ export interface GenerationAgentRuntimeInput {
   agentTypes?: Set<string>;
   bypassCustomAgentActivation?: boolean;
   regenerateMessageId?: string | null;
+  agentInjectionOverrides?: AgentInjection[];
 }
 
 export interface GenerationAgentRuntime {
@@ -95,6 +104,9 @@ interface ResolvedAgentsResult {
 
 const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 const ILLUSTRATOR_AGENT_TYPE = "illustrator";
+const KNOWLEDGE_RETRIEVAL_AGENT_TYPE = "knowledge-retrieval";
+const KNOWLEDGE_ROUTER_AGENT_TYPE = "knowledge-router";
+const KNOWLEDGE_AGENT_TYPES = new Set([KNOWLEDGE_RETRIEVAL_AGENT_TYPE, KNOWLEDGE_ROUTER_AGENT_TYPE]);
 const MAX_ASSISTANT_RUN_INTERVAL = 100;
 const MAX_CUSTOM_AGENT_USER_RUN_INTERVAL = 200;
 const PROMPT_INJECTABLE_RESULT_TYPES = new Set(["context_injection", "director_event"]);
@@ -120,6 +132,28 @@ const DEFAULT_ROLEPLAY_EXPRESSIONS = [
   "surprised",
   "thinking",
 ] as const;
+
+function normalizedAgentInjectionOverrides(value: unknown): AgentInjection[] {
+  if (!Array.isArray(value)) return [];
+  const overrides: AgentInjection[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const agentType = readString(entry.agentType).trim();
+    const text = readString(entry.text).trim();
+    if (!agentType || !text) continue;
+    const agentName = readString(entry.agentName).trim();
+    overrides.push({ agentType, ...(agentName ? { agentName } : {}), text });
+  }
+  return overrides;
+}
+
+function agentDataFromInjections(injections: AgentInjection[]): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const injection of injections) {
+    if (injection.text.trim()) data[injection.agentType] = injection.text.trim();
+  }
+  return data;
+}
 
 function uniqueStrings(values: string[]): string[] {
   const seen = new Set<string>();
@@ -253,6 +287,16 @@ async function loadConnection(storage: StorageGateway, connectionId: string | nu
   return isRecord(connection) ? connection : null;
 }
 
+async function loadDefaultAgentConnection(storage: StorageGateway): Promise<JsonRecord | null> {
+  const connections = await storage.list<JsonRecord>("connections");
+  return (
+    connections.find(
+      (connection) =>
+        readString(connection.provider).trim() !== "image_generation" && boolish(connection.defaultForAgents, false),
+    ) ?? null
+  );
+}
+
 function enabledToolNames(settings: Record<string, unknown>): string[] {
   const value = settings.enabledTools;
   if (!Array.isArray(value)) return [];
@@ -276,6 +320,214 @@ function chatAgentsEnabled(input: GenerationAgentRuntimeInput): boolean {
 
 function chatActiveAgentIds(input: GenerationAgentRuntimeInput): Set<string> {
   return stringSet(chatMetadata(input).activeAgentIds);
+}
+
+function chatActiveLorebookIds(input: GenerationAgentRuntimeInput): Set<string> {
+  return new Set([...stringSet(chatMetadata(input).activeLorebookIds), ...stringSet(input.chat.activeLorebookIds)]);
+}
+
+function lorebookAppliesToAgentContext(lorebook: JsonRecord, input: GenerationAgentRuntimeInput): boolean {
+  if (!boolish(lorebook.enabled, true)) return false;
+  if (boolish(lorebook.isGlobal ?? lorebook.global, false)) return true;
+
+  const lorebookId = readString(lorebook.id).trim();
+  if (lorebookId && chatActiveLorebookIds(input).has(lorebookId)) return true;
+
+  const chatId = readString(input.chat.id).trim();
+  if (chatId && readString(lorebook.chatId).trim() === chatId) return true;
+  if (chatId && stringArray(lorebook.chatIds).includes(chatId)) return true;
+
+  const activeCharacterIds = new Set(input.characters.map((character) => character.id));
+  const lorebookCharacterIds = new Set([
+    ...stringArray(lorebook.characterIds),
+    readString(lorebook.characterId).trim(),
+  ]);
+  for (const characterId of lorebookCharacterIds) {
+    if (characterId && activeCharacterIds.has(characterId)) return true;
+  }
+
+  const personaId = readString(input.chat.personaId).trim();
+  if (personaId) {
+    const lorebookPersonaIds = new Set([...stringArray(lorebook.personaIds), readString(lorebook.personaId).trim()]);
+    if (lorebookPersonaIds.has(personaId)) return true;
+  }
+
+  return false;
+}
+
+function normalizeKnowledgeSourceLorebookIds(settings: Record<string, unknown>, scopedLorebookIds: string[]): string[] {
+  const manualIds = stringArray(settings.sourceLorebookIds);
+  if (manualIds.length > 0) return manualIds;
+  if (settings.useChatActiveLorebooks === false) return [];
+  return scopedLorebookIds;
+}
+
+function optionalNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const parsed = readNumber(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeKnowledgeLorebookEntry(entry: JsonRecord, lorebook?: JsonRecord): LorebookEntry | null {
+  const id = readString(entry.id).trim();
+  const lorebookId = readString(entry.lorebookId).trim() || readString(lorebook?.id).trim();
+  const content = readString(entry.content).trim();
+  if (!id || !lorebookId || !content) return null;
+  return {
+    id,
+    lorebookId,
+    name: readString(entry.name).trim() || "Untitled",
+    content,
+    description: readString(entry.description).trim(),
+    keys: stringArray(entry.keys),
+    secondaryKeys: stringArray(entry.secondaryKeys),
+    enabled: boolish(entry.enabled, true),
+    constant: boolish(entry.constant, false),
+    selective: boolish(entry.selective, false),
+    selectiveLogic: readString(entry.selectiveLogic, "and") as LorebookEntry["selectiveLogic"],
+    probability: optionalNumber(entry.probability),
+    scanDepth: optionalNumber(entry.scanDepth),
+    matchWholeWords: boolish(entry.matchWholeWords, false),
+    caseSensitive: boolish(entry.caseSensitive, false),
+    useRegex: boolish(entry.useRegex, false),
+    characterFilterMode: readString(entry.characterFilterMode, "any") as LorebookEntry["characterFilterMode"],
+    characterFilterIds: stringArray(entry.characterFilterIds),
+    characterTagFilterMode: readString(entry.characterTagFilterMode, "any") as LorebookEntry["characterTagFilterMode"],
+    characterTagFilters: stringArray(entry.characterTagFilters),
+    generationTriggerFilterMode: readString(
+      entry.generationTriggerFilterMode,
+      "any",
+    ) as LorebookEntry["generationTriggerFilterMode"],
+    generationTriggerFilters: stringArray(entry.generationTriggerFilters),
+    additionalMatchingSources: stringArray(
+      entry.additionalMatchingSources,
+    ) as LorebookEntry["additionalMatchingSources"],
+    position: readNumber(entry.position, 0),
+    depth: readNumber(entry.depth, 0),
+    order: readNumber(entry.order ?? entry.sortOrder, 0),
+    role: readString(entry.role, "system") as LorebookEntry["role"],
+    sticky: optionalNumber(entry.sticky),
+    cooldown: optionalNumber(entry.cooldown),
+    delay: optionalNumber(entry.delay),
+    ephemeral: optionalNumber(entry.ephemeral),
+    group: readString(entry.group).trim(),
+    groupWeight: optionalNumber(entry.groupWeight),
+    folderId: readString(entry.folderId).trim() || null,
+    locked: boolish(entry.locked, false),
+    preventRecursion: boolish(entry.preventRecursion, false),
+    tag: readString(entry.tag).trim(),
+    relationships: parseRecord(entry.relationships) as Record<string, string>,
+    dynamicState: parseRecord(entry.dynamicState),
+    activationConditions: Array.isArray(entry.activationConditions)
+      ? (entry.activationConditions as LorebookEntry["activationConditions"])
+      : [],
+    schedule: isRecord(entry.schedule) ? (entry.schedule as unknown as LorebookEntry["schedule"]) : null,
+    excludeFromVectorization: boolish(
+      entry.excludeFromVectorization,
+      boolish(lorebook?.excludeFromVectorization, false),
+    ),
+    embedding: Array.isArray(entry.embedding)
+      ? entry.embedding.filter((item): item is number => typeof item === "number")
+      : null,
+    createdAt: readString(entry.createdAt).trim(),
+    updatedAt: readString(entry.updatedAt).trim(),
+  };
+}
+
+async function loadKnowledgeSourceLorebookEntries(
+  storage: StorageGateway,
+  input: GenerationAgentRuntimeInput,
+  settings: Record<string, unknown>,
+): Promise<LorebookEntry[]> {
+  const lorebooks = await storage.list<JsonRecord>("lorebooks");
+  const scopedLorebooks = lorebooks.filter((lorebook) => lorebookAppliesToAgentContext(lorebook, input));
+  const sourceIds = normalizeKnowledgeSourceLorebookIds(
+    settings,
+    scopedLorebooks.map((lorebook) => readString(lorebook.id).trim()).filter(Boolean),
+  );
+  if (sourceIds.length === 0) return [];
+
+  const lorebookById = new Map(lorebooks.map((lorebook) => [readString(lorebook.id).trim(), lorebook]));
+  const rows = await Promise.all(
+    [...new Set(sourceIds)].map(async (lorebookId) => {
+      const lorebook = lorebookById.get(lorebookId);
+      const entries = await storage.listLorebookEntries<JsonRecord>(lorebookId);
+      return entries.map((entry) => normalizeKnowledgeLorebookEntry(entry, lorebook));
+    }),
+  );
+  return rows
+    .flat()
+    .filter((entry): entry is LorebookEntry => entry !== null)
+    .filter((entry) => entry.enabled && entry.content.trim());
+}
+
+function knowledgeEntryPassesContext(entry: LorebookEntry, input: GenerationAgentRuntimeInput): boolean {
+  return lorebookEntryPassesContextFilters(entry, {
+    activeCharacterIds: input.characters.map((character) => character.id),
+    activeCharacterTags: input.characters.flatMap((character) => character.tags),
+    generationTriggers: ["chat", readString(input.chat.mode).trim()].filter(Boolean),
+  });
+}
+
+function formatKnowledgeSourceMaterial(entries: LorebookEntry[]): string {
+  return entries.map((entry) => `### ${entry.name}\n${entry.content}`).join("\n\n");
+}
+
+async function runKnowledgePreGenerationAgents(
+  deps: AgentDeps,
+  input: GenerationAgentRuntimeInput,
+  context: AgentContext,
+  agents: ResolvedAgent[],
+  onResult?: (result: AgentResult) => void,
+): Promise<{ injections: AgentInjection[]; results: AgentResult[] }> {
+  const knowledgeAgents = agents.filter(
+    (agent) => agent.phase === "pre_generation" && KNOWLEDGE_AGENT_TYPES.has(agent.type),
+  );
+  if (knowledgeAgents.length === 0) return { injections: [], results: [] };
+
+  const results: AgentResult[] = [];
+  const injections: AgentInjection[] = [];
+  const activatedEntryIds = new Set(input.activatedLorebookEntries.map((entry) => entry.id));
+
+  for (const agent of knowledgeAgents) {
+    const entries = await loadKnowledgeSourceLorebookEntries(deps.storage, input, agent.settings);
+    const scopedEntries =
+      agent.type === KNOWLEDGE_ROUTER_AGENT_TYPE
+        ? entries.filter((entry) => knowledgeEntryPassesContext(entry, input))
+        : entries;
+    if (scopedEntries.length === 0) continue;
+
+    const result =
+      agent.type === KNOWLEDGE_ROUTER_AGENT_TYPE
+        ? await executeKnowledgeRouter(agent, context, agent.provider, agent.model, scopedEntries, {
+            activatedEntries: scopedEntries.filter((entry) => activatedEntryIds.has(entry.id)),
+            keywordScanEntries: scopedEntries.filter((entry) => !activatedEntryIds.has(entry.id)),
+            scanMessages: context.recentMessages.map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            scanOptions: {
+              gameState: context.gameState as GameStateForScanning | null,
+              activeCharacterIds: input.characters.map((character) => character.id),
+              activeCharacterTags: input.characters.flatMap((character) => character.tags),
+              generationTriggers: ["chat", context.chatMode].filter(Boolean),
+            },
+          })
+        : await executeKnowledgeRetrieval(
+            agent,
+            context,
+            agent.provider,
+            agent.model,
+            formatKnowledgeSourceMaterial(scopedEntries),
+          );
+
+    results.push(result);
+    onResult?.(result);
+    const text = resultText(result);
+    if (text) injections.push({ agentType: agent.type, agentName: agent.name, text });
+  }
+
+  return { injections, results };
 }
 
 function chatToolsEnabled(input: GenerationAgentRuntimeInput): boolean {
@@ -549,6 +801,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   let customTools: Map<string, CustomToolRecord> | null = null;
   const resolved: ResolvedAgent[] = [];
   const skippedResults: AgentResult[] = [];
+  let defaultAgentConnection: JsonRecord | null | undefined;
   for (const agent of rows) {
     const type = readString(agent.type || agent.agentType) || "agent";
     if (suppressAgentForTurn(input, type)) continue;
@@ -564,7 +817,11 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       continue;
     }
     const requestedConnectionId = readString(agent.connectionId).trim();
-    const fallbackConnectionId = readString(input.connection.id).trim() || null;
+    if (!requestedConnectionId && defaultAgentConnection === undefined) {
+      defaultAgentConnection = await loadDefaultAgentConnection(deps.storage);
+    }
+    const fallbackConnection = defaultAgentConnection ?? input.connection;
+    const fallbackConnectionId = readString(fallbackConnection.id).trim() || null;
     const connectionId = requestedConnectionId || fallbackConnectionId;
     let connection: JsonRecord;
     if (requestedConnectionId) {
@@ -575,7 +832,7 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
       }
       connection = loadedConnection;
     } else {
-      connection = input.connection;
+      connection = fallbackConnection;
     }
     const model = readString(agent.model).trim() || readString(connection.model).trim();
     if (!model) continue;
@@ -890,13 +1147,14 @@ export async function createGenerationAgentRuntime(
 ): Promise<GenerationAgentRuntime> {
   const { agents, skippedResults } = await resolveAgents(deps, input);
   const preResults: AgentResult[] = [...skippedResults];
-  const agentData: Record<string, string> = {};
+  const overrideInjections = normalizedAgentInjectionOverrides(input.agentInjectionOverrides);
+  const agentData: Record<string, string> = agentDataFromInjections(overrideInjections);
   for (const result of skippedResults) {
     onResult?.(result);
   }
   if (agents.length === 0) {
     return {
-      preInjections: [],
+      preInjections: overrideInjections,
       preResults,
       agentData,
       runParallel: async () => [],
@@ -905,14 +1163,36 @@ export async function createGenerationAgentRuntime(
   }
 
   const context = await buildAgentContext(deps, input, agents);
-  const pipeline = createAgentPipeline(agents, context, (result) => {
+  const pipelineAgents = agents.filter((agent) => !KNOWLEDGE_AGENT_TYPES.has(agent.type));
+  const pipeline = createAgentPipeline(pipelineAgents, context, (result) => {
     const text = resultText(result);
     if (text) agentData[result.agentType] = text;
     onResult?.(resultEventData(result));
   });
 
-  const preInjections = await pipeline.preGenerate((type) => type !== "prompt-reviewer");
+  if (overrideInjections.length > 0) {
+    return {
+      preInjections: overrideInjections,
+      preResults,
+      agentData,
+      runParallel: async () => pipeline.runParallel(),
+      runPost: async (mainResponse) => pipeline.postGenerate(mainResponse, { preGenInjections: overrideInjections }),
+    };
+  }
+
+  const [pipelinePreInjections, knowledgePre] = await Promise.all([
+    pipeline.preGenerate((type) => type !== "prompt-reviewer"),
+    runKnowledgePreGenerationAgents(deps, input, context, agents, (result) => {
+      const text = resultText(result);
+      if (text) agentData[result.agentType] = text;
+      onResult?.(resultEventData(result));
+    }),
+  ]);
+  const preInjections = [...pipelinePreInjections, ...knowledgePre.injections];
   for (const result of pipeline.results) {
+    if (result.agentType && !preResults.includes(result)) preResults.push(result);
+  }
+  for (const result of knowledgePre.results) {
     if (result.agentType && !preResults.includes(result)) preResults.push(result);
   }
   for (const injection of preInjections) {

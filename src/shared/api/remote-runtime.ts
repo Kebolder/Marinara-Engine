@@ -157,6 +157,7 @@ const REMOTE_COMMANDS = new Set([
   "connection_test",
   "connection_test_message",
   "connection_test_image",
+  "connection_diagnose_claude_subscription",
   "connection_models",
   "connection_save_default_parameters",
   "persona_activate",

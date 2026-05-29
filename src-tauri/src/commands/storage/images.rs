@@ -7,8 +7,7 @@ mod providers;
 pub(crate) use providers::{
     connection_base_url as image_connection_base_url, generate_image_with_connection,
     generate_image_with_options, image_model as image_generation_model,
-    image_source as image_generation_source,
-    is_openai_gpt_image_model, ImageGenerationOptions,
+    image_source as image_generation_source, is_openai_gpt_image_model, ImageGenerationOptions,
 };
 
 pub(crate) fn avatar_generation_prompt_id(name: &str) -> String {

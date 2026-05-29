@@ -240,9 +240,7 @@ pub(crate) fn image_model(connection: &Value, source: &str) -> Option<String> {
             connection,
             "black-forest-labs/FLUX.1-schnell-Free",
         )),
-        "nanogpt" | "openai" | "blockentropy" => {
-            Some(connection_model(connection, "gpt-image-1"))
-        }
+        "nanogpt" | "openai" | "blockentropy" => Some(connection_model(connection, "gpt-image-1")),
         _ => configured_model(connection),
     };
 
@@ -2663,7 +2661,11 @@ mod tests {
 
     #[test]
     fn novelai_v4_prompt_sanitization_trims_unicode_and_caps_length() {
-        let prompt = format!("{} {}", "夜".repeat(20), "beautiful cinematic portrait, ".repeat(200));
+        let prompt = format!(
+            "{} {}",
+            "夜".repeat(20),
+            "beautiful cinematic portrait, ".repeat(200)
+        );
         let sanitized = prepare_novelai_prompt(&prompt, "prompt", "nai-diffusion-4-5-full")
             .expect("mixed prompt should sanitize");
 

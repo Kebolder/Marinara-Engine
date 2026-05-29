@@ -1,8 +1,23 @@
 # Graphify should map project source, not local workflow state or generated output.
 .git/
+.git/**
+.git/codex-shared-scratch/
+.git/codex-shared-scratch/**
 .graphifyignore
 scratch/
+scratch/**
+.codex-scratchpads/
+.codex-scratchpads/**
 graphify-out/
+graphify-out/**
+.agents/
+.agents/**
+pr-evidence/
+pr-evidence/**
+docs/evidence/
+docs/evidence/**
+docs/pr-evidence/
+docs/pr-evidence/**
 
 # Dependency, build, cache, and local environment output.
 node_modules/
@@ -38,8 +53,8 @@ packages/
 .playwright-mcp/
 
 # Editor-local state.
-.vscode/*
-!.vscode/extensions.json
+.vscode/
+.vscode/**
 .idea/
 .DS_Store
 *.suo

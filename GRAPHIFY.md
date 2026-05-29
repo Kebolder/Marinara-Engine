@@ -64,6 +64,8 @@ For any further installation instructions, please follow the relevant segment of
 - After every code change, run `graphify update .` from the repository root so the map stays current.
 - For docs, PDFs, images, or other semantic-source changes, run `/graphify . --update` or the equivalent Graphify update path so semantic nodes are refreshed.
 - Do not hand-edit generated `graphify-out/` files.
+- Keep Graphify scoped to repository source through the positive allowlist in `graphify.scope.json`. `.graphifyignore` is defense-in-depth for raw CLI traversal, not the canonical scope contract.
+- `scratch/`, `.git/`, `.git/codex-shared-scratch/`, `.codex-scratchpads/`, `.agents/`, `pr-evidence/`, `docs/evidence/`, `docs/pr-evidence/`, and generated `graphify-out/` content are local/private or transient state and must not be tracked as Graphify source files. Run `pnpm check:graphify-scope` before sharing graph output if scope is in doubt, or `node scripts/check-graphify-scope.mjs --fix` to prune stale out-of-scope cache/index/graph entries before rebuilding.
 - If Graphify is unavailable, say so in the final response and fall back to direct source inspection. Do not invent graph evidence.
 
 ## Common Commands
@@ -125,5 +127,6 @@ Use the report as a navigation map. Verify behavior claims against source files 
 - Code files are processed locally for AST extraction.
 - Docs, PDFs, images, and transcripts may be sent through the configured AI backend for semantic extraction.
 - Do not graph private chat transcripts, secrets, generated dependency/build output, provider caches, or unrelated workspace folders unless the user explicitly asks and the scope is safe.
+- Do not graph local agent scratch ledgers, chore queues, reviewer drafts, QA screenshots/logs, or archived scratch proof. These belong under ignored `scratch/` or `.git/codex-shared-scratch/`, and Graphify output must stay free of both paths and their contents.
 - Do not commit local absolute workspace paths in Graphify outputs; use repo-relative paths such as `src/...`, keep Marinara's Graphify portability patch applied, and verify path hygiene before sharing or committing `graphify-out/`.
 - Use Graphify to decide where to inspect, then cite and trust source files, tests, and project docs for behavior.

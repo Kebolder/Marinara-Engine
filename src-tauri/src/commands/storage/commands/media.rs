@@ -157,6 +157,14 @@ pub async fn connection_models(state: State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
+pub async fn connection_diagnose_claude_subscription(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Value, AppError> {
+    llm::connection_diagnose_claude_subscription(&state, &id).await
+}
+
+#[tauri::command]
 pub fn connection_save_default_parameters(
     state: State<'_, AppState>,
     id: String,

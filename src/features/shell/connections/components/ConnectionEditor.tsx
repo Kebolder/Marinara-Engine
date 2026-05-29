@@ -12,8 +12,10 @@ import {
   useTestConnection,
   useTestMessage,
   useTestImageGeneration,
+  useDiagnoseClaudeSubscription,
   useFetchModels,
   useSaveConnectionDefaults,
+  type ClaudeSubscriptionDiagnosis,
 } from "../../../catalog/connections";
 import { usePresets } from "../../../catalog/presets";
 import {
@@ -102,6 +104,12 @@ const OPENAI_CHATGPT_SETUP_STEPS = [
   { label: "API Key and Base URL are not required - leave them blank." },
 ] as const;
 
+const CLAUDE_SUBSCRIPTION_SETUP_STEPS = [
+  { label: "Install Claude Code", command: "npm i -g @anthropic-ai/claude-code" },
+  { label: "Sign in once", command: "claude login" },
+  { label: "API Key and Base URL are not required - leave them blank." },
+] as const;
+
 type RemoteModel = {
   id: string;
   name: string;
@@ -142,6 +150,7 @@ export function ConnectionEditor() {
   const testConnection = useTestConnection();
   const testMessage = useTestMessage();
   const testImageGeneration = useTestImageGeneration();
+  const diagnoseClaudeSubscription = useDiagnoseClaudeSubscription();
   const fetchModels = useFetchModels();
   const saveConnectionDefaults = useSaveConnectionDefaults();
   const { data: allConnections } = useConnections();
@@ -200,6 +209,7 @@ export function ConnectionEditor() {
     prompt: string;
     error?: string;
   } | null>(null);
+  const [claudeDiagResult, setClaudeDiagResult] = useState<ClaudeSubscriptionDiagnosis | null>(null);
 
   // Model search
   const [modelSearch, setModelSearch] = useState("");
@@ -299,6 +309,7 @@ export function ConnectionEditor() {
     setTestResult(null);
     setMsgResult(null);
     setImgTestResult(null);
+    setClaudeDiagResult(null);
   }, [conn]);
 
   const comfyWorkflowValidation = useMemo(() => {
@@ -403,7 +414,9 @@ export function ConnectionEditor() {
     setFetchError(null);
   }, [localProvider]);
 
+  const isClaudeSubscriptionProvider = localProvider === "claude_subscription";
   const usesLocalChatGptAuth = localProvider === "openai_chatgpt";
+  const usesLocalAuthProvider = usesLocalChatGptAuth || isClaudeSubscriptionProvider;
   const embeddingConnectionOptions = useMemo(
     () =>
       ((allConnections ?? []) as Record<string, unknown>[]).filter(
@@ -439,12 +452,11 @@ export function ConnectionEditor() {
   const handleSave = useCallback(async () => {
     if (!connectionDetailId) return;
     setSaveError(null);
-    const chatGptAuthProvider = localProvider === "openai_chatgpt";
     const payload: Record<string, unknown> = {
       id: connectionDetailId,
       name: localName,
       provider: localProvider,
-      baseUrl: chatGptAuthProvider ? "" : localBaseUrl,
+      baseUrl: usesLocalAuthProvider ? "" : localBaseUrl,
       model: localModel,
       maxContext: localMaxContext,
       maxParallelJobs: localMaxParallelJobs,
@@ -452,8 +464,8 @@ export function ConnectionEditor() {
       cachingAtDepth: localCachingAtDepth,
       claudeFastMode: localProvider === "claude_subscription" ? localClaudeFastMode : false,
       defaultForAgents: localDefaultForAgents,
-      embeddingModel: chatGptAuthProvider ? "" : localEmbeddingModel,
-      embeddingBaseUrl: chatGptAuthProvider ? "" : localEmbeddingBaseUrl,
+      embeddingModel: usesLocalAuthProvider ? "" : localEmbeddingModel,
+      embeddingBaseUrl: usesLocalAuthProvider ? "" : localEmbeddingBaseUrl,
       embeddingConnectionId: selectedEmbeddingConnectionId || null,
       promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
       openrouterProvider: localOpenrouterProvider || null,
@@ -465,7 +477,7 @@ export function ConnectionEditor() {
         localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
     };
-    if (chatGptAuthProvider) {
+    if (usesLocalAuthProvider) {
       payload.apiKey = "";
     } else if (localApiKey.trim()) {
       payload.apiKey = localApiKey;
@@ -500,6 +512,7 @@ export function ConnectionEditor() {
     connectionDetailId,
     localName,
     localProvider,
+    usesLocalAuthProvider,
     localBaseUrl,
     localApiKey,
     localModel,
@@ -586,6 +599,32 @@ export function ConnectionEditor() {
         }),
     });
   }, [connectionDetailId, dirty, handleSave, testMessage]);
+
+  const handleDiagnoseClaudeSubscription = useCallback(async () => {
+    if (!connectionDetailId) return;
+    if (dirty) {
+      try {
+        await handleSave();
+      } catch {
+        return;
+      }
+    }
+    setClaudeDiagResult(null);
+    diagnoseClaudeSubscription.mutate(connectionDetailId, {
+      onSuccess: (data) => setClaudeDiagResult(data),
+      onError: (err) =>
+        setClaudeDiagResult({
+          success: false,
+          requestedModel: localModel,
+          modelsBilled: [],
+          modelUsageDetail: [],
+          fastModeState: null,
+          downgraded: false,
+          response: err instanceof Error ? err.message : "Failed",
+          latencyMs: 0,
+        }),
+    });
+  }, [connectionDetailId, dirty, handleSave, diagnoseClaudeSubscription, localModel]);
 
   const handleTestImage = useCallback(async () => {
     if (!connectionDetailId) return;
@@ -861,8 +900,10 @@ export function ConnectionEditor() {
                     setLocalProvider(key);
                     // Auto-fill base URL
                     setLocalBaseUrl(info.defaultBaseUrl);
-                    if (key === "openai_chatgpt") {
+                    if (key === "openai_chatgpt" || key === "claude_subscription") {
                       setLocalApiKey("");
+                    }
+                    if (key === "openai_chatgpt") {
                       setLocalEmbeddingModel("");
                       setLocalEmbeddingBaseUrl("");
                     }
@@ -887,6 +928,7 @@ export function ConnectionEditor() {
             </div>
           </FieldGroup>
 
+          {isClaudeSubscriptionProvider && <ClaudeSubscriptionAuthHelp />}
           {usesLocalChatGptAuth && <OpenAiChatGptAuthHelp />}
 
           {/* ── OpenRouter Provider Preference ── */}
@@ -925,32 +967,36 @@ export function ConnectionEditor() {
             label="API Key"
             icon={<Key size="0.875rem" className="text-sky-400" />}
             help={
-              usesLocalChatGptAuth
-                ? "OpenAI (ChatGPT) uses your local Codex login instead of a provider API key."
+              usesLocalAuthProvider
+                ? "This provider uses your local subscription login instead of a provider API key."
                 : "Your authentication key from the AI provider. You can get one from their website. It's like a password that lets Marinara talk to the AI service."
             }
           >
             <input
-              value={usesLocalChatGptAuth ? "" : localApiKey}
+              value={usesLocalAuthProvider ? "" : localApiKey}
               onChange={(e) => {
                 setLocalApiKey(e.target.value);
                 markDirty();
               }}
               type="password"
-              disabled={usesLocalChatGptAuth}
+              disabled={usesLocalAuthProvider}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70"
               placeholder={
-                usesLocalChatGptAuth
-                  ? "Not used - read from local Codex ChatGPT login"
-                  : "••••••••  (leave empty to keep existing key)"
+                isClaudeSubscriptionProvider
+                  ? "Not used - read from local Claude Code login"
+                  : usesLocalChatGptAuth
+                    ? "Not used - read from local Codex ChatGPT login"
+                    : "••••••••  (leave empty to keep existing key)"
               }
             />
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              {usesLocalChatGptAuth
-                ? "Authentication is read from your local codex login session."
-                : "Your key is encrypted at rest. Leave blank when editing to keep the existing key."}
+              {isClaudeSubscriptionProvider
+                ? "Authentication is read from your local Claude Code session."
+                : usesLocalChatGptAuth
+                  ? "Authentication is read from your local codex login session."
+                  : "Your key is encrypted at rest. Leave blank when editing to keep the existing key."}
             </p>
-            {!usesLocalChatGptAuth && API_KEY_LINKS[localProvider] && (
+            {!usesLocalAuthProvider && API_KEY_LINKS[localProvider] && (
               <a
                 href={API_KEY_LINKS[localProvider]!.url}
                 target="_blank"
@@ -974,26 +1020,32 @@ export function ConnectionEditor() {
             label="Base URL"
             icon={<Globe size="0.875rem" className="text-sky-400" />}
             help={
-              usesLocalChatGptAuth
-                ? "OpenAI (ChatGPT) sends requests through Marinara's built-in ChatGPT Codex endpoint."
+              usesLocalAuthProvider
+                ? "This provider selects its endpoint automatically from your local subscription tooling."
                 : "The API endpoint URL. Usually auto-filled for known providers. Only change this if you're using a proxy, local server, or custom endpoint."
             }
           >
             <input
-              value={usesLocalChatGptAuth ? "" : localBaseUrl}
+              value={usesLocalAuthProvider ? "" : localBaseUrl}
               onChange={(e) => {
                 setLocalBaseUrl(e.target.value);
                 markDirty();
               }}
-              disabled={usesLocalChatGptAuth}
+              disabled={usesLocalAuthProvider}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70"
               placeholder={
-                usesLocalChatGptAuth
-                  ? "Not used - ChatGPT Codex endpoint is selected automatically"
-                  : providerDef?.defaultBaseUrl || "https://api.example.com/v1"
+                isClaudeSubscriptionProvider
+                  ? "Not used - Claude Code selects the endpoint automatically"
+                  : usesLocalChatGptAuth
+                    ? "Not used - ChatGPT Codex endpoint is selected automatically"
+                    : providerDef?.defaultBaseUrl || "https://api.example.com/v1"
               }
             />
-            {usesLocalChatGptAuth ? (
+            {isClaudeSubscriptionProvider ? (
+              <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                Marinara sends requests through the local Claude Code command using your Claude subscription login.
+              </p>
+            ) : usesLocalChatGptAuth ? (
               <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
                 Marinara sends requests to the ChatGPT Codex endpoint automatically using your local Codex auth.
               </p>
@@ -1010,7 +1062,7 @@ export function ConnectionEditor() {
                 <code className="rounded bg-[var(--secondary)] px-1">http://localhost:5001/v1</code>
               </p>
             )}
-            {!usesLocalChatGptAuth && (
+            {!usesLocalAuthProvider && (
               <p className="mt-1.5 flex items-start gap-1 text-[0.625rem] text-amber-400/80">
                 <AlertCircle size="0.625rem" className="mt-px shrink-0" />
                 <span>
@@ -1729,11 +1781,11 @@ export function ConnectionEditor() {
           </FieldGroup>
 
           {/* ── Embedding Model (for lorebook vectorization) ── */}
-          {usesLocalChatGptAuth ? (
+          {usesLocalAuthProvider ? (
             <FieldGroup
               label="Embedding Connection"
               icon={<Server size="0.875rem" className="text-violet-400" />}
-              help="OpenAI (ChatGPT) cannot create embeddings through Codex auth. Choose a separate embedding-capable connection if this chat should use semantic lorebook matching."
+              help="Local subscription providers cannot create embeddings through their chat login. Choose a separate embedding-capable connection if this chat should use semantic lorebook matching."
             >
               <select
                 value={selectedEmbeddingConnectionId}
@@ -1752,8 +1804,8 @@ export function ConnectionEditor() {
                 ))}
               </select>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                Embedding model and endpoint settings come from the selected connection. ChatGPT local auth remains only
-                for chat generation.
+                Embedding model and endpoint settings come from the selected connection. Local subscription auth remains
+                only for chat generation.
               </p>
             </FieldGroup>
           ) : localProvider !== "image_generation" ? (
@@ -1871,15 +1923,40 @@ export function ConnectionEditor() {
                   Test Image
                 </button>
               )}
+              {isClaudeSubscriptionProvider && (
+                <button
+                  onClick={handleDiagnoseClaudeSubscription}
+                  disabled={diagnoseClaudeSubscription.isPending || !localModel}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-400/10 px-4 py-2.5 text-xs font-medium text-amber-400 ring-1 ring-amber-400/20 transition-all hover:bg-amber-400/20 active:scale-[0.98] disabled:opacity-50"
+                  title="Run a real Claude Code request and report the model usage metadata it returns."
+                >
+                  {diagnoseClaudeSubscription.isPending ? (
+                    <Loader2 size="0.8125rem" className="animate-spin" />
+                  ) : (
+                    <AlertCircle size="0.8125rem" />
+                  )}
+                  Diagnose Routing
+                </button>
+              )}
             </div>
 
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">
               <strong>Test Connection</strong>{" "}
-              {usesLocalChatGptAuth ? "verifies your local Codex ChatGPT login." : "verifies your API key works."}
+              {isClaudeSubscriptionProvider
+                ? "verifies your local Claude Code command is available."
+                : usesLocalChatGptAuth
+                  ? "verifies your local Codex ChatGPT login."
+                  : "verifies your API key works."}
               {localProvider !== "image_generation" && (
                 <>
                   {" "}
                   <strong>Send Test Message</strong> sends "hi" to the model and shows the response.
+                </>
+              )}
+              {isClaudeSubscriptionProvider && (
+                <>
+                  {" "}
+                  <strong>Diagnose Routing</strong> runs a real Claude Code prompt and reports model usage metadata.
                 </>
               )}
               {localProvider === "image_generation" && (
@@ -1924,6 +2001,44 @@ export function ConnectionEditor() {
                 ) : (
                   <span className="text-[var(--destructive)]">{imgTestResult.error || "No image returned"}</span>
                 )}
+              </TestResultCard>
+            )}
+
+            {claudeDiagResult && (
+              <TestResultCard
+                label="Model Routing Diagnosis"
+                success={claudeDiagResult.success}
+                latencyMs={claudeDiagResult.latencyMs}
+              >
+                <div className="space-y-2 text-xs leading-relaxed">
+                  <div>
+                    Requested <strong>{claudeDiagResult.requestedModel || "unknown"}</strong>
+                    {claudeDiagResult.modelsBilled.length > 0 ? (
+                      <>
+                        {" "}
+                        and Claude reported <strong>{claudeDiagResult.modelsBilled.join(", ")}</strong>.
+                      </>
+                    ) : (
+                      " and Claude did not return modelUsage metadata."
+                    )}
+                  </div>
+                  {claudeDiagResult.fastModeState && (
+                    <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                      Fast mode state: <code>{claudeDiagResult.fastModeState}</code>
+                    </div>
+                  )}
+                  {claudeDiagResult.downgraded && (
+                    <div className="rounded-lg bg-[var(--destructive)]/10 p-2 text-[0.6875rem] text-[var(--destructive)] ring-1 ring-[var(--destructive)]/25">
+                      The usage metadata does not include the requested model. Claude Code may be routing differently
+                      than this connection expects.
+                    </div>
+                  )}
+                  {claudeDiagResult.response && (
+                    <div className="rounded-lg bg-[var(--secondary)] p-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {claudeDiagResult.response}
+                    </div>
+                  )}
+                </div>
               </TestResultCard>
             )}
           </div>
@@ -1990,6 +2105,43 @@ function OpenAiChatGptAuthHelp() {
           <p className="mt-2">
             Marinara reads the local Codex auth file and refreshes the ChatGPT session when possible. Embeddings are not
             available on this provider; configure a separate connection for embedding work.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClaudeSubscriptionAuthHelp() {
+  return (
+    <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 p-3 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+      <div className="flex items-start gap-2">
+        <AlertCircle size="0.8125rem" className="mt-0.5 shrink-0 text-sky-300" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sky-200">
+            Routes chat through your local Claude Code login so it bills against your Anthropic subscription instead of
+            an API key.
+          </p>
+          <p className="mt-1 text-sky-200/90">Prerequisites on the Marinara host:</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+            {CLAUDE_SUBSCRIPTION_SETUP_STEPS.map((step) => {
+              return (
+                <li key={step.label}>
+                  {"command" in step ? (
+                    <>
+                      {step.label}:{" "}
+                      <code className="rounded bg-[var(--secondary)] px-1 py-0.5 text-[0.625rem]">{step.command}</code>
+                    </>
+                  ) : (
+                    step.label
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="mt-2">
+            Marinara reads the local <code className="rounded bg-[var(--secondary)] px-1 py-0.5">claude</code> session
+            and lets the Claude Code tooling choose its endpoint. Embeddings need a separate connection.
           </p>
         </div>
       </div>

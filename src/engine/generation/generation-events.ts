@@ -6,6 +6,7 @@ export type GenerationEvent =
   | { type: "tool_result"; data: { toolCallId?: string; name: string; result: string; success: boolean } }
   | { type: "user_message"; data: unknown }
   | { type: "assistant_message"; data: unknown }
+  | { type: "agent_injection_review"; data: unknown }
   | { type: "agent_result"; data: unknown }
   | { type: "cross_post"; data: unknown }
   | { type: "assistant_action"; data: unknown }

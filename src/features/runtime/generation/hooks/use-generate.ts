@@ -1153,6 +1153,19 @@ export async function runGenerationWithUi(
         case "agent_result":
           queueAgentResultEffect(event.data);
           break;
+        case "agent_injection_review": {
+          const data = parseMaybeRecord(event.data);
+          const reviewChatId = readString(data.chatId).trim();
+          const injections = Array.isArray(data.injections) ? data.injections : [];
+          if (reviewChatId && injections.length > 0) {
+            window.dispatchEvent(
+              new CustomEvent("marinara:agent-injection-review", {
+                detail: { chatId: reviewChatId, injections },
+              }),
+            );
+          }
+          break;
+        }
         case "cross_post": {
           const data = parseMaybeRecord(event.data);
           const target = readString(data.targetChatName).trim();

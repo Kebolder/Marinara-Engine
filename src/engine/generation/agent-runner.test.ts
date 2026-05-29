@@ -314,6 +314,61 @@ describe("createGenerationAgentRuntime", () => {
     expect(calls[0]?.parameters).not.toHaveProperty("temperature");
   });
 
+  it("uses the default agent connection before the chat connection when no agent override is set", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "agent-a",
+              type: "prose-guardian",
+              name: "Prose Guardian",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "",
+              promptTemplate: "Add a concise style note.",
+            },
+          ],
+          {
+            connections: [
+              {
+                id: "agent-default",
+                provider: "anthropic",
+                model: "agent-default-model",
+                defaultForAgents: true,
+                defaultParameters: { topP: 0.61 },
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          provider: "google",
+          model: "chat-model",
+          defaultParameters: { topP: 0.24 },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]).toMatchObject({
+      connectionId: "agent-default",
+      model: "agent-default-model",
+      parameters: expect.objectContaining({ topP: 0.61 }),
+    });
+  });
+
   it("does not run Echo Chamber during assistant message regeneration", async () => {
     const calls: LlmRequest[] = [];
     const runtime = await createGenerationAgentRuntime(
@@ -1786,5 +1841,161 @@ describe("createGenerationAgentRuntime", () => {
       success: true,
     });
     expect(calls).toHaveLength(1);
+  });
+
+  it("scopes knowledge retrieval source material to active chat lorebooks", async () => {
+    const calls: LlmRequest[] = [];
+    const baseStorage = storage(
+      [
+        {
+          id: "knowledge-retrieval",
+          type: "knowledge-retrieval",
+          name: "Knowledge Retrieval",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Extract relevant lore.",
+          settings: {},
+        },
+      ],
+      {
+        lorebooks: [
+          { id: "active-lorebook", enabled: true, name: "Active Lore" },
+          { id: "other-lorebook", enabled: true, name: "Other Lore" },
+        ],
+      },
+    );
+    const entriesByLorebook: Record<string, Record<string, unknown>[]> = {
+      "active-lorebook": [
+        {
+          id: "active-entry",
+          lorebookId: "active-lorebook",
+          name: "Correct City",
+          content: "The active city is Hearthglass.",
+          enabled: true,
+        },
+      ],
+      "other-lorebook": [
+        {
+          id: "other-entry",
+          lorebookId: "other-lorebook",
+          name: "Wrong City",
+          content: "The unrelated city is Wrongport.",
+          enabled: true,
+        },
+      ],
+    };
+
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: {
+          ...baseStorage,
+          listLorebookEntries: async <T>(lorebookId: string) => (entriesByLorebook[lorebookId] ?? []) as T[],
+        },
+        llm: countingLlm(calls, "Use Hearthglass as the city."),
+        integrations,
+      },
+      {
+        chat: {
+          id: "chat-a",
+          mode: "roleplay",
+          metadata: { enableAgents: true, activeLorebookIds: ["active-lorebook"] },
+        },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "Where are we?" }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      { agentType: "knowledge-retrieval", agentName: "Knowledge Retrieval", text: "Use Hearthglass as the city." },
+    ]);
+    expect(calls).toHaveLength(1);
+    const promptText = calls[0]!.messages.map((message) => message.content).join("\n");
+    expect(promptText).toContain("The active city is Hearthglass.");
+    expect(promptText).not.toContain("Wrongport");
+  });
+
+  it("scopes knowledge router candidates to lorebooks linked to active characters", async () => {
+    const calls: LlmRequest[] = [];
+    const baseStorage = storage(
+      [
+        {
+          id: "knowledge-router",
+          type: "knowledge-router",
+          name: "Knowledge Router",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Select relevant entries.",
+          settings: {},
+        },
+      ],
+      {
+        lorebooks: [
+          { id: "character-lorebook", enabled: true, name: "Character Lore", characterIds: ["char-a"] },
+          { id: "unlinked-lorebook", enabled: true, name: "Unlinked Lore" },
+        ],
+      },
+    );
+    const entriesByLorebook: Record<string, Record<string, unknown>[]> = {
+      "character-lorebook": [
+        {
+          id: "char-entry",
+          lorebookId: "character-lorebook",
+          name: "Character Secret",
+          content: "Dottore knows the sealed archive.",
+          description: "Secret archive knowledge.",
+          enabled: true,
+        },
+      ],
+      "unlinked-lorebook": [
+        {
+          id: "unlinked-entry",
+          lorebookId: "unlinked-lorebook",
+          name: "Wrong Secret",
+          content: "Unlinked lore should not leak.",
+          description: "Wrong leak.",
+          enabled: true,
+        },
+      ],
+    };
+
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: {
+          ...baseStorage,
+          listLorebookEntries: async <T>(lorebookId: string) => (entriesByLorebook[lorebookId] ?? []) as T[],
+        },
+        llm: countingLlm(calls, JSON.stringify({ entryIds: ["char-entry", "unlinked-entry"] })),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", mode: "roleplay", metadata: { enableAgents: true } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "What does he know?" }],
+        characters: [{ id: "char-a", name: "Dottore", description: "", tags: [] }],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "knowledge-router",
+        agentName: "Knowledge Router",
+        text: "### Character Secret\nDottore knows the sealed archive.",
+      },
+    ]);
+    expect(calls).toHaveLength(1);
+    const promptText = calls[0]!.messages.map((message) => message.content).join("\n");
+    expect(promptText).toContain("Character Secret");
+    expect(promptText).not.toContain("Wrong Secret");
   });
 });

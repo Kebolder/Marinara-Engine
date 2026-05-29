@@ -108,7 +108,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             required_string(&args, "id")?,
             optional_string(&args, "format").as_deref(),
         ),
-        "character_export_png" => exports::export_character_png(state, required_string(&args, "id")?),
+        "character_export_png" => {
+            exports::export_character_png(state, required_string(&args, "id")?)
+        }
         "character_embedded_lorebook_import" => {
             exports::import_character_embedded_lorebook(state, required_string(&args, "id")?)
         }
@@ -231,23 +233,31 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         ),
         "game_assets_move" => state.game_assets.move_to_folder(
             required_string(&args, "path")?,
-            optional_string(&args, "targetFolder").as_deref().unwrap_or(""),
+            optional_string(&args, "targetFolder")
+                .as_deref()
+                .unwrap_or(""),
         ),
         "game_assets_copy" => state.game_assets.copy_to_folder(
             required_string(&args, "path")?,
-            optional_string(&args, "targetFolder").as_deref().unwrap_or(""),
+            optional_string(&args, "targetFolder")
+                .as_deref()
+                .unwrap_or(""),
         ),
         "game_assets_move_bulk" => Ok(state.game_assets.move_many(
             &required_string_vec(&args, "paths")?,
-            optional_string(&args, "targetFolder").as_deref().unwrap_or(""),
+            optional_string(&args, "targetFolder")
+                .as_deref()
+                .unwrap_or(""),
         )),
         "game_assets_copy_bulk" => Ok(state.game_assets.copy_many(
             &required_string_vec(&args, "paths")?,
-            optional_string(&args, "targetFolder").as_deref().unwrap_or(""),
+            optional_string(&args, "targetFolder")
+                .as_deref()
+                .unwrap_or(""),
         )),
-        "game_assets_delete_bulk" => Ok(state.game_assets.delete_many(
-            &required_string_vec(&args, "paths")?,
-        )),
+        "game_assets_delete_bulk" => Ok(state
+            .game_assets
+            .delete_many(&required_string_vec(&args, "paths")?)),
         "game_assets_file_info" => state.game_assets.file_info(required_string(&args, "path")?),
         "game_assets_folder_description" => game_assets::game_assets_folder_description(
             state,
@@ -256,7 +266,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
                 "description": required_string(&args, "description")?,
             }),
         ),
-        "game_assets_upload" => game_assets::game_assets_upload(state, optional_value(&args, "body")),
+        "game_assets_upload" => {
+            game_assets::game_assets_upload(state, optional_value(&args, "body"))
+        }
         "background_file_path" => Ok(json!({
             "path": state.backgrounds.absolute_path_string(required_string(&args, "filename")?)?
         })),
@@ -269,11 +281,27 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             integrations::tts_call(state, "PUT", &["config"], optional_value(&args, "config")).await
         }
         "tts_voices" => integrations::tts_call(state, "GET", &["voices"], Value::Null).await,
-        "tts_speak" => integrations::tts_call(state, "POST", &["speak"], optional_value(&args, "input")).await,
-        "translate_text_command" => translation::translate_text(state, optional_value(&args, "input")).await,
-        "discord_webhook_send" => integrations::discord_webhook_send(optional_value(&args, "body")).await,
-        "spotify_status" => spotify_direct(state, "POST", &["status"], optional_value(&args, "body")).await,
-        "spotify_authorize" => spotify_direct(state, "POST", &["authorize"], optional_value(&args, "input")).await,
+        "tts_speak" => {
+            integrations::tts_call(state, "POST", &["speak"], optional_value(&args, "input")).await
+        }
+        "translate_text_command" => {
+            translation::translate_text(state, optional_value(&args, "input")).await
+        }
+        "discord_webhook_send" => {
+            integrations::discord_webhook_send(optional_value(&args, "body")).await
+        }
+        "spotify_status" => {
+            spotify_direct(state, "POST", &["status"], optional_value(&args, "body")).await
+        }
+        "spotify_authorize" => {
+            spotify_direct(
+                state,
+                "POST",
+                &["authorize"],
+                optional_value(&args, "input"),
+            )
+            .await
+        }
         "spotify_exchange" => {
             spotify_direct(
                 state,
@@ -284,38 +312,147 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             .await
         }
         "spotify_disconnect" => {
-            spotify_direct(state, "POST", &["disconnect"], optional_value(&args, "body")).await
+            spotify_direct(
+                state,
+                "POST",
+                &["disconnect"],
+                optional_value(&args, "body"),
+            )
+            .await
         }
-        "spotify_player" => spotify_direct(state, "GET", &["player"], optional_value(&args, "body")).await,
-        "spotify_devices" => spotify_direct(state, "GET", &["devices"], optional_value(&args, "body")).await,
+        "spotify_player" => {
+            spotify_direct(state, "GET", &["player"], optional_value(&args, "body")).await
+        }
+        "spotify_devices" => {
+            spotify_direct(state, "GET", &["devices"], optional_value(&args, "body")).await
+        }
         "spotify_access_token" => {
-            spotify_direct(state, "GET", &["access-token"], optional_value(&args, "body")).await
+            spotify_direct(
+                state,
+                "GET",
+                &["access-token"],
+                optional_value(&args, "body"),
+            )
+            .await
         }
         "spotify_playlists" => spotify_playlists(state, &args).await,
         "spotify_playlist_tracks" => {
-            spotify_direct(state, "POST", &["playlist-tracks"], optional_value(&args, "input")).await
+            spotify_direct(
+                state,
+                "POST",
+                &["playlist-tracks"],
+                optional_value(&args, "input"),
+            )
+            .await
         }
         "spotify_search_tracks" => {
-            spotify_direct(state, "POST", &["search-tracks"], optional_value(&args, "input")).await
+            spotify_direct(
+                state,
+                "POST",
+                &["search-tracks"],
+                optional_value(&args, "input"),
+            )
+            .await
         }
         "spotify_play_track" => {
-            spotify_direct(state, "POST", &["play-track"], optional_value(&args, "input")).await
+            spotify_direct(
+                state,
+                "POST",
+                &["play-track"],
+                optional_value(&args, "input"),
+            )
+            .await
         }
         "spotify_dj_mari_playlist" => {
-            spotify_direct(state, "POST", &["dj-mari-playlist"], optional_value(&args, "input")).await
+            spotify_direct(
+                state,
+                "POST",
+                &["dj-mari-playlist"],
+                optional_value(&args, "input"),
+            )
+            .await
         }
-        "spotify_player_play" => spotify_direct(state, "PUT", &["player", "play"], optional_value(&args, "body")).await,
-        "spotify_player_pause" => spotify_direct(state, "PUT", &["player", "pause"], optional_value(&args, "body")).await,
-        "spotify_player_next" => spotify_direct(state, "POST", &["player", "next"], optional_value(&args, "body")).await,
-        "spotify_player_previous" => spotify_direct(state, "POST", &["player", "previous"], optional_value(&args, "body")).await,
-        "spotify_player_transfer" => spotify_direct(state, "PUT", &["player", "transfer"], optional_value(&args, "body")).await,
-        "spotify_player_volume" => spotify_direct(state, "PUT", &["player", "volume"], optional_value(&args, "body")).await,
-        "spotify_player_shuffle" => spotify_direct(state, "PUT", &["player", "shuffle"], optional_value(&args, "body")).await,
-        "spotify_player_repeat" => spotify_direct(state, "PUT", &["player", "repeat"], optional_value(&args, "body")).await,
-        "knowledge_sources_list" => knowledge::knowledge_sources_call(state, "GET", &[], Value::Null),
-        "knowledge_source_upload" => {
-            knowledge::knowledge_sources_call(state, "POST", &["upload"], optional_value(&args, "body"))
+        "spotify_player_play" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "play"],
+                optional_value(&args, "body"),
+            )
+            .await
         }
+        "spotify_player_pause" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "pause"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_next" => {
+            spotify_direct(
+                state,
+                "POST",
+                &["player", "next"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_previous" => {
+            spotify_direct(
+                state,
+                "POST",
+                &["player", "previous"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_transfer" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "transfer"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_volume" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "volume"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_shuffle" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "shuffle"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "spotify_player_repeat" => {
+            spotify_direct(
+                state,
+                "PUT",
+                &["player", "repeat"],
+                optional_value(&args, "body"),
+            )
+            .await
+        }
+        "knowledge_sources_list" => {
+            knowledge::knowledge_sources_call(state, "GET", &[], Value::Null)
+        }
+        "knowledge_source_upload" => knowledge::knowledge_sources_call(
+            state,
+            "POST",
+            &["upload"],
+            optional_value(&args, "body"),
+        ),
         "knowledge_source_delete" => knowledge::knowledge_sources_call(
             state,
             "DELETE",
@@ -351,14 +488,18 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         ),
         "import_st_bulk_scan" => import_call(state, &args, &["st-bulk", "scan"], "payload"),
         "import_st_bulk_run" => import_call(state, &args, &["st-bulk", "run"], "payload"),
-        "custom_tool_execute" => custom_tools::execute_custom_tool(state, optional_value(&args, "body")).await,
+        "custom_tool_execute" => {
+            custom_tools::execute_custom_tool(state, optional_value(&args, "body")).await
+        }
         "custom_tool_capabilities" => Ok(custom_tools::custom_tool_capabilities()),
         "agent_patch_by_type" => agents::patch_agent_type(
             state,
             required_string(&args, "agentType")?,
             optional_value(&args, "patch"),
         ),
-        "agent_toggle_by_type" => agents::toggle_agent_type(state, required_string(&args, "agentType")?),
+        "agent_toggle_by_type" => {
+            agents::toggle_agent_type(state, required_string(&args, "agentType")?)
+        }
         "agent_cadence_status" => agents::agent_cadence_status(
             state,
             required_string(&args, "agentType")?,
@@ -396,13 +537,17 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         "chat_memories_refresh" => {
             chats::refresh_chat_memories(state, required_string(&args, "chatId")?).await
         }
-        "chat_memories_export" => chats::export_chat_memories(state, required_string(&args, "chatId")?),
-        "chat_memories_import" => chats::import_chat_memories(
-            state,
-            required_string(&args, "chatId")?,
-            optional_value(&args, "body"),
-        )
-        .await,
+        "chat_memories_export" => {
+            chats::export_chat_memories(state, required_string(&args, "chatId")?)
+        }
+        "chat_memories_import" => {
+            chats::import_chat_memories(
+                state,
+                required_string(&args, "chatId")?,
+                optional_value(&args, "body"),
+            )
+            .await
+        }
         "chat_notes_list" => {
             chats::chat_array_field(state, required_string(&args, "chatId")?, "notes")
         }
@@ -443,9 +588,10 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         ),
         "chat_connect" => chat_connect(state, &args),
         "chat_disconnect" => chat_disconnect(state, &args),
-        "admin_expunge_command" => {
-            admin::admin_expunge(state, json!({ "confirm": true, "scopes": required_string_vec(&args, "scopes")? }))
-        }
+        "admin_expunge_command" => admin::admin_expunge(
+            state,
+            json!({ "confirm": true, "scopes": required_string_vec(&args, "scopes")? }),
+        ),
         "admin_clear_all_command" => admin::admin_clear_all(state),
         "agent_memory_get" => agents::agent_memory(
             state,
@@ -477,6 +623,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         "connection_test" => connection_test(state, &args).await,
         "connection_test_message" => connection_test_message(state, &args).await,
         "connection_test_image" => connection_test_image(state, &args).await,
+        "connection_diagnose_claude_subscription" => {
+            connection_diagnose_claude_subscription(state, &args).await
+        }
         "connection_models" => connection_models(state, &args).await,
         "connection_save_default_parameters" => connection_save_default_parameters(state, &args),
         "character_gallery_upload" => character_gallery_upload(state, &args),
@@ -490,7 +639,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
         "avatar_generation_command" => avatar_generation_command(state, &args).await,
         "sprite_generate_sheet" => sprite_generate_sheet(state, &args).await,
         "sprite_generate_sheet_preview" => sprite_generate_sheet_preview(state, &args).await,
-        "sprite_cleanup" => sprites::cleanup_generated_sprites(state, optional_value(&args, "body")),
+        "sprite_cleanup" => {
+            sprites::cleanup_generated_sprites(state, optional_value(&args, "body"))
+        }
         "sprite_list" => sprites::list_sprites(state, required_string(&args, "characterId")?),
         "sprite_upload" => sprites::upload_sprite(
             state,
@@ -551,7 +702,9 @@ pub async fn dispatch(state: &AppState, request: InvokeRequest) -> AppResult<Val
             llm::llm_models(state, optional_string(&args, "connectionId").as_deref()).await
         }
         "llm_stream_cancel" => llm_stream_cancel(state, &args),
-        "professor_mari_prompt" => mari::professor_mari_prompt(state, optional_value(&args, "request")).await,
+        "professor_mari_prompt" => {
+            mari::professor_mari_prompt(state, optional_value(&args, "request")).await
+        }
         "update_check" => updates::check_updates().await,
         "update_apply" => updates::apply_update(optional_value(&args, "input")),
         _ => Err(AppError::new(
@@ -646,11 +799,10 @@ async fn spotify_playlists(state: &AppState, args: &Map<String, Value>) -> AppRe
 }
 
 async fn tracker_snapshot_latest(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
-    Ok(game_state_snapshots::latest_tracker_snapshot(
-        state,
-        required_string(args, "chatId")?,
-    )?
-    .unwrap_or(Value::Null))
+    Ok(
+        game_state_snapshots::latest_tracker_snapshot(state, required_string(args, "chatId")?)?
+            .unwrap_or(Value::Null),
+    )
 }
 
 async fn tracker_snapshot_get(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
@@ -885,6 +1037,13 @@ async fn connection_test_image(state: &AppState, args: &Map<String, Value>) -> A
 
 async fn connection_models(state: &AppState, args: &Map<String, Value>) -> AppResult<Value> {
     llm::connection_models(state, required_string(args, "id")?).await
+}
+
+async fn connection_diagnose_claude_subscription(
+    state: &AppState,
+    args: &Map<String, Value>,
+) -> AppResult<Value> {
+    llm::connection_diagnose_claude_subscription(state, required_string(args, "id")?).await
 }
 
 fn connection_save_default_parameters(

@@ -9,6 +9,16 @@ import type { ConnectionRow, ConnectionTestResult } from "../types";
 
 export { connectionKeys } from "../query-keys";
 
+export type ClaudeSubscriptionDiagnosis = {
+  success: boolean;
+  requestedModel: string;
+  modelsBilled: string[];
+  modelUsageDetail: Array<{ model: string; inputTokens: number | null; outputTokens: number | null; role: string }>;
+  fastModeState: string | null;
+  downgraded: boolean;
+  response: string;
+  latencyMs: number;
+};
 
 export function useConnections(enabled = true) {
   return useQuery({
@@ -95,6 +105,13 @@ export function useTestImageGeneration() {
         prompt: string;
         error?: string;
       }>("connection_test_image", { id }),
+  });
+}
+
+export function useDiagnoseClaudeSubscription() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      invokeTauri<ClaudeSubscriptionDiagnosis>("connection_diagnose_claude_subscription", { id }),
   });
 }
 

@@ -246,6 +246,7 @@ pub fn run() {
             storage_commands::media_commands::connection_test_message,
             storage_commands::media_commands::connection_test_image,
             storage_commands::media_commands::connection_models,
+            storage_commands::media_commands::connection_diagnose_claude_subscription,
             storage_commands::media_commands::connection_save_default_parameters,
             storage_commands::media_commands::persona_activate,
             storage_commands::media_commands::character_avatar_upload,

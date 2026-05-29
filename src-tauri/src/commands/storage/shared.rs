@@ -718,9 +718,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
             .as_nanos();
-        TempRoot(std::env::temp_dir().join(format!(
-            "marinara-storage-{test_name}-{suffix}"
-        )))
+        TempRoot(std::env::temp_dir().join(format!("marinara-storage-{test_name}-{suffix}")))
     }
 
     #[test]

@@ -689,7 +689,10 @@ fn build_task_prompt(input: &MariPromptRequest, repo_guidance: Option<&str>) -> 
             ));
         }
     }
-    if let Some(repo_guidance) = repo_guidance.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(repo_guidance) = repo_guidance
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         sections.push(format!(
             "Current repository guidance from AGENTS.md. Use this as the current source map, then verify exact answers with search_marinara_code/read_marinara_code_file before citing files:\n{repo_guidance}"
         ));

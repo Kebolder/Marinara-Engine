@@ -187,8 +187,11 @@ mod tests {
             )
             .expect("connection should write");
 
-        let result = admin_expunge(&state, json!({ "confirm": true, "scopes": ["connections"] }))
-            .expect("connection expunge should succeed");
+        let result = admin_expunge(
+            &state,
+            json!({ "confirm": true, "scopes": ["connections"] }),
+        )
+        .expect("connection expunge should succeed");
 
         assert_eq!(
             result["clearedCollections"],

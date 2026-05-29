@@ -1740,6 +1740,121 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
     Ok(trimmed.to_string())
 }
 
+fn parse_claude_subscription_json_output(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return Some(value);
+    }
+    trimmed
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .next_back()
+}
+
+pub fn diagnose_claude_subscription_model(model: &str, fast_mode: bool) -> AppResult<Value> {
+    let requested_model = model.trim();
+    if requested_model.is_empty() {
+        return Err(AppError::invalid_input(
+            "No model configured. Pick a model first.",
+        ));
+    }
+    let started = std::time::Instant::now();
+    let mut command = Command::new(claude_subscription_command());
+    command
+        .arg("-p")
+        .arg("--model")
+        .arg(requested_model)
+        .arg("--output-format")
+        .arg("json")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .arg("--settings")
+        .arg(json!({ "fastMode": fast_mode }).to_string())
+        .arg("--tools")
+        .arg("")
+        .arg("--disable-slash-commands")
+        .arg("--no-session-persistence")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.env("ENABLE_CLAUDEAI_MCP_SERVERS", "false");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        AppError::new(
+            "claude_subscription_unavailable",
+            format!(
+                "Failed to start Claude Code. Install @anthropic-ai/claude-code, run `claude login`, or set CLAUDE_CODE_COMMAND. Underlying error: {error}"
+            ),
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(b"Reply with exactly: OK")
+            .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(AppError::with_details(
+            "claude_subscription_failed",
+            if stderr.trim().is_empty() {
+                "Claude Code routing diagnosis failed.".to_string()
+            } else {
+                stderr.trim().to_string()
+            },
+            json!({
+                "status": output.status.code(),
+                "stdout": stdout.chars().take(1000).collect::<String>(),
+            }),
+        ));
+    }
+    let value = parse_claude_subscription_json_output(&stdout).ok_or_else(|| {
+        AppError::with_details(
+            "claude_subscription_response_error",
+            "Claude Code did not return diagnostic JSON.",
+            json!({ "stdout": stdout.chars().take(1000).collect::<String>() }),
+        )
+    })?;
+    let model_usage = value
+        .get("modelUsage")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let models_billed = model_usage.keys().cloned().collect::<Vec<_>>();
+    let model_usage_detail = model_usage
+        .iter()
+        .map(|(model, usage)| {
+            json!({
+                "model": model,
+                "inputTokens": usage.get("input_tokens").and_then(Value::as_u64),
+                "outputTokens": usage.get("output_tokens").and_then(Value::as_u64),
+                "role": if model == requested_model { "requested" } else { "auxiliary" },
+            })
+        })
+        .collect::<Vec<_>>();
+    let response = claude_subscription_text_from_json(&value).unwrap_or_default();
+    Ok(json!({
+        "success": true,
+        "requestedModel": requested_model,
+        "modelsBilled": models_billed,
+        "modelUsageDetail": model_usage_detail,
+        "fastModeState": value.get("fast_mode_state").and_then(Value::as_str),
+        "downgraded": !model_usage.is_empty() && !model_usage.contains_key(requested_model),
+        "response": response,
+        "latencyMs": started.elapsed().as_millis(),
+    }))
+}
+
 async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> {
     let prompt_selection = claude_subscription_prompt(&request);
     let mut command = Command::new(claude_subscription_command());

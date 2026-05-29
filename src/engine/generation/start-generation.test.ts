@@ -149,6 +149,12 @@ async function drainGeneration(stream: AsyncGenerator<unknown>) {
   }
 }
 
+async function collectGeneration(stream: AsyncGenerator<unknown>): Promise<unknown[]> {
+  const events: unknown[] = [];
+  for await (const event of stream) events.push(event);
+  return events;
+}
+
 const illustratorDrawData = {
   shouldGenerate: true,
   reason: "Important visual beat",
@@ -279,6 +285,26 @@ describe("startGeneration chat message loading", () => {
       content: "Visible reply.",
       extra: { thinking: "private reasoning" },
     });
+  });
+
+  it("does not persist a blank assistant message when the provider only returns thinking", async () => {
+    const { deps, createChatMessage } = generationDepsForChat();
+    deps.llm.stream = vi.fn(async function* () {
+      yield { type: "thinking" as const, text: "private reasoning only" };
+    });
+
+    await expect(
+      drainGeneration(
+        startGeneration(deps, {
+          chatId: "chat-1",
+          userMessage: "hello",
+          impersonateBlockAgents: true,
+        }),
+      ),
+    ).rejects.toThrow("Generation produced no visible assistant response");
+
+    expect(createChatMessage.mock.calls.some(([, value]) => value.role === "assistant")).toBe(false);
+    expect(createChatMessage.mock.calls.filter(([, value]) => value.role === "user")).toHaveLength(1);
   });
 
   it("reuses the pre-commit messages and appends the saved user message for normal sends", async () => {
@@ -1137,6 +1163,105 @@ describe("startGeneration automatic custom agent cadence", () => {
 });
 
 describe("startGeneration agent runtime parity", () => {
+  it("pauses for writer agent review when chat metadata requests it", async () => {
+    const { deps, streamedRequests, createChatMessage } = generationDepsForChat({
+      chatPatch: { mode: "roleplay" },
+      chatMetadata: { enableAgents: true, activeAgentIds: ["agent-a"], reviewWriterAgentOutputs: true },
+      agents: [
+        {
+          id: "agent-a",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Add a concise style note.",
+        },
+      ],
+    });
+
+    const events = await collectGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "hello" }));
+
+    expect(streamedRequests).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "agent_injection_review",
+        data: expect.objectContaining({
+          chatId: "chat-1",
+          injections: [
+            expect.objectContaining({
+              agentType: "prose-guardian",
+              agentName: "Prose Guardian",
+              text: "Done.",
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(createChatMessage).not.toHaveBeenCalledWith("chat-1", expect.objectContaining({ role: "assistant" }));
+  });
+
+  it("uses reviewed writer agent overrides when continuing after review", async () => {
+    const { deps, streamedRequests } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", promptPresetId: "preset-1" },
+      chatMetadata: { enableAgents: true, activeAgentIds: ["agent-a"], reviewWriterAgentOutputs: true },
+      initialMessages: [{ id: "user-1", chatId: "chat-1", role: "user", content: "hello" }],
+      agents: [
+        {
+          id: "agent-a",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Add a concise style note.",
+        },
+      ],
+      prompts: [{ id: "preset-1", parameters: {} }],
+      promptSections: [
+        {
+          id: "main",
+          presetId: "preset-1",
+          name: "Main",
+          role: "system",
+          content: "Main prompt.",
+          enabled: true,
+          sortOrder: 0,
+        },
+        {
+          id: "agent-data",
+          presetId: "preset-1",
+          name: "Agent Data",
+          role: "system",
+          enabled: true,
+          markerConfig: { type: "agent_data", agentType: "prose-guardian" },
+          sortOrder: 1,
+        },
+      ],
+    });
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        agentInjectionOverrides: [
+          {
+            agentType: "prose-guardian",
+            agentName: "Prose Guardian",
+            text: "Edited writer guidance.",
+          },
+        ],
+      }),
+    );
+
+    expect(streamedRequests).toHaveLength(1);
+    const mainRequest = streamedRequests[0] as { messages: Array<{ content: string }> };
+    const mainPrompt = mainRequest.messages.map((message) => message.content).join("\n\n");
+    expect(mainPrompt).toContain("Main prompt.");
+    expect(mainPrompt).toContain("Edited writer guidance.");
+  });
+
   it("injects pre-generation agent data into preset agent_data markers before the main call", async () => {
     const { deps, streamedRequests } = generationDepsForChat({
       chatPatch: { mode: "roleplay", promptPresetId: "preset-1" },
@@ -1334,6 +1459,215 @@ describe("startGeneration agent runtime parity", () => {
           Dottore: "smirk",
         },
       },
+    });
+  });
+
+  it("persists CYOA choices and pre-generation injections on generated assistant message metadata", async () => {
+    const { deps, createChatMessage } = generationDepsForChat({
+      chatPatch: { mode: "roleplay" },
+      chatMetadata: { enableAgents: true },
+      agents: [
+        {
+          id: "prose-guardian",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Give writing guidance.",
+          settings: {},
+        },
+        {
+          id: "cyoa",
+          type: "cyoa",
+          name: "CYOA Choices",
+          enabled: true,
+          phase: "post_processing",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Offer choices.",
+          settings: {},
+        },
+      ],
+    });
+    const responses = [
+      "Vary sentence rhythm.",
+      "Assistant reply.",
+      JSON.stringify({
+        choices: [
+          { label: "Press forward", text: "I step closer and press for the truth." },
+          { label: "Hold back", text: "I stay quiet and watch for another clue." },
+        ],
+      }),
+    ];
+    let turn = 0;
+    deps.llm = {
+      ...deps.llm,
+      stream: vi.fn(async function* () {
+        yield { type: "token" as const, text: responses[turn++] ?? "" };
+      }),
+    };
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", userMessage: "hello" }));
+
+    const assistantCreate = createChatMessage.mock.calls.find(
+      (call) => (call[1] as { role?: unknown }).role === "assistant",
+    );
+    expect(assistantCreate?.[1]).toMatchObject({
+      extra: {
+        contextInjections: [
+          { agentType: "prose-guardian", agentName: "Prose Guardian", text: "Vary sentence rhythm." },
+        ],
+        cyoaChoices: [
+          { label: "Press forward", text: "I step closer and press for the truth." },
+          { label: "Hold back", text: "I stay quiet and watch for another clue." },
+        ],
+      },
+    });
+  });
+
+  it("stores regenerated CYOA choices and injections on the new assistant swipe", async () => {
+    const { deps, addChatMessageSwipe, patchChatMessageExtra } = generationDepsForChat({
+      chatPatch: { mode: "roleplay" },
+      chatMetadata: { enableAgents: true },
+      initialMessages: [
+        { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
+        { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "first reply", extra: {} },
+      ],
+      agents: [
+        {
+          id: "prose-guardian",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Give writing guidance.",
+          settings: {},
+        },
+        {
+          id: "cyoa",
+          type: "cyoa",
+          name: "CYOA Choices",
+          enabled: true,
+          phase: "post_processing",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Offer choices.",
+          settings: {},
+        },
+      ],
+    });
+    const responses = [
+      "Make the next swipe sharper.",
+      "Regenerated reply.",
+      JSON.stringify({ choices: [{ label: "Demand answers", text: "I demand answers immediately." }] }),
+    ];
+    let turn = 0;
+    deps.llm = {
+      ...deps.llm,
+      stream: vi.fn(async function* () {
+        yield { type: "token" as const, text: responses[turn++] ?? "" };
+      }),
+    };
+
+    await drainGeneration(startGeneration(deps, { chatId: "chat-1", regenerateMessageId: "assistant-1" }));
+
+    expect(addChatMessageSwipe).toHaveBeenCalledWith(
+      "chat-1",
+      "assistant-1",
+      "Regenerated reply.",
+      expect.objectContaining({
+        extra: expect.objectContaining({
+          contextInjections: [
+            { agentType: "prose-guardian", agentName: "Prose Guardian", text: "Make the next swipe sharper." },
+          ],
+          cyoaChoices: [{ label: "Demand answers", text: "I demand answers immediately." }],
+        }),
+      }),
+    );
+    expect(patchChatMessageExtra).toHaveBeenCalledWith(
+      "assistant-1",
+      expect.objectContaining({
+        contextInjections: [
+          { agentType: "prose-guardian", agentName: "Prose Guardian", text: "Make the next swipe sharper." },
+        ],
+        cyoaChoices: [{ label: "Demand answers", text: "I demand answers immediately." }],
+      }),
+    );
+  });
+
+  it("persists targeted CYOA and context-injection retries to the target assistant message", async () => {
+    const { deps, patchChatMessageExtra } = generationDepsForChat({
+      chatPatch: { mode: "roleplay" },
+      chatMetadata: { enableAgents: true },
+      initialMessages: [
+        { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
+        {
+          id: "assistant-1",
+          chatId: "chat-1",
+          role: "assistant",
+          content: "first reply",
+          extra: {
+            contextInjections: [
+              { agentType: "prose-guardian", agentName: "Prose Guardian", text: "Old guidance." },
+              { agentType: "director", agentName: "Narrative Director", text: "Preserve this beat." },
+            ],
+            cyoaChoices: [{ label: "Old", text: "Old choice." }],
+          },
+        },
+      ],
+      agents: [
+        {
+          id: "prose-guardian",
+          type: "prose-guardian",
+          name: "Prose Guardian",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Give writing guidance.",
+          settings: {},
+        },
+        {
+          id: "cyoa",
+          type: "cyoa",
+          name: "CYOA Choices",
+          enabled: true,
+          phase: "post_processing",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Offer choices.",
+          settings: {},
+        },
+      ],
+    });
+    const responses = [
+      "Fresh guidance.",
+      JSON.stringify({ choices: [{ label: "Investigate", text: "I investigate the strange sound." }] }),
+    ];
+    let turn = 0;
+    deps.llm = {
+      ...deps.llm,
+      stream: vi.fn(async function* () {
+        yield { type: "token" as const, text: responses[turn++] ?? "" };
+      }),
+    };
+
+    await retryGenerationAgents(deps, {
+      chatId: "chat-1",
+      agentTypes: ["prose-guardian", "cyoa"],
+      options: { forMessageId: "assistant-1" },
+    });
+
+    expect(patchChatMessageExtra).toHaveBeenCalledWith("assistant-1", {
+      contextInjections: [
+        { agentType: "prose-guardian", agentName: "Prose Guardian", text: "Fresh guidance." },
+        { agentType: "director", agentName: "Narrative Director", text: "Preserve this beat." },
+      ],
+      cyoaChoices: [{ label: "Investigate", text: "I investigate the strange sound." }],
     });
   });
 });

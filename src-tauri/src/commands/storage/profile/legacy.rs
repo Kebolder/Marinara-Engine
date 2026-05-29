@@ -1,6 +1,5 @@
 use super::super::{
-    game_state_snapshots,
-    new_id, now_iso,
+    game_state_snapshots, new_id, now_iso,
     shared::{
         materialize_message_swipe_fields, non_negative_i64_value,
         normalize_legacy_text_array_fields, normalize_legacy_text_bool_fields,
@@ -404,7 +403,10 @@ fn normalize_legacy_connected_note(row: Value, note_type: &str) -> Option<(Strin
         "sourceChatId".to_string(),
         source_chat_id.map(Value::String).unwrap_or(Value::Null),
     );
-    note.insert("targetChatId".to_string(), Value::String(target_chat_id.clone()));
+    note.insert(
+        "targetChatId".to_string(),
+        Value::String(target_chat_id.clone()),
+    );
     note.insert(
         "anchorMessageId".to_string(),
         anchor_message_id.map(Value::String).unwrap_or(Value::Null),

@@ -712,9 +712,9 @@ impl SecurityConfig {
     }
 
     fn is_exact_cors_origin_allowed(&self, origin: &str) -> bool {
-        self.cors_origins.iter().any(|allowed| {
-            allowed != "*" && normalize_origin(allowed).as_deref() == Some(origin)
-        })
+        self.cors_origins
+            .iter()
+            .any(|allowed| allowed != "*" && normalize_origin(allowed).as_deref() == Some(origin))
     }
 
     fn is_origin_trusted(&self, origin_or_referer: &str) -> bool {
