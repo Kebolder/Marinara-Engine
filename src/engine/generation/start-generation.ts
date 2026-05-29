@@ -132,6 +132,11 @@ interface AgentInjectionOverride {
   text: string;
 }
 
+interface CyoaChoice {
+  label: string;
+  text: string;
+}
+
 const LOREBOOK_KEEPER_AGENT_TYPE = "lorebook-keeper";
 const DEFAULT_LOREBOOK_KEEPER_RUN_INTERVAL = BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[LOREBOOK_KEEPER_AGENT_TYPE] ?? 8;
 
@@ -885,6 +890,83 @@ function spriteExpressionsFromAgentResults(results: AgentResult[]): Record<strin
   return Object.keys(expressions).length > 0 ? expressions : null;
 }
 
+function normalizeCyoaChoices(value: unknown): CyoaChoice[] {
+  const data = parseRecord(value);
+  const rawChoices = Array.isArray(data.choices) ? data.choices : Array.isArray(value) ? value : [];
+  return rawChoices
+    .map((choice, index) => {
+      const record = parseRecord(choice);
+      const text = readString(record.text).trim();
+      if (!text) return null;
+      const label = readString(record.label).trim() || `Choice ${index + 1}`;
+      return { label, text };
+    })
+    .filter((choice): choice is CyoaChoice => choice !== null);
+}
+
+function cyoaChoicesFromAgentResults(results: AgentResult[]): CyoaChoice[] | null {
+  let choices: CyoaChoice[] | null = null;
+  for (const result of results) {
+    if (!result.success) continue;
+    if (result.agentType !== "cyoa" && result.type !== "cyoa_choices") continue;
+    const nextChoices = normalizeCyoaChoices(result.data);
+    if (nextChoices.length > 0) choices = nextChoices;
+  }
+  return choices;
+}
+
+function normalizeContextInjections(value: unknown): AgentInjectionOverride[] {
+  if (!Array.isArray(value)) return [];
+  const injections: AgentInjectionOverride[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const agentType = readString(entry.agentType).trim();
+    const text = readString(entry.text).trim();
+    if (!agentType || !text) continue;
+    const agentName = readString(entry.agentName).trim();
+    injections.push({ agentType, ...(agentName ? { agentName } : {}), text });
+  }
+  return injections;
+}
+
+function mergeContextInjections(
+  existing: unknown,
+  updates: readonly AgentInjectionOverride[],
+): AgentInjectionOverride[] {
+  const merged = normalizeContextInjections(existing);
+  const indexByAgentType = new Map(merged.map((injection, index) => [injection.agentType, index]));
+  for (const update of updates) {
+    const index = indexByAgentType.get(update.agentType);
+    if (index == null) {
+      indexByAgentType.set(update.agentType, merged.length);
+      merged.push({ ...update });
+    } else {
+      merged[index] = { ...update };
+    }
+  }
+  return merged;
+}
+
+function agentExtraFromResults(args: {
+  results: AgentResult[];
+  contextInjections?: AgentInjectionOverride[] | null;
+  existingExtra?: unknown;
+  mergeContextInjectionUpdates?: boolean;
+}): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  const cyoaChoices = cyoaChoicesFromAgentResults(args.results);
+  if (cyoaChoices?.length) extra.cyoaChoices = cyoaChoices;
+
+  const contextInjections = normalizeContextInjections(args.contextInjections);
+  if (contextInjections.length > 0) {
+    extra.contextInjections = args.mergeContextInjectionUpdates
+      ? mergeContextInjections(parseRecord(args.existingExtra).contextInjections, contextInjections)
+      : contextInjections;
+  }
+
+  return extra;
+}
+
 async function saveAssistantMessage(args: {
   storage: StorageGateway;
   chat: JsonRecord;
@@ -899,6 +981,7 @@ async function saveAssistantMessage(args: {
   usage?: unknown;
   promptSnapshot?: MainGenerationPromptSnapshot | null;
   spriteExpressions?: Record<string, string> | null;
+  contextInjections?: AgentInjectionOverride[] | null;
 }): Promise<unknown | null> {
   const regenerateMessageId = readString(args.input.regenerateMessageId).trim();
   const generationReplay = buildGenerationReplay(args.input);
@@ -908,6 +991,10 @@ async function saveAssistantMessage(args: {
     connection: args.connection,
     promptSnapshot: args.promptSnapshot,
     usage: args.usage,
+  });
+  const agentExtra = agentExtraFromResults({
+    results: args.agentResults,
+    contextInjections: args.contextInjections,
   });
 
   if (args.input.impersonate === true) {
@@ -922,6 +1009,7 @@ async function saveAssistantMessage(args: {
         chatSummaryFingerprint: args.chatSummaryFingerprint,
         promptSnapshot,
         spriteExpressions: args.spriteExpressions,
+        agentExtra,
       });
     }
 
@@ -934,6 +1022,7 @@ async function saveAssistantMessage(args: {
         ...(thinking ? { thinking } : {}),
         ...(generationReplay ? { generationReplay } : {}),
         ...(args.spriteExpressions ? { spriteExpressions: args.spriteExpressions } : {}),
+        ...agentExtra,
         ...(promptSnapshot
           ? {
               generationPromptSnapshot: promptSnapshot,
@@ -956,6 +1045,7 @@ async function saveAssistantMessage(args: {
       chatSummaryFingerprint: args.chatSummaryFingerprint,
       promptSnapshot,
       spriteExpressions: args.spriteExpressions,
+      agentExtra,
     });
   }
 
@@ -978,6 +1068,7 @@ async function saveAssistantMessage(args: {
       ...(thinking ? { thinking } : {}),
       ...(generationReplay ? { generationReplay } : {}),
       ...(args.spriteExpressions ? { spriteExpressions: args.spriteExpressions } : {}),
+      ...agentExtra,
       ...(promptSnapshot
         ? {
             generationPromptSnapshot: promptSnapshot,
@@ -1006,6 +1097,7 @@ async function saveRegeneratedMessage(args: {
   chatSummaryFingerprint: string | null;
   promptSnapshot: GenerationPromptSnapshot | null;
   spriteExpressions?: Record<string, string> | null;
+  agentExtra?: Record<string, unknown> | null;
 }): Promise<unknown | null> {
   const swipeExtra = swipeScopedGenerationExtra({
     generationReplay: args.generationReplay,
@@ -1013,6 +1105,7 @@ async function saveRegeneratedMessage(args: {
     thinking: args.thinking,
     promptSnapshot: args.promptSnapshot,
     spriteExpressions: args.spriteExpressions,
+    agentExtra: args.agentExtra,
   });
   const updated = await args.storage.addChatMessageSwipe(
     args.chatId,
@@ -1028,6 +1121,7 @@ async function saveRegeneratedMessage(args: {
     thinking: args.thinking,
     promptSnapshot: args.promptSnapshot,
     spriteExpressions: args.spriteExpressions,
+    agentExtra: args.agentExtra,
     activeSwipeIndex,
     existingExtra: parseRecord(updatedRecord.extra),
   });
@@ -1040,6 +1134,7 @@ function swipeScopedGenerationExtra(args: {
   thinking?: string | null;
   promptSnapshot?: GenerationPromptSnapshot | null;
   spriteExpressions?: Record<string, string> | null;
+  agentExtra?: Record<string, unknown> | null;
 }): Record<string, unknown> {
   const extra: Record<string, unknown> = {};
   if (args.generationReplay) extra.generationReplay = args.generationReplay;
@@ -1049,6 +1144,7 @@ function swipeScopedGenerationExtra(args: {
   if (args.spriteExpressions && Object.keys(args.spriteExpressions).length > 0) {
     extra.spriteExpressions = args.spriteExpressions;
   }
+  if (args.agentExtra) Object.assign(extra, args.agentExtra);
   if (args.promptSnapshot) extra.generationPromptSnapshot = args.promptSnapshot;
   return extra;
 }
@@ -1059,6 +1155,7 @@ function generationReplayExtraPatch(args: {
   thinking?: string | null;
   promptSnapshot?: GenerationPromptSnapshot | null;
   spriteExpressions?: Record<string, string> | null;
+  agentExtra?: Record<string, unknown> | null;
   activeSwipeIndex?: number | null;
   existingExtra?: JsonRecord | null;
 }): Record<string, unknown> {
@@ -1070,6 +1167,7 @@ function generationReplayExtraPatch(args: {
   if (args.spriteExpressions && Object.keys(args.spriteExpressions).length > 0) {
     extraPatch.spriteExpressions = args.spriteExpressions;
   }
+  if (args.agentExtra) Object.assign(extraPatch, args.agentExtra);
   if (args.promptSnapshot) {
     const activeSwipeIndex =
       typeof args.activeSwipeIndex === "number" && Number.isFinite(args.activeSwipeIndex)
@@ -1090,6 +1188,24 @@ function savedGenerationEventType(input: StartGenerationInput): "assistant_messa
 
 function messageId(saved: unknown): string | null {
   return isRecord(saved) ? readString(saved.id) || null : null;
+}
+
+async function persistAgentMessageExtraForTarget(
+  storage: StorageGateway,
+  target: JsonRecord | null,
+  results: AgentResult[],
+  contextInjections: AgentInjectionOverride[] | null,
+): Promise<void> {
+  const messageId = readString(target?.id).trim();
+  if (!messageId) return;
+  const extraPatch = agentExtraFromResults({
+    results,
+    contextInjections,
+    existingExtra: target?.extra,
+    mergeContextInjectionUpdates: true,
+  });
+  if (Object.keys(extraPatch).length === 0) return;
+  await storage.patchChatMessageExtra(messageId, extraPatch);
 }
 
 function targetAssistantMessage(messages: JsonRecord[], options: Record<string, unknown> = {}): JsonRecord | null {
@@ -1318,6 +1434,7 @@ async function runGenerationAgentsForTarget(args: {
     unique.set(resultKey(result), result);
   }
   const finalResults = [...unique.values()];
+  await persistAgentMessageExtraForTarget(deps.storage, target, finalResults, runtime.preInjections);
   if (target) {
     await persistTrackerSnapshotSafely(deps.storage, chatId, target, finalResults, retryBaseline);
   }
@@ -1605,6 +1722,7 @@ export async function* startGeneration(
           usage,
           promptSnapshot,
           spriteExpressions,
+          contextInjections: runtime?.preInjections ?? null,
         });
     if (saved && input.impersonate !== true) {
       await mirrorSavedAssistantMessageToDiscord({

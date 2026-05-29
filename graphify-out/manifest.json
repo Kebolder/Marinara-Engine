@@ -15,8 +15,8 @@
     "semantic_hash": ""
   },
   "package.json": {
-    "mtime": 1779985097.1975687,
-    "ast_hash": "2a35c60dd77cf99d48619b90f3423303",
+    "mtime": 1780038653.4291396,
+    "ast_hash": "d78d907453c597cedb0471b7c0187239",
     "semantic_hash": ""
   },
   "tsconfig.json": {
@@ -130,8 +130,8 @@
     "semantic_hash": ""
   },
   "scripts/patch-graphify-portable-paths.mjs": {
-    "mtime": 1779982244.237295,
-    "ast_hash": "d038a7477ed930aa6037ef637573435f",
+    "mtime": 1780038653.4297054,
+    "ast_hash": "9cb3a0d9d599c8f7535c83497ecca980",
     "semantic_hash": ""
   },
   "scripts/check-rust-structure.mjs": {
@@ -3970,8 +3970,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.ts": {
-    "mtime": 1780037577.4433095,
-    "ast_hash": "9043fb79b8124e4ed5c9bd753fe0c5e8",
+    "mtime": 1780038653.7382803,
+    "ast_hash": "e04e53bb59170fbbd6786593f8572acd",
     "semantic_hash": ""
   },
   "src/engine/generation/agent-memory-runtime.ts": {
@@ -4010,8 +4010,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.test.ts": {
-    "mtime": 1780037411.5293605,
-    "ast_hash": "288f96c7c4dd5250f50c1ca633a02546",
+    "mtime": 1780038653.738135,
+    "ast_hash": "0b930faf975ba6544f7599350dbc2cce",
     "semantic_hash": ""
   },
   "src/engine/generation/active-characters.ts": {
@@ -4070,13 +4070,13 @@
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1779897785.4370153,
-    "ast_hash": "8d2aad26c4e723d11866e1fdca5417d3",
+    "mtime": 1780038653.4156334,
+    "ast_hash": "3377a592d4e02e6d69afa8b5835f8647",
     "semantic_hash": ""
   },
   "GRAPHIFY.md": {
-    "mtime": 1779961269.117316,
-    "ast_hash": "681d392655734f9ff37fbf2a1766bd7e",
+    "mtime": 1780038653.4158146,
+    "ast_hash": "47ac9634f33e92c75362ccbdb8958c52",
     "semantic_hash": ""
   },
   ".coderabbit.yaml": {
@@ -5667,6 +5667,21 @@
   "src/features/shell/bot-browser/components/BotBrowserView.test.tsx": {
     "mtime": 1780036574.543826,
     "ast_hash": "f84ddc90fcfab6f07afa4bd243c79527",
+    "semantic_hash": ""
+  },
+  "graphify.scope.json": {
+    "mtime": 1780038653.4289804,
+    "ast_hash": "79e9a00efada99ec1da1958850e1bf85",
+    "semantic_hash": ""
+  },
+  "scripts/graphify-scope.mjs": {
+    "mtime": 1780038653.4293864,
+    "ast_hash": "8f4aa1e57735c248257175a8b4a73a0f",
+    "semantic_hash": ""
+  },
+  "scripts/check-graphify-scope.mjs": {
+    "mtime": 1780038653.4292598,
+    "ast_hash": "508147626235be78ea322f4fb90be17f",
     "semantic_hash": ""
   }
 }
