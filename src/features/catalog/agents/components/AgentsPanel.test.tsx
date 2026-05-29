@@ -115,4 +115,28 @@ describe("AgentsPanel regex row enabled state", () => {
     // RED pre-fix (script.enabled === "true" only): boolean true reads as disabled -> opacity-50.
     expect(rowWrapper!.className).not.toContain("opacity-50");
   });
+
+  it("does not dim a regex row whose enabled flag is the legacy string \"1\"", async () => {
+    storageListMock.mockImplementation(async (entity: string) => {
+      if (entity === "regex-scripts") return [{ ...regexScriptRow(), enabled: "1" }] as never;
+      return [] as never;
+    });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <AgentsPanel />
+        </QueryClientProvider>,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain(REGEX_NAME);
+    });
+
+    const rowWrapper = findRegexRowWrapper(container);
+    expect(rowWrapper).toBeTruthy();
+    // Legacy "1" must read as enabled too (parity with parseScript / the engine helper).
+    expect(rowWrapper!.className).not.toContain("opacity-50");
+  });
 });
