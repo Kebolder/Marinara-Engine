@@ -124,21 +124,6 @@
     "ast_hash": "5f9a00499f294ecdd2bb79a8383ef151",
     "semantic_hash": ""
   },
-  "docs/evidence/issue-1224-mobile-nav-touch-targets/after-results.json": {
-    "mtime": 1779835633.2033465,
-    "ast_hash": "7cbcd0cbf5da35d233e0e2459ece7296",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1224-mobile-nav-touch-targets/before-results.json": {
-    "mtime": 1779835633.2041035,
-    "ast_hash": "a51443e0993915ebdee6cc0a196042e5",
-    "semantic_hash": ""
-  },
-  "docs/evidence/pr-1260-magic-rewrite/provider-request.json": {
-    "mtime": 1779835633.2064726,
-    "ast_hash": "56e9e765600a6ede988c45b6226f3e56",
-    "semantic_hash": ""
-  },
   "public/manifest.json": {
     "mtime": 1779835633.228447,
     "ast_hash": "cc233c96de452ebd8a4f05377c5ec083",
@@ -677,11 +662,6 @@
   "skills/marinara-agent-workflow/references/templates/reviewer-thread-ledger.template.json": {
     "mtime": 1779835633.2724867,
     "ast_hash": "9d9a76c9841882c6218899b7a36c639d",
-    "semantic_hash": ""
-  },
-  ".vscode/extensions.json": {
-    "mtime": 1779835633.1955287,
-    "ast_hash": "a4038619f5414c01f04abbbdd4730820",
     "semantic_hash": ""
   },
   "src/vite-env.d.ts": {
@@ -4342,156 +4322,6 @@
   "src/shared/api/README.md": {
     "mtime": 1779835633.8660746,
     "ast_hash": "e7a44d032788be20dd51270f15b7c750",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1272-refactor/before.png": {
-    "mtime": 1779835633.2195954,
-    "ast_hash": "077db5e3959a58e1405d12bb770e7755",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1272-refactor/after.png": {
-    "mtime": 1779835633.219278,
-    "ast_hash": "3198d6906f10bd261d5fb44ac6f6e166",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1431/after-metadata-written.png": {
-    "mtime": 1779912872.6883123,
-    "ast_hash": "2e75b998a1a31f12e3bfff39265db024",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1431/after-toggle-visible.png": {
-    "mtime": 1779912872.6887772,
-    "ast_hash": "d264f5f3428afb1a730cb7f09ab69000",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1431/before-missing-toggle.png": {
-    "mtime": 1779912872.6891763,
-    "ast_hash": "9431858154e81c736e17ab8ba7f6f66f",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1467/after.png": {
-    "mtime": 1779997003.574681,
-    "ast_hash": "b1ac7b95eace8359945e60a52e15fedd",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1466/before-picker-empty.png": {
-    "mtime": 1779997003.574509,
-    "ast_hash": "c70f4da3ba6263ac3fb6bc4bb036396d",
-    "semantic_hash": ""
-  },
-  "pr-evidence/issue-1466/after-created-character-visible.png": {
-    "mtime": 1779997003.5736241,
-    "ast_hash": "b91cff0a4e6b525ebc2cd027dd3f2783",
-    "semantic_hash": ""
-  },
-  ".agents/evidence/issue-1215/ctrl-enter-before.png": {
-    "mtime": 1779835633.1935048,
-    "ast_hash": "9df4d5bbb0916ad473a968f7b8b5b323",
-    "semantic_hash": ""
-  },
-  ".agents/evidence/issue-1215/ctrl-enter-after.png": {
-    "mtime": 1779835633.1909208,
-    "ast_hash": "718dc15b48b17e50f8da2b742a5b1e34",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1223-mobile-sidebar/issue-1223-before-after-browser-back.png": {
-    "mtime": 1779835633.2005475,
-    "ast_hash": "afd5c6671839dd42db1bee0eef8f88a3",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1223-mobile-sidebar/issue-1223-after-resize-sidebar-open.png": {
-    "mtime": 1779835633.199866,
-    "ast_hash": "ea0bf37e32a392eed19487c374db69b4",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1223-mobile-sidebar/issue-1223-after-sidebar-open.png": {
-    "mtime": 1779835633.2002494,
-    "ast_hash": "30903c31aa8c20a44a1ba8c459a38e2b",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1223-mobile-sidebar/issue-1223-after-after-browser-back.png": {
-    "mtime": 1779835633.1994588,
-    "ast_hash": "7c5b04dfb69cb09e27b13ad78432dfd3",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1223-mobile-sidebar/issue-1223-before-sidebar-open.png": {
-    "mtime": 1779835633.2009735,
-    "ast_hash": "3b495b652b4288316bf0218c232fcea7",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1224-mobile-nav-touch-targets/after-320x568.png": {
-    "mtime": 1779835633.20181,
-    "ast_hash": "f8fe7736f9511d56cbd3bf6c91dbde08",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1224-mobile-nav-touch-targets/before-320x568.png": {
-    "mtime": 1779835633.2039442,
-    "ast_hash": "1c3a194e4bdc38a7a470dfc605555a75",
-    "semantic_hash": ""
-  },
-  "docs/evidence/pr-1260-magic-rewrite/after.png": {
-    "mtime": 1779835633.2062786,
-    "ast_hash": "e6ce36bc99b3c31a660f4809a9bfccab",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1227-connection-modal-actions/before-320.png": {
-    "mtime": 1779835633.2054398,
-    "ast_hash": "66e88cc0474665944d31b63cd605a4d5",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1227-connection-modal-actions/after-320.png": {
-    "mtime": 1779835633.2047875,
-    "ast_hash": "8fef1a186e0befdacafc1ad28ff40dbc",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1125/before-fix.png": {
-    "mtime": 1779835633.1988158,
-    "ast_hash": "5d74aa9b596c08f0925ed156c545580e",
-    "semantic_hash": ""
-  },
-  "docs/evidence/issue-1125/after-fix.png": {
-    "mtime": 1779835633.1981924,
-    "ast_hash": "5a81dbd252c68086a68f0f7bb51ae83f",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1135/after-return.png": {
-    "mtime": 1779835633.2081482,
-    "ast_hash": "c4ad7f4e73808814dde167c24287cde5",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1135/before-return.png": {
-    "mtime": 1779835633.2086787,
-    "ast_hash": "48d172bf5665084588c31a03247242ae",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1229/before.png": {
-    "mtime": 1779835633.2150917,
-    "ast_hash": "a97db66db48bd11cdf57f9ef5cb83a51",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1229/after-close.png": {
-    "mtime": 1779835633.2135444,
-    "ast_hash": "c724db0606b1ddcf6af2e0867bf953e2",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1219/after-back.png": {
-    "mtime": 1779835633.2092538,
-    "ast_hash": "f1999754a98355ff8cf2195d9462d563",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/issue-1219/before-back.png": {
-    "mtime": 1779835633.2112014,
-    "ast_hash": "2ff277bdded62fd498b9b27e3fa5f283",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/create-connection-modal-layout/before.png": {
-    "mtime": 1779835633.2073317,
-    "ast_hash": "7f4647d68aeebeb625bbb1154d70aabd",
-    "semantic_hash": ""
-  },
-  "docs/pr-evidence/create-connection-modal-layout/after.png": {
-    "mtime": 1779835633.2068844,
-    "ast_hash": "8e24ed1bbe62b8977a179fdb1f2e451b",
     "semantic_hash": ""
   },
   "public/1024x1024.png": {
