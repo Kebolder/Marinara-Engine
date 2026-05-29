@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { profileApi } from "../../../../shared/api/profile-api";
 import { remoteRuntimeTarget } from "../../../../shared/api/remote-runtime";
+import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { cn } from "../../../../shared/lib/utils";
 
 type ProfileImportStats = {
@@ -121,6 +122,18 @@ export function ProfileImportSection() {
         filters: [{ name: "Marinara Profile", extensions: ["json", "zip"] }],
       });
       if (typeof selected !== "string" || !selected.trim()) {
+        setProfileImportProgress(null);
+        return;
+      }
+      const confirmed = await showConfirmDialog({
+        title: "Import Profile",
+        message:
+          "Importing a profile replaces data from the selected file and may remove existing collections, depending on the export format. This cannot be undone. Continue?",
+        confirmLabel: "Import",
+        cancelLabel: "Cancel",
+        tone: "destructive",
+      });
+      if (!confirmed) {
         setProfileImportProgress(null);
         return;
       }

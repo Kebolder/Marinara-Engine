@@ -11,7 +11,7 @@ use super::{
     finish_profile_import_assets, insert_profile_import_aliases, normalize_profile_prompt_overrides,
 };
 use crate::state::AppState;
-use marinara_core::AppResult;
+use marinara_core::{AppError, AppResult};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -99,6 +99,23 @@ where
     let mut imported_conversation_notes = 0usize;
     let mut imported_ooc_influences = 0usize;
     for (table, collection) in LEGACY_PROFILE_TABLES {
+        // A partial profile (an older backup, a hand-built export, or a file
+        // missing a table) must not wipe collections it does not carry.
+        // Skipping the replacement leaves the user's existing collection
+        // untouched; a table that is present but empty is still an explicit
+        // clear and falls through to a normal empty replacement.
+        let Some(table_value) = tables.get(*table) else {
+            continue;
+        };
+        // A present-but-non-array table is malformed (e.g. `"characters": {}`).
+        // `table_rows` would coerce it to an empty array, which silently clears
+        // the collection - the same data loss the absent-key skip above guards
+        // against. Reject the import instead so nothing is replaced.
+        if !table_value.is_array() {
+            return Err(AppError::invalid_input(format!(
+                "Legacy profile table `{table}` must be a JSON array"
+            )));
+        }
         let mut rows = table_rows(tables, table);
         match *collection {
             "app-settings" => normalize_legacy_app_settings(&mut rows),
@@ -107,6 +124,7 @@ where
                 unsupported_prompt_overrides = normalize_profile_prompt_overrides(&mut rows)
             }
             "lorebooks" => add_legacy_lorebook_links(&mut rows, tables),
+            "lorebook-entries" => normalize_legacy_lorebook_entries(&mut rows),
             "chats" => {
                 add_legacy_chat_memories(&mut rows, tables);
                 let counts = add_legacy_connected_notes(&mut rows, tables);
@@ -265,6 +283,45 @@ fn add_legacy_lorebook_links(rows: &mut [Value], tables: &Map<String, Value>) {
             push_unique(&mut merged_persona_ids, &id);
         }
         object.insert("personaIds".to_string(), json!(merged_persona_ids));
+    }
+}
+
+/// Pre-refactor stored lorebook-entry bool columns (`caseSensitive`,
+/// `constant`, `locked`, ...) as TEXT (`"true"` / `"false"`) and the
+/// multi-value filter columns as TEXT-encoded JSON arrays (`"[]"`). The
+/// refactor frontend reads these directly, so `"false"` evaluates truthy in
+/// the entry editor and the keyword scanner's raw-truthiness checks misread
+/// `constant` / `preventRecursion`; a string `"[]"` also crashes the editor on
+/// `.map`. Coerce them to native types, matching the treatment the
+/// character-card import path (`normalize_lorebook_entry`) already applies.
+/// `keys` / `secondaryKeys` are handled separately by the generic
+/// `normalize_typed_json_fields` pass.
+fn normalize_legacy_lorebook_entries(rows: &mut [Value]) {
+    for row in rows {
+        normalize_legacy_text_bool_fields(
+            row,
+            &[
+                "enabled",
+                "constant",
+                "selective",
+                "matchWholeWords",
+                "caseSensitive",
+                "useRegex",
+                "preventRecursion",
+                "locked",
+                "excludeFromVectorization",
+            ],
+        );
+        normalize_legacy_text_array_fields(
+            row,
+            &[
+                "characterFilterIds",
+                "characterTagFilters",
+                "generationTriggerFilters",
+                "additionalMatchingSources",
+                "activationConditions",
+            ],
+        );
     }
 }
 
@@ -940,5 +997,164 @@ mod tests {
         assert_eq!(folder["id"], "folder-1");
         assert_eq!(folder["name"], "Provider Folder");
         assert_eq!(folder["collapsed"], true);
+    }
+
+    #[test]
+    fn legacy_lorebook_entries_coerce_text_bools_and_arrays() {
+        let state = test_state("lorebook-entry-coercion");
+        let mut tables = Map::new();
+        tables.insert(
+            "lorebook_entries".to_string(),
+            json!([
+                {
+                    "id": "entry-1",
+                    "lorebookId": "lore-1",
+                    "name": "NPC: Kafka",
+                    "keys": ["Kafka"],
+                    "secondaryKeys": [],
+                    "caseSensitive": "false",
+                    "constant": "false",
+                    "locked": "false",
+                    "preventRecursion": "false",
+                    "excludeFromVectorization": "false",
+                    "selective": "true",
+                    "enabled": "true",
+                    "matchWholeWords": true,
+                    "characterFilterIds": "[]",
+                    "characterTagFilters": "[]",
+                    "additionalMatchingSources": "[]",
+                    "activationConditions": "[]"
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+            .expect("legacy lorebook-entry import should succeed");
+
+        let entry = state
+            .storage
+            .get("lorebook-entries", "entry-1")
+            .expect("entry lookup should not fail")
+            .expect("imported entry should be addressable by id");
+
+        for field in [
+            "caseSensitive",
+            "constant",
+            "locked",
+            "preventRecursion",
+            "excludeFromVectorization",
+            "selective",
+            "enabled",
+            "matchWholeWords",
+        ] {
+            assert!(
+                entry[field].is_boolean(),
+                "{field} should be a native boolean, got {:?}",
+                entry[field]
+            );
+        }
+        assert_eq!(entry["caseSensitive"], false);
+        assert_eq!(entry["constant"], false);
+        assert_eq!(entry["locked"], false);
+        assert_eq!(entry["preventRecursion"], false);
+        assert_eq!(entry["excludeFromVectorization"], false);
+        assert_eq!(entry["selective"], true);
+        assert_eq!(entry["enabled"], true);
+
+        for field in [
+            "characterFilterIds",
+            "characterTagFilters",
+            "additionalMatchingSources",
+            "activationConditions",
+        ] {
+            assert!(
+                entry[field].is_array(),
+                "{field} should be a native array, got {:?}",
+                entry[field]
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_partial_profile_does_not_wipe_absent_collections() {
+        let state = test_state("partial-no-wipe");
+        state
+            .storage
+            .upsert_with_id(
+                "characters",
+                "char-1",
+                json!({ "name": "Keep Me", "data": { "name": "Keep Me" } }),
+            )
+            .expect("seeded character should write");
+        state
+            .storage
+            .upsert_with_id("lorebooks", "lore-1", json!({ "name": "Keep Me Too" }))
+            .expect("seeded lorebook should write");
+
+        let mut tables = Map::new();
+        tables.insert(
+            "chats".to_string(),
+            json!([
+                {
+                    "id": "chat-1",
+                    "name": "Imported Chat",
+                    "mode": "conversation",
+                    "metadata": {},
+                    "characterIds": []
+                }
+            ]),
+        );
+
+        import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+            .expect("partial legacy profile import should succeed");
+
+        // The table present in the file is replaced as expected...
+        let chat = state
+            .storage
+            .get("chats", "chat-1")
+            .expect("chat lookup should not fail")
+            .expect("imported chat should be present");
+        assert_eq!(chat["name"], "Imported Chat");
+
+        // ...but collections absent from the file are left untouched, not wiped.
+        assert!(state
+            .storage
+            .get("characters", "char-1")
+            .expect("character lookup should not fail")
+            .is_some());
+        assert!(state
+            .storage
+            .get("lorebooks", "lore-1")
+            .expect("lorebook lookup should not fail")
+            .is_some());
+    }
+
+    #[test]
+    fn legacy_present_but_malformed_table_is_rejected_without_wiping() {
+        let state = test_state("malformed-table-no-wipe");
+        state
+            .storage
+            .upsert_with_id(
+                "characters",
+                "char-1",
+                json!({ "name": "Keep Me", "data": { "name": "Keep Me" } }),
+            )
+            .expect("seeded character should write");
+
+        let mut tables = Map::new();
+        // Object instead of array: malformed, must not be treated as a clear.
+        tables.insert("characters".to_string(), json!({}));
+
+        let error =
+            import_legacy_profile_tables_with_restored_assets(&state, &tables, 0, None, || Ok(()))
+                .expect_err("a present-but-non-array table should be rejected");
+        assert_eq!(error.code, "invalid_input");
+
+        // The rejected import must not have wiped the existing collection.
+        assert!(state
+            .storage
+            .get("characters", "char-1")
+            .expect("character lookup should not fail")
+            .is_some());
     }
 }
