@@ -38,11 +38,31 @@ export function installRangeSliderSync() {
   document.addEventListener("focusin", syncEventTarget, true);
   document.addEventListener("pointerover", syncEventTarget, true);
 
+  // React updates a controlled slider by assigning the existing node's .value with no
+  // input/change event, so the listeners above never fire and the track fill goes stale.
+  // Patch the shared value setter to re-sync range inputs whenever their value is assigned.
+  const valueDescriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  const originalValueSetter = valueDescriptor?.set;
+  if (valueDescriptor && originalValueSetter) {
+    Object.defineProperty(HTMLInputElement.prototype, "value", {
+      ...valueDescriptor,
+      set(this: HTMLInputElement, next: string) {
+        originalValueSetter.call(this, next);
+        if (this.type === "range") {
+          syncRangeSliderProgress(this);
+        }
+      },
+    });
+  }
+
   return () => {
     observer.disconnect();
     document.removeEventListener("input", syncEventTarget, true);
     document.removeEventListener("change", syncEventTarget, true);
     document.removeEventListener("focusin", syncEventTarget, true);
     document.removeEventListener("pointerover", syncEventTarget, true);
+    if (valueDescriptor) {
+      Object.defineProperty(HTMLInputElement.prototype, "value", valueDescriptor);
+    }
   };
 }
