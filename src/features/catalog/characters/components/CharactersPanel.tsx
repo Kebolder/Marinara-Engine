@@ -16,7 +16,7 @@ import {
 import { useUpdateChat, useCreateMessage, chatKeys } from "../../chats/index";
 import { useStartChatFromCharacter } from "../hooks/use-start-chat-from-character";
 import { exportApi } from "../../../../shared/api/export-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
+import { storageApi } from "../../../../shared/api/storage-api";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { ContextMenu, type ContextMenuItem } from "../../../../shared/components/ui/ContextMenu";
@@ -1320,25 +1320,28 @@ export function CharactersPanel() {
               </button>
               <button
                 onClick={async () => {
-                  const msg = await createMessage.mutateAsync({
-                    role: "assistant",
-                    content: firstMesConfirm.message,
-                    characterId: firstMesConfirm.charId,
-                  });
-                  // Add alternate greetings as swipes on the first message
-                  if (msg?.id && firstMesConfirm.alternateGreetings.length > 0) {
-                    for (const greeting of firstMesConfirm.alternateGreetings) {
-                      if (greeting.trim()) {
-                        await invokeTauri("chat_message_add_swipe", {
-                          chatId: activeChat!.id,
-                          messageId: msg.id,
-                          body: { content: greeting, silent: true },
-                        });
+                  try {
+                    const msg = await createMessage.mutateAsync({
+                      role: "assistant",
+                      content: firstMesConfirm.message,
+                      characterId: firstMesConfirm.charId,
+                    });
+                    // Add alternate greetings as swipes on the first message
+                    if (msg?.id && firstMesConfirm.alternateGreetings.length > 0) {
+                      for (const greeting of firstMesConfirm.alternateGreetings) {
+                        if (greeting.trim()) {
+                          await storageApi.addChatMessageSwipe(activeChat!.id, msg.id, greeting, {
+                            activate: false,
+                          });
+                        }
                       }
+                      queryClient.invalidateQueries({ queryKey: chatKeys.messages(activeChat!.id) });
                     }
-                    queryClient.invalidateQueries({ queryKey: chatKeys.messages(activeChat!.id) });
+                  } catch {
+                    toast.error("Failed to add first message");
+                  } finally {
+                    setFirstMesConfirm(null);
                   }
-                  setFirstMesConfirm(null);
                 }}
                 className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90"
               >
