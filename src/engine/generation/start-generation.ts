@@ -598,12 +598,13 @@ function directiveMessages(
 ): LlmMessage[] {
   const messages: LlmMessage[] = [];
   if (input.impersonate === true) {
+    const personaName = readString(persona?.name).trim() || "User";
     messages.push({
       role: "user",
       content: buildImpersonateInstruction({
         customPrompt: input.impersonatePromptTemplate,
         direction: prepared.content,
-        personaName: persona?.name,
+        personaName,
         personaDescription: persona?.description,
       }),
     });

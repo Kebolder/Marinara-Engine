@@ -3,7 +3,15 @@
 // ──────────────────────────────────────────────
 import { create } from "zustand";
 import { gameApi } from "../api/game-api";
-import type { GameActiveState, GameMap, GameNpc, DiceRollResult, HudWidget, GameBlueprint, WidgetUpdate } from "../../../../engine/contracts/types/game";
+import type {
+  GameActiveState,
+  GameMap,
+  GameNpc,
+  DiceRollResult,
+  HudWidget,
+  GameBlueprint,
+  WidgetUpdate,
+} from "../../../../engine/contracts/types/game";
 import { sanitizeGameNpcAvatarUrls } from "../../../../engine/modes/game/assets/npc-avatar-utils";
 
 interface GameModeStore {
@@ -307,8 +315,9 @@ export const useGameModeStore = create<GameModeStore>((set) => ({
       // Zustand skips subscriber notification on reference equality, which
       // prevents infinite render loops caused by useEffect → store update →
       // useSyncExternalStore synchronous re-subscription → repeat.
-      if (!modified) return s;
-      return { npcs: sanitizeGameNpcAvatarUrls(nextNpcs) };
+      const sanitizedNpcs = sanitizeGameNpcAvatarUrls(nextNpcs);
+      if (!modified && sanitizedNpcs.every((npc, index) => npc === s.npcs[index])) return s;
+      return { npcs: sanitizedNpcs };
     }),
   setSetupActive: (active) => set({ isSetupActive: active }),
   setSetupStep: (step) => set({ setupStep: step }),

@@ -1,6 +1,24 @@
 import type { Chat } from "../../../../engine/contracts/types/chat";
-import type { CombatAttack, CombatEnemy, CombatInitState, CombatMechanic, CombatPartyMember, EncounterSettings } from "../../../../engine/contracts/types/combat-encounter";
-import type { Combatant, CombatPlayerAction, GameActiveState, GameCheckpoint, GameMap, GameNpc, GameSetupConfig, HudWidget, PartyArc, SessionSummary } from "../../../../engine/contracts/types/game";
+import type {
+  CombatAttack,
+  CombatEnemy,
+  CombatInitState,
+  CombatMechanic,
+  CombatPartyMember,
+  EncounterSettings,
+} from "../../../../engine/contracts/types/combat-encounter";
+import type {
+  Combatant,
+  CombatPlayerAction,
+  GameActiveState,
+  GameCheckpoint,
+  GameMap,
+  GameNpc,
+  GameSetupConfig,
+  HudWidget,
+  PartyArc,
+  SessionSummary,
+} from "../../../../engine/contracts/types/game";
 import type { RPGAttributes } from "../../../../engine/contracts/types/game-state";
 import { ApiError, type JsonRepairRequest } from "../../../../shared/api/api-errors";
 import { gameAssetsApi } from "../../../../shared/api/assets-api";
@@ -11,20 +29,54 @@ import { llmApi } from "../../../../shared/api/llm-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { resolveCombatRound } from "../../../../engine/modes/game/mechanics/combat.service";
 import { rollDice as rollGameDice } from "../../../../engine/modes/game/mechanics/dice.service";
-import { rollEncounter as rollGameEncounter, rollEnemyCount } from "../../../../engine/modes/game/mechanics/encounter.service";
-import { generateCombatLoot, generateLootTable, type LootDrop } from "../../../../engine/modes/game/mechanics/loot.service";
+import {
+  rollEncounter as rollGameEncounter,
+  rollEnemyCount,
+} from "../../../../engine/modes/game/mechanics/encounter.service";
+import {
+  generateCombatLoot,
+  generateLootTable,
+  type LootDrop,
+} from "../../../../engine/modes/game/mechanics/loot.service";
 import { processReputationActions } from "../../../../engine/modes/game/mechanics/reputation.service";
-import { getGoverningAttribute, mapSheetAttributesToRPG, resolveSkillCheck } from "../../../../engine/modes/game/mechanics/skill-check.service";
-import { applyMoraleEvent, getMoraleTier, type MoraleEvent } from "../../../../engine/modes/game/mechanics/morale.service";
-import { getElementPreset, listElementPresets } from "../../../../engine/modes/game/mechanics/element-reactions.service";
+import {
+  getGoverningAttribute,
+  mapSheetAttributesToRPG,
+  resolveSkillCheck,
+} from "../../../../engine/modes/game/mechanics/skill-check.service";
+import {
+  applyMoraleEvent,
+  getMoraleTier,
+  type MoraleEvent,
+} from "../../../../engine/modes/game/mechanics/morale.service";
+import {
+  getElementPreset,
+  listElementPresets,
+} from "../../../../engine/modes/game/mechanics/element-reactions.service";
 import { buildPartySystemPrompt } from "../../../../engine/modes/game/prompts/party-prompts";
 import { buildSessionConclusionPrompt, buildSetupPrompt } from "../../../../engine/modes/game/prompts/gm-prompts";
 import { dedupeSessionSummaryLists } from "../../../../engine/modes/game/state/session-summary-normalization";
 import { buildRecapPrompt, buildSessionCarryoverContext } from "../../../../engine/modes/game/state/session.service";
 import { validateTransition } from "../../../../engine/modes/game/state/state-machine.service";
-import { addCombatEntry, addEventEntry, addInventoryEntry, addLocationEntry, addNoteEntry, buildDeterministicSummary, buildStructuredRecap, createJournal, type Journal, type JournalEntry } from "../../../../engine/modes/game/world/journal.service";
+import {
+  addCombatEntry,
+  addEventEntry,
+  addInventoryEntry,
+  addLocationEntry,
+  addNoteEntry,
+  buildDeterministicSummary,
+  buildStructuredRecap,
+  createJournal,
+  type Journal,
+  type JournalEntry,
+} from "../../../../engine/modes/game/world/journal.service";
 import { withActiveGameMapMeta } from "../../../../engine/modes/game/world/map-position.service";
-import { createInitialTime, formatGameTime, advanceTime as advanceGameTime, type GameTime } from "../../../../engine/modes/game/world/time.service";
+import {
+  createInitialTime,
+  formatGameTime,
+  advanceTime as advanceGameTime,
+  type GameTime,
+} from "../../../../engine/modes/game/world/time.service";
 import { generateWeather, inferBiome, type WeatherState } from "../../../../engine/modes/game/world/weather.service";
 import { parsePartyDialogue } from "../lib/party-dialogue-parser";
 
@@ -237,7 +289,9 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     if (start >= 0 && end > start) {
       try {
         const parsed = JSON.parse(text.slice(start, end + 1));
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
       } catch {
         return null;
       }
@@ -364,7 +418,8 @@ function setupBlueprint(setup: Record<string, unknown>, fallback: Record<string,
     ...rawBlueprint,
     hudWidgets: Array.isArray(rawBlueprint.hudWidgets) ? rawBlueprint.hudWidgets : fallbackWidgets,
     introSequence: Array.isArray(rawBlueprint.introSequence) ? rawBlueprint.introSequence : fallback.introSequence,
-    visualTheme: Object.keys(asRecord(rawBlueprint.visualTheme)).length > 0 ? rawBlueprint.visualTheme : fallback.visualTheme,
+    visualTheme:
+      Object.keys(asRecord(rawBlueprint.visualTheme)).length > 0 ? rawBlueprint.visualTheme : fallback.visualTheme,
     campaignPlan:
       Object.keys(asRecord(rawBlueprint.campaignPlan)).length > 0
         ? rawBlueprint.campaignPlan
@@ -439,11 +494,15 @@ function journalFromMeta(meta: Record<string, unknown>): Journal {
 
 function isGameSetupConfig(value: unknown): value is GameSetupConfig {
   const record = asRecord(value);
-  return typeof record.genre === "string" && typeof record.setting === "string" && Array.isArray(record.partyCharacterIds);
+  return (
+    typeof record.genre === "string" && typeof record.setting === "string" && Array.isArray(record.partyCharacterIds)
+  );
 }
 
 function gameSetupChatPatch(config: GameSetupConfig, connectionId?: string | null): Record<string, unknown> {
-  const characterIds = (config.partyCharacterIds ?? []).filter((id) => typeof id === "string" && !id.startsWith("npc:"));
+  const characterIds = (config.partyCharacterIds ?? []).filter(
+    (id) => typeof id === "string" && !id.startsWith("npc:"),
+  );
   return {
     characterIds,
     personaId: config.personaId ?? null,
@@ -495,7 +554,9 @@ function normalizeSessionSummaryPayload(
     npcUpdates: normalizeSessionSummaryTextList(record.npcUpdates, fallback.npcUpdates),
   });
   return {
-    sessionNumber: Number.isFinite(Number(record.sessionNumber)) ? Number(record.sessionNumber) : fallback.sessionNumber,
+    sessionNumber: Number.isFinite(Number(record.sessionNumber))
+      ? Number(record.sessionNumber)
+      : fallback.sessionNumber,
     summary: typeof record.summary === "string" && record.summary.trim() ? record.summary : fallback.summary,
     resumePoint:
       typeof record.resumePoint === "string" && record.resumePoint.trim() ? record.resumePoint : fallback.resumePoint,
@@ -508,9 +569,14 @@ function normalizeSessionSummaryPayload(
     keyDiscoveries: factLists.keyDiscoveries,
     characterMoments: factLists.characterMoments,
     littleDetails: factLists.littleDetails,
-    statsSnapshot: Object.keys(asRecord(record.statsSnapshot)).length > 0 ? asRecord(record.statsSnapshot) : fallback.statsSnapshot,
+    statsSnapshot:
+      Object.keys(asRecord(record.statsSnapshot)).length > 0 ? asRecord(record.statsSnapshot) : fallback.statsSnapshot,
     npcUpdates: factLists.npcUpdates,
-    nextSessionRequest: nextSessionRequest ?? (typeof record.nextSessionRequest === "string" ? record.nextSessionRequest : fallback.nextSessionRequest ?? null),
+    nextSessionRequest:
+      nextSessionRequest ??
+      (typeof record.nextSessionRequest === "string"
+        ? record.nextSessionRequest
+        : (fallback.nextSessionRequest ?? null)),
     timestamp: typeof record.timestamp === "string" ? record.timestamp : nowIso(),
   };
 }
@@ -526,8 +592,55 @@ function gameCardName(card: Record<string, unknown>, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function gameCardTextList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function gameCardRpgStatsPrompt(value: unknown): Record<string, unknown> {
+  const stats = asRecord(value);
+  const promptStats: Record<string, unknown> = {};
+  const attributes = Array.isArray(stats.attributes)
+    ? stats.attributes
+        .map(asRecord)
+        .map((attribute) => {
+          const name = typeof attribute.name === "string" ? attribute.name.trim() : "";
+          const numericValue = Number(attribute.value);
+          const next: Record<string, unknown> = {};
+          if (name) next.name = name;
+          if (Number.isFinite(numericValue)) next.value = numericValue;
+          return next;
+        })
+        .filter((attribute) => Object.keys(attribute).length > 0)
+    : [];
+  if (attributes.length) promptStats.attributes = attributes;
+
+  const hp = asRecord(stats.hp);
+  const promptHp: Record<string, number> = {};
+  const hpValue = Number(hp.value);
+  const hpMax = Number(hp.max);
+  if (Number.isFinite(hpValue)) promptHp.value = hpValue;
+  if (Number.isFinite(hpMax)) promptHp.max = hpMax;
+  if (Object.keys(promptHp).length) promptStats.hp = promptHp;
+
+  return promptStats;
+}
+
 function gameCardPromptText(card: Record<string, unknown>): string {
-  return JSON.stringify(card, null, 2);
+  return JSON.stringify(
+    {
+      name: gameCardName(card, "Party member"),
+      shortDescription: typeof card.shortDescription === "string" ? card.shortDescription : "",
+      class: typeof card.class === "string" ? card.class : "",
+      abilities: gameCardTextList(card.abilities),
+      strengths: gameCardTextList(card.strengths),
+      weaknesses: gameCardTextList(card.weaknesses),
+      rpgStats: gameCardRpgStatsPrompt(card.rpgStats),
+    },
+    null,
+    2,
+  );
 }
 
 function gameSessionSortValue(chat: Chat): number {
@@ -583,7 +696,10 @@ function gameStateCarryoverPatch(previousChat: Chat | null | undefined, nextChat
   };
 }
 
-function normalizeJournalEntry(type: string, data: Record<string, unknown>): Pick<JournalEntry, "type" | "title" | "content"> {
+function normalizeJournalEntry(
+  type: string,
+  data: Record<string, unknown>,
+): Pick<JournalEntry, "type" | "title" | "content"> {
   const title =
     typeof data.title === "string"
       ? data.title
@@ -690,7 +806,12 @@ function promptOverride(payload: Record<string, unknown>, id: string): string | 
   return override?.prompt?.trim() ?? null;
 }
 
-function imageSize(payload: Record<string, unknown>, bucket: string, axis: "width" | "height", fallback: number): number {
+function imageSize(
+  payload: Record<string, unknown>,
+  bucket: string,
+  axis: "width" | "height",
+  fallback: number,
+): number {
   const bucketSize = asRecord(asRecord(payload.imageSizes)[bucket]);
   const value = Number(bucketSize[axis]);
   return Number.isFinite(value) && value >= 128 && value <= 2048 ? value : fallback;
@@ -797,26 +918,33 @@ async function uploadGeneratedAsset(
   base64: string,
   mimeType: string,
 ): Promise<string> {
-  const uploaded = await gameAssetsApi.upload({
+  const uploaded = (await gameAssetsApi.upload({
     category,
     subcategory,
     file: base64File(base64, `${slug}.${imageExt(mimeType)}`, mimeType),
-  }) as { item?: { path?: string } };
+  })) as { item?: { path?: string } };
   const path = uploaded.item?.path;
   if (!path) throw new Error("Generated asset path missing.");
   return assetTagFromPath(path);
 }
 
 function spotifyQuery(payload: Record<string, unknown>): string {
-  const text = [payload.narration, payload.playerAction].filter((value): value is string => typeof value === "string").join(" ");
-  const words = text.split(/[^a-zA-Z0-9]+/).filter((word) => word.length > 3).slice(0, 8);
+  const text = [payload.narration, payload.playerAction]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const words = text
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((word) => word.length > 3)
+    .slice(0, 8);
   return words.length ? words.join(" ") : "cinematic adventure soundtrack";
 }
 
 function recentSpotifyTracks(payload: Record<string, unknown>): string[] {
   const context = asRecord(payload.context);
   return Array.isArray(context.recentSpotifyTracks)
-    ? context.recentSpotifyTracks.filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"))
+    ? context.recentSpotifyTracks.filter(
+        (uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"),
+      )
     : [];
 }
 
@@ -969,7 +1097,9 @@ export const gameApi = {
     const characterCards = setupCharacterCards(setup);
     const campaignProgression = {
       storyArc: typeof setup.storyArc === "string" ? setup.storyArc : null,
-      plotTwists: Array.isArray(setup.plotTwists) ? setup.plotTwists.filter((item): item is string => typeof item === "string") : [],
+      plotTwists: Array.isArray(setup.plotTwists)
+        ? setup.plotTwists.filter((item): item is string => typeof item === "string")
+        : [],
       partyArcs: Array.isArray(setup.partyArcs) ? setup.partyArcs : [],
     };
     if (setupConfig) {
@@ -990,7 +1120,8 @@ export const gameApi = {
       gameNpcs: startingNpcs,
       gameCharacterCards: characterCards,
       gamePartyArcs: campaignProgression.partyArcs,
-      gameArtStylePrompt: typeof setup.artStylePrompt === "string" ? setup.artStylePrompt : setupConfig?.artStylePrompt ?? null,
+      gameArtStylePrompt:
+        typeof setup.artStylePrompt === "string" ? setup.artStylePrompt : (setupConfig?.artStylePrompt ?? null),
       gameTime: createInitialTime(),
       gameJournal: createJournal(),
     });
@@ -1017,18 +1148,25 @@ export const gameApi = {
       const sessionChat = await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
       return { status: "active", alreadyStarted: true, sessionChat };
     }
-    const sessionChat = await patchChatMetadata(data.chatId, { gameSessionStatus: "active", gameActiveState: "exploration" });
+    const sessionChat = await patchChatMetadata(data.chatId, {
+      gameSessionStatus: "active",
+      gameActiveState: "exploration",
+    });
     return { status: "active", alreadyStarted: false, sessionChat };
   },
 
   async startSession(data: { gameId: string; connectionId?: string }): Promise<StartSessionResponse> {
     const chats = await storageApi.list<Chat>("chats");
-    const existing = chats.filter((chat) => chatMeta(chat).gameId === data.gameId).sort((a, b) => gameSessionSortValue(a) - gameSessionSortValue(b));
+    const existing = chats
+      .filter((chat) => chatMeta(chat).gameId === data.gameId)
+      .sort((a, b) => gameSessionSortValue(a) - gameSessionSortValue(b));
     const sessionNumber = existing.length + 1;
     const previousChat = existing[existing.length - 1] ?? null;
     const previousMeta = chatMeta(previousChat);
     const summaries = Array.isArray(previousMeta.gamePreviousSessionSummaries)
-      ? [...(previousMeta.gamePreviousSessionSummaries as SessionSummary[])].sort((a, b) => a.sessionNumber - b.sessionNumber)
+      ? [...(previousMeta.gamePreviousSessionSummaries as SessionSummary[])].sort(
+          (a, b) => a.sessionNumber - b.sessionNumber,
+        )
       : [];
     const latestEndingBeat = (await sessionTranscript(existing[existing.length - 1]?.id ?? "", 8).catch(() => ""))
       .split("\n")
@@ -1098,7 +1236,11 @@ export const gameApi = {
     let campaignProgression = meta.gameCampaignProgression;
     let characterCards = Array.isArray(meta.gameCharacterCards) ? meta.gameCharacterCards : [];
     if (!data.summary && data.generated) {
-      summary = normalizeSessionSummaryPayload(asRecord(data.generated.summary), fallback, data.nextSessionRequest ?? null);
+      summary = normalizeSessionSummaryPayload(
+        asRecord(data.generated.summary),
+        fallback,
+        data.nextSessionRequest ?? null,
+      );
       campaignProgression = asRecord(data.generated.campaignProgression);
       characterCards = Array.isArray(data.generated.characterCards) ? data.generated.characterCards : characterCards;
     } else if (!data.summary && data.connectionId) {
@@ -1107,7 +1249,10 @@ export const gameApi = {
         connectionId: data.connectionId,
         fallback: { summary, campaignProgression, characterCards },
         system: buildSessionConclusionPrompt({
-          language: typeof asRecord(meta.gameSetupConfig).language === "string" ? (asRecord(meta.gameSetupConfig).language as string) : null,
+          language:
+            typeof asRecord(meta.gameSetupConfig).language === "string"
+              ? (asRecord(meta.gameSetupConfig).language as string)
+              : null,
           includeCharacterCards: characterCards.length > 0,
         }),
         user: [
@@ -1156,8 +1301,20 @@ export const gameApi = {
   }): Promise<RegenerateSessionLorebookResponse> {
     const transcript = await sessionTranscript(data.chatId);
     const fallbackEntries = transcript.trim()
-      ? [{ name: `Session ${data.sessionNumber} Recap`, content: transcript.split("\n").slice(0, 12).join("\n"), keys: [`session ${data.sessionNumber}`, "recap", "campaign"] }]
-      : [{ name: `Session ${data.sessionNumber} State`, content: "No transcript was available; preserve the current campaign state from the chat metadata.", keys: [`session ${data.sessionNumber}`] }];
+      ? [
+          {
+            name: `Session ${data.sessionNumber} Recap`,
+            content: transcript.split("\n").slice(0, 12).join("\n"),
+            keys: [`session ${data.sessionNumber}`, "recap", "campaign"],
+          },
+        ]
+      : [
+          {
+            name: `Session ${data.sessionNumber} State`,
+            content: "No transcript was available; preserve the current campaign state from the chat metadata.",
+            keys: [`session ${data.sessionNumber}`],
+          },
+        ];
     const parsed =
       data.generated ??
       (await llmJson({
@@ -1231,7 +1388,8 @@ export const gameApi = {
       (await llmJson({
         connectionId: data.connectionId,
         fallback,
-        system: "Update campaign progression from this game session. Return strict JSON with storyArc, plotTwists, and partyArcs.",
+        system:
+          "Update campaign progression from this game session. Return strict JSON with storyArc, plotTwists, and partyArcs.",
         user: transcript,
         parameters: { temperature: 0.4, maxTokens: 1800 },
         repair: {
@@ -1251,7 +1409,13 @@ export const gameApi = {
     return { sessionChat, gameId: String(meta.gameId ?? ""), campaignProgression };
   },
 
-  async upsertPartyCard(data: { chatId: string; characterName: string; characterId?: string; connectionId?: string; added?: boolean }): Promise<PartyCardResponse> {
+  async upsertPartyCard(data: {
+    chatId: string;
+    characterName: string;
+    characterId?: string;
+    connectionId?: string;
+    added?: boolean;
+  }): Promise<PartyCardResponse> {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const cards = Array.isArray(meta.gameCharacterCards) ? [...meta.gameCharacterCards] : [];
@@ -1323,11 +1487,17 @@ export const gameApi = {
     return { map, maps: [map], activeGameMapId: map.id ?? null, sessionChat };
   },
 
-  async moveOnMap(data: { chatId: string; position: { x: number; y: number } | string; mapId?: string | null }): Promise<MapResponse> {
+  async moveOnMap(data: {
+    chatId: string;
+    position: { x: number; y: number } | string;
+    mapId?: string | null;
+  }): Promise<MapResponse> {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const maps = Array.isArray(meta.gameMaps) ? (meta.gameMaps as GameMap[]) : [];
-    const current = (maps.find((map) => map.id === data.mapId) ?? (meta.gameMap as GameMap | undefined) ?? defaultGameMap()) as GameMap;
+    const current = (maps.find((map) => map.id === data.mapId) ??
+      (meta.gameMap as GameMap | undefined) ??
+      defaultGameMap()) as GameMap;
     const map = { ...current, partyPosition: data.position } as GameMap;
     const nextMeta = withActiveGameMapMeta(meta, map);
     const sessionChat = await patchChatMetadata(data.chatId, nextMeta);
@@ -1357,7 +1527,14 @@ export const gameApi = {
     elementPreset?: string;
   }) {
     const combatants = data.combatants.map((combatant) => ({ ...combatant })) as any[];
-    const result = resolveCombatRound(combatants, data.round, "normal", data.elementPreset, data.playerAction as any, data.mechanics);
+    const result = resolveCombatRound(
+      combatants,
+      data.round,
+      "normal",
+      data.elementPreset,
+      data.playerAction as any,
+      data.mechanics,
+    );
     return { result, combatants: combatants as Combatant[] };
   },
 
@@ -1400,7 +1577,10 @@ export const gameApi = {
     return { drops: generateLootTable(Math.max(0, Math.min(10, data.count ?? 1)), data.difficulty ?? "normal") };
   },
 
-  async advanceTime(data: { chatId: string; action: string }): Promise<{ time: GameTime; formatted: string; sessionChat: Chat }> {
+  async advanceTime(data: {
+    chatId: string;
+    action: string;
+  }): Promise<{ time: GameTime; formatted: string; sessionChat: Chat }> {
     const meta = chatMeta(await getChat(data.chatId));
     const time = advanceGameTime(gameTimeFromMeta(meta), data.action);
     const formatted = formatGameTime(time);
@@ -1408,23 +1588,36 @@ export const gameApi = {
     return { time, formatted, sessionChat };
   },
 
-  async updateWeather(data: { chatId: string; action: string; location?: string; season?: string; type?: string }): Promise<{ changed: boolean; weather: WeatherState; sessionChat: Chat }> {
+  async updateWeather(data: {
+    chatId: string;
+    action: string;
+    location?: string;
+    season?: string;
+    type?: string;
+  }): Promise<{ changed: boolean; weather: WeatherState; sessionChat: Chat }> {
     const chat = await getChat(data.chatId);
     const forced = data.type
       ? ({ type: data.type, temperature: 20, description: "", wind: "calm", visibility: "clear" } as WeatherState)
       : generateWeather(inferBiome(data.location ?? ""), (data.season as any) ?? "summer");
-    const changed = Boolean(data.type) || Math.random() < (data.action === "travel" ? 0.35 : data.action === "rest_long" ? 0.6 : data.action === "explore" ? 0.2 : 0.08);
+    const changed =
+      Boolean(data.type) ||
+      Math.random() <
+        (data.action === "travel" ? 0.35 : data.action === "rest_long" ? 0.6 : data.action === "explore" ? 0.2 : 0.08);
     const sessionChat = changed ? await patchChatMetadata(data.chatId, { gameWeather: forced }) : chat;
     return { changed, weather: forced, sessionChat };
   },
 
   async rollEncounter(data: { action: string; location?: string; difficulty?: string; partySize?: number }) {
     const encounter = rollGameEncounter(data.action, data.difficulty ?? "normal", data.location ?? "");
-    const enemyCount = encounter.type === "combat" ? rollEnemyCount(data.partySize ?? 1, data.difficulty ?? "normal") : 0;
+    const enemyCount =
+      encounter.type === "combat" ? rollEnemyCount(data.partySize ?? 1, data.difficulty ?? "normal") : 0;
     return { encounter, enemyCount };
   },
 
-  async updateReputation(data: { chatId: string; actions: Array<{ npcId: string; action: string; modifier?: number }> }) {
+  async updateReputation(data: {
+    chatId: string;
+    actions: Array<{ npcId: string; action: string; modifier?: number }>;
+  }) {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const npcs = Array.isArray(meta.gameNpcs) ? (meta.gameNpcs as GameNpc[]) : [];
@@ -1433,7 +1626,11 @@ export const gameApi = {
     return { npcs: result.npcs, changes: result.changes, sessionChat };
   },
 
-  async addJournalEntry(data: { chatId: string; type: string; data: Record<string, unknown> }): Promise<{ journal: Journal; sessionChat: Chat }> {
+  async addJournalEntry(data: {
+    chatId: string;
+    type: string;
+    data: Record<string, unknown>;
+  }): Promise<{ journal: Journal; sessionChat: Chat }> {
     const chat = await getChat(data.chatId);
     const journal = applyJournalEntry(journalFromMeta(chatMeta(chat)), data.type, data.data);
     const sessionChat = await patchChatMetadata(data.chatId, { gameJournal: journal });
@@ -1517,7 +1714,13 @@ export const gameApi = {
     return { ok: Boolean(result.deleted) };
   },
 
-  async partyTurn(input: { chatId: string; narration: string; playerAction?: string; connectionId?: string | null; debugMode?: boolean }) {
+  async partyTurn(input: {
+    chatId: string;
+    narration: string;
+    playerAction?: string;
+    connectionId?: string | null;
+    debugMode?: boolean;
+  }) {
     const meta = chatMeta(await getChat(input.chatId));
     const cards = Array.isArray(meta.gameCharacterCards) ? meta.gameCharacterCards.map(asRecord) : [];
     const names = cards.map((card, index) => gameCardName(card, `Party member ${index + 1}`));
@@ -1538,7 +1741,8 @@ export const gameApi = {
                   card: gameCardPromptText(card),
                 }))
               : [{ name: partyNames, card: partyNames }],
-            playerName: typeof meta.gamePlayerName === "string" && meta.gamePlayerName.trim() ? meta.gamePlayerName : "Player",
+            playerName:
+              typeof meta.gamePlayerName === "string" && meta.gamePlayerName.trim() ? meta.gamePlayerName : "Player",
             gameActiveState: typeof meta.gameActiveState === "string" ? meta.gameActiveState : "exploration",
             partyArcs: Array.isArray(meta.gamePartyArcs) ? (meta.gamePartyArcs as PartyArc[]) : [],
           }),
@@ -1750,7 +1954,8 @@ export const gameApi = {
       (typeof record.imageConnectionId === "string" && record.imageConnectionId) ||
       (typeof meta.gameImageConnectionId === "string" && meta.gameImageConnectionId) ||
       (typeof meta.imageConnectionId === "string" && meta.imageConnectionId) ||
-      (typeof asRecord(meta.gameSetupConfig).imageConnectionId === "string" && (asRecord(meta.gameSetupConfig).imageConnectionId as string));
+      (typeof asRecord(meta.gameSetupConfig).imageConnectionId === "string" &&
+        (asRecord(meta.gameSetupConfig).imageConnectionId as string));
     if (!imageConnectionId) throw new Error("Game image generation requires an image connection.");
 
     const preview = await gameApi.previewGeneratedAssets(payload);
@@ -1768,16 +1973,25 @@ export const gameApi = {
       });
       if (item.kind === "background") {
         const key = typeof record.backgroundTag === "string" ? record.backgroundTag : "generated-background";
-        const tag = await uploadGeneratedAsset("backgrounds", "generated", generatedAssetSlug(key), image.base64, image.mimeType);
+        const tag = await uploadGeneratedAsset(
+          "backgrounds",
+          "generated",
+          generatedAssetSlug(key),
+          image.base64,
+          image.mimeType,
+        );
         generatedBackground = tag;
         sessionChat = await patchChatMetadata(chatId, { gameSceneBackground: tag });
       } else if (item.kind === "illustration") {
         const illustration = asRecord(record.illustration);
-        const key =
-          (typeof illustration.slug === "string" && illustration.slug) ||
-          item.title ||
-          "scene-illustration";
-        const tag = await uploadGeneratedAsset("backgrounds", "illustrations", generatedAssetSlug(key), image.base64, image.mimeType);
+        const key = (typeof illustration.slug === "string" && illustration.slug) || item.title || "scene-illustration";
+        const tag = await uploadGeneratedAsset(
+          "backgrounds",
+          "illustrations",
+          generatedAssetSlug(key),
+          image.base64,
+          image.mimeType,
+        );
         generatedIllustration = {
           tag,
           ...(Number.isInteger(illustration.segment) ? { segment: illustration.segment as number } : {}),

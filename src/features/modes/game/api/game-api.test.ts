@@ -351,6 +351,16 @@ describe("gameApi.partyTurn prompt wiring", () => {
                 name: "Mira",
                 shortDescription: "Scout with dry humor.",
                 class: "Ranger",
+                abilities: ["Track"],
+                strengths: ["Keeps watch"],
+                weaknesses: ["Distrusts nobles"],
+                rpgStats: {
+                  attributes: [{ name: "DEX", value: 14, vendorAttributeSecret: "drop me" }],
+                  hp: { value: 18, max: 20, vendorHpSecret: "drop me too" },
+                  vendorStatsSecret: "do not prompt",
+                },
+                extra: { vendorExtraSecret: "do not prompt" },
+                vendorCardSecret: "do not prompt",
               },
             ],
             ...metadata,
@@ -390,8 +400,16 @@ describe("gameApi.partyTurn prompt wiring", () => {
     });
     const systemPrompt = vi.mocked(llmApi.complete).mock.calls[0]?.[0]?.messages[0]?.content ?? "";
     expect(systemPrompt).toContain(`<party_member name="Mira">`);
+    expect(systemPrompt).toContain(`"shortDescription": "Scout with dry humor."`);
+    expect(systemPrompt).toContain(`"abilities": [`);
+    expect(systemPrompt).toContain(`"name": "DEX"`);
     expect(systemPrompt).toContain("Current game state: dialogue");
     expect(systemPrompt).toContain("NEVER generate dialogue lines for the player (Captain)");
+    expect(systemPrompt).not.toContain("vendorCardSecret");
+    expect(systemPrompt).not.toContain("vendorExtraSecret");
+    expect(systemPrompt).not.toContain("vendorStatsSecret");
+    expect(systemPrompt).not.toContain("vendorAttributeSecret");
+    expect(systemPrompt).not.toContain("vendorHpSecret");
     expect(storageApiMock.create).toHaveBeenCalledWith(
       "messages",
       expect.objectContaining({

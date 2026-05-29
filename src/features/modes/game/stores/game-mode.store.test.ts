@@ -29,10 +29,12 @@ describe("useGameModeStore NPC avatar handling", () => {
   });
 
   it("removes the built-in Mari avatar from non-Mari NPCs when syncing metadata", () => {
-    useGameModeStore.getState().setNpcs([
-      npc({ id: "npc-caretaker", name: "Caretaker", avatarUrl: BUILT_IN_MARI_AVATAR }),
-      npc({ id: "npc-mari", name: "Professor Mari", avatarUrl: BUILT_IN_MARI_AVATAR }),
-    ]);
+    useGameModeStore
+      .getState()
+      .setNpcs([
+        npc({ id: "npc-caretaker", name: "Caretaker", avatarUrl: BUILT_IN_MARI_AVATAR }),
+        npc({ id: "npc-mari", name: "Professor Mari", avatarUrl: BUILT_IN_MARI_AVATAR }),
+      ]);
 
     const npcs = useGameModeStore.getState().npcs;
     expect(npcs.find((entry) => entry.id === "npc-caretaker")?.avatarUrl).toBeUndefined();
@@ -52,5 +54,16 @@ describe("useGameModeStore NPC avatar handling", () => {
       }),
     );
     expect(storedNpc?.avatarUrl).not.toBe(BUILT_IN_MARI_AVATAR);
+  });
+
+  it("scrubs a stale Mari avatar when patching the same generated URL", () => {
+    useGameModeStore.setState({
+      npcs: [npc({ id: "npc-caretaker", name: "Caretaker", avatarUrl: BUILT_IN_MARI_AVATAR })],
+    });
+
+    useGameModeStore.getState().patchNpcAvatars([{ name: "Caretaker", avatarUrl: BUILT_IN_MARI_AVATAR }]);
+
+    const [storedNpc] = useGameModeStore.getState().npcs;
+    expect(storedNpc?.avatarUrl).toBeUndefined();
   });
 });

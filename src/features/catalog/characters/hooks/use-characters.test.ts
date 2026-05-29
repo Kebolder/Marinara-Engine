@@ -62,6 +62,30 @@ describe("character query cache helpers", () => {
 });
 
 describe("character update schema", () => {
+  it("does not default-fill embedded character book fields during partial updates", () => {
+    const parsed = updateCharacterSchema.parse({
+      data: {
+        character_book: {
+          entries: [
+            {
+              keys: ["moon"],
+              vendor_entry_field: { source: "legacy-card" },
+            },
+          ],
+        },
+      },
+    });
+
+    const book = parsed.data?.character_book as Record<string, unknown> | null | undefined;
+    const entry = Array.isArray(book?.entries) ? (book.entries[0] as Record<string, unknown>) : null;
+    expect(book).not.toHaveProperty("name");
+    expect(book).not.toHaveProperty("token_budget");
+    expect(book).not.toHaveProperty("recursive_scanning");
+    expect(entry).not.toHaveProperty("content");
+    expect(entry).not.toHaveProperty("enabled");
+    expect(entry?.vendor_entry_field).toEqual({ source: "legacy-card" });
+  });
+
   it("preserves unknown embedded character book fields when parsing update imports", () => {
     const parsed = updateCharacterSchema.parse({
       data: {

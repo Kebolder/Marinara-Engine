@@ -817,6 +817,25 @@ describe("startGeneration generation replay metadata", () => {
     expect(promptText).toContain("Requested beat: give a direct order");
   });
 
+  it("uses a concrete fallback name for impersonation when no persona is selected", async () => {
+    const { deps, streamedRequests } = generationDepsForChat();
+
+    await drainGeneration(
+      startGeneration(deps, {
+        chatId: "chat-1",
+        userMessage: "answer with a shrug",
+        impersonate: true,
+        impersonateBlockAgents: true,
+      }),
+    );
+
+    const promptText = (streamedRequests[0] as { messages: Array<{ content: string }> }).messages
+      .map((message) => message.content)
+      .join("\n");
+    expect(promptText).toContain("You are now writing as User");
+    expect(promptText).not.toContain("{{user}}");
+  });
+
   it("adds swipes when regenerating an impersonated user message", async () => {
     const { deps, createChatMessage, addChatMessageSwipe, patchChatMessageExtra } = generationDepsForChat({
       initialMessages: [

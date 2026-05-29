@@ -89,10 +89,32 @@ import { usePartyTurn } from "../hooks/use-party-turn";
 import { parsePartyDialogue } from "../lib/party-dialogue-parser";
 import { dispatchSpotifySceneTrackChange } from "../../../../shared/lib/spotify-playback-events";
 import { ActiveWorldInfoButton, ActiveWorldInfoModal } from "../../../runtime/visuals/index";
-import type { CombatInitState, CombatPartyMember, CombatEnemy, CombatDialogueCue, CombatItemEffect, CombatMechanic, EncounterSettings } from "../../../../engine/contracts/types/combat-encounter";
-import type { PartyDialogueLine, CombatSummary, GameMap, GameActiveState, DiceRollResult, HudWidget, SkillCheckResult } from "../../../../engine/contracts/types/game";
+import type {
+  CombatInitState,
+  CombatPartyMember,
+  CombatEnemy,
+  CombatDialogueCue,
+  CombatItemEffect,
+  CombatMechanic,
+  EncounterSettings,
+} from "../../../../engine/contracts/types/combat-encounter";
+import type {
+  PartyDialogueLine,
+  CombatSummary,
+  GameMap,
+  GameActiveState,
+  DiceRollResult,
+  HudWidget,
+  SkillCheckResult,
+} from "../../../../engine/contracts/types/game";
 import type { GameState } from "../../../../engine/contracts/types/game-state";
-import type { SceneAnalysis, SceneIllustrationRequest, SceneSegmentEffect, SceneSpotifyTrackCandidate, SceneSpotifyTrackSelection } from "../../../../engine/contracts/types/scene";
+import type {
+  SceneAnalysis,
+  SceneIllustrationRequest,
+  SceneSegmentEffect,
+  SceneSpotifyTrackCandidate,
+  SceneSpotifyTrackSelection,
+} from "../../../../engine/contracts/types/scene";
 import { scoreMusic, scoreAmbient } from "../../../../engine/shared/scoring/music-score";
 import {
   applyMapUpdateCommandsToMeta,
@@ -1766,7 +1788,8 @@ export function GameSurface({
   useEffect(() => {
     const existing = useGameStateStore.getState().current;
     if (existing?.chatId === activeChatId) return;
-    worldStateApi.get(activeChatId)
+    worldStateApi
+      .get(activeChatId)
       .then((gs) => {
         if (gs) {
           useGameStateStore.getState().setGameState(gs);
@@ -1918,9 +1941,7 @@ export function GameSurface({
     statuses: CombatStatusTag[];
     messageId: string;
   } | null>(null);
-  const [pendingSkillCheck, setPendingSkillCheck] = useState<SkillCheckResult | null>(
-    null,
-  );
+  const [pendingSkillCheck, setPendingSkillCheck] = useState<SkillCheckResult | null>(null);
   const [pendingReaction, setPendingReaction] = useState<{
     reaction: string;
     description: string;
@@ -1976,7 +1997,9 @@ export function GameSurface({
         setInventoryItems(nextInventory);
         inventoryItemsRef.current = nextInventory;
         recentMusicHistoryRef.current = normalizeRecentMusicHistory(result.metadata.gameRecentMusic);
-        recentSpotifyTrackHistoryRef.current = normalizeRecentSpotifyTrackHistory(result.metadata.gameRecentSpotifyTracks);
+        recentSpotifyTrackHistoryRef.current = normalizeRecentSpotifyTrackHistory(
+          result.metadata.gameRecentSpotifyTracks,
+        );
       }
       queryClient.invalidateQueries({ queryKey: chatKeys.detail(activeChatId) });
       queryClient.invalidateQueries({ queryKey: chatKeys.messages(activeChatId) });
@@ -2904,12 +2927,12 @@ export function GameSurface({
       setSpotifyRetryPending(true);
       try {
         const result = (await gameApi.spotifyCandidates({
-            chatId: activeChatId,
-            narration,
-            playerAction: playerAction ?? undefined,
-            context,
-            limit: 50,
-          })) as GameSpotifyCandidatesResponse;
+          chatId: activeChatId,
+          narration,
+          playerAction: playerAction ?? undefined,
+          context,
+          limit: 50,
+        })) as GameSpotifyCandidatesResponse;
         return result.enabled ? (result.tracks ?? []) : [];
       } catch (error) {
         console.warn("[spotify/game] Failed to prepare scene music candidates:", error);
@@ -3015,9 +3038,7 @@ export function GameSurface({
   // Track which message has had its scene effects prepared so narration
   // isn't displayed until backgrounds/music/etc. are ready.
   const sceneReadyMsgIdRef = useRef<string | undefined>(undefined);
-  const applySceneResultRef = useRef<
-    ((result: SceneAnalysis) => void | Promise<void>) | null
-  >(null);
+  const applySceneResultRef = useRef<((result: SceneAnalysis) => void | Promise<void>) | null>(null);
   const [sceneReadyTick, setSceneReadyTick] = useState(0);
   void sceneReadyTick; // used only to trigger re-renders
 
@@ -4785,8 +4806,7 @@ export function GameSurface({
         minute: normalizeGameMinute(gameTimeMeta?.minute, parsedSnapshotTime?.minute ?? 0),
       };
       const formattedTime = formatGameTimeForHud(nextTime);
-      const previousTime =
-        (snapshot?.chatId === activeChatId ? snapshot.time : gameSnapshot?.time) ?? metaTime ?? null;
+      const previousTime = (snapshot?.chatId === activeChatId ? snapshot.time : gameSnapshot?.time) ?? metaTime ?? null;
       let patchedTime = false;
 
       try {
@@ -6874,12 +6894,19 @@ export function GameSurface({
         clearPendingInteractiveCommands();
       }
       setPendingInterrupt(null);
-      if (options?.commitPendingMove && pendingMapMove) {
+      const shouldCommitPendingMove = !!(options?.commitPendingMove && pendingMapMove);
+      const clearCommittedPendingMapMove = () => {
+        if (shouldCommitPendingMove) setPendingMapMove(null);
+      };
+      if (shouldCommitPendingMove && pendingMapMove) {
         moveOnMap.mutate({ chatId: activeChatId, position: pendingMapMove.position, mapId: activeMapId });
       }
       setActiveChoices(null);
       if (getGameDirectAddressMode(message) === "party" && !attachments?.length) {
-        if (partyTurnInFlightRef.current || partyTurn.isPending) return;
+        if (partyTurnInFlightRef.current || partyTurn.isPending) {
+          clearCommittedPendingMapMove();
+          return;
+        }
         const playerAction = stripGameDirectAddressPrefix(message);
         const requestId = partyTurnRequestIdRef.current + 1;
         partyTurnRequestIdRef.current = requestId;
@@ -6910,13 +6937,12 @@ export function GameSurface({
           if (partyTurnRequestIdRef.current === requestId) {
             partyTurnInFlightRef.current = false;
           }
+          clearCommittedPendingMapMove();
         }
         return;
       }
       sendMessage(message, attachments);
-      if (options?.commitPendingMove && pendingMapMove) {
-        setPendingMapMove(null);
-      }
+      clearCommittedPendingMapMove();
     },
     [
       activeChatId,

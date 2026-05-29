@@ -59,23 +59,25 @@ export const characterBookSchema = z
   })
   .passthrough();
 
-export const characterDataSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().default(""),
-  personality: z.string().default(""),
-  scenario: z.string().default(""),
-  first_mes: z.string().default(""),
-  mes_example: z.string().default(""),
-  creator_notes: z.string().default(""),
-  system_prompt: z.string().default(""),
-  post_history_instructions: z.string().default(""),
-  tags: z.array(z.string()).default([]),
-  creator: z.string().default(""),
-  character_version: z.string().default(""),
-  alternate_greetings: z.array(z.string()).default([]),
-  extensions: characterExtensionsSchema.default({}),
-  character_book: characterBookSchema.nullable().default(null),
-}).passthrough();
+export const characterDataSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().default(""),
+    personality: z.string().default(""),
+    scenario: z.string().default(""),
+    first_mes: z.string().default(""),
+    mes_example: z.string().default(""),
+    creator_notes: z.string().default(""),
+    system_prompt: z.string().default(""),
+    post_history_instructions: z.string().default(""),
+    tags: z.array(z.string()).default([]),
+    creator: z.string().default(""),
+    character_version: z.string().default(""),
+    alternate_greetings: z.array(z.string()).default([]),
+    extensions: characterExtensionsSchema.default({}),
+    character_book: characterBookSchema.nullable().default(null),
+  })
+  .passthrough();
 
 export const characterCardV2Schema = z.object({
   spec: z.literal("chara_card_v2"),
@@ -83,27 +85,48 @@ export const characterCardV2Schema = z.object({
   data: characterDataSchema,
 });
 
-export const createCharacterSchema = z.object({
-  data: characterDataSchema,
-}).passthrough();
+export const createCharacterSchema = z
+  .object({
+    data: characterDataSchema,
+  })
+  .passthrough();
 
-export const updateCharacterSchema = z.object({
-  data: characterDataSchema.partial().optional(),
-}).passthrough();
+const updateCharacterBookEntrySchema = characterBookEntrySchema.partial();
+const updateCharacterBookSchema = characterBookSchema
+  .omit({ entries: true })
+  .partial()
+  .extend({
+    entries: z.array(updateCharacterBookEntrySchema).optional(),
+  })
+  .nullable()
+  .optional();
+const updateCharacterDataSchema = characterDataSchema.deepPartial().extend({
+  character_book: updateCharacterBookSchema,
+});
 
-export const createGroupSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().default(""),
-  characterIds: z.array(z.string()).default([]),
-}).passthrough();
+export const updateCharacterSchema = z
+  .object({
+    data: updateCharacterDataSchema.optional(),
+  })
+  .passthrough();
+
+export const createGroupSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().default(""),
+    characterIds: z.array(z.string()).default([]),
+  })
+  .passthrough();
 
 export const updateGroupSchema = createGroupSchema.partial();
 
-export const createPersonaGroupSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().default(""),
-  personaIds: z.array(z.string()).default([]),
-}).passthrough();
+export const createPersonaGroupSchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().default(""),
+    personaIds: z.array(z.string()).default([]),
+  })
+  .passthrough();
 
 export const updatePersonaGroupSchema = createPersonaGroupSchema.partial();
 
