@@ -6,7 +6,7 @@ import { storageApi } from "../../../../shared/api/storage-api";
 import type { ConnectionFolder } from "../../../../engine/contracts/types/connection";
 import { connectionKeys } from "./use-connections";
 
-export const connectionFolderKeys = {
+const connectionFolderKeys = {
   all: ["connection-folders"] as const,
   list: () => [...connectionFolderKeys.all, "list"] as const,
 };

@@ -31,7 +31,7 @@ export interface TreeNode {
 }
 
 /** TanStack Query key factory for game-assets queries. */
-export const gameAssetKeys = {
+const gameAssetKeys = {
   all: ["game-assets"] as const,
   tree: () => [...gameAssetKeys.all, "tree"] as const,
   content: (path: string) => [...gameAssetKeys.all, "content", path] as const,

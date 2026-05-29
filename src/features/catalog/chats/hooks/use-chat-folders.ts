@@ -6,7 +6,7 @@ import { storageApi } from "../../../../shared/api/storage-api";
 import type { ChatFolder } from "../../../../engine/contracts/types/chat";
 import { chatKeys } from "./use-chats";
 
-export const folderKeys = {
+const folderKeys = {
   all: ["chat-folders"] as const,
   list: () => [...folderKeys.all, "list"] as const,
 };

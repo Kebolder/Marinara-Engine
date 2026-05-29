@@ -4,8 +4,6 @@ import { personaApi } from "../../../../shared/api/persona-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 
-export { personaKeys } from "../query-keys";
-
 export function usePersonas() {
   return useQuery({
     queryKey: personaKeys.list,

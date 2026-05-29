@@ -6,7 +6,7 @@ import { storageApi } from "../../../../shared/api/storage-api";
 import type { CreateThemeInput, UpdateThemeInput } from "../../../../engine/contracts/schemas/theme.schema";
 import type { Theme } from "../../../../engine/contracts/types/theme";
 
-export const themeKeys = {
+const themeKeys = {
   all: ["themes"] as const,
   list: () => [...themeKeys.all, "list"] as const,
 };

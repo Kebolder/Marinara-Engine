@@ -6,7 +6,7 @@ import { storageApi } from "../../../../shared/api/storage-api";
 import type { CreateExtensionInput, UpdateExtensionInput } from "../../../../engine/contracts/schemas/extension.schema";
 import type { InstalledExtension } from "../../../../engine/contracts/types/extension";
 
-export const extensionKeys = {
+const extensionKeys = {
   all: ["extensions"] as const,
   list: () => [...extensionKeys.all, "list"] as const,
 };
