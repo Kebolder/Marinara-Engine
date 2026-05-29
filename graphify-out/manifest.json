@@ -170,7 +170,7 @@
     "semantic_hash": ""
   },
   "src-tauri/crates/llm/src/lib.rs": {
-    "mtime": 1780039823.7220483,
+    "mtime": 1780041423.0172176,
     "ast_hash": "7b0c25309e4482a0f730ce6eda554f4c",
     "semantic_hash": ""
   },
@@ -845,8 +845,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/EchoChamberPanel.tsx": {
-    "mtime": 1779908540.40094,
-    "ast_hash": "26495cb6101c9e7061c64d65d5d2bd66",
+    "mtime": 1780041423.394054,
+    "ast_hash": "44a926f4fe9e876e4bcb076596d8a2f2",
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/ChatGallery.tsx": {
@@ -895,8 +895,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/ChatSettingsDrawer.tsx": {
-    "mtime": 1780036574.539104,
-    "ast_hash": "e057dcef1191d51f5816b31326ed1c35",
+    "mtime": 1780041423.3937247,
+    "ast_hash": "b5ca275e0664f607716265ec62e79934",
     "semantic_hash": ""
   },
   "src/features/modes/shared/chat-ui/components/input-button-styles.ts": {
@@ -1505,8 +1505,8 @@
     "semantic_hash": ""
   },
   "src/features/modes/conversation/hooks/autonomous/use-background-autonomous.ts": {
-    "mtime": 1779997003.584591,
-    "ast_hash": "582c3089b0602f21705cec190a87f9ed",
+    "mtime": 1780041423.392569,
+    "ast_hash": "3de3a4a6c29d00f6c15f228871945cc2",
     "semantic_hash": ""
   },
   "src/features/modes/router/shell.ts": {
@@ -1595,8 +1595,8 @@
     "semantic_hash": ""
   },
   "src/features/shell/settings/hooks/use-admin-data-reset.ts": {
-    "mtime": 1779835633.8653817,
-    "ast_hash": "abeb29a6648feff7c309e27a02bb13ef",
+    "mtime": 1780041423.3949654,
+    "ast_hash": "ab53fb8fb75047ad551d8cf644c826e3",
     "semantic_hash": ""
   },
   "src/features/shell/settings/hooks/tracker-card-color-manager.test.ts": {
@@ -1670,8 +1670,8 @@
     "semantic_hash": ""
   },
   "src/features/shell/bot-browser/api/bot-browser-api.ts": {
-    "mtime": 1779835633.8601725,
-    "ast_hash": "fcda46f1614608681d439f1f44869485",
+    "mtime": 1780041423.3947883,
+    "ast_hash": "0ed509a638eb188585af17835c482735",
     "semantic_hash": ""
   },
   "src/features/shell/notifications/shell.ts": {
@@ -1735,8 +1735,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/chat-presets/hooks/use-chat-presets.ts": {
-    "mtime": 1779909677.259118,
-    "ast_hash": "2ce158e86a9e2f7fc546a1d5f15d7fef",
+    "mtime": 1780041423.3912997,
+    "ast_hash": "9d1a7cfa67db99fb7d43bcbf5783c311",
     "semantic_hash": ""
   },
   "src/features/catalog/chat-presets/hooks/use-chat-presets.test.ts": {
@@ -1800,13 +1800,13 @@
     "semantic_hash": ""
   },
   "src/features/catalog/agents/hooks/use-custom-tools.ts": {
-    "mtime": 1779876778.245264,
-    "ast_hash": "5b3cf9707d55a1b98b3a664081f80e89",
+    "mtime": 1780041423.3890157,
+    "ast_hash": "b3913dc37c62cbec67ee94d7276854ee",
     "semantic_hash": ""
   },
   "src/features/catalog/agents/hooks/use-agents.ts": {
-    "mtime": 1779835633.8182514,
-    "ast_hash": "961941f43922ce7cbfb88c5a0e7f59a7",
+    "mtime": 1780041423.3888898,
+    "ast_hash": "51b2b00e5227d21b10fe588fcb755426",
     "semantic_hash": ""
   },
   "src/features/catalog/agents/hooks/use-regex-scripts.ts": {
@@ -1850,8 +1850,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/personas/hooks/use-personas.ts": {
-    "mtime": 1779909664.6971762,
-    "ast_hash": "0cbb0e8853aa82d37581273783fff7d9",
+    "mtime": 1780041423.392309,
+    "ast_hash": "825596cfd080a7e900ba6d3b7f45b37e",
     "semantic_hash": ""
   },
   "src/features/catalog/connections/types.ts": {
@@ -1870,8 +1870,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/connections/hooks/use-connections.ts": {
-    "mtime": 1780037037.3256218,
-    "ast_hash": "e5f68e39a355ae4177dfcdae13ccdb34",
+    "mtime": 1780041423.3916929,
+    "ast_hash": "21cc1f724d4226c093f5e73c8e66cd10",
     "semantic_hash": ""
   },
   "src/features/catalog/connections/hooks/use-connection-folders.ts": {
@@ -1930,8 +1930,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/lorebooks/components/LorebookEditor.tsx": {
-    "mtime": 1779913258.0060332,
-    "ast_hash": "9e5f67441ca18f5b3ec72ce6d91e35a5",
+    "mtime": 1780041423.391994,
+    "ast_hash": "d1bfc59eb52aa7206a56fb98efeb9ac4",
     "semantic_hash": ""
   },
   "src/features/catalog/lorebooks/components/ImportLorebookModal.tsx": {
@@ -1960,8 +1960,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/lorebooks/hooks/use-lorebooks.ts": {
-    "mtime": 1779909653.0869126,
-    "ast_hash": "fa7fe84e2e961db9faa8c962911b3e7d",
+    "mtime": 1780041423.3921494,
+    "ast_hash": "a75c7986d7ce877556e3eb90a571b0e5",
     "semantic_hash": ""
   },
   "src/features/catalog/lorebooks/lib/lorebook-keeper-updates.ts": {
@@ -1980,8 +1980,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/chats/hooks/use-chats.ts": {
-    "mtime": 1780003389.2943156,
-    "ast_hash": "80a3bb04c6ef3653abb7c4d6cd8c877b",
+    "mtime": 1780041423.3915155,
+    "ast_hash": "0ed80a162be11aae858617840a96a34a",
     "semantic_hash": ""
   },
   "src/features/catalog/chats/hooks/use-chat-folders.ts": {
@@ -2075,8 +2075,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/characters/components/CharacterEditor.tsx": {
-    "mtime": 1779989666.1884382,
-    "ast_hash": "835d3b390b8c5e953933b4b2b6d57aa2",
+    "mtime": 1780041423.3893502,
+    "ast_hash": "d4a35d68edffaa6f06de94249d14508b",
     "semantic_hash": ""
   },
   "src/features/catalog/characters/components/CharactersPanel.tsx": {
@@ -2110,8 +2110,8 @@
     "semantic_hash": ""
   },
   "src/features/catalog/characters/hooks/use-characters.ts": {
-    "mtime": 1779997003.5808532,
-    "ast_hash": "545a29a8c0ed968eb2429ba884fd7981",
+    "mtime": 1780041423.3910964,
+    "ast_hash": "8f8e8d470e7a749edae8e6d65cdb5f07",
     "semantic_hash": ""
   },
   "src/features/catalog/characters/lib/import-drop.test.ts": {
@@ -3185,8 +3185,8 @@
     "semantic_hash": ""
   },
   "src/shared/api/agent-api.ts": {
-    "mtime": 1780036841.739675,
-    "ast_hash": "8a20764d3e2ec2abedb240abaee9e6cd",
+    "mtime": 1780041423.3952248,
+    "ast_hash": "5664c0793b0b99c486187a6b4a6f7eb8",
     "semantic_hash": ""
   },
   "src/shared/api/download-payload.ts": {
@@ -3965,8 +3965,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/prompt-assembly.test.ts": {
-    "mtime": 1780005973.2561364,
-    "ast_hash": "c238f626d94354a906036932c7dad488",
+    "mtime": 1780041549.9118822,
+    "ast_hash": "0706dd8ef36047de3f1be5161adfc811",
     "semantic_hash": ""
   },
   "src/engine/generation/start-generation.ts": {
@@ -3985,8 +3985,8 @@
     "semantic_hash": ""
   },
   "src/engine/generation/prompt-assembly.ts": {
-    "mtime": 1780005957.8275588,
-    "ast_hash": "80d7cd698566c298beef2ff4f746a836",
+    "mtime": 1780041820.799526,
+    "ast_hash": "335f7fb9f9b686fa39a7d68319f0bc9a",
     "semantic_hash": ""
   },
   "src/engine/generation/agent-normalizers.ts": {
@@ -5684,59 +5684,44 @@
     "ast_hash": "508147626235be78ea322f4fb90be17f",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/tauri.settings.gradle": {
-    "mtime": 1779703246.2137322,
-    "ast_hash": "61868dc086fa8d1c86d43b90cd5444f5",
+  "src/shared/api/admin-api.ts": {
+    "mtime": 1780041423.3950937,
+    "ast_hash": "f13677af5f8e67e3e893bff44d405942",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/tauri.build.gradle.kts": {
-    "mtime": 1779703246.2137322,
-    "ast_hash": "3c89aa14a516eb5c3a9df3b7a618d739",
+  "src/shared/api/character-api.ts": {
+    "mtime": 1780041423.3954272,
+    "ast_hash": "21664ebc29b9b25ce58b1d0ad13e1472",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/Ipc.kt": {
-    "mtime": 1779703216.6856103,
-    "ast_hash": "a0312100b17edb17ed99f7f3a0ca0d04",
+  "src/shared/api/connection-command-api.ts": {
+    "mtime": 1780041423.39564,
+    "ast_hash": "4620cacc1f351a5773e2d15b1c376f91",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/Logger.kt": {
-    "mtime": 1779703216.6991236,
-    "ast_hash": "2a999c5543facba10b551cb03620bba0",
+  "src/shared/api/chat-command-api.ts": {
+    "mtime": 1780041423.3955293,
+    "ast_hash": "29e7ebf40702aedd0776361ff522119d",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/PermissionHelper.kt": {
-    "mtime": 1779703216.7131283,
-    "ast_hash": "4f305d8fa8340e6b07e04338af908eb5",
+  "src/shared/api/persona-api.ts": {
+    "mtime": 1780041423.3963249,
+    "ast_hash": "627261a407649d6123efe47114e9017c",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/Rust.kt": {
-    "mtime": 1779703216.7336383,
-    "ast_hash": "5f87ec95bd44c15d74637986e3290183",
+  "src/shared/api/lorebook-command-api.ts": {
+    "mtime": 1780041423.3962314,
+    "ast_hash": "2e34e5f8fa2f21c5e800321d55e844fa",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/RustWebChromeClient.kt": {
-    "mtime": 1779703216.7491436,
-    "ast_hash": "317f69b65a24b631a38e225ca38c6636",
+  "src/shared/api/bot-browser-command-api.ts": {
+    "mtime": 1780041423.395319,
+    "ast_hash": "7b6facb0e53a69c194d9b2451510a237",
     "semantic_hash": ""
   },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/RustWebView.kt": {
-    "mtime": 1779703216.7641556,
-    "ast_hash": "e61f865f72e5e348c103d3dbf7b60a56",
-    "semantic_hash": ""
-  },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/RustWebViewClient.kt": {
-    "mtime": 1779703216.777156,
-    "ast_hash": "eccd02bfa68cd8604634923852c007e3",
-    "semantic_hash": ""
-  },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/TauriActivity.kt": {
-    "mtime": 1779703244.018254,
-    "ast_hash": "d03243906946beb7730f6af9d1c940c6",
-    "semantic_hash": ""
-  },
-  "src-tauri/gen/android/app/src/main/java/com/marinara_engine/app/generated/WryActivity.kt": {
-    "mtime": 1779703216.7896566,
-    "ast_hash": "a0315affc0ba380862f265bda859e69e",
+  "src/shared/api/custom-tool-api.ts": {
+    "mtime": 1780041423.3961341,
+    "ast_hash": "1e643aa15ece886c60eb312ad9bbb19c",
     "semantic_hash": ""
   }
 }

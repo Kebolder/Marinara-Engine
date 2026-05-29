@@ -984,10 +984,7 @@ function appendSummaryToSystemPrompt(
   return true;
 }
 
-function buildRoleplayScenePromptBlock(
-  chat: JsonRecord,
-  wrapFormat: WrapFormat,
-): string | null {
+function buildRoleplayScenePromptBlock(chat: JsonRecord, wrapFormat: WrapFormat): string | null {
   const meta = parseRecord(chat.metadata);
   if (readString(chat.mode || chat.chatMode) !== "roleplay" && readString(meta.sceneStatus) !== "active") return null;
   const parts: string[] = [];
@@ -1423,6 +1420,14 @@ function previewMessagesForPrompt(messages: ChatMLMessage[]): ChatMLMessage[] {
   return messages.map((message) => ({ ...message }));
 }
 
+function authorNotesDepthEntry(chat: JsonRecord): { content: string; role: "system"; depth: number } | null {
+  const meta = parseRecord(chat.metadata);
+  const content = cleanPromptText(readString(meta.authorNotes).trim());
+  if (!content) return null;
+  const depth = Math.max(0, readNumber(meta.authorNotesDepth, 4));
+  return { content, role: "system", depth };
+}
+
 function normalizeLorebookEntry(entry: JsonRecord): LorebookEntry {
   return {
     id: readString(entry.id),
@@ -1743,7 +1748,11 @@ export async function assembleGenerationPrompt(
 
   insertBeforeLastUser(messages, buildConnectedConversationBlocks(input.chat));
 
-  messages = injectAtDepth(messages, processedLore.depthEntries);
+  const authorNotesEntry = authorNotesDepthEntry(input.chat);
+  messages = injectAtDepth(
+    messages,
+    authorNotesEntry ? [...processedLore.depthEntries, authorNotesEntry] : processedLore.depthEntries,
+  );
   const regexScripts = await storage.list<JsonRecord>("regex-scripts");
   applyRegexScriptsToPromptMessages(messages, regexScripts, {
     resolveMacros: (value) => resolveMacros(value, macros, { trimResult: false }),

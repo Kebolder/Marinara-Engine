@@ -171,6 +171,39 @@ const request = {
 };
 
 describe("assembleGenerationPrompt macro parity", () => {
+  it("injects roleplay author notes at the configured depth", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "chat",
+        mode: "roleplay",
+        metadata: {
+          authorNotes: "A5_AUTHOR_NOTES_MARKER\n{{// hidden author note }}",
+          authorNotesDepth: 1,
+        },
+      },
+      storedMessages: [
+        { role: "user", content: "First user" },
+        { role: "assistant", content: "Assistant response" },
+        { role: "user", content: "Latest user" },
+      ],
+      connection: {},
+      request,
+      latestUserInput: "Latest user",
+    });
+
+    const previewAuthorIndex = assembly.previewMessages.findIndex((message) =>
+      message.content.includes("A5_AUTHOR_NOTES_MARKER"),
+    );
+    expect(previewAuthorIndex).toBeGreaterThanOrEqual(0);
+    expect(assembly.previewMessages[previewAuthorIndex]?.role).toBe("system");
+    expect(assembly.previewMessages[previewAuthorIndex + 1]?.content).toBe("Latest user");
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("A5_AUTHOR_NOTES_MARKER");
+    expect(prompt).not.toContain("hidden author note");
+    expect(prompt).not.toContain("{{//");
+  });
+
   it("strips prompt comments from persona fields and preset sections", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithPersonas(
