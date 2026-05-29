@@ -1366,7 +1366,10 @@ summary[class*="cursor-pointer"],
   cursor: var(--cursor-pink), auto !important;
 }
 .cursor-not-allowed,
-.disabled\:cursor-not-allowed:disabled {
+.cursor-not-allowed *,
+.disabled\:cursor-not-allowed:disabled,
+.disabled\:cursor-not-allowed:disabled * {
+  /* Cascade to descendants so child icons/spans don't pick up the universal *{cursor} rule. */
   cursor: not-allowed !important;
 }
 .active\:cursor-grabbing:active {

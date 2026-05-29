@@ -125,7 +125,7 @@ export function App() {
       <AppDialogRenderer />
       <ChibiProfessorMariEasterEgg />
       <Toaster
-        position="bottom-right"
+        position="top-center"
         theme={theme}
         closeButton
         toastOptions={{
