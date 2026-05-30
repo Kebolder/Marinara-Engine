@@ -105,8 +105,9 @@ export async function generateConversationSchedules(
 
   const meta = parseJsonObject(chat.metadata);
   const existingSchedules = hasSchedules(meta.characterSchedules) ? meta.characterSchedules : {};
-  const characterIds =
-    input.characterIds?.length ? input.characterIds : parseJsonArray<string>(chat.characterIds).filter(Boolean);
+  const characterIds = input.characterIds?.length
+    ? input.characterIds
+    : parseJsonArray<string>(chat.characterIds).filter(Boolean);
   if (characterIds.length === 0) throw new Error("No conversation characters are selected");
   const provider = createScheduleProvider(capabilities.llm, connectionId, numberOrNull(connection.maxTokensOverride));
   const model = stringValue(connection.model);
@@ -167,7 +168,13 @@ export async function generateConversationSchedules(
       );
       const fullSchedule = preserveTimingSettings({ ...schedule, weekStart: mondayStr }, existing);
       newSchedules[characterId] = fullSchedule;
-      await updateCharacterConversationStatus(capabilities.storage, characterId, fullSchedule, character, characterData);
+      await updateCharacterConversationStatus(
+        capabilities.storage,
+        characterId,
+        fullSchedule,
+        character,
+        characterData,
+      );
       results[characterId] = { status: "generated", schedule: fullSchedule };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Schedule generation failed";
@@ -513,25 +520,27 @@ function createScheduleProvider(
     maxTokensOverrideValue,
     async chatComplete(messages, options) {
       const requestMessages: LlmMessage[] = messages.map(toLlmMessage);
-      const content = await llm.complete(requestMessages.length
-        ? {
-            connectionId,
-            model: options.model,
-            messages: requestMessages,
-            parameters: {
-              temperature: options.temperature,
-              maxTokens: options.maxTokens,
+      const content = await llm.complete(
+        requestMessages.length
+          ? {
+              connectionId,
+              model: options.model,
+              messages: requestMessages,
+              parameters: {
+                temperature: options.temperature,
+                maxTokens: options.maxTokens,
+              },
+            }
+          : {
+              connectionId,
+              model: options.model,
+              messages: [{ role: "user", content: "" }],
+              parameters: {
+                temperature: options.temperature,
+                maxTokens: options.maxTokens,
+              },
             },
-          }
-        : {
-            connectionId,
-            model: options.model,
-            messages: [{ role: "user", content: "" }],
-            parameters: {
-              temperature: options.temperature,
-              maxTokens: options.maxTokens,
-            },
-          });
+      );
       return { content };
     },
   };
@@ -544,7 +553,6 @@ function toLlmMessage(message: ChatMessage): LlmMessage {
       : "user";
   return { role, content: String(message.content ?? ""), name: message.name };
 }
-
 
 async function resolveScheduleConnection(storage: StorageGateway, chatConnectionId: string): Promise<JsonRecord> {
   const connections = await storage.list<JsonRecord>("connections");
@@ -566,7 +574,10 @@ async function resolveScheduleConnection(storage: StorageGateway, chatConnection
   return selected;
 }
 
-async function loadOtherConversationSchedules(storage: StorageGateway, currentChatId: string): Promise<Map<string, WeekSchedule>> {
+async function loadOtherConversationSchedules(
+  storage: StorageGateway,
+  currentChatId: string,
+): Promise<Map<string, WeekSchedule>> {
   const schedules = new Map<string, WeekSchedule>();
   const allChats = await storage.list<JsonRecord>("chats");
   for (const chat of allChats) {
@@ -607,7 +618,10 @@ async function updateCharacterConversationStatus(
   const character = loadedCharacter ?? (await storage.get<JsonRecord>("characters", characterId));
   if (!character) return;
   const characterData = loadedCharacterData ?? parseJsonObject(character.data);
-  const extensions = { ...parseJsonObject(characterData.extensions), conversationStatus: getCurrentStatus(schedule).status };
+  const extensions = {
+    ...parseJsonObject(characterData.extensions),
+    conversationStatus: getCurrentStatus(schedule).status,
+  };
   await storage.update("characters", characterId, {
     data: {
       ...characterData,
@@ -694,7 +708,12 @@ function limitText(value: string, maxChars: number): string {
 function formatSummaryEntry(label: string, entry: SummaryEntry): string[] {
   const lines = [`- ${label}: ${limitText(entry.summary, 700)}`];
   if (entry.keyDetails.length > 0) {
-    lines.push(`  Key details: ${entry.keyDetails.slice(0, 8).map((detail) => limitText(detail, 180)).join("; ")}`);
+    lines.push(
+      `  Key details: ${entry.keyDetails
+        .slice(0, 8)
+        .map((detail) => limitText(detail, 180))
+        .join("; ")}`,
+    );
   }
   return lines;
 }

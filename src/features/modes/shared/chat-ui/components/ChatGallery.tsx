@@ -16,11 +16,7 @@ import {
   Pin,
   Minimize2,
 } from "lucide-react";
-import {
-  useGalleryImages,
-  useUploadGalleryImage,
-  useDeleteGalleryImage,
-} from "../../../../catalog/gallery/index";
+import { useGalleryImages, useUploadGalleryImage, useDeleteGalleryImage } from "../../../../catalog/gallery/index";
 import { useGalleryStore } from "../../../../../shared/stores/gallery.store";
 import { ImageUploadDropzone } from "../../../../../shared/components/ui/ImageUploadDropzone";
 import { ImagePromptPanel } from "./ImagePromptPanel";
@@ -117,9 +113,7 @@ export function ChatGallery({ chat, onIllustrate }: ChatGalleryProps) {
                 <AlertCircle size="0.75rem" className="mt-0.5 shrink-0 text-[var(--destructive)]" />
               )}
               <span>
-                {illustratePending
-                  ? "Illustrator is checking the chat and image settings."
-                  : illustrateError}
+                {illustratePending ? "Illustrator is checking the chat and image settings." : illustrateError}
               </span>
             </p>
           )}

@@ -2180,14 +2180,9 @@ function TestResultCard({
         {isSuccess ? (
           <Check size="0.8125rem" className="text-emerald-400" />
         ) : (
-          <AlertCircle
-            size="0.8125rem"
-            className={isWarning ? "text-amber-300" : "text-[var(--destructive)]"}
-          />
+          <AlertCircle size="0.8125rem" className={isWarning ? "text-amber-300" : "text-[var(--destructive)]"} />
         )}
-        <span
-          className={isWarning ? "text-amber-300" : isSuccess ? "text-emerald-400" : "text-[var(--destructive)]"}
-        >
+        <span className={isWarning ? "text-amber-300" : isSuccess ? "text-emerald-400" : "text-[var(--destructive)]"}>
           {label}: {statusLabel}
         </span>
         <span className="ml-auto text-[0.625rem] text-[var(--muted-foreground)]">{latencyMs}ms</span>

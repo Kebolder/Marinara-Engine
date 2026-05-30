@@ -4,7 +4,16 @@ import { parseJsonArray, parseJsonObject } from "../../../core/json";
 import { boolish } from "../../../generation/runtime-records";
 import { parseGameJsonish } from "../../../shared/parsing-jsonish";
 import { readString as stringValue } from "../../../shared/value-readers";
-import type { SceneAnalysis, SceneCreateRequest, SceneCreateResponse, SceneForkRequest, SceneForkResponse, SceneFullPlan, ScenePlanRequest, ScenePlanResponse } from "../../../contracts/types/scene";
+import type {
+  SceneAnalysis,
+  SceneCreateRequest,
+  SceneCreateResponse,
+  SceneForkRequest,
+  SceneForkResponse,
+  SceneFullPlan,
+  ScenePlanRequest,
+  ScenePlanResponse,
+} from "../../../contracts/types/scene";
 import {
   copyTrackerSnapshotsForRebasedMessages,
   type TrackerSnapshotMessageRebase,
@@ -229,10 +238,7 @@ export async function abandonRoleplayScene(
   return { originChatId };
 }
 
-export async function forkRoleplayScene(
-  storage: StorageGateway,
-  input: SceneForkRequest,
-): Promise<SceneForkResponse> {
+export async function forkRoleplayScene(storage: StorageGateway, input: SceneForkRequest): Promise<SceneForkResponse> {
   if (input.mode !== "clone" && input.mode !== "convert") {
     throw new Error("mode must be clone or convert");
   }
@@ -500,7 +506,10 @@ async function writeCharacterSceneMemories(
   sceneChat: JsonRecord,
   summary: string,
 ): Promise<void> {
-  const sceneName = stringValue(sceneChat.name).replace(/^Scene:\s*/i, "").trim() || "Scene";
+  const sceneName =
+    stringValue(sceneChat.name)
+      .replace(/^Scene:\s*/i, "")
+      .trim() || "Scene";
   const createdAt = new Date().toISOString();
   const summaryLine = `[Scene on ${createdAt.slice(0, 10)}: ${sceneName}] ${summary.trim()}`;
   for (const characterId of stringArray(sceneChat.characterIds)) {
@@ -609,7 +618,6 @@ function buildForkContinuityMessage(sceneMeta: JsonRecord): string | null {
   if (!lines.length) return null;
   return ["Hidden continuity carried from the original scene branch.", "", ...lines].join("\n");
 }
-
 
 async function resolveConnectionId(
   storage: StorageGateway,

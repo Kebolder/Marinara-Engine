@@ -29,14 +29,14 @@ function recordingStorage(chatsById: Record<string, JsonRecord>): RecordingStora
   const chatMessages: JsonRecord[] = [];
   let createCounter = 0;
   const gateway: StorageGateway = {
-    list: async <T,>() => [] as T[],
-    get: async <T,>(entity: string, id: string) => {
+    list: async <T>() => [] as T[],
+    get: async <T>(entity: string, id: string) => {
       if (entity === "chats") {
         return ((chatsById[id] ?? null) as T | null) ?? null;
       }
       return null as T | null;
     },
-    create: async <T,>(entity: string, value: Record<string, unknown>) => {
+    create: async <T>(entity: string, value: Record<string, unknown>) => {
       createCounter += 1;
       const id = `${entity}-${createCounter}`;
       const stored = { id, ...value };
@@ -46,32 +46,32 @@ function recordingStorage(chatsById: Record<string, JsonRecord>): RecordingStora
       }
       return stored as T;
     },
-    update: async <T,>(entity: string, id: string, patch: Record<string, unknown>) => {
+    update: async <T>(entity: string, id: string, patch: Record<string, unknown>) => {
       updateCalls.push({ entity, id, patch: { ...patch } });
       if (entity === "chats" && chatsById[id]) {
         chatsById[id] = { ...chatsById[id], ...patch };
       }
-      return ({ id, ...patch }) as T;
+      return { id, ...patch } as T;
     },
     delete: async () => ({ deleted: true }),
     listChatMessages: async () => [],
-    createChatMessage: async <T,>(chatId: string, value: Record<string, unknown>) => {
+    createChatMessage: async <T>(chatId: string, value: Record<string, unknown>) => {
       const stored = { id: `message-${chatMessages.length + 1}`, chatId, ...value };
       chatMessages.push(stored);
       return stored as T;
     },
-    updateChatMessage: async <T,>() => ({}) as T,
+    updateChatMessage: async <T>() => ({}) as T,
     deleteChatMessage: async () => ({ deleted: true }),
-    patchChatMessageExtra: async <T,>() => ({}) as T,
-    addChatMessageSwipe: async <T,>() => ({}) as T,
-    patchChatMetadata: async <T,>() => ({}) as T,
-    patchChatSummaries: async <T,>() => ({}) as T,
+    patchChatMessageExtra: async <T>() => ({}) as T,
+    addChatMessageSwipe: async <T>() => ({}) as T,
+    patchChatMetadata: async <T>() => ({}) as T,
+    patchChatSummaries: async <T>() => ({}) as T,
     listChatMemories: async () => [],
-    getWorldState: async <T,>() => null as T | null,
-    saveTrackerSnapshot: async <T,>() => ({}) as T,
+    getWorldState: async <T>() => null as T | null,
+    saveTrackerSnapshot: async <T>() => ({}) as T,
     listLorebookEntries: async () => [],
     createLorebookEntries: async () => [],
-    promptFull: async <T,>() => null as T | null,
+    promptFull: async <T>() => null as T | null,
   };
   return { gateway, createCalls, updateCalls, chatMessages };
 }

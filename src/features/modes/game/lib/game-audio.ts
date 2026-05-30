@@ -341,9 +341,7 @@ class GameAudioManager {
       }
 
       try {
-        const buffer = await ctx.decodeAudioData(
-          await loadUrlArrayBuffer(url, { errorMessage: "Audio load failed" }),
-        );
+        const buffer = await ctx.decodeAudioData(await loadUrlArrayBuffer(url, { errorMessage: "Audio load failed" }));
         if (stopped) return;
         if (!(await this.resumeAudioContext(ctx))) {
           throw new Error("Audio context is not running");
@@ -475,9 +473,7 @@ class GameAudioManager {
       }
 
       try {
-        const buffer = await ctx.decodeAudioData(
-          await loadUrlArrayBuffer(url, { errorMessage: "Audio load failed" }),
-        );
+        const buffer = await ctx.decodeAudioData(await loadUrlArrayBuffer(url, { errorMessage: "Audio load failed" }));
         if (stopped) return;
         if (!(await this.resumeAudioContext(ctx))) {
           throw new Error("Audio context is not running");

@@ -69,7 +69,6 @@ type ConnectionRowData = {
   folderId?: string | null;
 };
 
-
 function ConnectionRow({
   conn,
   isSelected,
@@ -321,10 +320,7 @@ export function ConnectionsPanel() {
   const [newFolderName, setNewFolderName] = useState("");
   const [movingConnectionId, setMovingConnectionId] = useState<string | null>(null);
 
-  const connectionsList = useMemo(
-    () => (connections as ConnectionRowData[] | undefined) ?? [],
-    [connections],
-  );
+  const connectionsList = useMemo(() => (connections as ConnectionRowData[] | undefined) ?? [], [connections]);
 
   // Sorted folder list + local order for optimistic drag-to-reorder
   const sortedFolders = useMemo(() => {
@@ -418,7 +414,7 @@ export function ConnectionsPanel() {
   };
 
   const movingConnection = movingConnectionId
-    ? connectionsList.find((c) => c.id === movingConnectionId) ?? null
+    ? (connectionsList.find((c) => c.id === movingConnectionId) ?? null)
     : null;
 
   return (
@@ -552,9 +548,7 @@ export function ConnectionsPanel() {
       )}
 
       {/* Unfiled connections */}
-      <div className="stagger-children flex flex-col gap-1">
-        {unfiledConnections.map(renderConnectionRow)}
-      </div>
+      <div className="stagger-children flex flex-col gap-1">{unfiledConnections.map(renderConnectionRow)}</div>
 
       {activeChat && (
         <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]/60">

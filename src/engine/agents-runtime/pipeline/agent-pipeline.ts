@@ -95,7 +95,13 @@ function shouldExecuteIndividually(agent: ResolvedAgent): boolean {
 async function executeResolvedAgent(agent: ResolvedAgent, context: AgentContext): Promise<AgentResult> {
   const agentContext = buildAgentContext(agent, context);
   if (agent.type === "knowledge-retrieval") {
-    return executeKnowledgeRetrieval(agent, agentContext, agent.provider, agent.model, agent.knowledgeSourceMaterial ?? "");
+    return executeKnowledgeRetrieval(
+      agent,
+      agentContext,
+      agent.provider,
+      agent.model,
+      agent.knowledgeSourceMaterial ?? "",
+    );
   }
   if (agent.type === "knowledge-router") {
     return executeKnowledgeRouter(
@@ -127,11 +133,16 @@ async function executeGroup(
   const batchAgents = group.agents.filter((agent) => !shouldExecuteIndividually(agent));
   const toolAgentTypes = individualAgents.filter((agent) => agent.toolContext?.tools.length).map((agent) => agent.type);
 
-  logger.debug("[agent-pipeline] executeGroup: %d batchable, %d individual %j", batchAgents.length, individualAgents.length, {
-    batch: batchAgents.map((a) => a.type),
-    tools: toolAgentTypes,
-    individual: individualAgents.map((a) => a.type),
-  });
+  logger.debug(
+    "[agent-pipeline] executeGroup: %d batchable, %d individual %j",
+    batchAgents.length,
+    individualAgents.length,
+    {
+      batch: batchAgents.map((a) => a.type),
+      tools: toolAgentTypes,
+      individual: individualAgents.map((a) => a.type),
+    },
+  );
 
   // Safe callback wrapper — errors in the callback (e.g. writing to a
   // closed SSE stream) must never crash the group and silently drop results.

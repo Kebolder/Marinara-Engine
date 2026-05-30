@@ -127,13 +127,16 @@ describe("ttsApi", () => {
     });
   });
 
-  it.each([null, "audio", 42, false])("rejects malformed speak responses before reading audio fields", async (response) => {
-    invokeMock.mockResolvedValueOnce(response);
+  it.each([null, "audio", 42, false])(
+    "rejects malformed speak responses before reading audio fields",
+    async (response) => {
+      invokeMock.mockResolvedValueOnce(response);
 
-    await expect(ttsApi.speak({ text: "Hello" })).rejects.toThrow("TTS request returned an invalid response");
+      await expect(ttsApi.speak({ text: "Hello" })).rejects.toThrow("TTS request returned an invalid response");
 
-    expect(invokeMock).toHaveBeenCalledWith("tts_speak", { input: { text: "Hello" } });
-  });
+      expect(invokeMock).toHaveBeenCalledWith("tts_speak", { input: { text: "Hello" } });
+    },
+  );
 
   it("rejects speak responses without audio using the provider error message", async () => {
     invokeMock.mockResolvedValueOnce({ error: "Provider rejected the TTS request." });

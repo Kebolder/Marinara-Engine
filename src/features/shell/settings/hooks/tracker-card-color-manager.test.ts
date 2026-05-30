@@ -98,9 +98,7 @@ describe("tracker card color manager", () => {
 
     updateCachedTrackerCardColorTargetConfig(queryClient, target, "preview", "saved");
 
-    const previewCharacters = queryClient.getQueryData<Array<{ data: Record<string, unknown> }>>(
-      characterKeys.list(),
-    );
+    const previewCharacters = queryClient.getQueryData<Array<{ data: Record<string, unknown> }>>(characterKeys.list());
     const previewCharacter = previewCharacters?.[0];
     expect(previewCharacter?.data.extensions).toMatchObject({
       trackerCardColors: "preview",
@@ -114,9 +112,7 @@ describe("tracker card color manager", () => {
 
     updateCachedTrackerCardColorTargetConfig(queryClient, target, "saved");
 
-    const savedCharacters = queryClient.getQueryData<Array<{ data: Record<string, unknown> }>>(
-      characterKeys.list(),
-    );
+    const savedCharacters = queryClient.getQueryData<Array<{ data: Record<string, unknown> }>>(characterKeys.list());
     const savedCharacter = savedCharacters?.[0];
     expect(savedCharacter?.data.extensions).toMatchObject({
       trackerCardColors: "saved",

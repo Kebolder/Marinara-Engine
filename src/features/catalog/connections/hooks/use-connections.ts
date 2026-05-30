@@ -48,7 +48,8 @@ export function useConnection(id: string | null) {
 export function useCreateConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: CreateConnectionVariables) => storageApi.create("connections", createConnectionSchema.parse(data)),
+    mutationFn: (data: CreateConnectionVariables) =>
+      storageApi.create("connections", createConnectionSchema.parse(data)),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionKeys.list() }),
   });
 }

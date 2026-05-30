@@ -7,7 +7,6 @@ export function requireRecord(value: unknown, label: string): JsonRecord {
   throw new Error(`${label} was not found`);
 }
 
-
 export async function resolveGenerationConnection(
   storage: StorageGateway,
   chat: JsonRecord,

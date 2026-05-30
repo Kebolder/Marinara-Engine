@@ -261,11 +261,13 @@ export function ProfessorMariSurface() {
     const nextPersonaId = selectedPersonaId;
     persistedConnectionIdRef.current = nextConnectionId;
     persistedPersonaIdRef.current = nextPersonaId;
-    void mariApi.preferences.save({ selectedConnectionId: nextConnectionId, selectedPersonaId: nextPersonaId }).catch((error) => {
-      persistedConnectionIdRef.current = undefined;
-      persistedPersonaIdRef.current = undefined;
-      setSendError(error instanceof Error ? error.message : "Professor Mari preferences could not be saved.");
-    });
+    void mariApi.preferences
+      .save({ selectedConnectionId: nextConnectionId, selectedPersonaId: nextPersonaId })
+      .catch((error) => {
+        persistedConnectionIdRef.current = undefined;
+        persistedPersonaIdRef.current = undefined;
+        setSendError(error instanceof Error ? error.message : "Professor Mari preferences could not be saved.");
+      });
   }, [preferencesLoaded, selectedConnectionId, selectedPersonaId]);
 
   useEffect(() => {
@@ -793,7 +795,9 @@ function MariContextMenu({
                 >
                   <span className="min-w-0 flex-1 truncate">{connection.name || connection.id}</span>
                   {connection.provider && (
-                    <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">{connection.provider}</span>
+                    <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">
+                      {connection.provider}
+                    </span>
                   )}
                   {active && <Check size="0.75rem" />}
                 </button>

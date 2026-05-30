@@ -54,7 +54,11 @@ import { createMessageMacroResolver, findCharacterByName } from "../../../../sha
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../../../shared/lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../../../shared/lib/tts-audio-cache";
-import { resolveTTSVoiceForSpeaker, splitTTSChunks, ttsConfigMatchesSpeaker } from "../../../../shared/lib/tts-dialogue";
+import {
+  resolveTTSVoiceForSpeaker,
+  splitTTSChunks,
+  ttsConfigMatchesSpeaker,
+} from "../../../../shared/lib/tts-dialogue";
 import type { Message } from "../../../../engine/contracts/types/chat";
 import type { PartyDialogueLine, GameNpc, SkillCheckResult } from "../../../../engine/contracts/types/game";
 import type { TTSConfig } from "../../../../engine/contracts/types/tts";
@@ -5258,10 +5262,7 @@ function truncateMessageContentAtSegment(rawContent: string, segmentIndexInclusi
       continue;
     }
 
-    const isSpecial =
-      readablePlaceholderRe.test(line) ||
-      partyLineRegex.test(line) ||
-      compactDialogueRegex.test(line);
+    const isSpecial = readablePlaceholderRe.test(line) || partyLineRegex.test(line) || compactDialogueRegex.test(line);
 
     if (isSpecial) {
       if (pendingFallback) {

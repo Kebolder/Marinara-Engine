@@ -1772,7 +1772,8 @@ export function GameSurface({
     const existing = useGameStateStore.getState().current;
     if (existing?.chatId === requestedChatId) return;
     let cancelled = false;
-    gameTrackerApi.visible(requestedChatId)
+    gameTrackerApi
+      .visible(requestedChatId)
       .then((gs) => {
         if (!cancelled && gs?.chatId === requestedChatId && useChatStore.getState().activeChatId === requestedChatId) {
           useGameStateStore.getState().setGameState(gs);
@@ -3360,13 +3361,10 @@ export function GameSurface({
       }
       if (segmentPersistTimer.current) clearTimeout(segmentPersistTimer.current);
       segmentPersistTimer.current = setTimeout(() => {
-        persistGameMetadata(
-          activeChatId,
-          {
-            gameNarrationIndex: index,
-            gameNarrationMessageId: narrationProgressMessageId,
-          },
-        ).catch(() => {});
+        persistGameMetadata(activeChatId, {
+          gameNarrationIndex: index,
+          gameNarrationMessageId: narrationProgressMessageId,
+        }).catch(() => {});
       }, 500);
     },
     [activeChatId, narrationProgressMessageId, segmentStorageKey],
@@ -3379,13 +3377,10 @@ export function GameSurface({
         try {
           const saved = parseStoredNarrationProgress(localStorage.getItem(segmentStorageKey));
           if (saved) {
-            persistGameMetadata(
-              activeChatId,
-              {
-                gameNarrationIndex: saved.index,
-                gameNarrationMessageId: saved.messageId,
-              },
-            ).catch(() => {});
+            persistGameMetadata(activeChatId, {
+              gameNarrationIndex: saved.index,
+              gameNarrationMessageId: saved.messageId,
+            }).catch(() => {});
           }
         } catch {
           /* */

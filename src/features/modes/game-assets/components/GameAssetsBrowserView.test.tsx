@@ -73,8 +73,7 @@ vi.mock("../../../../shared/stores/ui.store", () => ({
 }));
 
 vi.mock("../../../../shared/stores/chat.store", () => ({
-  useChatStore: (selector: (state: { activeChatId: string | null }) => unknown) =>
-    selector({ activeChatId: null }),
+  useChatStore: (selector: (state: { activeChatId: string | null }) => unknown) => selector({ activeChatId: null }),
 }));
 
 vi.mock("sonner", () => ({

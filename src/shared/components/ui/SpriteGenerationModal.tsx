@@ -498,8 +498,7 @@ export function SpriteGenerationModal({
   const spriteGenerationUnavailable = spriteCapabilities?.spriteGenerationAvailable === false;
   const spriteGenerationReason = spriteCapabilities?.reason ?? "Sprite generation is unavailable on this platform.";
   const cleanupEngineUnavailable = spriteCapabilities?.cleanupEngine?.installed === false;
-  const cleanupEngineReason =
-    spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
+  const cleanupEngineReason = spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
   const existingPortraitExpressions = useMemo(() => {
     const seen = new Set<string>();
     const names: string[] = [];

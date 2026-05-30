@@ -18,7 +18,15 @@ import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { gameApi } from "../api/game-api";
 import type { CombatMechanic } from "../../../../engine/contracts/types/combat-encounter";
-import type { GameActiveState, GameMap, GameSetupConfig, Combatant, CombatPlayerAction, HudWidget, GameBlueprint } from "../../../../engine/contracts/types/game";
+import type {
+  GameActiveState,
+  GameMap,
+  GameSetupConfig,
+  Combatant,
+  CombatPlayerAction,
+  HudWidget,
+  GameBlueprint,
+} from "../../../../engine/contracts/types/game";
 import type { Chat } from "../../../../engine/contracts/types/chat";
 
 // ── Query Keys ──
@@ -143,8 +151,7 @@ export function useStartSession() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { gameId: string; connectionId?: string }) =>
-      gameApi.startSession(data),
+    mutationFn: (data: { gameId: string; connectionId?: string }) => gameApi.startSession(data),
     onMutate: (variables) => {
       toast.loading("Starting the next session and generating recap...", {
         id: `game-session-start:${variables.gameId}`,
@@ -347,8 +354,7 @@ export function useRemovePartyMember() {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { chatId: string; characterName: string }) =>
-      gameApi.removePartyMember(data),
+    mutationFn: (data: { chatId: string; characterName: string }) => gameApi.removePartyMember(data),
     onSuccess: (res, variables) => {
       publishSessionChat(qc, res.sessionChat);
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
@@ -368,8 +374,7 @@ export function useRollDice() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { chatId: string; notation: string; context?: string }) =>
-      gameApi.rollDice(data),
+    mutationFn: (data: { chatId: string; notation: string; context?: string }) => gameApi.rollDice(data),
     onSuccess: (res) => {
       store.getState().setDiceRollResult(res.result);
     },
@@ -388,8 +393,7 @@ export function useSkillCheck() {
       disadvantage?: boolean;
       preRolledD20?: number;
       messageId?: string;
-    }) =>
-      gameApi.skillCheck(data),
+    }) => gameApi.skillCheck(data),
     onSuccess: (res, variables) => {
       if (res.updatedContent) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
@@ -404,8 +408,7 @@ export function useTransitionGameState() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { chatId: string; newState: GameActiveState }) =>
-      gameApi.transitionGameState(data),
+    mutationFn: (data: { chatId: string; newState: GameActiveState }) => gameApi.transitionGameState(data),
     onSuccess: (res, variables) => {
       store.getState().setGameState(res.newState);
       publishSessionChat(qc, res.sessionChat);
@@ -618,8 +621,7 @@ export function useCombatRound() {
 export function useAdvanceTime() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { chatId: string; action: string }) =>
-      gameApi.advanceTime(data),
+    mutationFn: (data: { chatId: string; action: string }) => gameApi.advanceTime(data),
     onSuccess: (res, variables) => {
       publishSessionChat(qc, res.sessionChat);
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
@@ -662,8 +664,7 @@ export function useUpdateWeather() {
 
 export function useRollEncounter() {
   return useMutation({
-    mutationFn: (data: { chatId: string; action: string; location?: string }) =>
-      gameApi.rollEncounter(data),
+    mutationFn: (data: { chatId: string; action: string; location?: string }) => gameApi.rollEncounter(data),
   });
 }
 
@@ -707,15 +708,13 @@ export function useGameCheckpoints(chatId: string | null) {
 
 export function useCreateCheckpoint() {
   return useMutation({
-    mutationFn: (data: { chatId: string; label: string; triggerType: string }) =>
-      gameApi.createCheckpoint(data),
+    mutationFn: (data: { chatId: string; label: string; triggerType: string }) => gameApi.createCheckpoint(data),
   });
 }
 
 export function useLoadCheckpoint() {
   return useMutation({
-    mutationFn: (data: { chatId: string; checkpointId: string }) =>
-      gameApi.loadCheckpoint(data),
+    mutationFn: (data: { chatId: string; checkpointId: string }) => gameApi.loadCheckpoint(data),
   });
 }
 

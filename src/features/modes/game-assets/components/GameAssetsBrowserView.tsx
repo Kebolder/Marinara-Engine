@@ -2,7 +2,21 @@
 // View: File Browser (full-page overlay)
 // ──────────────────────────────────────────────
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
-import { Check, Folder, Upload, Pencil, Info, FileText, Move, Copy, Minus, RotateCcw, Trash2, X, RefreshCw } from "lucide-react";
+import {
+  Check,
+  Folder,
+  Upload,
+  Pencil,
+  Info,
+  FileText,
+  Move,
+  Copy,
+  Minus,
+  RotateCcw,
+  Trash2,
+  X,
+  RefreshCw,
+} from "lucide-react";
 import {
   useGameAssetTree,
   useCreateGameAssetFolder,

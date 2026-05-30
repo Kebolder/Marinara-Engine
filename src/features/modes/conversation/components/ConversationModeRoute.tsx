@@ -87,7 +87,8 @@ export function ConversationModeRoute({ activeChatId }: ConversationModeRoutePro
     isStreaming: timeline.isStreaming,
   });
 
-  const connectedChatId = (data.chat as unknown as { connectedChatId?: string | null } | null | undefined)?.connectedChatId;
+  const connectedChatId = (data.chat as unknown as { connectedChatId?: string | null } | null | undefined)
+    ?.connectedChatId;
   const activeSceneChat = data.chatMeta.activeSceneChatId
     ? data.chatList.find((item) => item.id === data.chatMeta.activeSceneChatId)
     : undefined;
@@ -179,7 +180,10 @@ export function ConversationModeRoute({ activeChatId }: ConversationModeRoutePro
         lastAssistantMessageId={timeline.lastAssistantMessageId}
       />
       {pendingNewChatMode && (
-        <NewChatConnectionGate mode={pendingNewChatMode} onClose={() => useChatStore.getState().setPendingNewChatMode(null)} />
+        <NewChatConnectionGate
+          mode={pendingNewChatMode}
+          onClose={() => useChatStore.getState().setPendingNewChatMode(null)}
+        />
       )}
     </>
   );

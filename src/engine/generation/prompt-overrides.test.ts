@@ -192,7 +192,9 @@ describe("conversation selfie prompt overrides", () => {
       create: vi.fn(async (_entity: string, value: Record<string, unknown>) => ({ id: "gallery-1", ...value })),
     } as Partial<StorageGateway> as StorageGateway;
     const complete = vi.fn(async (request: Parameters<LlmGateway["complete"]>[0]) => {
-      expect(request.messages[0]?.content).toContain("Always include these tags or modifiers: cinematic lighting, sharp focus");
+      expect(request.messages[0]?.content).toContain(
+        "Always include these tags or modifiers: cinematic lighting, sharp focus",
+      );
       expect(request.messages[1]?.content).toContain("Required image tags: cinematic lighting, sharp focus");
       return "selfie portrait, cinematic lighting";
     });

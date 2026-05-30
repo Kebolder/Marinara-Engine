@@ -35,7 +35,9 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
       />
 
       <div className={cn("relative z-10", fillHeight && "min-h-0 flex-1 overflow-y-auto")}>
-        {model.showTrackerSections ? <TrackerSectionList model={model} deleteMode={deleteMode} addMode={addMode} /> : null}
+        {model.showTrackerSections ? (
+          <TrackerSectionList model={model} deleteMode={deleteMode} addMode={addMode} />
+        ) : null}
 
         {!model.activeChatId ? (
           <EmptySection>Select a chat to view tracker data.</EmptySection>

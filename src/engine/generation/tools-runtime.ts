@@ -122,9 +122,7 @@ export function customToolDefinition(tool: CustomToolRecord): LLMToolDefinition 
   };
 }
 
-export const BUILT_IN_TOOL_MAP: Map<string, ToolDefinition> = new Map(
-  BUILT_IN_TOOLS.map((tool) => [tool.name, tool]),
-);
+export const BUILT_IN_TOOL_MAP: Map<string, ToolDefinition> = new Map(BUILT_IN_TOOLS.map((tool) => [tool.name, tool]));
 
 export function builtInToolDefinition(name: string): LLMToolDefinition | null {
   const tool = BUILT_IN_TOOL_MAP.get(name);
@@ -192,9 +190,7 @@ function hiddenFromAiRecord(message: JsonRecord): boolean {
 
 async function hideSummarySourceMessages(storage: StorageGateway, messageIds: string[]): Promise<string[]> {
   const results = await Promise.allSettled(
-    messageIds.map((messageId) =>
-      storage.patchChatMessageExtra(messageId, { hiddenFromAI: true, hiddenFromAi: true }),
-    ),
+    messageIds.map((messageId) => storage.patchChatMessageExtra(messageId, { hiddenFromAI: true, hiddenFromAi: true })),
   );
   const hiddenIds: string[] = [];
   for (const [index, result] of results.entries()) {
@@ -254,9 +250,7 @@ async function loadSearchableStoredLorebookEntries(
   const lorebooks = (await storage.list<JsonRecord>("lorebooks")).filter((book) =>
     lorebookAppliesToContext(book, input.chat, input.characters, input.persona),
   );
-  const entries = await Promise.all(
-    lorebooks.map((book) => loadLorebookEntriesForActivation(storage, book)),
-  );
+  const entries = await Promise.all(lorebooks.map((book) => loadLorebookEntriesForActivation(storage, book)));
   return entries.flat().filter((entry) => lorebookToolEntryPassesContext(entry, input));
 }
 
@@ -650,10 +644,7 @@ export async function buildMainToolDefinitions(
     customs.push(customToolDefinition(tool));
   }
   if (builtIns.length === 0 && customs.length === 0) return null;
-  const allowedToolNames = new Set<string>([
-    ...builtIns.map((tool) => tool.name),
-    ...customTools.keys(),
-  ]);
+  const allowedToolNames = new Set<string>([...builtIns.map((tool) => tool.name), ...customTools.keys()]);
   return { toolDefs: [...builtIns, ...customs], customTools, allowedToolNames };
 }
 

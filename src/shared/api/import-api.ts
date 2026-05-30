@@ -34,7 +34,8 @@ export const importApi = {
   stCharacterFile: async <T>(payload: ImportFilePayload) =>
     invokeTauri<T>("import_st_character", { body: await filePayload(payload) }),
   stCharacterBatch: async <T>(payload: ImportFilePayload | File[] | FormData) => {
-    const body = Array.isArray(payload) || payload instanceof FormData ? await filesPayload(payload) : await filePayload(payload);
+    const body =
+      Array.isArray(payload) || payload instanceof FormData ? await filesPayload(payload) : await filePayload(payload);
     return invokeTauri<T>("import_st_character_batch", { body });
   },
   stCharacterInspect: async <T>(payload: File[] | FormData) =>

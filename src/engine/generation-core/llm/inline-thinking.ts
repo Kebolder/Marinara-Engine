@@ -63,10 +63,7 @@ export function extractLeadingThinkingBlocks(text: string): LeadingThinkingExtra
 
 function possibleTagPrefix(buffer: string, closing: boolean): boolean {
   if (!buffer.startsWith("<") || buffer.includes(">")) return false;
-  const body = buffer
-    .slice(1)
-    .replace(/^\s+/, "")
-    .toLowerCase();
+  const body = buffer.slice(1).replace(/^\s+/, "").toLowerCase();
   const normalized = closing ? body.replace(/^\/\s*/, "") : body;
   if (closing && !body.startsWith("/") && !"/".startsWith(body)) return false;
   if (!/^[\w-]*$/.test(normalized)) return false;

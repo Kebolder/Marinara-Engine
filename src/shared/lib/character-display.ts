@@ -45,22 +45,14 @@ function addAliasCandidate(
   candidates.push({ text: cleaned, kind });
 }
 
-function addParentheticalAliases(
-  candidates: CharacterLookupAliasCandidate[],
-  seen: Set<string>,
-  value: string,
-) {
+function addParentheticalAliases(candidates: CharacterLookupAliasCandidate[], seen: Set<string>, value: string) {
   PARENTHETICAL_ALIAS_PATTERN.lastIndex = 0;
   for (const match of value.matchAll(PARENTHETICAL_ALIAS_PATTERN)) {
     addAliasCandidate(candidates, seen, "parenthetical", match[1]);
   }
 }
 
-function addAliasPayloadCandidates(
-  candidates: CharacterLookupAliasCandidate[],
-  seen: Set<string>,
-  payload: string,
-) {
+function addAliasPayloadCandidates(candidates: CharacterLookupAliasCandidate[], seen: Set<string>, payload: string) {
   for (const part of payload.split(LIST_ALIAS_PATTERN)) {
     const cleaned = cleanDisplayText(part);
     if (!cleaned) continue;

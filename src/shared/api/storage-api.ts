@@ -1,8 +1,4 @@
-import type {
-  AddChatMessageSwipeOptions,
-  StorageGateway,
-  StorageListOptions,
-} from "../../engine/capabilities/storage";
+import type { AddChatMessageSwipeOptions, StorageGateway, StorageListOptions } from "../../engine/capabilities/storage";
 import { collapseExcessBlankLines } from "../../engine/shared/text/newlines";
 import { ApiError } from "./api-errors";
 import { invokeTauri } from "./tauri-client";
@@ -42,7 +38,11 @@ function normalizeArrayField(record: Record<string, unknown>, field: string): vo
   }
 }
 
-function normalizeObjectField(record: Record<string, unknown>, field: string, fallback: Record<string, unknown> | null): void {
+function normalizeObjectField(
+  record: Record<string, unknown>,
+  field: string,
+  fallback: Record<string, unknown> | null,
+): void {
   const parsed = parseStoredJson(record[field]);
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     record[field] = parsed as Record<string, unknown>;
@@ -143,35 +143,35 @@ export const storageApi: StorageGateway = {
     normalizeStorageReadResult(
       entity,
       await invokeTauri("storage_list", {
-      entity,
-      options: options ?? null,
-    }),
+        entity,
+        options: options ?? null,
+      }),
     ) as never,
   get: async (entity: string, id: string, options?: Pick<StorageListOptions, "fields" | "fieldSelections">) =>
     normalizeStorageReadResult(
       entity,
       await invokeTauri("storage_get", {
-      entity,
-      id,
-      options: options ?? null,
-    }),
+        entity,
+        id,
+        options: options ?? null,
+      }),
     ) as never,
   create: async (entity: string, value: Record<string, unknown>) =>
     normalizeStorageReadResult(
       entity,
       await invokeTauri("storage_create", {
-      entity,
-      value: normalizeStorageWrite(entity, value),
-    }),
+        entity,
+        value: normalizeStorageWrite(entity, value),
+      }),
     ) as never,
   update: async (entity: string, id: string, patch: Record<string, unknown>) =>
     normalizeStorageReadResult(
       entity,
       await invokeTauri("storage_update", {
-      entity,
-      id,
-      patch: normalizeStorageWrite(entity, patch),
-    }),
+        entity,
+        id,
+        patch: normalizeStorageWrite(entity, patch),
+      }),
     ) as never,
   delete: (entity: string, id: string) =>
     invokeTauri("storage_delete", {

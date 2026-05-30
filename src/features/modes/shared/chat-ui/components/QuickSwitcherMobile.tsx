@@ -41,7 +41,6 @@ interface ParsedGroup {
   members: Persona[];
 }
 
-
 export function QuickSwitcherMobile() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"connections" | "personas">("connections");
@@ -61,7 +60,12 @@ export function QuickSwitcherMobile() {
   const isRandom = activeConnectionId === "random";
 
   const sortedConnections = filterLanguageGenerationConnections(
-    (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string | boolean | null }>,
+    (connections ?? []) as Array<{
+      id: string;
+      name: string;
+      provider?: string;
+      useForRandom?: string | boolean | null;
+    }>,
   ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   const sortedPersonas = ((rawPersonas ?? []) as Persona[])

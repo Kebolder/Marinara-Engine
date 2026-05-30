@@ -1,4 +1,11 @@
-import type { GameActiveState, GameCampaignPlan, GameMap, GameNpc, SessionSummary, HudWidget } from "../../../contracts/types/game";
+import type {
+  GameActiveState,
+  GameCampaignPlan,
+  GameMap,
+  GameNpc,
+  SessionSummary,
+  HudWidget,
+} from "../../../contracts/types/game";
 import type { CharacterSpriteInfo } from "./sprite.service.js";
 
 export interface GmPromptContext {

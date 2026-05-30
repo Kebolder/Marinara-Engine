@@ -11,7 +11,15 @@ import type {
   RPGAttributes,
 } from "../contracts/types/game-state";
 import { preserveTrackerCharacterUiFields } from "./generate-route-utils";
-import { boolish, isRecord, nowIso, parseRecord, readNonNegativeInteger, readNumber, readString } from "./runtime-records";
+import {
+  boolish,
+  isRecord,
+  nowIso,
+  parseRecord,
+  readNonNegativeInteger,
+  readNumber,
+  readString,
+} from "./runtime-records";
 
 export interface TrackerSnapshotTurnTarget {
   messageId: string;
@@ -104,8 +112,13 @@ function parseQuestObjective(value: unknown): { text: string; completed: boolean
   const record = parseRecord(value);
   const text = firstString(record.text, record.description, record.objective, record.name, record.title);
   if (!text) return null;
-  const status = readString(record.status ?? record.done).trim().toLowerCase();
-  return { text, completed: boolish(record.completed, status === "complete" || status === "completed" || status === "done") };
+  const status = readString(record.status ?? record.done)
+    .trim()
+    .toLowerCase();
+  return {
+    text,
+    completed: boolish(record.completed, status === "complete" || status === "completed" || status === "done"),
+  };
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -122,7 +135,9 @@ function parseQuest(value: unknown): QuestProgress | null {
   if (!name) return null;
   const questEntryId = readString(record.questEntryId).trim() || name;
   const objectives = Array.isArray(record.objectives)
-    ? record.objectives.map(parseQuestObjective).filter((objective): objective is { text: string; completed: boolean } => !!objective)
+    ? record.objectives
+        .map(parseQuestObjective)
+        .filter((objective): objective is { text: string; completed: boolean } => !!objective)
     : [];
   return {
     questEntryId,
@@ -201,11 +216,11 @@ function parsePresentCharacter(value: unknown): PresentCharacter | null {
         ? record.portraitFocusY
         : undefined,
     portraitZoom:
-      typeof record.portraitZoom === "number" && Number.isFinite(record.portraitZoom)
-        ? record.portraitZoom
-        : undefined,
+      typeof record.portraitZoom === "number" && Number.isFinite(record.portraitZoom) ? record.portraitZoom : undefined,
     customFields,
-    stats: Array.isArray(record.stats) ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat) : [],
+    stats: Array.isArray(record.stats)
+      ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat)
+      : [],
     thoughts: readNullableString(record.thoughts),
   };
 }
@@ -213,7 +228,9 @@ function parsePresentCharacter(value: unknown): PresentCharacter | null {
 function clonePlayerStats(value: unknown): PlayerStats {
   const record = parseRecord(value);
   return {
-    stats: Array.isArray(record.stats) ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat) : [],
+    stats: Array.isArray(record.stats)
+      ? record.stats.map(parseStat).filter((stat): stat is CharacterStat => !!stat)
+      : [],
     attributes: parseRpgAttributes(record.attributes),
     skills: parseSkills(record.skills),
     inventory: Array.isArray(record.inventory)
@@ -223,9 +240,7 @@ function clonePlayerStats(value: unknown): PlayerStats {
       ? record.activeQuests.map(parseQuest).filter((quest): quest is QuestProgress => !!quest)
       : [],
     customTrackerFields: Array.isArray(record.customTrackerFields)
-      ? record.customTrackerFields
-          .map(parseCustomTrackerField)
-          .filter((field): field is CustomTrackerField => !!field)
+      ? record.customTrackerFields.map(parseCustomTrackerField).filter((field): field is CustomTrackerField => !!field)
       : undefined,
     status: readString(record.status),
   };
@@ -275,7 +290,10 @@ function cloneQuest(quest: QuestProgress): QuestProgress {
   };
 }
 
-function applyQuestUpdatesToPlayerStats(value: unknown, updatesValue: unknown): { playerStats: PlayerStats; changed: boolean } {
+function applyQuestUpdatesToPlayerStats(
+  value: unknown,
+  updatesValue: unknown,
+): { playerStats: PlayerStats; changed: boolean } {
   const updates = Array.isArray(updatesValue)
     ? updatesValue.map(normalizeQuestUpdate).filter((update): update is NormalizedQuestUpdate => !!update)
     : [];
@@ -310,7 +328,10 @@ function applyQuestUpdatesToPlayerStats(value: unknown, updatesValue: unknown): 
 
   for (let index = quests.length - 1; index >= 0; index -= 1) {
     const quest = quests[index]!;
-    if (quest.completed && (quest.objectives.length === 0 || quest.objectives.every((objective) => objective.completed))) {
+    if (
+      quest.completed &&
+      (quest.objectives.length === 0 || quest.objectives.every((objective) => objective.completed))
+    ) {
       quests.splice(index, 1);
     }
   }
@@ -403,7 +424,10 @@ export function resolveVisibleGameStateFallbackMessageIds(
   return Array.from(targets.values());
 }
 
-async function listTrackerSnapshotRows(storage: StorageGateway, chatId: string): Promise<Array<Record<string, unknown>>> {
+async function listTrackerSnapshotRows(
+  storage: StorageGateway,
+  chatId: string,
+): Promise<Array<Record<string, unknown>>> {
   const rows = await storage.list<Record<string, unknown>>("game-state-snapshots", {
     filters: { chatId, kind: "tracker" },
     orderBy: "createdAt",
@@ -591,9 +615,7 @@ function gameStatePatchFromAgentResult(result: AgentResult, snapshot: GameState)
     const playerStats = clonePlayerStats(snapshot.playerStats);
     if (Object.prototype.hasOwnProperty.call(data, "status")) playerStats.status = readString(data.status).trim();
     if (Array.isArray(data.inventory)) {
-      playerStats.inventory = data.inventory
-        .map(parseInventoryItem)
-        .filter((item): item is InventoryItem => !!item);
+      playerStats.inventory = data.inventory.map(parseInventoryItem).filter((item): item is InventoryItem => !!item);
     }
     const patch: TrackerStatePatch = { playerStats };
     if (Array.isArray(data.stats)) {
@@ -628,9 +650,8 @@ export async function persistTrackerSnapshotForTurn(
 ): Promise<GameState | null> {
   if (!target || !target.messageId || results.length === 0) return null;
   const existing = await getTrackerSnapshotForTarget(storage, chatId, target);
-  const chat = (existing || options.baseSnapshot)
-    ? null
-    : parseRecord(await storage.get("chats", chatId).catch(() => null));
+  const chat =
+    existing || options.baseSnapshot ? null : parseRecord(await storage.get("chats", chatId).catch(() => null));
   let snapshot = normalizeGameState(existing ?? options.baseSnapshot ?? chat?.gameState, chatId, target);
   if (!existing) {
     snapshot = { ...snapshot, id: "", committed: false, manualOverrides: null, createdAt: nowIso() };

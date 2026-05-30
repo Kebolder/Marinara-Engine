@@ -1423,10 +1423,9 @@ describe("assembleGenerationPrompt lorebook activation settings", () => {
       order: index,
     }));
     const assembly = await assembleGenerationPrompt(
-      storageWithLore(
-        chainEntries,
-        [{ id: "lorebook", enabled: true, isGlobal: true, recursiveScanning: true, maxRecursionDepth: 99 }],
-      ),
+      storageWithLore(chainEntries, [
+        { id: "lorebook", enabled: true, isGlobal: true, recursiveScanning: true, maxRecursionDepth: 99 },
+      ]),
       {
         chat: { id: "chat", mode: "roleplay" },
         storedMessages: [{ role: "user", content: "Trigger LQA_CAP_KEY_0.", contextKind: "history" }],

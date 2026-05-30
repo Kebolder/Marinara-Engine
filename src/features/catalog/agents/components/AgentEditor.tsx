@@ -44,11 +44,7 @@ import {
 } from "lucide-react";
 import { useDeleteAgent } from "../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../lorebooks/index";
-import {
-  useKnowledgeSources,
-  useUploadKnowledgeSource,
-  useDeleteKnowledgeSource,
-} from "../../knowledge/index";
+import { useKnowledgeSources, useUploadKnowledgeSource, useDeleteKnowledgeSource } from "../../knowledge/index";
 import { cn } from "../../../../shared/lib/utils";
 import {
   getAgentRunIntervalMeta,
@@ -65,7 +61,19 @@ import {
   normalizeCustomAgentActivationScanDepth,
 } from "../../../../engine/contracts/constants/agent-activation";
 import { getDefaultAgentPrompt } from "../../../../engine/contracts/constants/agent-prompts";
-import { BUILT_IN_AGENTS, BUILT_IN_TOOLS, DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_TOOLS, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS, getDefaultBuiltInAgentSettings, type AgentPhase, type AgentResultType, type ToolDefinition } from "../../../../engine/contracts/types/agent";
+import {
+  BUILT_IN_AGENTS,
+  BUILT_IN_TOOLS,
+  DEFAULT_AGENT_CONTEXT_SIZE,
+  DEFAULT_AGENT_TOOLS,
+  DEFAULT_AGENT_MAX_TOKENS,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
+  getDefaultBuiltInAgentSettings,
+  type AgentPhase,
+  type AgentResultType,
+  type ToolDefinition,
+} from "../../../../engine/contracts/types/agent";
 
 function createCustomAgentType(name: string): string {
   const slug =
@@ -905,7 +913,8 @@ export function AgentEditor() {
               ))}
             </select>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection.
+              When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active
+              connection.
             </p>
           </FieldGroup>
 
@@ -970,8 +979,8 @@ export function AgentEditor() {
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Saved on the Illustrator agent. Positive tags are appended after the generated prompt; negative tags are
-                sent directly to the image generator and combine with any connection-level defaults. NovelAI tag syntax is
-                supported.
+                sent directly to the image generator and combine with any connection-level defaults. NovelAI tag syntax
+                is supported.
               </p>
               <label className="mt-3 flex items-center gap-2 cursor-pointer">
                 <input

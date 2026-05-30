@@ -1411,7 +1411,10 @@ function ChatSettingsDrawerInner({
     }
     return presetList.find((p) => isEnabledFlag(p.isDefault ?? p.default, false)) ?? null;
   }, [presetList, appliedPresetId]);
-  const selectedChatPresetIsDefault = isEnabledFlag(selectedChatPreset?.isDefault ?? selectedChatPreset?.default, false);
+  const selectedChatPresetIsDefault = isEnabledFlag(
+    selectedChatPreset?.isDefault ?? selectedChatPreset?.default,
+    false,
+  );
   const selectedChatPresetIsActive = isEnabledFlag(selectedChatPreset?.isActive ?? selectedChatPreset?.active, false);
   const [renamingPreset, setRenamingPreset] = useState(false);
   const [renamePresetVal, setRenamePresetVal] = useState("");

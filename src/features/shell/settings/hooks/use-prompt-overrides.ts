@@ -1,9 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { promptOverridesApi } from "../api/prompt-overrides-api";
-import type {
-  PromptOverrideDetail,
-  PromptOverrideSummary,
-} from "../../../../engine/generation/prompt-overrides";
+import type { PromptOverrideDetail, PromptOverrideSummary } from "../../../../engine/generation/prompt-overrides";
 
 export type { PromptOverrideDetail, PromptOverrideSummary };
 

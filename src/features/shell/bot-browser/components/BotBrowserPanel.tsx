@@ -74,7 +74,9 @@ export function BotBrowserPanel() {
       if (!d) return { altGreetings: [] };
       return {
         firstMes: d.first_mes,
-        altGreetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.filter((g): g is string => typeof g === "string") : [],
+        altGreetings: Array.isArray(d.alternate_greetings)
+          ? d.alternate_greetings.filter((g): g is string => typeof g === "string")
+          : [],
       };
     },
     [characters],

@@ -8,7 +8,18 @@ import { useConnections } from "../../connections/index";
 import { useCharacterGroups, useCreateCharacter, useUpdateGroup } from "../hooks/use-characters";
 import { useCreateLorebookEntry, useLorebooks } from "../../lorebooks/index";
 import { useUIStore } from "../../../../shared/stores/ui.store";
-import { Sparkles, Loader2, Wand2, CheckCircle, AlertCircle, ChevronDown, User, Save, Folder, BookOpen } from "lucide-react";
+import {
+  Sparkles,
+  Loader2,
+  Wand2,
+  CheckCircle,
+  AlertCircle,
+  ChevronDown,
+  User,
+  Save,
+  Folder,
+  BookOpen,
+} from "lucide-react";
 import { ProfessorMariWorkingWindow } from "../../../../shared/components/ui/ProfessorMariWorkingWindow";
 import { generateCharacterMaker } from "../../../../engine/generation/makers";
 import { llmApi } from "../../../../shared/api/llm-api";
@@ -162,8 +173,7 @@ export function CharacterMakerModal({ open, onClose }: Props) {
       if (parsed) {
         setGenerated(parsed);
         setConfirmedName((parsed.name || nameHint).trim());
-      }
-      else setError("Generated text wasn't valid JSON. You can try again.");
+      } else setError("Generated text wasn't valid JSON. You can try again.");
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         setError(err instanceof Error ? err.message : "Generation failed");

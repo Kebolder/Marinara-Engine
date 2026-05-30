@@ -15,14 +15,22 @@ import { AgentDebugPanel } from "./AgentDebugPanel";
 // animation-only props (initial/animate/exit) so the rendered DOM carries the
 // real className the fix changed.
 vi.mock("framer-motion", () => {
-  const passthrough = (tag: string) =>
-    ({ initial: _initial, animate: _animate, exit: _exit, children, ...rest }: {
+  const passthrough =
+    (tag: string) =>
+    ({
+      initial: _initial,
+      animate: _animate,
+      exit: _exit,
+      children,
+      ...rest
+    }: {
       initial?: unknown;
       animate?: unknown;
       exit?: unknown;
       children?: ReactNode;
       [key: string]: unknown;
-    }) => createElement(tag, rest, children);
+    }) =>
+      createElement(tag, rest, children);
   return {
     AnimatePresence: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
     motion: new Proxy(

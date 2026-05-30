@@ -136,11 +136,13 @@ export async function checkConversationAutonomous(
 ): Promise<AutonomousCheckResult> {
   const chat = await requireChat(storage, input.chatId);
   const meta = metadataRecord(chat.metadata);
-  const userStatus: UserStatus = input.userStatus === "idle" || input.userStatus === "dnd" ? input.userStatus : "active";
+  const userStatus: UserStatus =
+    input.userStatus === "idle" || input.userStatus === "dnd" ? input.userStatus : "active";
   const disabled = meta.autonomousMessages !== true;
   if (disabled) return { shouldTrigger: false, characterIds: [], reason: "disabled", inactivityMs: 0 };
   if (userStatus === "dnd") return { shouldTrigger: false, characterIds: [], reason: "user_dnd", inactivityMs: 0 };
-  if (meta.sceneStatus === "active") return { shouldTrigger: false, characterIds: [], reason: "scene_active", inactivityMs: 0 };
+  if (meta.sceneStatus === "active")
+    return { shouldTrigger: false, characterIds: [], reason: "scene_active", inactivityMs: 0 };
 
   const messages = await chatMessages(storage, input.chatId);
   initializeActivityFromMessages(
@@ -160,7 +162,10 @@ export async function checkConversationAutonomous(
       .filter((characterId) => !autonomySchedules[characterId])
       .map(async (characterId) => {
         const character = await storage.get("characters", characterId);
-        autonomySchedules[characterId] = createSchedulelessAutonomySchedule(characterTalkativeness(character), userStatus);
+        autonomySchedules[characterId] = createSchedulelessAutonomySchedule(
+          characterTalkativeness(character),
+          userStatus,
+        );
       }),
   );
 

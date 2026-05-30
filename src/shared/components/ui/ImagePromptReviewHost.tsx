@@ -1,9 +1,5 @@
 import { create } from "zustand";
-import {
-  ImagePromptReviewModal,
-  type ImagePromptOverride,
-  type ImagePromptReviewItem,
-} from "./ImagePromptReviewModal";
+import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "./ImagePromptReviewModal";
 
 type PromptReviewRequest = {
   id: string;

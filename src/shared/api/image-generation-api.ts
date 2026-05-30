@@ -24,8 +24,7 @@ export const spriteApi = {
 export const imageGenerationApi = {
   avatarPreview: <T = unknown>(body: Record<string, unknown>) =>
     invokeTauri<T>("avatar_generation_preview_command", { body }),
-  avatarGenerate: <T = unknown>(body: Record<string, unknown>) =>
-    invokeTauri<T>("avatar_generation_command", { body }),
+  avatarGenerate: <T = unknown>(body: Record<string, unknown>) => invokeTauri<T>("avatar_generation_command", { body }),
   generate: <T = unknown>(body: Record<string, unknown>) => invokeTauri<T>("image_generate", { body }),
 };
 

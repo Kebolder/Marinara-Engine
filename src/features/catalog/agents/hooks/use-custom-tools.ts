@@ -58,7 +58,8 @@ export function useCustomToolCapabilities() {
 export function useCreateCustomTool() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) => storageApi.create("custom-tools", createCustomToolSchema.parse(data)),
+    mutationFn: (data: Record<string, unknown>) =>
+      storageApi.create("custom-tools", createCustomToolSchema.parse(data)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: toolKeys.all });
     },

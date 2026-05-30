@@ -198,5 +198,5 @@ export default tseslint.config(
       "no-empty-pattern": "off",
       "no-undef": "off",
     },
-  }
+  },
 );

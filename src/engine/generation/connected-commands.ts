@@ -104,17 +104,16 @@ function messageDefaults(chatId: string, value: Record<string, unknown>): Record
   };
 }
 
-async function connectedNoteStorageChatId(
-  storage: StorageGateway,
-  chat: JsonRecord,
-): Promise<string> {
+async function connectedNoteStorageChatId(storage: StorageGateway, chat: JsonRecord): Promise<string> {
   const sourceChatId = readString(chat.id);
   const connectedChatId = readString(chat.connectedChatId).trim();
   const mode = readString(chat.mode || chat.chatMode);
   if (!sourceChatId || !connectedChatId || mode !== "conversation") return sourceChatId;
   const target = await storage.get<JsonRecord>("chats", connectedChatId).catch(() => null);
   const targetMode = readString(target?.mode || target?.chatMode);
-  return target && (targetMode === "roleplay" || targetMode === "game") ? readString(target.id) || connectedChatId : sourceChatId;
+  return target && (targetMode === "roleplay" || targetMode === "game")
+    ? readString(target.id) || connectedChatId
+    : sourceChatId;
 }
 
 async function persistNoteWrites(
@@ -270,9 +269,7 @@ async function buildSelfiePrompt(args: {
       readString(data.description).trim()
     : "";
   const metadata = parseRecord(args.chat.metadata);
-  const positive =
-    readString(metadata.selfiePositivePrompt).trim() ||
-    stringArray(metadata.selfieTags).join(", ");
+  const positive = readString(metadata.selfiePositivePrompt).trim() || stringArray(metadata.selfieTags).join(", ");
   const template = readString(metadata.selfiePrompt).trim();
   const systemPrompt = await resolveConversationSelfieSystemPrompt({
     storage: args.storage,
@@ -417,7 +414,11 @@ async function generateSelfie(args: {
     });
     return true;
   } catch (error) {
-    eventsPushSelfieError(args.events, characterId, error instanceof Error ? error.message : "Image generation failed.");
+    eventsPushSelfieError(
+      args.events,
+      characterId,
+      error instanceof Error ? error.message : "Image generation failed.",
+    );
     return false;
   }
 }
@@ -571,7 +572,11 @@ function personaPatch(command: CreatePersonaCommand | UpdatePersonaCommand): Jso
   };
 }
 
-async function createLorebookEntries(storage: StorageGateway, lorebookId: string, command: CreateLorebookCommand | UpdateLorebookCommand) {
+async function createLorebookEntries(
+  storage: StorageGateway,
+  lorebookId: string,
+  command: CreateLorebookCommand | UpdateLorebookCommand,
+) {
   if (!command.entries?.length) return;
   for (const entry of command.entries) {
     await storage.create("lorebook-entries", {

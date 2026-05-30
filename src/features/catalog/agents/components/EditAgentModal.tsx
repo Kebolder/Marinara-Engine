@@ -63,8 +63,7 @@ export function EditAgentModal({ open, onClose, agent }: Props) {
 
   // Update existing config
   const updateAgent = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) =>
-      storageApi.update("agents", id, data),
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => storageApi.update("agents", id, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["agents"] });
       onClose();

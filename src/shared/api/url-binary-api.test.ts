@@ -35,13 +35,16 @@ describe("urlBinaryApi", () => {
     expect(blob.type).toBe("audio/mpeg");
   });
 
-  it.each([null, "bytes", 42, false, []])("rejects malformed binary responses before reading fields", async (response) => {
-    invokeMock.mockResolvedValueOnce(response);
+  it.each([null, "bytes", 42, false, []])(
+    "rejects malformed binary responses before reading fields",
+    async (response) => {
+      invokeMock.mockResolvedValueOnce(response);
 
-    await expect(urlBinaryApi.load("https://example.com/file")).rejects.toThrow(
-      "URL binary request returned an invalid response",
-    );
-  });
+      await expect(urlBinaryApi.load("https://example.com/file")).rejects.toThrow(
+        "URL binary request returned an invalid response",
+      );
+    },
+  );
 
   it("rejects object responses without base64 data using the response error message", async () => {
     invokeMock.mockResolvedValueOnce({ error: "Remote file is too large" });

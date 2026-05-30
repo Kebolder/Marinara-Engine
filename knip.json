@@ -1,17 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "project": [
-    "src/**/*.{ts,tsx}",
-    "scripts/**/*.mjs",
-    "*.config.{js,ts}"
-  ],
-  "ignoreDependencies": [
-    "@tauri-apps/cli",
-    "tailwindcss"
-  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "*.config.{js,ts}"],
+  "ignoreDependencies": ["@tauri-apps/cli", "tailwindcss"],
   "ignoreIssues": {
-    "src/features/runtime/tracker/components/tracker-data-sidebar.constants.ts": [
-      "duplicates"
-    ]
+    "src/features/runtime/tracker/components/tracker-data-sidebar.constants.ts": ["duplicates"]
   }
 }

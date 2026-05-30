@@ -89,7 +89,10 @@ function selectRecentTail(messages: MariMessage[], maxContext: number): MariMess
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
     const nextTokens = tokens + messageTokens(message);
-    if (tail.length >= COMPACTION_TAIL_MIN_MESSAGES && (nextTokens > tokenBudget || tail.length >= COMPACTION_TAIL_MAX_MESSAGES)) {
+    if (
+      tail.length >= COMPACTION_TAIL_MIN_MESSAGES &&
+      (nextTokens > tokenBudget || tail.length >= COMPACTION_TAIL_MAX_MESSAGES)
+    ) {
       break;
     }
     tail.unshift(message);
@@ -116,7 +119,11 @@ function formatCompactionTranscript(messages: MariMessage[], maxContext: number)
 }
 
 function normalizeCompactionSummary(value: string): string {
-  return value.trim().replace(/^```(?:markdown|md|text)?\s*/i, "").replace(/```$/i, "").trim();
+  return value
+    .trim()
+    .replace(/^```(?:markdown|md|text)?\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
 }
 
 export async function compactProfessorMariHistory({

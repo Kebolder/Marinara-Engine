@@ -79,9 +79,9 @@ describe("game gallery scope", () => {
   it("does not aggregate non-game chats or game chats without a scope id", () => {
     const sessions = [chat({ id: "session-1", mode: "game", groupId: "game-1" })];
 
-    expect(getGalleryChatIds(chat({ id: "conversation-1", mode: "conversation", groupId: "game-1" }), sessions)).toEqual([
-      "conversation-1",
-    ]);
+    expect(
+      getGalleryChatIds(chat({ id: "conversation-1", mode: "conversation", groupId: "game-1" }), sessions),
+    ).toEqual(["conversation-1"]);
     expect(getGalleryChatIds(chat({ id: "solo", mode: "game" }), sessions)).toEqual(["solo"]);
   });
 

@@ -126,9 +126,7 @@ describe("scanForActivatedEntries secondary keyword logic", () => {
       ),
     ).toEqual(["or-entry"]);
     expect(scanForActivatedEntries([{ role: "user", content: "The bronze gate opens." }], [orEntry])).toHaveLength(0);
-    expect(scanForActivatedEntries([{ role: "user", content: "The sealed gate opens." }], [notEntry])).toHaveLength(
-      0,
-    );
+    expect(scanForActivatedEntries([{ role: "user", content: "The sealed gate opens." }], [notEntry])).toHaveLength(0);
     expect(
       scanForActivatedEntries([{ role: "user", content: "The quiet gate opens." }], [notEntry]).map(
         (entry) => entry.entry.id,

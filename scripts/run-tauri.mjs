@@ -19,7 +19,10 @@ if (cargoBin && existsSync(cargoBin)) {
 if (isTauriDev) {
   env[autoDevtoolsEnv] ??= "1";
 
-  if (process.platform === "win32" && !env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS?.includes("--remote-debugging-port=")) {
+  if (
+    process.platform === "win32" &&
+    !env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS?.includes("--remote-debugging-port=")
+  ) {
     env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = [env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, webview2DebugArg]
       .filter(Boolean)
       .join(" ");

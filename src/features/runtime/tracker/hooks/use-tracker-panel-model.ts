@@ -12,14 +12,16 @@ import {
 } from "../../../../shared/lib/tracker-metadata";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
-import type { TrackerPanelSizeProfile, TrackerPanelSide, TrackerTemperatureUnit, TrackerThoughtBubbleDisplay } from "../../../../shared/stores/ui.store";
+import type {
+  TrackerPanelSizeProfile,
+  TrackerPanelSide,
+  TrackerTemperatureUnit,
+  TrackerThoughtBubbleDisplay,
+} from "../../../../shared/stores/ui.store";
 import { chatKeys, preserveRecentMessageContentEdit, useChat } from "../../../catalog/chats/index";
 import { useCharacters, usePersonas } from "../../../catalog/characters/index";
 import { useTrackerStateController } from "../../world-state/index";
-import {
-  TRACKER_SECTION_AGENT_TYPES,
-  type TrackerPanelSection,
-} from "../../world-state/index";
+import { TRACKER_SECTION_AGENT_TYPES, type TrackerPanelSection } from "../../world-state/index";
 import type { TrackerStateController } from "../../world-state/types";
 import { useFeaturedCharacterCards } from "./use-featured-character-cards";
 import { getCharacterProfileColors } from "../components/tracker-character-profile-style";
@@ -36,11 +38,7 @@ const TRACKER_SPRITE_MESSAGE_LIMIT = 20;
 
 function useTrackerSpriteMessages(chatId: string | null, enabled: boolean) {
   return useQuery({
-    queryKey: [
-      ...chatKeys.messages(chatId ?? ""),
-      "tracker-sprite-expressions",
-      TRACKER_SPRITE_MESSAGE_LIMIT,
-    ],
+    queryKey: [...chatKeys.messages(chatId ?? ""), "tracker-sprite-expressions", TRACKER_SPRITE_MESSAGE_LIMIT],
     queryFn: () =>
       storageApi
         .listChatMessages<Message>(chatId!, { limit: TRACKER_SPRITE_MESSAGE_LIMIT })

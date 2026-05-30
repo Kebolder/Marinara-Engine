@@ -67,9 +67,7 @@ describe("resolveMacros character instruction macros", () => {
   it("resolves character instruction macros from the active character fields", () => {
     const resolved = resolveMacros("Sys: {{charSysInfo}}\nPost: {{charPostHistory}}", conditionalContext());
 
-    expect(resolved).toBe(
-      "Sys: Prioritize clinical precision.\nPost: Keep experiments consistent after chat history.",
-    );
+    expect(resolved).toBe("Sys: Prioritize clinical precision.\nPost: Keep experiments consistent after chat history.");
   });
 
   it("resolves nested macros inside active character instruction fields", () => {
@@ -207,9 +205,7 @@ describe("resolveMacros conditional blocks", () => {
     );
 
     expect(resolveMacros("{{#if off}}Enabled{{else}}Disabled{{/if}}", conditionalContext())).toBe("Disabled");
-    expect(resolveMacros("{{#if missingFlag}}Enabled{{else}}Disabled{{/if}}", conditionalContext())).toBe(
-      "Disabled",
-    );
+    expect(resolveMacros("{{#if missingFlag}}Enabled{{else}}Disabled{{/if}}", conditionalContext())).toBe("Disabled");
   });
 
   it("supports legacy comparisons and aliases", () => {
@@ -223,9 +219,7 @@ describe("resolveMacros conditional blocks", () => {
   it("supports nested macro operands in condition expressions", () => {
     const ctx = conditionalContext({ variables: { target: "Dottore" } });
 
-    expect(resolveMacros('{{#if {{getvar::target}} == {{char}}}}Matched{{else}}Missed{{/if}}', ctx)).toBe(
-      "Matched",
-    );
+    expect(resolveMacros("{{#if {{getvar::target}} == {{char}}}}Matched{{else}}Missed{{/if}}", ctx)).toBe("Matched");
     expect(resolveMacros('{{#if "{{char}}" == "Dottore"}}Quoted{{else}}Missed{{/if}}', ctx)).toBe("Quoted");
   });
 

@@ -1,6 +1,16 @@
 import type { DirectionCommand } from "../../../contracts/types/game";
-import type { SceneAnalysis, SceneIllustrationRequest, SceneSegmentEffect, SceneSpotifyTrackCandidate, SceneSpotifyTrackSelection } from "../../../contracts/types/scene";
-import { normalizeLocationKind, normalizeMusicGenre, normalizeMusicIntensity } from "../../../shared/scoring/music-score";
+import type {
+  SceneAnalysis,
+  SceneIllustrationRequest,
+  SceneSegmentEffect,
+  SceneSpotifyTrackCandidate,
+  SceneSpotifyTrackSelection,
+} from "../../../contracts/types/scene";
+import {
+  normalizeLocationKind,
+  normalizeMusicGenre,
+  normalizeMusicIntensity,
+} from "../../../shared/scoring/music-score";
 
 const logger = {
   debug: (..._args: unknown[]) => undefined,
@@ -376,7 +386,11 @@ export function postProcessSceneResult(raw: SceneAnalysis, ctx: PostProcessConte
     : null;
 
   // ── Background ──
-  if (typeof result.background === "string" && result.background && !ctx.availableBackgrounds.includes(result.background)) {
+  if (
+    typeof result.background === "string" &&
+    result.background &&
+    !ctx.availableBackgrounds.includes(result.background)
+  ) {
     // If the model already output a backgrounds:generated:* tag, leave it as-is
     if (result.background.startsWith("backgrounds:generated:") && ctx.canGenerateBackgrounds) {
       // Already valid generated format — no change needed

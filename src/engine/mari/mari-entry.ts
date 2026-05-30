@@ -105,7 +105,9 @@ export async function runProfessorMariEntry(input: MariEntryRequest, gateway: Ma
   });
   const content = typeof response.content === "string" ? response.content : "";
   if (!content.trim()) {
-    throw new Error("Professor Mari returned an empty response. Try again or select a different tool-capable connection.");
+    throw new Error(
+      "Professor Mari returned an empty response. Try again or select a different tool-capable connection.",
+    );
   }
   return {
     ...response,
@@ -116,10 +118,7 @@ export async function runProfessorMariEntry(input: MariEntryRequest, gateway: Ma
 
 function normalizeMariEntryAction(value: unknown): MariEntryAction {
   if (!isRecord(value)) return MARI_DEFAULT_ACTION;
-  if (
-    value.type === "none" &&
-    (value.capability === "read_only" || value.capability === "workspace_agent")
-  ) {
+  if (value.type === "none" && (value.capability === "read_only" || value.capability === "workspace_agent")) {
     return {
       type: "none",
       capability: value.capability,

@@ -96,37 +96,40 @@ describe("remote LLM stream cancellation", () => {
   it.each([
     ["500", "fake provider 500", 500],
     ["429", "fake provider 429", 429],
-  ])("surfaces provider messages from remote stream error events for HTTP %s recovery", async (_scenario, message, status) => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        `data: ${JSON.stringify({
-          type: "error",
+  ])(
+    "surfaces provider messages from remote stream error events for HTTP %s recovery",
+    async (_scenario, message, status) => {
+      fetchMock.mockResolvedValue(
+        new Response(
+          `data: ${JSON.stringify({
+            type: "error",
+            code: "provider_error",
+            message,
+            data: { status },
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+
+      const consumeStream = async () => {
+        for await (const _chunk of streamRemoteLlm(
+          `stream-${status}`,
+          { model: "marinara-fake", messages: [{ role: "user", content: "trigger provider failure" }] },
+          { baseUrl: "http://127.0.0.1:8787" },
+        )) {
+          // The fake stream only emits an error event.
+        }
+      };
+
+      await expect(consumeStream()).rejects.toMatchObject({
+        message,
+        status,
+        details: {
           code: "provider_error",
-          message,
-          data: { status },
-        })}\n\n`,
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      ),
-    );
-
-    const consumeStream = async () => {
-      for await (const _chunk of streamRemoteLlm(
-        `stream-${status}`,
-        { model: "marinara-fake", messages: [{ role: "user", content: "trigger provider failure" }] },
-        { baseUrl: "http://127.0.0.1:8787" },
-      )) {
-        // The fake stream only emits an error event.
-      }
-    };
-
-    await expect(consumeStream()).rejects.toMatchObject({
-      message,
-      status,
-      details: {
-        code: "provider_error",
-      },
-    });
-  });
+        },
+      });
+    },
+  );
 
   it.each([
     ["text", { type: "error", text: "legacy text failure" }, "legacy text failure"],

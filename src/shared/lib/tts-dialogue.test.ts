@@ -31,11 +31,15 @@ const baseConfig: TTSConfig = {
 
 describe("TTS dialogue routing", () => {
   it("routes prose to narrator voice and quoted dialogue to the fallback character", () => {
-    const requests = buildTTSVoiceRequests('She smiles. "Come here." Then waits.', {
-      ...baseConfig,
-      narratorVoiceEnabled: true,
-      narratorVoice: "nova",
-    }, "Ada");
+    const requests = buildTTSVoiceRequests(
+      'She smiles. "Come here." Then waits.',
+      {
+        ...baseConfig,
+        narratorVoiceEnabled: true,
+        narratorVoice: "nova",
+      },
+      "Ada",
+    );
 
     expect(requests).toEqual([
       expect.objectContaining({ text: "She smiles.", speaker: "Narrator", voice: "nova" }),
@@ -45,11 +49,15 @@ describe("TTS dialogue routing", () => {
   });
 
   it("keeps action-only chunks on narrator voice when narrator splitting is enabled", () => {
-    const requests = buildTTSVoiceRequests("She crosses the room without speaking.", {
-      ...baseConfig,
-      narratorVoiceEnabled: true,
-      narratorVoice: "nova",
-    }, "Ada");
+    const requests = buildTTSVoiceRequests(
+      "She crosses the room without speaking.",
+      {
+        ...baseConfig,
+        narratorVoiceEnabled: true,
+        narratorVoice: "nova",
+      },
+      "Ada",
+    );
 
     expect(requests).toEqual([
       expect.objectContaining({ text: "She crosses the room without speaking.", speaker: "Narrator", voice: "nova" }),
@@ -60,16 +68,20 @@ describe("TTS dialogue routing", () => {
     const requests = buildTTSVoiceRequests('She smiles. "Come here."', baseConfig, "Ada");
 
     expect(requests).toEqual([
-      expect.objectContaining({ text: "She smiles. \"Come here.\"", speaker: "Ada", voice: "alloy" }),
+      expect.objectContaining({ text: 'She smiles. "Come here."', speaker: "Ada", voice: "alloy" }),
     ]);
   });
 
   it("supports doubled ASCII quotes as dialogue delimiters", () => {
-    const requests = buildTTSVoiceRequests('She whispers, ""Stay close.""', {
-      ...baseConfig,
-      narratorVoiceEnabled: true,
-      narratorVoice: "nova",
-    }, "Ada");
+    const requests = buildTTSVoiceRequests(
+      'She whispers, ""Stay close.""',
+      {
+        ...baseConfig,
+        narratorVoiceEnabled: true,
+        narratorVoice: "nova",
+      },
+      "Ada",
+    );
 
     expect(requests).toEqual([
       expect.objectContaining({ text: "She whispers,", speaker: "Narrator", voice: "nova" }),
@@ -78,14 +90,16 @@ describe("TTS dialogue routing", () => {
   });
 
   it("does not treat a real fallback speaker named Narrator as synthetic narration", () => {
-    const requests = buildTTSVoiceRequests('"Line."', {
-      ...baseConfig,
-      narratorVoiceEnabled: true,
-      narratorVoice: "nova",
-    }, "Narrator");
+    const requests = buildTTSVoiceRequests(
+      '"Line."',
+      {
+        ...baseConfig,
+        narratorVoiceEnabled: true,
+        narratorVoice: "nova",
+      },
+      "Narrator",
+    );
 
-    expect(requests).toEqual([
-      expect.objectContaining({ text: "Line.", speaker: "Narrator", voice: "alloy" }),
-    ]);
+    expect(requests).toEqual([expect.objectContaining({ text: "Line.", speaker: "Narrator", voice: "alloy" })]);
   });
 });

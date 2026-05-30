@@ -196,7 +196,12 @@ type PromptOverride = {
   prompt?: string;
 };
 
-type GameJsonRepairKind = "game_setup" | "game_map" | "session_conclusion" | "session_lorebook" | "campaign_progression";
+type GameJsonRepairKind =
+  | "game_setup"
+  | "game_map"
+  | "session_conclusion"
+  | "session_lorebook"
+  | "campaign_progression";
 
 type GameJsonRepairContext = {
   kind: GameJsonRepairKind;
@@ -545,7 +550,13 @@ function normalizeGeneratedMap(raw: unknown, fallback: GameMap): GameMap | null 
     const fallbackCell = cells.find((cell) => cell.discovered) ?? cells[0]!;
     const fallbackPosition = { x: fallbackCell.x, y: fallbackCell.y };
     const knownCoordinates = new Set(cells.map((cell) => `${cell.x},${cell.y}`));
-    const partyPosition = normalizeGridPartyPosition(record.partyPosition, fallbackPosition, width, height, knownCoordinates);
+    const partyPosition = normalizeGridPartyPosition(
+      record.partyPosition,
+      fallbackPosition,
+      width,
+      height,
+      knownCoordinates,
+    );
     return {
       ...base,
       type: "grid",

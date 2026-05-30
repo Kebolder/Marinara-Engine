@@ -46,8 +46,9 @@ function makeStubDeps(
     defaultParameters: {},
   };
   const customTools = options.customTools ?? [];
-  const initialMessages =
-    options.initialMessages ?? [{ id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" }];
+  const initialMessages = options.initialMessages ?? [
+    { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" },
+  ];
 
   const messagesById = new Map(initialMessages.map((message) => [String(message.id), message]));
   const allMessages = [...initialMessages];
@@ -85,9 +86,7 @@ function makeStubDeps(
     }
     return { id, ...patch };
   });
-  const customToolsExecute = vi.fn(
-    options.customToolExecuteImpl ?? (async () => ({ ok: true })),
-  );
+  const customToolsExecute = vi.fn(options.customToolExecuteImpl ?? (async () => ({ ok: true })));
 
   const storage: StorageGateway = {
     get: vi.fn(async (entity: string, id: string) => {
@@ -157,9 +156,7 @@ function makeStubDeps(
 
 type CollectedEvent = { type: string; data: unknown };
 
-async function collectEvents(
-  gen: AsyncGenerator<{ type: string; data?: unknown }>,
-): Promise<CollectedEvent[]> {
+async function collectEvents(gen: AsyncGenerator<{ type: string; data?: unknown }>): Promise<CollectedEvent[]> {
   const events: CollectedEvent[] = [];
   for await (const event of gen) {
     events.push({ type: event.type, data: event.data });
@@ -222,10 +219,7 @@ describe("row 1 — Spotify tool excluded from main path", () => {
 describe("row 2 — infinite tool loop terminates at MAX_MAIN_TOOL_ITERATIONS = 8", () => {
   it("stops after 8 stream calls and emits the iteration-cap phase event", async () => {
     // 10 turns of repeated roll_dice — should cap at 8.
-    const turn: LlmChunk[] = [
-      { type: "token", text: "rolling..." },
-      toolCallChunk("roll_dice", { notation: "1d6" }),
-    ];
+    const turn: LlmChunk[] = [{ type: "token", text: "rolling..." }, toolCallChunk("roll_dice", { notation: "1d6" })];
     const turns: LlmChunk[][] = Array.from({ length: 10 }, () => turn);
     const { deps, streamedRequests } = makeStubDeps({
       chatMetadata: { enableTools: true, activeToolIds: ["roll_dice"] },
@@ -243,8 +237,7 @@ describe("row 2 — infinite tool loop terminates at MAX_MAIN_TOOL_ITERATIONS = 
     expect(streamedRequests).toHaveLength(8);
     const phaseEvents = events.filter((event) => event.type === "phase");
     const capPhase = phaseEvents.find(
-      (event) =>
-        typeof event.data === "string" && event.data.includes("Tool-call iteration limit (8)"),
+      (event) => typeof event.data === "string" && event.data.includes("Tool-call iteration limit (8)"),
     );
     expect(capPhase).toBeTruthy();
   });
@@ -625,12 +618,7 @@ describe("row 7 — empty activeToolIds with enableTools: true exposes the expec
     expect(names).toContain("trigger_event");
     expect(names).toContain("search_lorebook");
     // Agent-only must be absent:
-    for (const agentOnly of [
-      "read_chat_summary",
-      "append_chat_summary",
-      "read_chat_variable",
-      "write_chat_variable",
-    ]) {
+    for (const agentOnly of ["read_chat_summary", "append_chat_summary", "read_chat_variable", "write_chat_variable"]) {
       expect(names.has(agentOnly)).toBe(false);
     }
     // Spotify must be absent on the main path:
@@ -766,9 +754,7 @@ describe("row 8 — mid-loop abort propagates cleanly", () => {
     const toolCalls = events.filter((event) => event.type === "tool_call");
     const toolResults = events.filter((event) => event.type === "tool_result");
     expect(toolCalls.length).toBe(toolResults.length);
-    const callIds = new Set(
-      toolCalls.map((event) => (event.data as { id: string }).id),
-    );
+    const callIds = new Set(toolCalls.map((event) => (event.data as { id: string }).id));
     for (const result of toolResults) {
       expect(callIds.has((result.data as { toolCallId: string }).toolCallId)).toBe(true);
     }
@@ -787,10 +773,7 @@ describe("row 8 — mid-loop abort propagates cleanly", () => {
 describe("row 9 — Branch B (directMessages) tool loop matches Branch A behavior", () => {
   it("directMessages path runs the same multi-turn tool loop and caps at 8 iterations", async () => {
     // 10 turns of repeated roll_dice with directMessages — should also cap at 8.
-    const turn: LlmChunk[] = [
-      { type: "token", text: "x" },
-      toolCallChunk("roll_dice", { notation: "1d6" }),
-    ];
+    const turn: LlmChunk[] = [{ type: "token", text: "x" }, toolCallChunk("roll_dice", { notation: "1d6" })];
     const turns: LlmChunk[][] = Array.from({ length: 10 }, () => turn);
     const { deps, streamedRequests } = makeStubDeps({
       chatMetadata: { enableTools: true, activeToolIds: ["roll_dice"] },
@@ -1033,7 +1016,9 @@ describe("row 10 — custom-tool name collision with built-in: built-in wins, no
 
     await collectEvents(startGeneration(deps, { chatId: "chat-1", message: "go" }));
 
-    const assistantCall = createChatMessage.mock.calls.find(([, body]) => (body as Record<string, unknown>).role === "assistant");
+    const assistantCall = createChatMessage.mock.calls.find(
+      ([, body]) => (body as Record<string, unknown>).role === "assistant",
+    );
     expect(assistantCall).toBeDefined();
     const generationInfo = (assistantCall![1] as { generationInfo: { usage: Record<string, number> } }).generationInfo;
     expect(generationInfo.usage.promptTokens).toBe(250);

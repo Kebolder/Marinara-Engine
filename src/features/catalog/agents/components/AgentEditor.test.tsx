@@ -33,7 +33,11 @@ vi.mock("../hooks/use-agents", () => {
   const EMPTY: never[] = [];
   const noop = { mutateAsync: vi.fn(), isPending: false };
   return {
-    agentKeys: { all: ["agents"], detail: (id: string) => ["agents", id], customRuns: (id: string) => ["agents", "runs", "custom", id] },
+    agentKeys: {
+      all: ["agents"],
+      detail: (id: string) => ["agents", id],
+      customRuns: (id: string) => ["agents", "runs", "custom", id],
+    },
     useAgentConfigs: () => ({ data: EMPTY }),
     useUpdateAgent: () => noop,
     useCreateAgent: () => noop,

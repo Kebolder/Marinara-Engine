@@ -96,7 +96,8 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
     .sort((a, b) => {
       const aIndex = orderIndex.get(stringValue(a.id));
       const bIndex = orderIndex.get(stringValue(b.id));
-      if (aIndex != null || bIndex != null) return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+      if (aIndex != null || bIndex != null)
+        return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
       return orderValue(a) - orderValue(b);
     });
 
@@ -109,10 +110,13 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
     ? [
         "[Preset Variables]",
         ...choiceBlocks.map((block) => {
-          const label = stringValue(block.label) || stringValue(block.name) || stringValue(block.variableName) || "Variable";
+          const label =
+            stringValue(block.label) || stringValue(block.name) || stringValue(block.variableName) || "Variable";
           const options = Array.isArray(block.options)
             ? block.options
-                .map((option) => (isRecord(option) ? stringValue(option.label) || stringValue(option.value) : stringValue(option)))
+                .map((option) =>
+                  isRecord(option) ? stringValue(option.label) || stringValue(option.value) : stringValue(option),
+                )
                 .filter(Boolean)
                 .join(", ")
             : "";
@@ -126,7 +130,9 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
       const role = (stringValue(section.role) || "system").toUpperCase();
       const content = stringValue(section.content);
       const group = groupById.get(stringValue(section.groupId));
-      const groupLabel = group ? ` | Group: ${stringValue(group.name) || stringValue(group.label) || stringValue(group.id)}` : "";
+      const groupLabel = group
+        ? ` | Group: ${stringValue(group.name) || stringValue(group.label) || stringValue(group.id)}`
+        : "";
       return `[Message ${index + 1} | ${role} | ${name}${groupLabel}]\n${content.trim() ? content : "(empty)"}`;
     })
     .join("\n\n---\n\n");

@@ -1,4 +1,9 @@
-import type { DirectionCommand, DirectionEffect, SkillCheckResult, WidgetUpdate } from "../../../../engine/contracts/types/game";
+import type {
+  DirectionCommand,
+  DirectionEffect,
+  SkillCheckResult,
+  WidgetUpdate,
+} from "../../../../engine/contracts/types/game";
 
 export interface CombatEncounterTag {
   enemies: Array<{
@@ -675,9 +680,7 @@ export function parseSegmentInventoryUpdates(content: string): SegmentInventoryU
     }
 
     const isStandaloneSegment =
-      readablePlaceholderRe.test(line) ||
-      partyLineRegex.test(line) ||
-      compactDialogueRegex.test(line);
+      readablePlaceholderRe.test(line) || partyLineRegex.test(line) || compactDialogueRegex.test(line);
 
     if (isStandaloneSegment) {
       if (fallbackActive) {

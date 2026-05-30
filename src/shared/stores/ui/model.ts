@@ -128,7 +128,8 @@ export function normalizeTrackerPanelSizeProfile(value: unknown, legacyWidth?: u
     return value as TrackerPanelSizeProfile;
   }
 
-  const width = typeof legacyWidth === "number" && Number.isFinite(legacyWidth) ? clampTrackerPanelWidth(legacyWidth) : null;
+  const width =
+    typeof legacyWidth === "number" && Number.isFinite(legacyWidth) ? clampTrackerPanelWidth(legacyWidth) : null;
   if (width !== null) {
     if (width <= 300) return "compact";
     if (width >= 380) return "expanded";
@@ -176,8 +177,7 @@ export function normalizeTrackerPanelSectionOrder(value: unknown): TrackerPanelS
 
 export function normalizeSummaryPopoverSettings(value: unknown): SummaryPopoverSettings {
   const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-  const numberOrNull = (next: unknown) =>
-    typeof next === "number" && Number.isFinite(next) ? Math.round(next) : null;
+  const numberOrNull = (next: unknown) => (typeof next === "number" && Number.isFinite(next) ? Math.round(next) : null);
   return {
     sourceMode: raw.sourceMode === "range" ? "range" : "last",
     contextSize: numberOrNull(raw.contextSize),

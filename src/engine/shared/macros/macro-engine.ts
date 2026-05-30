@@ -2,12 +2,7 @@
 // Macro Engine — {{user}}, {{char}}, {{date}}, etc.
 // ──────────────────────────────────────────────
 
-import {
-  formatZonedDate,
-  formatZonedIsoDateTime,
-  formatZonedTime,
-  getZonedWeekdayName,
-} from "../time/timezone";
+import { formatZonedDate, formatZonedIsoDateTime, formatZonedTime, getZonedWeekdayName } from "../time/timezone";
 
 export interface MacroContext {
   user: string;
@@ -458,8 +453,7 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext, state: MacroR
 function parseConditionExpression(condition: string): { left: string; operator: string; right?: string } {
   const symbolicMatch = condition.match(/^(.+?)\s*(==|!=|=)\s*(.+)$/i);
   const wordMatch =
-    symbolicMatch ??
-    condition.match(/^(.+?)\s+(is\s+not|not\s+contains|not\s+includes|contains|includes|is)\s+(.+)$/i);
+    symbolicMatch ?? condition.match(/^(.+?)\s+(is\s+not|not\s+contains|not\s+includes|contains|includes|is)\s+(.+)$/i);
   if (!wordMatch) return { left: condition.trim(), operator: "truthy" };
   return {
     left: wordMatch[1]?.trim() ?? "",
@@ -786,9 +780,8 @@ function resolveMacrosWithState(
   result = result.replace(/\{\{charSysInfo\}\}/gi, () =>
     resolveContextCharacterFieldValue(ctx, "systemPrompt", state.characterFieldDepth),
   );
-  result = result.replace(
-    /\{\{charPostHistory\}\}/gi,
-    () => resolveContextCharacterFieldValue(ctx, "postHistoryInstructions", state.characterFieldDepth),
+  result = result.replace(/\{\{charPostHistory\}\}/gi, () =>
+    resolveContextCharacterFieldValue(ctx, "postHistoryInstructions", state.characterFieldDepth),
   );
 
   // ── Static substitutions ──
@@ -856,7 +849,12 @@ function resolveMacrosWithState(
       case "getvar":
         return ctx.variables[name] ?? "";
       case "setvar":
-        ctx.variables[name] = resolveMacrosWithState(writeMatch?.[3] ?? "", ctx, { ...options, trimResult: false }, state);
+        ctx.variables[name] = resolveMacrosWithState(
+          writeMatch?.[3] ?? "",
+          ctx,
+          { ...options, trimResult: false },
+          state,
+        );
         return "";
       case "addvar":
         ctx.variables[name] =

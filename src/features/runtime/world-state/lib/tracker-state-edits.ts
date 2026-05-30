@@ -24,11 +24,7 @@ export function appendTrackerListItem<T>(items: readonly T[], item: T): T[] {
   return [...items, item];
 }
 
-function mergeChangedTrackerFields<T extends object>(
-  previous: T | undefined,
-  latest: T | undefined,
-  next: T,
-): T {
+function mergeChangedTrackerFields<T extends object>(previous: T | undefined, latest: T | undefined, next: T): T {
   const merged = { ...(latest ?? previous ?? next) } as T;
   for (const key of Object.keys(next) as Array<keyof T>) {
     if (!previous || !Object.is(next[key], previous[key])) {
@@ -92,11 +88,7 @@ function mergeKeyedTrackerListItemUpdate<T extends object>(
   if (latestIndex === null) return [...latestItems];
   const latestItem = latestItems[latestIndex];
   if (!latestItem && latestIndex >= latestItems.length) return [...latestItems];
-  return replaceTrackerListItem(
-    latestItems,
-    latestIndex,
-    mergeItem(previousItems[index], latestItem, nextItem),
-  );
+  return replaceTrackerListItem(latestItems, latestIndex, mergeItem(previousItems[index], latestItem, nextItem));
 }
 
 function removeKeyedTrackerListItem<T>(
@@ -394,9 +386,7 @@ export function createManualQuest(options: Partial<QuestProgress> = {}): QuestPr
   };
 }
 
-export function createManualCustomTrackerField(
-  options: Partial<CustomTrackerField> = {},
-): CustomTrackerField {
+export function createManualCustomTrackerField(options: Partial<CustomTrackerField> = {}): CustomTrackerField {
   return {
     name: options.name ?? "New Field",
     value: options.value ?? "",
@@ -438,10 +428,7 @@ export function updatePresentCharacterCustomField(
   return { ...character, customFields: nextFields };
 }
 
-export function addQuestObjective(
-  quest: QuestProgress,
-  objective = createManualQuestObjective(),
-): QuestProgress {
+export function addQuestObjective(quest: QuestProgress, objective = createManualQuestObjective()): QuestProgress {
   return {
     ...quest,
     objectives: appendTrackerListItem(quest.objectives, objective),

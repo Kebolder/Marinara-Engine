@@ -1,4 +1,10 @@
-import type { ActivationCondition, LorebookEntry, LorebookFilterMode, LorebookMatchingSource, LorebookSchedule } from "../../contracts/types/lorebook";
+import type {
+  ActivationCondition,
+  LorebookEntry,
+  LorebookFilterMode,
+  LorebookMatchingSource,
+  LorebookSchedule,
+} from "../../contracts/types/lorebook";
 import { testPrimaryKeys, testSecondaryKeys } from "../../shared/regex/lorebook-keyword-matching";
 import { vmRegexExecutor } from "./regex-timeout.js";
 

@@ -27,7 +27,13 @@ import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { useGenerate } from "../../../runtime/generation/index";
 import { useApplyRegex } from "../../../catalog/agents/regex-application";
-import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../../catalog/chats/index";
+import {
+  useCreateMessage,
+  useDeleteMessage,
+  useUpdateMessageExtra,
+  useChat,
+  chatKeys,
+} from "../../../catalog/chats/index";
 import { characterKeys, useActivePersona, usePersona, useUpdatePersona } from "../../../catalog/characters/index";
 import {
   matchSlashCommand,

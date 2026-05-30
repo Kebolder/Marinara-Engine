@@ -97,11 +97,7 @@ async function createPromptNested<T>(
   return created;
 }
 
-async function updatePromptNested<T>(
-  kind: PromptNestedKind,
-  id: string,
-  data: Record<string, unknown>,
-): Promise<T> {
+async function updatePromptNested<T>(kind: PromptNestedKind, id: string, data: Record<string, unknown>): Promise<T> {
   return storageApi.update<T>(promptNestedEntity[kind], id, data);
 }
 
@@ -109,11 +105,7 @@ async function deletePromptNested(kind: PromptNestedKind, id: string) {
   return storageApi.delete(promptNestedEntity[kind], id);
 }
 
-async function reorderPromptNested<T>(
-  presetId: string,
-  kind: PromptNestedKind,
-  ids: string[],
-): Promise<T[]> {
+async function reorderPromptNested<T>(presetId: string, kind: PromptNestedKind, ids: string[]): Promise<T[]> {
   const entity = promptNestedEntity[kind];
   await Promise.all(
     ids.map((id, index) =>
@@ -302,7 +294,11 @@ export function useCreateSection() {
 export function useUpdateSection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ presetId, sectionId, ...data }: { presetId: string; sectionId: string } & Record<string, unknown>) => {
+    mutationFn: ({
+      presetId,
+      sectionId,
+      ...data
+    }: { presetId: string; sectionId: string } & Record<string, unknown>) => {
       void presetId;
       return updatePromptNested<PromptSection>("sections", sectionId, data);
     },

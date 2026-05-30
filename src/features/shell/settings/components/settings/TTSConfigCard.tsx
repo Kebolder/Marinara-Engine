@@ -1006,7 +1006,9 @@ export function TTSConfigCard() {
                     >
                       {source === "elevenlabs" && <option value="">Select narrator voice</option>}
                       {fetchingVoices && <option value="">Loading voices&hellip;</option>}
-                      {!fetchingVoices && voiceOptions.length === 0 && <option value="">Save config to load voices</option>}
+                      {!fetchingVoices && voiceOptions.length === 0 && (
+                        <option value="">Save config to load voices</option>
+                      )}
                       {voiceOptions.map((option) => (
                         <option key={option.id} value={option.id}>
                           {option.name === option.id ? option.id : `${option.name} (${option.id})`}

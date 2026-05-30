@@ -55,7 +55,8 @@ export function QuickPersonaSwitcher({ className }: { className?: string }) {
     .slice()
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
-  const activePersona = personas.find((p) => p.id === activePersonaId) ?? (activePersonaRecord as Persona | null) ?? null;
+  const activePersona =
+    personas.find((p) => p.id === activePersonaId) ?? (activePersonaRecord as Persona | null) ?? null;
 
   // Build a map for quick lookups
   const personaMap = useMemo(() => {

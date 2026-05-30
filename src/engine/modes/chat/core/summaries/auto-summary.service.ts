@@ -79,7 +79,8 @@ function parseRecord(value: unknown): JsonRecord {
 }
 
 function stringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  if (Array.isArray(value))
+    return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
@@ -112,9 +113,7 @@ function createSummaryProvider(llm: LlmGateway, connection: JsonRecord): BaseLLM
     async chatComplete(messages, options) {
       const requestMessages: LlmMessage[] = messages.map((message) => ({
         role:
-          message.role === "system" || message.role === "assistant" || message.role === "tool"
-            ? message.role
-            : "user",
+          message.role === "system" || message.role === "assistant" || message.role === "tool" ? message.role : "user",
         content: String(message.content ?? ""),
         name: message.name,
       }));
@@ -162,7 +161,9 @@ async function resolveSummaryConnection(
 
 async function loadScopedMessages(storage: StorageGateway, chatId: string): Promise<ConversationSummaryMessage[]> {
   const rows = await storage.listChatMessages<unknown>(chatId);
-  const messages = Array.isArray(rows) ? rows.filter((row): row is JsonRecord => !!row && typeof row === "object" && !Array.isArray(row)) : [];
+  const messages = Array.isArray(rows)
+    ? rows.filter((row): row is JsonRecord => !!row && typeof row === "object" && !Array.isArray(row))
+    : [];
   let startIndex = 0;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (parseRecord(messages[index]!.extra).isConversationStart === true) {

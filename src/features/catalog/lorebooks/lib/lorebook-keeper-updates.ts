@@ -175,7 +175,9 @@ async function findExistingEntry(update: PendingLorebookUpdate): Promise<Loreboo
     const entry = await storageApi.get<LorebookEntry>("lorebook-entries", update.entryId).catch(() => null);
     if (entry?.lorebookId === update.lorebookId) return entry;
   }
-  const entries = await storageApi.list<LorebookEntry>("lorebook-entries", { filters: { lorebookId: update.lorebookId } });
+  const entries = await storageApi.list<LorebookEntry>("lorebook-entries", {
+    filters: { lorebookId: update.lorebookId },
+  });
   const targetName = update.entryName.trim().toLowerCase();
   return entries.find((entry) => entry.name.trim().toLowerCase() === targetName) ?? null;
 }
@@ -184,7 +186,10 @@ function appendLoreFacts(existingContent: string, update: PendingLorebookUpdate)
   const additions = uniqueStrings([
     ...update.newFacts,
     ...(update.content && !existingContent.trim() ? [update.content] : []),
-    ...(update.content && existingContent.trim() && !existingContent.includes(update.content) && update.newFacts.length === 0
+    ...(update.content &&
+    existingContent.trim() &&
+    !existingContent.includes(update.content) &&
+    update.newFacts.length === 0
       ? [update.content]
       : []),
   ]).filter((fact) => !existingContent.toLowerCase().includes(fact.toLowerCase()));

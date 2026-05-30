@@ -1356,8 +1356,7 @@ export function useGenerate() {
                 includeAppearances: useUIStore.getState().imagePromptIncludeAppearances,
                 format: useUIStore.getState().imagePromptFormat,
               },
-              hideAutomatedSummarySourceMessages:
-                useUIStore.getState().summaryPopoverSettings.hideSummarizedMessages,
+              hideAutomatedSummarySourceMessages: useUIStore.getState().summaryPopoverSettings.hideSummarizedMessages,
               debugMode: useUIStore.getState().debugMode,
               debugSink: enqueueAgentDebugEntry,
             },
@@ -1406,8 +1405,7 @@ export function useGenerate() {
           {
             chatId,
             agentTypes,
-            hideAutomatedSummarySourceMessages:
-              useUIStore.getState().summaryPopoverSettings.hideSummarizedMessages,
+            hideAutomatedSummarySourceMessages: useUIStore.getState().summaryPopoverSettings.hideSummarizedMessages,
             options: { ...(options ?? {}), bypassActivation: options?.bypassActivation ?? true },
           },
         );

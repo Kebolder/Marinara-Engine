@@ -144,7 +144,10 @@ describe("llmApi stream cancellation", () => {
     await expect(next).rejects.toMatchObject({ name: "AbortError" });
     await Promise.resolve();
 
-    expect(invokeMock).toHaveBeenCalledWith("llm_stream_cancel", expect.objectContaining({ streamId: expect.any(String) }));
+    expect(invokeMock).toHaveBeenCalledWith(
+      "llm_stream_cancel",
+      expect.objectContaining({ streamId: expect.any(String) }),
+    );
     expect(warn).not.toHaveBeenCalled();
   });
 });

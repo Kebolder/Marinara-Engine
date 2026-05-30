@@ -171,7 +171,10 @@ export async function loadRegisteredPrompt<TContext extends Record<string, strin
   context: TContext,
 ): Promise<string> {
   try {
-    const row = normalizePromptOverrideRow(await storage.get(PROMPT_OVERRIDE_COLLECTION, definition.key), definition.key);
+    const row = normalizePromptOverrideRow(
+      await storage.get(PROMPT_OVERRIDE_COLLECTION, definition.key),
+      definition.key,
+    );
     if (row?.enabled) {
       const declared = definition.variables.map((variable) => variable.name);
       const validation = validatePromptOverrideTemplate(row.template, declared);

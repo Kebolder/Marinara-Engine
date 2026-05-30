@@ -2015,12 +2015,7 @@ export const ChatMessage = memo(function ChatMessage({
                 dark
               />
               {onEdit && (
-                <ActionBtn
-                  icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />}
-                  onClick={startEditing}
-                  title="Edit"
-                  dark
-                />
+                <ActionBtn icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />} onClick={startEditing} title="Edit" dark />
               )}
               {onRegenerate && (
                 <ActionBtn

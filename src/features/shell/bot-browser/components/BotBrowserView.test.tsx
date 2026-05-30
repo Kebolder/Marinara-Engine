@@ -51,7 +51,10 @@ function deferred<T>() {
 }
 
 function chubSearchResult(name = "Retry Bot") {
-  const pathName = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const pathName = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
   return {
     data: {
       nodes: [
@@ -205,9 +208,9 @@ describe("BotBrowserView provider error UI", () => {
       expect(container.textContent).toContain("Retry Bot");
     });
     expect(container.textContent).not.toContain("late provider failure");
-    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Retry")).toBe(
-      false,
-    );
+    expect(
+      Array.from(container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Retry"),
+    ).toBe(false);
   });
 
   it("does not paint older results during the debounce gap after search criteria changes", async () => {

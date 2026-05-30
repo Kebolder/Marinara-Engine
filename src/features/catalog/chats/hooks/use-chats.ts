@@ -47,9 +47,7 @@ import type {
   DaySummaryEntry,
   WeekSummaryEntry,
 } from "../../../../engine/contracts/types/chat";
-import type {
-  ChatMemoryRecallImportResult,
-} from "../../../../engine/contracts/types/export";
+import type { ChatMemoryRecallImportResult } from "../../../../engine/contracts/types/export";
 
 export { chatKeys } from "../query-keys";
 export type { BulkChatExportFormat, ChatTranscriptExportFormat } from "../lib/chat-transcript-export";

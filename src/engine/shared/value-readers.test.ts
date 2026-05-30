@@ -12,5 +12,4 @@ describe("readString", () => {
     expect(readString(42, "fallback")).toBe("fallback");
     expect(readString({ value: "Nia" }, "fallback")).toBe("fallback");
   });
-
 });

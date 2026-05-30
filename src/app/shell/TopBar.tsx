@@ -31,17 +31,17 @@ export function TopBar({
   const hasOpenSurface = useUIStore((s) =>
     Boolean(
       s.characterDetailId ||
-        s.lorebookDetailId ||
-        s.presetDetailId ||
-        s.connectionDetailId ||
-        s.agentDetailId ||
-        s.toolDetailId ||
-        s.personaDetailId ||
-        s.regexDetailId ||
-        s.characterLibraryOpen ||
-        s.botBrowserOpen ||
-        s.gameAssetsBrowserOpen ||
-        s.rightPanelOpen,
+      s.lorebookDetailId ||
+      s.presetDetailId ||
+      s.connectionDetailId ||
+      s.agentDetailId ||
+      s.toolDetailId ||
+      s.personaDetailId ||
+      s.regexDetailId ||
+      s.characterLibraryOpen ||
+      s.botBrowserOpen ||
+      s.gameAssetsBrowserOpen ||
+      s.rightPanelOpen,
     ),
   );
 

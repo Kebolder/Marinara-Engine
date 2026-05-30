@@ -116,7 +116,7 @@ describe("AgentsPanel regex row enabled state", () => {
     expect(rowWrapper!.className).not.toContain("opacity-50");
   });
 
-  it("does not dim a regex row whose enabled flag is the legacy string \"1\"", async () => {
+  it('does not dim a regex row whose enabled flag is the legacy string "1"', async () => {
     storageListMock.mockImplementation(async (entity: string) => {
       if (entity === "regex-scripts") return [{ ...regexScriptRow(), enabled: "1" }] as never;
       return [] as never;
