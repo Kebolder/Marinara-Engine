@@ -17,6 +17,12 @@ const OPENAI_CHATGPT_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 const OPENAI_CHATGPT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const APP_VERSION: &str = "1.6.1";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SseBlockStatus {
+    Continue,
+    Complete,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LlmMessage {
     pub role: String,
@@ -840,16 +846,23 @@ async fn stream_openai_compatible(
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut tool_calls = OpenAiToolCallAccumulator::default();
+    let mut completed = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             AppError::new("llm_stream_error", provider_transport_error_message(error))
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(block) = take_sse_block(&mut buffer) {
-            process_openai_sse_block(&block, emit, &mut tool_calls)?;
+            if process_openai_sse_block(&block, emit, &mut tool_calls)? == SseBlockStatus::Complete {
+                completed = true;
+                break;
+            }
+        }
+        if completed {
+            break;
         }
     }
-    if !buffer.trim().is_empty() {
+    if !completed && !buffer.trim().is_empty() {
         process_openai_sse_block(&buffer, emit, &mut tool_calls)?;
     }
     for tool_call in tool_calls.into_tool_calls() {
@@ -1053,16 +1066,23 @@ async fn stream_openai_responses(
     }
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut completed = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             AppError::new("llm_stream_error", provider_transport_error_message(error))
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(block) = take_sse_block(&mut buffer) {
-            process_openai_responses_sse_block(&block, emit)?;
+            if process_openai_responses_sse_block(&block, emit)? == SseBlockStatus::Complete {
+                completed = true;
+                break;
+            }
+        }
+        if completed {
+            break;
         }
     }
-    if !buffer.trim().is_empty() {
+    if !completed && !buffer.trim().is_empty() {
         process_openai_responses_sse_block(&buffer, emit)?;
     }
     Ok(())
@@ -1071,7 +1091,7 @@ async fn stream_openai_responses(
 fn process_openai_responses_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
-) -> AppResult<()> {
+) -> AppResult<SseBlockStatus> {
     let event_name = block
         .lines()
         .find_map(|line| line.trim_start().strip_prefix("event:"))
@@ -1083,8 +1103,11 @@ fn process_openai_responses_sse_block(
         .map(str::trim)
         .collect::<Vec<_>>()
         .join("\n");
-    if payload.is_empty() || payload == "[DONE]" {
-        return Ok(());
+    if payload.is_empty() {
+        return Ok(SseBlockStatus::Continue);
+    }
+    if payload == "[DONE]" {
+        return Ok(SseBlockStatus::Complete);
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
@@ -1121,6 +1144,7 @@ fn process_openai_responses_sse_block(
             {
                 emit(json!({ "type": "usage", "data": usage }))?;
             }
+            return Ok(SseBlockStatus::Complete);
         }
         "response.failed" | "response.incomplete" | "error" => {
             return Err(AppError::with_details(
@@ -1131,7 +1155,7 @@ fn process_openai_responses_sse_block(
         }
         _ => {}
     }
-    Ok(())
+    Ok(SseBlockStatus::Continue)
 }
 
 #[derive(Default)]
@@ -1211,15 +1235,18 @@ fn process_openai_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
     tool_calls: &mut OpenAiToolCallAccumulator,
-) -> AppResult<()> {
+) -> AppResult<SseBlockStatus> {
     let payload = block
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("data:"))
         .map(str::trim)
         .collect::<Vec<_>>()
         .join("\n");
-    if payload.is_empty() || payload == "[DONE]" {
-        return Ok(());
+    if payload.is_empty() {
+        return Ok(SseBlockStatus::Continue);
+    }
+    if payload == "[DONE]" {
+        return Ok(SseBlockStatus::Complete);
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
@@ -1227,7 +1254,7 @@ fn process_openai_sse_block(
         emit(json!({ "type": "usage", "data": usage }))?;
     }
     let Some(choices) = value.get("choices").and_then(Value::as_array) else {
-        return Ok(());
+        return Ok(SseBlockStatus::Continue);
     };
     for choice in choices {
         let delta = choice.get("delta").unwrap_or(choice);
@@ -1245,7 +1272,7 @@ fn process_openai_sse_block(
             }
         }
     }
-    Ok(())
+    Ok(SseBlockStatus::Continue)
 }
 
 fn openai_message(message: &LlmMessage) -> Value {
@@ -2075,16 +2102,23 @@ async fn stream_anthropic(
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut completed = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             AppError::new("llm_stream_error", provider_transport_error_message(error))
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(block) = take_sse_block(&mut buffer) {
-            process_anthropic_sse_block(&block, emit)?;
+            if process_anthropic_sse_block(&block, emit)? == SseBlockStatus::Complete {
+                completed = true;
+                break;
+            }
+        }
+        if completed {
+            break;
         }
     }
-    if !buffer.trim().is_empty() {
+    if !completed && !buffer.trim().is_empty() {
         process_anthropic_sse_block(&buffer, emit)?;
     }
     Ok(())
@@ -2107,7 +2141,7 @@ fn emit_anthropic_usage(
 fn process_anthropic_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
-) -> AppResult<()> {
+) -> AppResult<SseBlockStatus> {
     let event_name = block
         .lines()
         .find_map(|line| line.trim_start().strip_prefix("event:"))
@@ -2119,8 +2153,11 @@ fn process_anthropic_sse_block(
         .map(str::trim)
         .collect::<Vec<_>>()
         .join("\n");
-    if payload.is_empty() || payload == "[DONE]" {
-        return Ok(());
+    if payload.is_empty() {
+        return Ok(SseBlockStatus::Continue);
+    }
+    if payload == "[DONE]" {
+        return Ok(SseBlockStatus::Complete);
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
@@ -2186,9 +2223,10 @@ fn process_anthropic_sse_block(
                 redact_sensitive_json(error),
             ));
         }
+        "message_stop" => return Ok(SseBlockStatus::Complete),
         _ => {}
     }
-    Ok(())
+    Ok(SseBlockStatus::Continue)
 }
 
 fn anthropic_endpoint(base: &str, path: &str) -> String {
@@ -2397,16 +2435,23 @@ async fn stream_google(
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut completed = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
             AppError::new("llm_stream_error", provider_transport_error_message(error))
         })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(block) = take_sse_block(&mut buffer) {
-            process_google_sse_block(&block, emit)?;
+            if process_google_sse_block(&block, emit)? == SseBlockStatus::Complete {
+                completed = true;
+                break;
+            }
+        }
+        if completed {
+            break;
         }
     }
-    if !buffer.trim().is_empty() {
+    if !completed && !buffer.trim().is_empty() {
         process_google_sse_block(&buffer, emit)?;
     }
     Ok(())
@@ -2415,15 +2460,18 @@ async fn stream_google(
 fn process_google_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
-) -> AppResult<()> {
+) -> AppResult<SseBlockStatus> {
     let payload = block
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("data:"))
         .map(str::trim)
         .collect::<Vec<_>>()
         .join("\n");
-    if payload.is_empty() || payload == "[DONE]" {
-        return Ok(());
+    if payload.is_empty() {
+        return Ok(SseBlockStatus::Continue);
+    }
+    if payload == "[DONE]" {
+        return Ok(SseBlockStatus::Complete);
     }
     let value: Value = serde_json::from_str(&payload)
         .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
@@ -2438,7 +2486,7 @@ fn process_google_sse_block(
         emit(json!({ "type": "usage", "data": usage }))?;
     }
     let Some(candidates) = value.get("candidates").and_then(Value::as_array) else {
-        return Ok(());
+        return Ok(SseBlockStatus::Continue);
     };
     for candidate in candidates {
         let Some(parts) = candidate
@@ -2466,8 +2514,16 @@ fn process_google_sse_block(
                 emit(json!({ "type": "token", "text": text, "data": text }))?;
             }
         }
+        if candidate
+            .get("finishReason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+            .is_some()
+        {
+            return Ok(SseBlockStatus::Complete);
+        }
     }
-    Ok(())
+    Ok(SseBlockStatus::Continue)
 }
 
 async fn read_error_response_details(response: reqwest::Response) -> AppResult<Value> {
@@ -2738,13 +2794,13 @@ mod tests {
             Ok(())
         };
 
-        process_openai_sse_block(
+        let first_status = process_openai_sse_block(
             r#"data: {"choices":[{"delta":{"content":"Rolling...","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"roll_dice","arguments":"{\"notation\""}}]}}]}"#,
             &mut emit,
             &mut tool_calls,
         )
         .expect("first chunk should parse");
-        process_openai_sse_block(
+        let status = process_openai_sse_block(
             r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"1d20\"}"}}]}}]}"#,
             &mut emit,
             &mut tool_calls,
@@ -2758,6 +2814,43 @@ mod tests {
         assert_eq!(calls[0]["id"], "call_1");
         assert_eq!(calls[0]["function"]["name"], "roll_dice");
         assert_eq!(calls[0]["function"]["arguments"], r#"{"notation":"1d20"}"#);
+        assert_eq!(first_status, SseBlockStatus::Continue);
+        assert_eq!(status, SseBlockStatus::Continue);
+    }
+
+    #[test]
+    fn openai_chat_stream_done_block_is_terminal() {
+        let mut emitted = Vec::new();
+        let mut tool_calls = OpenAiToolCallAccumulator::default();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_openai_sse_block("data: [DONE]", &mut emit, &mut tool_calls)
+            .expect("DONE chunk should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert!(emitted.is_empty());
+    }
+
+    #[test]
+    fn openai_responses_completed_event_is_terminal() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_openai_responses_sse_block(
+            r#"event: response.completed
+data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2}}}"#,
+            &mut emit,
+        )
+        .expect("response.completed should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert_eq!(emitted[0]["type"], json!("usage"));
     }
 
     #[test]
@@ -2929,7 +3022,7 @@ mod tests {
             Ok(())
         };
 
-        process_google_sse_block(
+        let status = process_google_sse_block(
             r#"data: {"candidates":[{"content":{"parts":[{"text":"pondering","thought":true},{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}"#,
             &mut emit,
         )
@@ -2942,6 +3035,28 @@ mod tests {
         );
         assert_eq!(
             emitted[2],
+            json!({ "type": "token", "text": "hello", "data": "hello" })
+        );
+        assert_eq!(status, SseBlockStatus::Continue);
+    }
+
+    #[test]
+    fn google_stream_finish_reason_is_terminal_after_tokens() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_google_sse_block(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}]}"#,
+            &mut emit,
+        )
+        .expect("Gemini terminal block should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert_eq!(
+            emitted[0],
             json!({ "type": "token", "text": "hello", "data": "hello" })
         );
     }
@@ -3083,7 +3198,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","
             &mut emit,
         )
         .expect("thinking delta should parse");
-        process_anthropic_sse_block(
+        let status = process_anthropic_sse_block(
             r#"event: content_block_delta
 data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}"#,
             &mut emit,
@@ -3099,6 +3214,26 @@ data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text
             emitted[2],
             json!({ "type": "token", "text": "hello", "data": "hello" })
         );
+        assert_eq!(status, SseBlockStatus::Continue);
+    }
+
+    #[test]
+    fn anthropic_stream_message_stop_is_terminal() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        let status = process_anthropic_sse_block(
+            r#"event: message_stop
+data: {"type":"message_stop"}"#,
+            &mut emit,
+        )
+        .expect("message_stop should parse");
+
+        assert_eq!(status, SseBlockStatus::Complete);
+        assert!(emitted.is_empty());
     }
 
     #[test]

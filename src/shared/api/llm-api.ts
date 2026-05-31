@@ -68,6 +68,7 @@ export const llmApi: LlmGateway = {
     let wake: (() => void) | null = null;
     let commandSettled = false;
     let cancelRequested = false;
+    let terminalEventReceived = false;
 
     const notify = () => {
       wake?.();
@@ -91,7 +92,10 @@ export const llmApi: LlmGateway = {
       const text =
         typeof event.text === "string" ? event.text : typeof event.data === "string" ? event.data : undefined;
       const normalized = text === undefined ? event : { ...event, text };
-      if (normalized.type === "done" || normalized.type === "error") completed = true;
+      if (normalized.type === "done" || normalized.type === "error") {
+        terminalEventReceived = true;
+        completed = true;
+      }
       queue.push(normalized);
       notify();
     });
@@ -125,7 +129,7 @@ export const llmApi: LlmGateway = {
         if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
         yield event;
       }
-      if (commandSettled) await command;
+      if (commandSettled || terminalEventReceived) await command;
       else cancelNativeStream();
       if (failure) throw failure;
     } finally {
