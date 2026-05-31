@@ -2242,6 +2242,73 @@ describe("startGeneration agent runtime parity", () => {
       cyoaChoices: [{ label: "Investigate", text: "I investigate the strange sound." }],
     });
   });
+
+  it("persists retried expression agent choices to the target assistant message", async () => {
+    const { deps, patchChatMessageExtra } = generationDepsForChat({
+      chatPatch: { mode: "roleplay", characterIds: ["char-dottore", "char-mari"] },
+      chatMetadata: { enableAgents: true },
+      initialMessages: [
+        { id: "user-1", chatId: "chat-1", role: "user", content: "hello" },
+        {
+          id: "assistant-1",
+          chatId: "chat-1",
+          role: "assistant",
+          content: "first reply",
+          extra: { spriteExpressions: { "char-dottore": "neutral" } },
+        },
+      ],
+      characters: [
+        { id: "char-dottore", data: { name: "Dottore", description: "Fatui scientist." } },
+        { id: "char-mari", data: { name: "Mari", description: "AI engineer." } },
+      ],
+      agents: [
+        {
+          id: "expression",
+          type: "expression",
+          name: "Expression Engine",
+          enabled: true,
+          phase: "post_processing",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Pick the visible character expression.",
+          settings: {},
+        },
+      ],
+    });
+    deps.llm = {
+      ...deps.llm,
+      stream: vi.fn(async function* () {
+        yield {
+          type: "token" as const,
+          text: [
+            '<result agent="expression">',
+            JSON.stringify({
+              expressions: [
+                { characterId: "char-dottore", characterName: "Dottore", expression: "smirk" },
+                { characterId: "char-mari", characterName: "Mari", expression: "sleepy" },
+              ],
+            }),
+            "</result>",
+          ].join("\n"),
+        };
+      }),
+    };
+
+    await retryGenerationAgents(deps, {
+      chatId: "chat-1",
+      agentTypes: ["expression"],
+      options: { forMessageId: "assistant-1" },
+    });
+
+    expect(patchChatMessageExtra).toHaveBeenCalledWith("assistant-1", {
+      spriteExpressions: {
+        "char-dottore": "smirk",
+        Dottore: "smirk",
+        "char-mari": "sleepy",
+        Mari: "sleepy",
+      },
+    });
+  });
 });
 
 describe("startGeneration Discord mirror", () => {

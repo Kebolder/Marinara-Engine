@@ -1303,7 +1303,8 @@ export const ChatInput = memo(function ChatInput({
           rows={1}
           spellCheck
           autoCorrect="on"
-          className="mari-chat-input-textarea max-h-[12.5rem] min-w-0 flex-1 resize-none bg-transparent py-0 text-sm leading-normal text-foreground/90 placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          autoCapitalize="sentences"
+          className="mari-chat-input-textarea max-h-[12.5rem] min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-normal text-foreground/90 placeholder:text-foreground/30 outline-none disabled:cursor-not-allowed disabled:opacity-40"
         />
 
         {/* Emoji picker */}

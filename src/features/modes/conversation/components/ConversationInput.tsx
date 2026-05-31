@@ -1620,10 +1620,13 @@ export function ConversationInput({
                   : "Message..."
           }
           rows={1}
+          spellCheck
+          autoCorrect="on"
+          autoCapitalize="sentences"
           onInput={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          className="max-h-[12.5rem] min-w-0 basis-full resize-none bg-transparent py-0 text-[1rem] leading-normal text-[var(--foreground)] outline-none placeholder:text-foreground/30 sm:flex-1 sm:basis-auto"
+          className="max-h-[12.5rem] min-h-[2.5rem] min-w-0 basis-full resize-none bg-transparent py-2 text-[1rem] leading-normal text-[var(--foreground)] outline-none placeholder:text-foreground/30 sm:flex-1 sm:basis-auto"
         />
 
         <div className="flex items-center gap-1.5 sm:hidden">

@@ -1811,6 +1811,10 @@ async function persistAgentMessageExtraForTarget(
     existingExtra: target?.extra,
     mergeContextInjectionUpdates: true,
   });
+  const spriteExpressions = spriteExpressionsFromAgentResults(results);
+  if (spriteExpressions && Object.keys(spriteExpressions).length > 0) {
+    extraPatch.spriteExpressions = spriteExpressions;
+  }
   if (Object.keys(extraPatch).length === 0) return;
   await storage.patchChatMessageExtra(messageId, extraPatch);
 }

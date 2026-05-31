@@ -164,14 +164,14 @@ function CrossfadeBackground({
     <>
       <div
         className={cn(
-          "mari-background absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
+          "mari-background pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
           className,
         )}
         style={{ ...blurStyle, backgroundImage: bgA ? `url(${bgA})` : "none", opacity: aActive ? 1 : 0 }}
       />
       <div
         className={cn(
-          "mari-background absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
+          "mari-background pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
           className,
         )}
         style={{ ...blurStyle, backgroundImage: bgB ? `url(${bgB})` : "none", opacity: aActive ? 0 : 1 }}
@@ -757,11 +757,11 @@ export function ChatRoleplaySurface({
   }, [activeChatId]);
 
   return (
-    <div data-component="ChatArea.Roleplay" className="flex flex-1 overflow-hidden">
-      <div className="rpg-chat-area mari-chat-area relative flex flex-1 flex-col overflow-hidden">
+    <div data-component="ChatArea.Roleplay" className="flex h-full min-h-0 flex-1 overflow-hidden">
+      <div className="rpg-chat-area mari-chat-area relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <CrossfadeBackground url={chatBackground} blurPx={chatBackgroundBlur} />
-        <div className="rpg-overlay absolute inset-0" />
-        <div className="rpg-vignette pointer-events-none absolute inset-0" />
+        <div className="rpg-overlay pointer-events-none absolute inset-0 z-0" />
+        <div className="rpg-vignette pointer-events-none absolute inset-0 z-0" />
         {weatherEffects && addonsReady && <WeatherEffectsConnected chatId={activeChatId} />}
         {showSpriteOverlay && addonsReady && (
           <Suspense fallback={null}>
@@ -781,8 +781,8 @@ export function ChatRoleplaySurface({
           </Suspense>
         )}
 
-        <div className="flex flex-1 overflow-hidden">
-          <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <>
               <div
                 data-tracker-panel-anchor="roleplay-hud"
@@ -970,7 +970,7 @@ export function ChatRoleplaySurface({
               </Suspense>
             )}
 
-            <div className={cn("relative z-10 flex-1 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div className={cn("relative z-10 min-h-0 flex-1 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div
                 ref={scrollRef}
                 data-chat-scroll
@@ -1095,7 +1095,7 @@ export function ChatRoleplaySurface({
               </div>
             </div>
 
-            <div className={cn("relative z-20", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div className={cn("relative z-20 shrink-0", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div className={cn("relative", centerCompact ? "px-3" : "px-3 md:px-[12%]")}>
                 {chatMeta.sceneStatus === "active" && (
                   <EndSceneBar
