@@ -61,7 +61,10 @@ export const llmApi: LlmGateway = {
       if (signal?.aborted) abort();
       signal?.addEventListener("abort", abort, { once: true });
       try {
-        yield* streamRemoteLlm(streamId, request, remoteTarget, signal);
+        for await (const event of streamRemoteLlm(streamId, request, remoteTarget, signal)) {
+          if (event.type === "done") continue;
+          yield event;
+        }
       } finally {
         signal?.removeEventListener("abort", abort);
       }
@@ -116,6 +119,7 @@ export const llmApi: LlmGateway = {
         commandSettled = true;
       },
       (error) => {
+        // A native command rejection is fatal; prefer surfacing it over yielding already-buffered partial tokens.
         commandSettled = true;
         failure = error;
         completed = true;
@@ -134,11 +138,13 @@ export const llmApi: LlmGateway = {
         }
         const event = queue.shift()!;
         if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
+        if (event.type === "done") continue;
         yield event;
       }
       if (commandSettled) {
         await command;
       } else if (terminalEventReceived) {
+        // command handles native success and rejection, so this race only distinguishes settled cleanup from timeout.
         const cleanedUp = await Promise.race([command.then(() => true), wait(TAURI_STREAM_TERMINAL_CLEANUP_GRACE_MS)]);
         if (!cleanedUp) cancelNativeStream();
       } else {

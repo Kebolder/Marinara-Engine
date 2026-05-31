@@ -94,6 +94,25 @@ describe("llmApi stream cancellation", () => {
     await expect(next).resolves.toMatchObject({ done: true });
   });
 
+  it("does not yield remote done events", async () => {
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(stream, { status: 200 })));
+    useUIStore.getState().setRemoteRuntimeUrl("http://127.0.0.1:8787");
+    const iterator = llmApi.stream(request);
+
+    const next = iterator.next();
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    streamController!.enqueue(sseChunk({ type: "done" }));
+    streamController!.close();
+
+    await expect(next).resolves.toMatchObject({ done: true });
+  });
+
   it("logs local cancel command failures without changing abort behavior", async () => {
     invokeMock.mockImplementation((command) => {
       if (command === "llm_stream_channel") return pendingCommand();
@@ -180,7 +199,7 @@ describe("llmApi stream cancellation", () => {
     );
   });
 
-  it("cancels local native cleanup if the terminal event arrives before the native command settles", async () => {
+  it("does not yield local done events and cancels native cleanup if the command stays unsettled", async () => {
     vi.useFakeTimers();
     invokeMock.mockImplementation((command) => {
       if (command === "llm_stream_channel") {
@@ -195,11 +214,9 @@ describe("llmApi stream cancellation", () => {
     await Promise.resolve();
     sentChannel().onmessage({ type: "done" });
 
-    await expect(doneEvent).resolves.toMatchObject({ done: false, value: { type: "done" } });
-    const final = iterator.next();
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(TAURI_STREAM_TERMINAL_CLEANUP_GRACE_MS);
-    await expect(final).resolves.toMatchObject({ done: true });
+    await expect(doneEvent).resolves.toMatchObject({ done: true });
     expect(invokeMock).toHaveBeenCalledWith(
       "llm_stream_cancel",
       expect.objectContaining({ streamId: expect.any(String) }),
