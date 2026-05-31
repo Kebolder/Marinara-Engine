@@ -68,7 +68,7 @@ function isClaudeOpusAdaptiveOnlyModel(model: string): boolean {
 }
 
 function supportsAnthropicAdaptiveThinking(model: string): boolean {
-  return isClaudeOpusAdaptiveOnlyModel(model) || claudeVersionAtLeast(model, "sonnet", 4, 5);
+  return claudeVersionAtLeast(model, "opus", 4, 6) || claudeVersionAtLeast(model, "sonnet", 4, 6);
 }
 
 function shouldSendOpenAiSamplingParameters(model: string): boolean {
@@ -115,11 +115,11 @@ function openAiReasoningEffort(parameters: JsonRecord): string | null {
   return null;
 }
 
-function anthropicThinkingEffort(parameters: JsonRecord): string | null {
+function anthropicThinkingEffort(model: string, parameters: JsonRecord): string | null {
   const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"]);
   if (!effort) return null;
   if (["low", "medium", "high"].includes(effort)) return effort;
-  if (effort === "xhigh") return "xhigh";
+  if (effort === "xhigh") return isClaudeOpusAdaptiveOnlyModel(model) ? "xhigh" : "high";
   if (effort === "maximum" || effort === "max") return "max";
   return null;
 }
@@ -128,6 +128,14 @@ function anthropicThinkingBudgetTokens(effort: string): number {
   if (effort === "low") return 1024;
   if (effort === "medium") return 8192;
   return 24576;
+}
+
+function shouldUseAnthropicAdaptiveThinking(model: string, parameters: JsonRecord, effort: string | null): boolean {
+  if (!supportsAnthropicAdaptiveThinking(model)) return false;
+  if (effort) return true;
+  const showThoughts = parameters.showThoughts ?? parameters.show_thoughts;
+  if (showThoughts != null) return boolish(showThoughts, false);
+  return isClaudeOpusAdaptiveOnlyModel(model);
 }
 
 function isOpenrouterClaudeReasoningModel(provider: string, model: string): boolean {
@@ -208,8 +216,8 @@ function visibleAnthropicParameters(
 ): Record<string, unknown> {
   const model = readString(connection.model);
   const adaptiveOnly = isClaudeOpusAdaptiveOnlyModel(model);
-  const effort = anthropicThinkingEffort(parameters);
-  const adaptiveThinking = !!effort && supportsAnthropicAdaptiveThinking(model);
+  const effort = anthropicThinkingEffort(model, parameters);
+  const adaptiveThinking = shouldUseAnthropicAdaptiveThinking(model, parameters, effort);
   const body: Record<string, unknown> = {
     max_tokens: requestMaxTokens(connection, parameters),
   };
@@ -222,15 +230,13 @@ function visibleAnthropicParameters(
     const topK = parameterInteger(parameters, ["topK", "top_k"]);
     if (topK !== null) body.top_k = topK;
   }
-  if (effort) {
-    if (adaptiveThinking) {
-      body.thinking = { type: "adaptive", display: "summarized" };
-      body.output_config = { effort };
-    } else {
-      const budgetTokens = anthropicThinkingBudgetTokens(effort);
-      body.thinking = { type: "enabled", budget_tokens: budgetTokens };
-      body.max_tokens = requestMaxTokens(connection, parameters) + budgetTokens;
-    }
+  if (adaptiveThinking) {
+    body.thinking = { type: "adaptive", display: "summarized" };
+    if (effort) body.output_config = { effort };
+  } else if (effort) {
+    const budgetTokens = anthropicThinkingBudgetTokens(effort);
+    body.thinking = { type: "enabled", budget_tokens: budgetTokens };
+    body.max_tokens = requestMaxTokens(connection, parameters) + budgetTokens;
   }
   const stop = stopSequences(parameters);
   if (stop) body.stop_sequences = stop;

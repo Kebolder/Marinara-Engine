@@ -51,6 +51,26 @@ describe("providerVisibleLlmParameters", () => {
     expect(info.showThoughts).toBe(true);
   });
 
+  it("enables Anthropic Opus adaptive thinking without an explicit effort", () => {
+    const visible = providerVisibleLlmParameters(
+      { provider: "anthropic", model: "claude-opus-4-8" },
+      {
+        maxTokens: 4096,
+      },
+      { stream: true },
+    );
+
+    expect(visible).toEqual({
+      max_tokens: 4096,
+      stream: true,
+      thinking: { type: "adaptive", display: "summarized" },
+    });
+
+    const info = generationInfoFromVisibleParameters({ provider: "anthropic", model: "claude-opus-4-8" }, visible);
+    expect(info.showThoughts).toBe(true);
+    expect(info.reasoningEffort).toBeNull();
+  });
+
   it("maps Anthropic maximum effort to the provider max level", () => {
     const visible = providerVisibleLlmParameters(
       { provider: "anthropic", model: "claude-opus-4-8" },

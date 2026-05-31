@@ -253,6 +253,26 @@ fn param_string(parameters: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
+fn param_boolish(parameters: &Value, keys: &[&str], fallback: bool) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let value = parameters.get(*key)?;
+        match value {
+            Value::Bool(value) => Some(*value),
+            Value::Number(value) => value.as_i64().map(|value| value != 0),
+            Value::String(value) => {
+                let normalized = value.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" => Some(fallback),
+                    "false" | "0" | "no" | "off" => Some(false),
+                    "true" | "1" | "yes" | "on" => Some(true),
+                    _ => Some(fallback),
+                }
+            }
+            _ => Some(fallback),
+        }
+    })
+}
+
 fn stop_sequences(parameters: &Value) -> Option<Vec<String>> {
     let value = parameters
         .get("stop")
@@ -398,7 +418,7 @@ fn is_claude_opus_adaptive_only_model(model: &str) -> bool {
 }
 
 fn supports_anthropic_adaptive_thinking(model: &str) -> bool {
-    is_claude_opus_adaptive_only_model(model) || claude_version_at_least(model, "sonnet", 4, 5)
+    claude_version_at_least(model, "opus", 4, 6) || claude_version_at_least(model, "sonnet", 4, 6)
 }
 
 fn should_send_openai_sampling_parameters(request: &LlmRequest) -> bool {
@@ -468,13 +488,14 @@ fn google_thinking_config(model: &str, parameters: &Value) -> Option<Value> {
     None
 }
 
-fn anthropic_thinking_effort(parameters: &Value) -> Option<&'static str> {
+fn anthropic_thinking_effort(model: &str, parameters: &Value) -> Option<&'static str> {
     let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
     match effort.as_str() {
         "low" => Some("low"),
         "medium" => Some("medium"),
         "high" => Some("high"),
-        "xhigh" => Some("xhigh"),
+        "xhigh" if is_claude_opus_adaptive_only_model(model) => Some("xhigh"),
+        "xhigh" => Some("high"),
         "maximum" | "max" => Some("max"),
         _ => None,
     }
@@ -486,6 +507,21 @@ fn anthropic_thinking_budget_tokens(effort: &str) -> u64 {
         "medium" => 8192,
         _ => 24576,
     }
+}
+
+fn should_use_anthropic_adaptive_thinking(
+    model: &str,
+    parameters: &Value,
+    effort: Option<&str>,
+) -> bool {
+    if !supports_anthropic_adaptive_thinking(model) {
+        return false;
+    }
+    if effort.is_some() {
+        return true;
+    }
+    param_boolish(parameters, &["showThoughts", "show_thoughts"], false)
+        .unwrap_or_else(|| is_claude_opus_adaptive_only_model(model))
 }
 
 fn should_send_top_k(request: &LlmRequest) -> bool {
@@ -1996,9 +2032,12 @@ fn build_anthropic_body(request: &LlmRequest, stream: bool) -> Value {
         body["system"] = json!(system.join("\n\n"));
     }
     let adaptive_only = is_claude_opus_adaptive_only_model(&request.connection.model);
-    let thinking_effort = anthropic_thinking_effort(&request.parameters);
-    let adaptive_thinking = thinking_effort.is_some()
-        && supports_anthropic_adaptive_thinking(&request.connection.model);
+    let thinking_effort = anthropic_thinking_effort(&request.connection.model, &request.parameters);
+    let adaptive_thinking = should_use_anthropic_adaptive_thinking(
+        &request.connection.model,
+        &request.parameters,
+        thinking_effort,
+    );
     if !adaptive_only && !adaptive_thinking {
         if let Some(temp) = temperature(&request.parameters) {
             body["temperature"] = json!(temp);
@@ -2009,15 +2048,15 @@ fn build_anthropic_body(request: &LlmRequest, stream: bool) -> Value {
             body["top_k"] = json!(top_k);
         }
     }
-    if let Some(effort) = thinking_effort {
-        if adaptive_thinking {
-            body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
+    if adaptive_thinking {
+        body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
+        if let Some(effort) = thinking_effort {
             body["output_config"] = json!({ "effort": effort });
-        } else {
-            let budget_tokens = anthropic_thinking_budget_tokens(effort);
-            body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
-            body["max_tokens"] = json!(request_max_tokens(request, 1024) + budget_tokens);
         }
+    } else if let Some(effort) = thinking_effort {
+        let budget_tokens = anthropic_thinking_budget_tokens(effort);
+        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+        body["max_tokens"] = json!(request_max_tokens(request, 1024) + budget_tokens);
     }
     if let Some(stop) = stop_sequences(&request.parameters) {
         body["stop_sequences"] = json!(stop);
@@ -2991,8 +3030,10 @@ mod tests {
     fn anthropic_adaptive_thinking_model_detection_matches_main_branch_rules() {
         assert!(supports_anthropic_adaptive_thinking("claude-opus-4-8"));
         assert!(supports_anthropic_adaptive_thinking("claude-opus-4-7"));
+        assert!(supports_anthropic_adaptive_thinking("claude-opus-4-6"));
         assert!(supports_anthropic_adaptive_thinking("claude-opus-5-6"));
-        assert!(supports_anthropic_adaptive_thinking("claude-sonnet-4-5"));
+        assert!(supports_anthropic_adaptive_thinking("claude-sonnet-4-6"));
+        assert!(!supports_anthropic_adaptive_thinking("claude-sonnet-4-5"));
         assert!(!supports_anthropic_adaptive_thinking(
             "claude-opus-4-20250514"
         ));
@@ -3024,6 +3065,25 @@ mod tests {
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());
         assert!(body.get("top_k").is_none());
+    }
+
+    #[test]
+    fn anthropic_opus_48_body_requests_adaptive_thinking_without_effort() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "maxTokens": 16000
+            }),
+        );
+        let body = build_anthropic_body(&request, false);
+
+        assert_eq!(body["max_tokens"], json!(16000));
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert!(body.get("output_config").is_none());
     }
 
     #[test]
