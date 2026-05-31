@@ -757,8 +757,8 @@ export function ChatRoleplaySurface({
   }, [activeChatId]);
 
   return (
-    <div data-component="ChatArea.Roleplay" className="flex h-full min-h-0 flex-1 overflow-hidden">
-      <div className="rpg-chat-area mari-chat-area relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+    <div data-component="ChatArea.Roleplay" className="flex h-full min-h-0 flex-1 basis-0 overflow-hidden">
+      <div className="rpg-chat-area mari-chat-area relative isolate flex h-full min-h-0 flex-1 basis-0 flex-col overflow-hidden">
         <CrossfadeBackground url={chatBackground} blurPx={chatBackgroundBlur} />
         <div className="rpg-overlay pointer-events-none absolute inset-0 z-0" />
         <div className="rpg-vignette pointer-events-none absolute inset-0 z-0" />
@@ -781,8 +781,8 @@ export function ChatRoleplaySurface({
           </Suspense>
         )}
 
-        <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="relative z-20 flex h-full min-h-0 flex-1 basis-0 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-1 basis-0 flex-col overflow-hidden">
             <>
               <div
                 data-tracker-panel-anchor="roleplay-hud"
@@ -970,7 +970,9 @@ export function ChatRoleplaySurface({
               </Suspense>
             )}
 
-            <div className={cn("relative z-10 min-h-0 flex-1 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div
+              className={cn("relative z-10 min-h-0 flex-1 basis-0 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}
+            >
               <div
                 ref={scrollRef}
                 data-chat-scroll
@@ -1095,7 +1097,7 @@ export function ChatRoleplaySurface({
               </div>
             </div>
 
-            <div className={cn("relative z-20 shrink-0", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div className={cn("relative z-30 shrink-0", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div className={cn("relative", centerCompact ? "px-3" : "px-3 md:px-[12%]")}>
                 {chatMeta.sceneStatus === "active" && (
                   <EndSceneBar

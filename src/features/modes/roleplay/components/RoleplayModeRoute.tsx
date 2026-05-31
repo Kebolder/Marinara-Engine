@@ -106,7 +106,16 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
     enabledAgentTypes,
     refreshWorldStateOnTimelineChange: agentsUiEnabled,
   });
-  const spriteState = useSpriteMetadataState({ chat: data.chat, chatMeta: data.chatMeta, messages: data.messages });
+  const lastRenderableMessagesRef = useRef<{ chatId: string; messages: MessageWithSwipes[] } | null>(null);
+  if (data.messages !== undefined) {
+    lastRenderableMessagesRef.current = { chatId: activeChatId, messages: data.messages };
+  }
+  const renderMessages =
+    data.messages ??
+    (timeline.isStreaming && lastRenderableMessagesRef.current?.chatId === activeChatId
+      ? lastRenderableMessagesRef.current.messages
+      : undefined);
+  const spriteState = useSpriteMetadataState({ chat: data.chat, chatMeta: data.chatMeta, messages: renderMessages });
   const { startEncounter } = useEncounter();
   const { concludeScene, abandonScene, forkScene, isForking } = useScene();
   const encounterActive = useEncounterStore((state) => state.active || state.showConfigModal);
@@ -122,7 +131,7 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
 
   const scroll = useRoleplayTranscriptScroll({
     activeChatId,
-    messages: data.messages,
+    messages: renderMessages,
     pageCount: data.pageCount,
     hasNextPage: !!data.hasNextPage,
     isFetchingNextPage: data.isFetchingNextPage,
@@ -157,7 +166,7 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
   useChatTtsAutoplay({
     chatId: activeChatId,
     mode: "roleplay",
-    messages: data.messages,
+    messages: renderMessages,
     characterMap: data.characterMap,
     isStreaming: timeline.isStreaming,
   });
@@ -167,19 +176,19 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
     hasAnimatedRef.current = false;
   }, [activeChatId]);
   const shouldAnimateMessages = !hasAnimatedRef.current;
-  if (data.messages?.length) hasAnimatedRef.current = true;
+  if (renderMessages?.length) hasAnimatedRef.current = true;
 
   const groupChatMode: string | undefined =
     data.chatCharIds.length > 1 ? (data.chatMeta.groupChatMode ?? "merged") : undefined;
   const msgPayload = useMemo(() => {
-    const messages = data.messages ?? [];
+    const messages = renderMessages ?? [];
     const start = Math.max(0, messages.length - SPRITE_OVERLAY_MESSAGE_SCAN_LIMIT);
     return messages.slice(start).map((message) => ({
       role: message.role,
       characterId: message.characterId,
       content: message.content,
     }));
-  }, [data.messages]);
+  }, [renderMessages]);
   const isSceneChat = data.chatMeta.sceneStatus === "active" || Boolean(data.chatMeta.sceneOriginChatId);
   const isRoleplay = data.chatMode === "roleplay";
   const expressionAvatarsEnabled =
@@ -290,7 +299,7 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
         characterMap={data.characterMap}
         characterNames={data.characterNames}
         personaInfo={data.personaInfo}
-        messages={data.messages}
+        messages={renderMessages}
         msgPayload={msgPayload}
         isLoading={data.isLoading}
         hasNextPage={!!data.hasNextPage}
