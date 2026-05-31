@@ -19,7 +19,7 @@ import {
 import { cn } from "../../../../../shared/lib/utils";
 import { toast } from "sonner";
 import { useTTSConfig, useUpdateTTSConfig, useTTSVoices } from "../../../../../shared/hooks/use-tts";
-import { useCharacters } from "../../../../catalog/characters/index";
+import { useCharacterSummaries } from "../../../../catalog/characters/index";
 import { ttsService } from "../../../../../shared/lib/tts-service";
 import { clientSidePlaybackRate } from "../../../../../shared/lib/tts-dialogue";
 import { parseCharacterDisplayData } from "../../../../../shared/lib/character-display";
@@ -31,7 +31,7 @@ import type {
   TTSVoiceMode,
 } from "../../../../../engine/contracts/types/tts";
 import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "../../../../../engine/contracts/types/tts";
-import { HelpTooltip } from "../../../../../shared/components/ui/HelpTooltip";
+import { LabelWithHelp } from "../../../../../shared/components/ui/HelpTooltip";
 
 // ── Sub-components ───────────────────────────────
 
@@ -39,8 +39,11 @@ function FieldRow({ label, help, children }: { label: string; help?: string; chi
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1">
-        <span className="text-xs font-medium text-[var(--foreground)]">{label}</span>
-        {help && <HelpTooltip text={help} />}
+        {help ? (
+          <LabelWithHelp label={label} help={help} className="text-xs font-medium text-[var(--foreground)]" />
+        ) : (
+          <span className="text-xs font-medium text-[var(--foreground)]">{label}</span>
+        )}
       </div>
       {children}
     </div>
@@ -290,7 +293,7 @@ function NpcDefaultVoicePool({
 export function TTSConfigCard() {
   const { data: savedConfig, isLoading } = useTTSConfig();
   const updateConfig = useUpdateTTSConfig();
-  const { data: characters } = useCharacters();
+  const { data: characters } = useCharacterSummaries();
 
   // Local draft state
   const [enabled, setEnabled] = useState(false);
@@ -673,7 +676,7 @@ export function TTSConfigCard() {
   return (
     <div
       className={cn(
-        "rounded-xl border border-rose-400/20 bg-gradient-to-br from-rose-500/5 to-orange-500/5 p-3 transition-all",
+        "rounded-xl border border-rose-400/20 bg-gradient-to-br from-rose-500/5 to-orange-500/5 p-3 transition-colors",
         expanded && "border-rose-400/30",
       )}
     >
@@ -1003,7 +1006,9 @@ export function TTSConfigCard() {
                     >
                       {source === "elevenlabs" && <option value="">Select narrator voice</option>}
                       {fetchingVoices && <option value="">Loading voices&hellip;</option>}
-                      {!fetchingVoices && voiceOptions.length === 0 && <option value="">Save config to load voices</option>}
+                      {!fetchingVoices && voiceOptions.length === 0 && (
+                        <option value="">Save config to load voices</option>
+                      )}
                       {voiceOptions.map((option) => (
                         <option key={option.id} value={option.id}>
                           {option.name === option.id ? option.id : `${option.name} (${option.id})`}

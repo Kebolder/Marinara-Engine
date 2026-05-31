@@ -12,9 +12,10 @@ import type { EchoChamberSide } from "../../../../../shared/stores/ui.store";
 import { useAgentConfigs } from "../../../../catalog/agents/index";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useChat } from "../../../../catalog/chats/index";
-import { invokeTauri } from "../../../../../shared/api/tauri-client";
+import { agentApi } from "../../../../../shared/api/agent-api";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { cn } from "../../../../../shared/lib/utils";
+import { normalizeEchoMessages, readEchoRecord, readEchoText } from "../lib/echo-chamber-messages";
 
 const MESSAGE_INTERVAL_MS = 30_000; // 30 s between reveals
 const NAME_COLORS = [
@@ -41,59 +42,6 @@ const GAP = 8; // breathing room
 
 interface EchoChamberPanelProps {
   hiddenOnMobile?: boolean;
-}
-
-type EchoMessage = { characterName: string; reaction: string; timestamp: number };
-
-function readRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-    } catch {
-      return {};
-    }
-  }
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-function readText(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function readTimestamp(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return Date.now();
-}
-
-function normalizeEchoMessages(rows: unknown[]): EchoMessage[] {
-  const messages: EchoMessage[] = [];
-  for (const row of rows) {
-    const record = readRecord(row);
-    const timestamp = readTimestamp(record.timestamp ?? record.createdAt);
-    const directName = readText(record.characterName);
-    const directReaction = readText(record.reaction);
-    if (directName && directReaction) {
-      messages.push({ characterName: directName, reaction: directReaction, timestamp });
-      continue;
-    }
-
-    const resultData = readRecord(record.resultData);
-    const reactions = Array.isArray(resultData.reactions) ? resultData.reactions : [];
-    for (const item of reactions) {
-      const reactionRecord = readRecord(item);
-      const characterName = readText(reactionRecord.characterName);
-      const reaction = readText(reactionRecord.reaction);
-      if (characterName && reaction) {
-        messages.push({ characterName, reaction, timestamp });
-      }
-    }
-  }
-  return messages;
 }
 
 /** Tiny 4-square grid icon; the active corner is highlighted. */
@@ -132,7 +80,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const echoEnabled = useMemo(() => {
     if (!chat) return false;
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
-    const meta = readRecord(raw);
+    const meta = readEchoRecord(raw);
     if (!meta.enableAgents) return false;
     const activeAgentIds: string[] = Array.isArray(meta.activeAgentIds) ? meta.activeAgentIds : [];
     if (activeAgentIds.length > 0) {
@@ -159,7 +107,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const setEchoLoadedChatId = useAgentStore((s) => s.setEchoLoadedChatId);
 
   useEffect(() => {
-    if (!activeChatId || !echoEnabled) return;
+    if (!echoChamberOpen || !activeChatId || !echoEnabled) return;
     // Already loaded for this chat (survives component remounts)
     if (echoLoadedChatId === activeChatId) return;
 
@@ -198,6 +146,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
         /* silently ignore load failures */
       });
   }, [
+    echoChamberOpen,
     activeChatId,
     echoEnabled,
     echoLoadedChatId,
@@ -231,9 +180,9 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const nameColorMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const msg of echoMessages) {
-      const characterName = readText(msg.characterName);
+      const characterName = readEchoText(msg.characterName);
       if (!characterName || map.has(characterName)) continue;
-        let hash = 0;
+      let hash = 0;
       for (let i = 0; i < characterName.length; i++) hash = characterName.charCodeAt(i) + ((hash << 5) - hash);
       map.set(characterName, NAME_COLORS[Math.abs(hash) % NAME_COLORS.length]!);
     }
@@ -294,8 +243,8 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   if (!echoChamberOpen || !echoEnabled || (isMobile && hiddenOnMobile)) return null;
   const visibleMessages = echoMessages
     .map((message) => ({
-      characterName: readText(message.characterName),
-      reaction: readText(message.reaction),
+      characterName: readEchoText(message.characterName),
+      reaction: readEchoText(message.reaction),
       timestamp: message.timestamp,
     }))
     .filter((message) => message.characterName && message.reaction)
@@ -330,7 +279,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
                 setEchoVisibleCount(0);
                 setEchoBaseline(0);
                 try {
-                  await invokeTauri("agent_echo_messages_clear", { chatId: activeChatId });
+                  await agentApi.clearEchoMessages(activeChatId);
                 } catch {
                   /* best-effort */
                 }

@@ -1,25 +1,28 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Maximize2, Minus, Square, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  closeDesktopWindow,
+  getDesktopWindowVisualState,
+  hasDesktopWindowControls,
+  minimizeDesktopWindow,
+  onDesktopWindowVisualStateChanged,
+  startDesktopWindowDrag,
+  toggleDesktopWindowFullscreen,
+  toggleDesktopWindowMaximize,
+  type DesktopWindowVisualState,
+} from "../../shared/api/window-controls-api";
 import { cn } from "../../shared/lib/utils";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { useUIStore } from "../../shared/stores/ui.store";
-import { SpotifyMiniPlayer } from "../../features/shell/spotify/shell";
 import { ChatTitleControls } from "./ChatTitleControls";
 import { PanelNavButtons } from "./PanelNavButtons";
 
+const SpotifyMiniPlayer = lazy(() =>
+  import("../../features/shell/spotify/shell").then((module) => ({ default: module.SpotifyMiniPlayer })),
+);
+
 type DesktopPlatform = "darwin" | "windows" | "linux";
-
-type TauriRuntimeWindow = Window & {
-  __TAURI__?: unknown;
-  __TAURI_INTERNALS__?: unknown;
-};
-
-function isTauriRuntime() {
-  if (typeof window === "undefined") return false;
-  const runtimeWindow = window as TauriRuntimeWindow;
-  return Boolean(runtimeWindow.__TAURI__ || runtimeWindow.__TAURI_INTERNALS__);
-}
+type WindowControlAction = "close" | "minimize" | "maximize" | "fullscreen";
 
 function inferDesktopPlatform(): DesktopPlatform {
   if (typeof navigator === "undefined") return "windows";
@@ -41,41 +44,49 @@ export function WindowTitleBar({
   onGoHome?: () => void;
 }) {
   const platform = useMemo(inferDesktopPlatform, []);
-  const [isMaximized, setIsMaximized] = useState(false);
-  const appWindow = useMemo(() => (isTauriRuntime() ? getCurrentWindow() : null), []);
+  const hasWindowControls = useMemo(hasDesktopWindowControls, []);
+  const [windowVisualState, setWindowVisualState] = useState<DesktopWindowVisualState>({
+    fullscreen: false,
+    maximized: false,
+  });
   const activeChatId = useChatStore((s) => s.activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
+  const closeRightPanel = useUIStore((s) => s.closeRightPanel);
   const spotifyPlayerEnabled = useUIStore((s) => s.spotifyPlayerEnabled);
   const hasOpenSurface = useUIStore((s) =>
     Boolean(
       s.characterDetailId ||
-        s.lorebookDetailId ||
-        s.presetDetailId ||
-        s.connectionDetailId ||
-        s.agentDetailId ||
-        s.toolDetailId ||
-        s.personaDetailId ||
-        s.regexDetailId ||
-        s.characterLibraryOpen ||
-        s.botBrowserOpen ||
-        s.gameAssetsBrowserOpen ||
-        s.rightPanelOpen,
+      s.lorebookDetailId ||
+      s.presetDetailId ||
+      s.connectionDetailId ||
+      s.agentDetailId ||
+      s.toolDetailId ||
+      s.personaDetailId ||
+      s.regexDetailId ||
+      s.characterLibraryOpen ||
+      s.botBrowserOpen ||
+      s.gameAssetsBrowserOpen ||
+      s.rightPanelOpen,
     ),
   );
 
-  const refreshMaximized = useCallback(() => {
-    if (!appWindow) return;
-    void appWindow.isMaximized().then(setIsMaximized).catch(() => setIsMaximized(false));
-  }, [appWindow]);
+  const refreshWindowVisualState = useCallback(() => {
+    if (!hasWindowControls) return;
+    void getDesktopWindowVisualState()
+      .then(setWindowVisualState)
+      .catch(() => {
+        setWindowVisualState({ fullscreen: false, maximized: false });
+      });
+  }, [hasWindowControls]);
 
   useEffect(() => {
-    if (!appWindow) return;
+    if (!hasWindowControls) return;
     let cleanup: (() => void) | undefined;
     let cancelled = false;
 
-    refreshMaximized();
-    void appWindow.onResized(() => refreshMaximized()).then((unlisten) => {
+    refreshWindowVisualState();
+    void onDesktopWindowVisualStateChanged(refreshWindowVisualState).then((unlisten) => {
       if (cancelled) {
         unlisten();
         return;
@@ -87,28 +98,30 @@ export function WindowTitleBar({
       cancelled = true;
       cleanup?.();
     };
-  }, [appWindow, refreshMaximized]);
+  }, [hasWindowControls, refreshWindowVisualState]);
 
   const runWindowAction = useCallback(
-    (action: "minimize" | "maximize" | "close") => {
-      if (!appWindow) return;
+    (action: WindowControlAction) => {
+      if (!hasWindowControls) return;
       const next =
         action === "minimize"
-          ? appWindow.minimize()
+          ? minimizeDesktopWindow()
           : action === "maximize"
-            ? appWindow.toggleMaximize().then(refreshMaximized)
-            : appWindow.close();
-      void next.catch(() => {});
+            ? toggleDesktopWindowMaximize().then(setWindowVisualState)
+            : action === "fullscreen"
+              ? toggleDesktopWindowFullscreen().then(setWindowVisualState)
+              : closeDesktopWindow();
+      void next.catch(() => refreshWindowVisualState());
     },
-    [appWindow, refreshMaximized],
+    [hasWindowControls, refreshWindowVisualState],
   );
 
   const startWindowDrag = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
-      if (!appWindow || event.button !== 0 || event.detail > 1) return;
-      void appWindow.startDragging().catch(() => {});
+      if (!hasWindowControls || event.button !== 0 || event.detail > 1) return;
+      void startDesktopWindowDrag().catch(() => {});
     },
-    [appWindow],
+    [hasWindowControls],
   );
 
   const toggleMaximizeFromDragRegion = useCallback(() => {
@@ -118,11 +131,13 @@ export function WindowTitleBar({
   const goHome = useCallback(() => {
     setActiveChatId(null);
     closeAllDetails();
+    closeRightPanel();
     onGoHome?.();
-  }, [closeAllDetails, onGoHome, setActiveChatId]);
+  }, [closeAllDetails, closeRightPanel, onGoHome, setActiveChatId]);
 
   const isHomeSurface = !professorMariOpen && !activeChatId && !hasOpenSurface;
-  const controlActions = platform === "darwin" ? (["close", "minimize", "maximize"] as const) : (["minimize", "maximize", "close"] as const);
+  const controlActions: WindowControlAction[] =
+    platform === "darwin" ? ["close", "minimize", "fullscreen"] : ["minimize", "maximize", "close"];
   const controls = (
     <div
       className={cn(
@@ -134,12 +149,25 @@ export function WindowTitleBar({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       {controlActions.map((action) => {
-        const label = action === "maximize" && isMaximized ? "Restore" : action[0]!.toUpperCase() + action.slice(1);
+        const isExpanded =
+          action === "fullscreen" ? windowVisualState.fullscreen : action === "maximize" && windowVisualState.maximized;
+        const label =
+          action === "fullscreen"
+            ? windowVisualState.fullscreen
+              ? "Exit Full Screen"
+              : "Enter Full Screen"
+            : action === "maximize" && windowVisualState.maximized
+              ? "Restore"
+              : action[0]!.toUpperCase() + action.slice(1);
+        const controlClassName = action === "fullscreen" ? "maximize" : action;
         return (
           <button
             key={action}
             type="button"
-            className={cn(`mari-window-control mari-window-control-${action}`, platform === "darwin" && "mari-window-control-mac")}
+            className={cn(
+              `mari-window-control mari-window-control-${controlClassName}`,
+              platform === "darwin" && "mari-window-control-mac",
+            )}
             onClick={() => runWindowAction(action)}
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
@@ -148,8 +176,8 @@ export function WindowTitleBar({
           >
             {action === "minimize" ? (
               <Minus aria-hidden size="0.75rem" strokeWidth={2.2} />
-            ) : action === "maximize" ? (
-              isMaximized ? (
+            ) : action === "maximize" || action === "fullscreen" ? (
+              isExpanded ? (
                 <Square aria-hidden size="0.625rem" strokeWidth={2.1} />
               ) : (
                 <Maximize2 aria-hidden size="0.7rem" strokeWidth={2.1} />
@@ -178,9 +206,7 @@ export function WindowTitleBar({
         onGoHome={onGoHome}
         hideHome
       />
-      <div
-        className="mari-titlebar-content flex h-full min-w-0 flex-1 items-center"
-      >
+      <div className="mari-titlebar-content flex h-full min-w-0 flex-1 items-center">
         <div
           className="mari-title-drag-region flex h-full min-w-0 flex-1 items-center justify-start pl-0.5 pr-3"
           onMouseDown={startWindowDrag}
@@ -209,11 +235,13 @@ export function WindowTitleBar({
         </div>
         {spotifyPlayerEnabled && (
           <div
-            className="mari-titlebar-spotify hidden min-w-0 flex-[0_1_31rem] items-center px-2 md:flex"
+            className="mari-titlebar-spotify hidden min-w-0 flex-[0_1_31rem] items-center overflow-hidden px-2 md:flex"
             onMouseDown={(event) => event.stopPropagation()}
             onDoubleClick={(event) => event.stopPropagation()}
           >
-            <SpotifyMiniPlayer />
+            <Suspense fallback={null}>
+              <SpotifyMiniPlayer />
+            </Suspense>
           </div>
         )}
         <div

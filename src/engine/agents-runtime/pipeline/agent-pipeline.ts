@@ -1,42 +1,28 @@
-import type { AgentContext, AgentDebugEntry, AgentResult } from "../../contracts/types/agent";
+import type { AgentContext, AgentResult } from "../../contracts/types/agent";
+import type { LorebookEntry } from "../../contracts/types/lorebook";
 import type { BaseLLMProvider } from "../../generation-core/llm/base-provider.js";
+import { createAgentRuntimeDebug } from "../debug.js";
 import {
   executeAgent,
   executeAgentBatch,
-  normalizeAgentMaxTokens,
   type AgentExecConfig,
   type AgentToolContext,
 } from "../executor/agent-executor.js";
-
-function createLogger(enabled: boolean) {
-  return {
-    debug: (...args: unknown[]) => {
-      if (enabled) console.debug(...args);
-    },
-    warn: (...args: unknown[]) => {
-      if (enabled) console.warn(...args);
-    },
-    error: (...args: unknown[]) => {
-      if (enabled) console.error(...args);
-    },
-  };
-}
-
-function emitDebug(context: AgentContext, entry: Omit<AgentDebugEntry, "timestamp"> & { timestamp?: number }) {
-  context.debugSink?.({
-    ...entry,
-    timestamp: entry.timestamp ?? Date.now(),
-  });
-}
+import { executeKnowledgeRetrieval } from "../knowledge/knowledge-retrieval.js";
+import { executeKnowledgeRouter, type KnowledgeRouterCandidateOptions } from "../knowledge/knowledge-router.js";
 
 /** A fully resolved agent ready for execution. */
 export interface ResolvedAgent extends AgentExecConfig {
   provider: BaseLLMProvider;
   model: string;
-  /** Maximum number of same-connection agent LLM jobs that may run in parallel. */
-  maxParallelJobs?: number;
   /** Optional tool context for agents that need function calling (e.g., Spotify). */
   toolContext?: AgentToolContext;
+  /** Source material selected for Knowledge Retrieval. */
+  knowledgeSourceMaterial?: string;
+  /** Candidate lorebook entries selected for Knowledge Router. */
+  knowledgeRouterEntries?: LorebookEntry[];
+  /** Router scan/semantic options derived from the current generation context. */
+  knowledgeRouterOptions?: KnowledgeRouterCandidateOptions;
 }
 
 export interface AgentInjection {
@@ -49,44 +35,28 @@ export interface AgentInjection {
 export type AgentResultCallback = (result: AgentResult) => void;
 
 // ──────────────────────────────────────────────
-// Grouping — batch agents by (provider instance, model)
+// Grouping — batch agents by (connection, model)
 // ──────────────────────────────────────────────
 
 interface AgentGroup {
   provider: BaseLLMProvider;
   model: string;
-  maxParallelJobs: number;
   agents: ResolvedAgent[];
 }
 
-export function normalizeAgentMaxParallelJobs(value: unknown): number {
-  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(numeric) || numeric < 1) return 1;
-  return Math.max(1, Math.min(16, Math.trunc(numeric)));
-}
-
-/**
- * Group agents by shared provider+model so they can be batched.
- * We use the provider reference + model string as the key.
- */
 function groupByProviderModel(agents: ResolvedAgent[]): AgentGroup[] {
   const groups = new Map<string, AgentGroup>();
 
   for (const agent of agents) {
-    // Use a composite key: object reference hash + model
-    // Two agents share a group if they have the same provider instance and model
-    const key = `${providerKey(agent.provider)}::${agent.model}::${postProcessingDataKey(agent)}`;
+    const key = `${agent.connectionId ?? "default"}::${agent.model}`;
     let group = groups.get(key);
     if (!group) {
       group = {
         provider: agent.provider,
         model: agent.model,
-        maxParallelJobs: normalizeAgentMaxParallelJobs(agent.maxParallelJobs),
         agents: [],
       };
       groups.set(key, group);
-    } else {
-      group.maxParallelJobs = Math.max(group.maxParallelJobs, normalizeAgentMaxParallelJobs(agent.maxParallelJobs));
     }
     group.agents.push(agent);
   }
@@ -94,47 +64,9 @@ function groupByProviderModel(agents: ResolvedAgent[]): AgentGroup[] {
   return Array.from(groups.values());
 }
 
-function splitGroupForParallelJobs(group: AgentGroup): AgentGroup[] {
-  const jobCount = Math.min(normalizeAgentMaxParallelJobs(group.maxParallelJobs), group.agents.length);
-  if (jobCount <= 1) return [group];
-
-  const chunks = Array.from({ length: jobCount }, () => [] as ResolvedAgent[]);
-  for (let index = 0; index < group.agents.length; index++) {
-    chunks[index % jobCount]!.push(group.agents[index]!);
-  }
-
-  return chunks
-    .filter((agents) => agents.length > 0)
-    .map((agents) => ({
-      provider: group.provider,
-      model: group.model,
-      maxParallelJobs: group.maxParallelJobs,
-      agents,
-    }));
-}
-
-// Simple provider identity via a WeakMap-backed counter
-const providerIds = new WeakMap<BaseLLMProvider, number>();
-let nextProviderId = 0;
-function providerKey(provider: BaseLLMProvider): number {
-  let id = providerIds.get(provider);
-  if (id === undefined) {
-    id = nextProviderId++;
-    providerIds.set(provider, id);
-  }
-  return id;
-}
-
-function postProcessingDataKey(agent: ResolvedAgent): string {
-  if (agent.phase !== "post_processing") return "default";
-  return [
-    agent.settings.includePreGenInjections === true ? "pre-gen" : "no-pre-gen",
-    agent.settings.includeParallelResults === true ? "parallel" : "no-parallel",
-  ].join(":");
-}
-
-function buildAgentContext(agent: ResolvedAgent, context: AgentContext): AgentContext {
-  if (agent.phase !== "post_processing") {
+function buildAgentContext(agentOrAgents: ResolvedAgent | ResolvedAgent[], context: AgentContext): AgentContext {
+  const agents = Array.isArray(agentOrAgents) ? agentOrAgents : [agentOrAgents];
+  if (!agents.some((agent) => agent.phase === "post_processing")) {
     return {
       ...context,
       preGenInjections: undefined,
@@ -142,11 +74,46 @@ function buildAgentContext(agent: ResolvedAgent, context: AgentContext): AgentCo
     };
   }
 
+  const includePreGenInjections = agents.some((agent) => agent.settings.includePreGenInjections === true);
+  const includeParallelResults = agents.some((agent) => agent.settings.includeParallelResults === true);
+
   return {
     ...context,
-    preGenInjections: agent.settings.includePreGenInjections === true ? (context.preGenInjections ?? []) : undefined,
-    parallelResults: agent.settings.includeParallelResults === true ? (context.parallelResults ?? []) : undefined,
+    preGenInjections: includePreGenInjections ? (context.preGenInjections ?? []) : undefined,
+    parallelResults: includeParallelResults ? (context.parallelResults ?? []) : undefined,
   };
+}
+
+function shouldExecuteIndividually(agent: ResolvedAgent): boolean {
+  return (
+    agent.type === "knowledge-retrieval" ||
+    agent.type === "knowledge-router" ||
+    Boolean(agent.toolContext?.tools.length)
+  );
+}
+
+async function executeResolvedAgent(agent: ResolvedAgent, context: AgentContext): Promise<AgentResult> {
+  const agentContext = buildAgentContext(agent, context);
+  if (agent.type === "knowledge-retrieval") {
+    return executeKnowledgeRetrieval(
+      agent,
+      agentContext,
+      agent.provider,
+      agent.model,
+      agent.knowledgeSourceMaterial ?? "",
+    );
+  }
+  if (agent.type === "knowledge-router") {
+    return executeKnowledgeRouter(
+      agent,
+      agentContext,
+      agent.provider,
+      agent.model,
+      agent.knowledgeRouterEntries ?? [],
+      agent.knowledgeRouterOptions,
+    );
+  }
+  return executeAgent(agent, agentContext, agent.provider, agent.model, agent.toolContext);
 }
 
 /**
@@ -159,27 +126,23 @@ async function executeGroup(
   context: AgentContext,
   onResult?: AgentResultCallback,
 ): Promise<AgentResult[]> {
-  const logger = createLogger(context.debugMode === true);
-  emitDebug(context, {
-    level: "debug",
-    phase: group.agents[0]?.phase ?? "unknown",
-    message: "group-start",
-    agents: group.agents.map((agent) => ({
-      type: agent.type,
-      name: agent.name,
-      model: agent.model,
-      maxTokens: normalizeAgentMaxTokens(agent.settings.maxTokens),
-    })),
-  });
-  const groupContext = buildAgentContext(group.agents[0]!, context);
+  const logger = createAgentRuntimeDebug(context);
+  const groupContext = buildAgentContext(group.agents, context);
   // Separate tool-using agents (can't be batched) from regular agents
-  const toolAgents = group.agents.filter((a) => a.toolContext?.tools.length);
-  const batchAgents = group.agents.filter((a) => !a.toolContext?.tools.length);
+  const individualAgents = group.agents.filter(shouldExecuteIndividually);
+  const batchAgents = group.agents.filter((agent) => !shouldExecuteIndividually(agent));
+  const toolAgentTypes = individualAgents.filter((agent) => agent.toolContext?.tools.length).map((agent) => agent.type);
 
-  logger.debug("[agent-pipeline] executeGroup: %d batchable, %d tool-using %j", batchAgents.length, toolAgents.length, {
-    batch: batchAgents.map((a) => a.type),
-    tools: toolAgents.map((a) => a.type),
-  });
+  logger.debug(
+    "[agent-pipeline] executeGroup: %d batchable, %d individual %j",
+    batchAgents.length,
+    individualAgents.length,
+    {
+      batch: batchAgents.map((a) => a.type),
+      tools: toolAgentTypes,
+      individual: individualAgents.map((a) => a.type),
+    },
+  );
 
   // Safe callback wrapper — errors in the callback (e.g. writing to a
   // closed SSE stream) must never crash the group and silently drop results.
@@ -202,15 +165,9 @@ async function executeGroup(
     allResults.push(...batchResults);
   }
 
-  // Run tool-using agents individually (they need the tool loop)
-  for (const agent of toolAgents) {
-    const result = await executeAgent(
-      agent,
-      buildAgentContext(agent, context),
-      agent.provider,
-      agent.model,
-      agent.toolContext,
-    );
+  // Run agents that need isolated prompts, source material, or tool loops individually.
+  for (const agent of individualAgents) {
+    const result = await executeResolvedAgent(agent, context);
     safeOnResult(result);
     allResults.push(result);
   }
@@ -230,9 +187,9 @@ async function executePhase(
   const phaseAgents = agents.filter((a) => a.phase === phase);
   if (phaseAgents.length === 0) return [];
 
-  const logger = createLogger(context.debugMode === true);
-  const groups = groupByProviderModel(phaseAgents).flatMap(splitGroupForParallelJobs);
-  emitDebug(context, {
+  const logger = createAgentRuntimeDebug(context);
+  const groups = groupByProviderModel(phaseAgents);
+  logger.emit({
     level: "debug",
     phase,
     message: "phase-groups",
@@ -273,7 +230,7 @@ async function executePhase(
           String(entry.reason),
         );
       }
-      emitDebug(context, {
+      logger.emit({
         level: "error",
         phase,
         message: "group-error",
@@ -310,7 +267,7 @@ async function executePhase(
  * Run pre-generation agents (batched per provider+model).
  * Returns text snippets to inject into the main prompt.
  */
-export async function runPreGenerationAgents(
+async function runPreGenerationAgents(
   agents: ResolvedAgent[],
   context: AgentContext,
   onResult?: AgentResultCallback,
@@ -339,7 +296,7 @@ export async function runPreGenerationAgents(
  * Run post-processing agents (batched per provider+model).
  * Returns all results for the caller to apply.
  */
-export async function runPostProcessingAgents(
+async function runPostProcessingAgents(
   agents: ResolvedAgent[],
   context: AgentContext,
   onResult?: AgentResultCallback,
@@ -350,7 +307,7 @@ export async function runPostProcessingAgents(
 /**
  * Run parallel-phase agents (batched per provider+model).
  */
-export async function runParallelAgents(
+async function runParallelAgents(
   agents: ResolvedAgent[],
   context: AgentContext,
   onResult?: AgentResultCallback,
@@ -361,13 +318,6 @@ export async function runParallelAgents(
 // ──────────────────────────────────────────────
 // Full Pipeline (convenience wrapper)
 // ──────────────────────────────────────────────
-
-export interface AgentPipelineResult {
-  /** Text snippets injected before generation (from pre-gen agents) */
-  contextInjections: string[];
-  /** All agent results from every phase */
-  allResults: AgentResult[];
-}
 
 /**
  * Run ALL enabled agents across the full pipeline.

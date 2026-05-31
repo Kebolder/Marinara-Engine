@@ -1,5 +1,5 @@
 // UI store types, constants, and pure helpers.
-import { TEMPERATURE_UNITS, normalizeTemperatureUnit, type TemperatureUnit } from "../../lib/temperature-units";
+import { normalizeTemperatureUnit, type TemperatureUnit } from "../../lib/temperature-units";
 import type { QuoteFormat } from "../../lib/dialogue-quotes";
 
 export type { QuoteFormat };
@@ -19,23 +19,23 @@ export type VisualTheme = "default" | "sillytavern";
 export type HudPosition = "top" | "left" | "right";
 export type TrackerPanelSide = "left" | "right";
 export type TrackerThoughtBubbleDisplay = "inline" | "floating";
-export const TRACKER_TEMPERATURE_UNITS = TEMPERATURE_UNITS;
+export type ImagePromptFormat = "descriptive" | "tags";
 export type TrackerTemperatureUnit = TemperatureUnit;
 export const TRACKER_PANEL_SIZE_PROFILES = ["compact", "standard", "expanded"] as const;
 export type TrackerPanelSizeProfile = (typeof TRACKER_PANEL_SIZE_PROFILES)[number];
 export type TrackerDataPanelSection = "world" | "persona" | "characters" | "quests" | "custom";
-export type TrackerPanelCollapsedSections = Partial<Record<TrackerDataPanelSection, boolean>>;
-export type TrackerPanelSectionOrder = TrackerDataPanelSection[];
+type TrackerPanelCollapsedSections = Partial<Record<TrackerDataPanelSection, boolean>>;
+type TrackerPanelSectionOrder = TrackerDataPanelSection[];
 export type EchoChamberSide = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type UserStatus = "active" | "idle" | "dnd";
 export type RoleplayAvatarStyle = "none" | "circles" | "rectangles" | "panel";
 export type GameDialogueDisplayMode = "classic" | "stacked";
 export type SummaryPopoverSourceMode = "last" | "range";
-export interface FloatingWidgetPosition {
+interface FloatingWidgetPosition {
   x: number;
   y: number;
 }
-export interface SummaryPopoverSettings {
+interface SummaryPopoverSettings {
   sourceMode: SummaryPopoverSourceMode;
   contextSize: number | null;
   rangeStart: number | null;
@@ -46,7 +46,7 @@ export interface SummaryPopoverSettings {
 export const APP_LANGUAGE_OPTIONS = [{ id: "en", label: "English" }] as const;
 export type AppLanguage = (typeof APP_LANGUAGE_OPTIONS)[number]["id"];
 
-export interface GameSetupLearnedOptions {
+interface GameSetupLearnedOptions {
   genres: string[];
   tones: string[];
   settings: string[];
@@ -54,26 +54,28 @@ export interface GameSetupLearnedOptions {
   preferences: string[];
 }
 
-export interface GameSetupRememberedText {
+interface GameSetupRememberedText {
   playerGoals: string;
   preferences: string;
 }
 
-export const SIDEBAR_WIDTH_MIN = 240;
-export const SIDEBAR_WIDTH_MAX = 480;
+export const SIDEBAR_WIDTH_DEFAULT = 320;
+export const RIGHT_PANEL_WIDTH_DEFAULT = 320;
+export const SIDEBAR_WIDTH_MIN = 280;
+export const SIDEBAR_WIDTH_MAX = 520;
 export const RIGHT_PANEL_WIDTH_MIN = 280;
 export const RIGHT_PANEL_WIDTH_MAX = 520;
-export const TRACKER_PANEL_SIZE_PROFILE_WIDTHS: Record<TrackerPanelSizeProfile, number> = {
+const TRACKER_PANEL_SIZE_PROFILE_WIDTHS: Record<TrackerPanelSizeProfile, number> = {
   compact: 280,
   standard: 340,
   expanded: 420,
 };
-export const TRACKER_PANEL_WIDTH_DEFAULT = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.standard;
-export const TRACKER_PANEL_WIDTH_MIN = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.compact;
-export const TRACKER_PANEL_WIDTH_MAX = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.expanded;
+const TRACKER_PANEL_WIDTH_DEFAULT = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.standard;
+const TRACKER_PANEL_WIDTH_MIN = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.compact;
+const TRACKER_PANEL_WIDTH_MAX = TRACKER_PANEL_SIZE_PROFILE_WIDTHS.expanded;
 export const IMAGE_DIMENSION_MIN = 64;
 export const IMAGE_DIMENSION_MAX = 4096;
-export const GAME_SETUP_LEARNED_LIMIT = 60;
+const GAME_SETUP_LEARNED_LIMIT = 60;
 export const TRACKER_DATA_PANEL_SECTIONS: TrackerDataPanelSection[] = [
   "world",
   "persona",
@@ -112,7 +114,7 @@ export function clampImageDimension(value: number) {
   return Math.max(IMAGE_DIMENSION_MIN, Math.min(IMAGE_DIMENSION_MAX, rounded));
 }
 
-export function clampTrackerPanelWidth(value: unknown) {
+function clampTrackerPanelWidth(value: unknown) {
   const width = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : TRACKER_PANEL_WIDTH_DEFAULT;
   return Math.max(TRACKER_PANEL_WIDTH_MIN, Math.min(TRACKER_PANEL_WIDTH_MAX, width));
 }
@@ -126,7 +128,8 @@ export function normalizeTrackerPanelSizeProfile(value: unknown, legacyWidth?: u
     return value as TrackerPanelSizeProfile;
   }
 
-  const width = typeof legacyWidth === "number" && Number.isFinite(legacyWidth) ? clampTrackerPanelWidth(legacyWidth) : null;
+  const width =
+    typeof legacyWidth === "number" && Number.isFinite(legacyWidth) ? clampTrackerPanelWidth(legacyWidth) : null;
   if (width !== null) {
     if (width <= 300) return "compact";
     if (width >= 380) return "expanded";
@@ -174,8 +177,7 @@ export function normalizeTrackerPanelSectionOrder(value: unknown): TrackerPanelS
 
 export function normalizeSummaryPopoverSettings(value: unknown): SummaryPopoverSettings {
   const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-  const numberOrNull = (next: unknown) =>
-    typeof next === "number" && Number.isFinite(next) ? Math.round(next) : null;
+  const numberOrNull = (next: unknown) => (typeof next === "number" && Number.isFinite(next) ? Math.round(next) : null);
   return {
     sourceMode: raw.sourceMode === "range" ? "range" : "last",
     contextSize: numberOrNull(raw.contextSize),
@@ -244,8 +246,18 @@ export const CLEARED_DETAIL_IDS = {
   regexDetailId: null,
 } satisfies FullPageRoutePatch;
 
+// Narrow viewports overlay the right catalog panel over chat, so opening a full-page
+// editor must close it (and Back must reopen it). Keep the width check in one place.
+function isMobilePanelViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < 768;
+}
+
 export function mobilePanelClosePatch(): FullPageRoutePatch {
-  return typeof window !== "undefined" && window.innerWidth < 768 ? { rightPanelOpen: false } : {};
+  return isMobilePanelViewport() ? { rightPanelOpen: false } : {};
+}
+
+export function mobilePanelReopenPatch(): FullPageRoutePatch {
+  return isMobilePanelViewport() ? { rightPanelOpen: true } : {};
 }
 
 export function openDetailRouteState(patch: FullPageRoutePatch): FullPageRoutePatch {
@@ -332,6 +344,10 @@ export interface UIState {
   gameAutoPlayDelay: number;
   /** When true, generated game image prompts are shown for review before provider calls are sent. */
   reviewImagePromptsBeforeSend: boolean;
+  /** When true, character/persona appearance text is allowed into generated image prompts. */
+  imagePromptIncludeAppearances: boolean;
+  /** Preferred prompt wording for image prompt generation. */
+  imagePromptFormat: ImagePromptFormat;
   imageBackgroundWidth: number;
   imageBackgroundHeight: number;
   imagePortraitWidth: number;
@@ -376,6 +392,8 @@ export interface UIState {
   intuitiveSwipeRerollLatest: boolean;
   /** When true, pressing Up Arrow with an empty chat input opens the last user message for editing (Conversation/Roleplay). */
   editLastMessageOnArrowUp: boolean;
+  /** When true, double-clicking or double-tapping a message opens it for editing. */
+  editMessagesOnDoubleClick: boolean;
   /** Persisted controls shown in the Chat Summary popover settings window. */
   summaryPopoverSettings: SummaryPopoverSettings;
 
@@ -478,6 +496,10 @@ export interface UIState {
   /** Transient: true when center content area is too narrow (overflow detected) */
   centerCompact: boolean;
 
+  /** Transient: true while the user is dragging a side-panel resizer; lets
+   * ConnectionsPanel suppress framer-motion Reorder layout animations during resize. */
+  rightPanelResizing: boolean;
+
   // Actions
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
@@ -549,6 +571,8 @@ export interface UIState {
   setGameTextSpeed: (v: number) => void;
   setGameAutoPlayDelay: (v: number) => void;
   setReviewImagePromptsBeforeSend: (v: boolean) => void;
+  setImagePromptIncludeAppearances: (v: boolean) => void;
+  setImagePromptFormat: (format: ImagePromptFormat) => void;
   setImageBackgroundDimensions: (width: number, height: number) => void;
   setImagePortraitDimensions: (width: number, height: number) => void;
   setImageSelfieDimensions: (width: number, height: number) => void;
@@ -577,6 +601,7 @@ export interface UIState {
   setIntuitiveSwipeNavigation: (v: boolean) => void;
   setIntuitiveSwipeRerollLatest: (v: boolean) => void;
   setEditLastMessageOnArrowUp: (v: boolean) => void;
+  setEditMessagesOnDoubleClick: (v: boolean) => void;
   setSummaryPopoverSettings: (settings: Partial<SummaryPopoverSettings>) => void;
   setNarrationFontColor: (v: string) => void;
   setNarrationOpacity: (v: number) => void;
@@ -590,6 +615,7 @@ export interface UIState {
   setTextStrokeWidth: (v: number) => void;
   setTextStrokeColor: (v: string) => void;
   setCenterCompact: (v: boolean) => void;
+  setRightPanelResizing: (v: boolean) => void;
   setVisualTheme: (v: VisualTheme) => void;
   setConvoGradientField: (scheme: "dark" | "light", field: "from" | "to", value: string) => void;
   setConvoNotificationSound: (v: boolean) => void;

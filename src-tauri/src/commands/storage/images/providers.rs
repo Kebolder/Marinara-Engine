@@ -1,4 +1,5 @@
 use super::*;
+use marinara_security::redact_sensitive_text;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
@@ -16,7 +17,9 @@ const DEFAULT_COMFYUI_BASE_URL: &str = "http://127.0.0.1:8188";
 const DEFAULT_NANOGPT_BASE_URL: &str = "https://nano-gpt.com/api/v1";
 const DEFAULT_BLOCKENTROPY_BASE_URL: &str = "https://api.blockentropy.ai";
 const DEFAULT_RUNPOD_BASE_URL: &str = "https://api.runpod.ai/v2";
+const DEFAULT_GOOGLE_IMAGE_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 const NOVELAI_V4_PROMPT_HINT: &str = "NovelAI V4/V4.5 prompts support roughly 512 T5 tokens and reject most Unicode prompt characters; try a shorter ASCII prompt without emoji or non-Latin text.";
+const NOVELAI_V4_PROMPT_CHAR_LIMIT: usize = 1800;
 const COMFYUI_PLACEHOLDER_REFERENCE_BASE64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
@@ -80,6 +83,7 @@ pub(crate) async fn generate_image_with_options(
         "openrouter" | "gemini_image" => {
             generate_chat_image(connection, prompt, width, height, &options).await
         }
+        "google_image" => generate_google_image(connection, prompt, width, height, &options).await,
         "xai" => generate_xai(connection, prompt, width, height).await,
         "openai" | "togetherai" | "nanogpt" | "blockentropy" | "" => {
             generate_openai_compatible_image(connection, &source, prompt, width, height, &options)
@@ -118,9 +122,14 @@ fn infer_image_source(model_or_source: &str, base_url: &str) -> String {
     match model.as_str() {
         "openai" | "stability" | "togetherai" | "novelai" | "pollinations" | "horde"
         | "blockentropy" | "openrouter" | "xai" | "comfyui" | "automatic1111"
-        | "runpod_comfyui" | "gemini_image" | "nanogpt" => return model,
+        | "runpod_comfyui" | "gemini_image" | "google_image" | "nanogpt" => return model,
         "drawthings" => return "automatic1111".to_string(),
         _ => {}
+    }
+    // Google's own image API (AI Studio "Nano Banana" / Imagen) is detected by host,
+    // and must win over the generic gemini/imagen fallback below (which targets OpenRouter).
+    if url.contains("generativelanguage.googleapis.com") {
+        return "google_image".to_string();
     }
     if url.contains("nano-gpt.com") {
         return "nanogpt".to_string();
@@ -230,9 +239,7 @@ pub(crate) fn image_model(connection: &Value, source: &str) -> Option<String> {
             connection,
             "black-forest-labs/FLUX.1-schnell-Free",
         )),
-        "nanogpt" | "openai" | "blockentropy" => {
-            Some(connection_model(connection, "gpt-image-1"))
-        }
+        "nanogpt" | "openai" | "blockentropy" => Some(connection_model(connection, "gpt-image-1")),
         _ => configured_model(connection),
     };
 
@@ -253,6 +260,7 @@ pub(crate) fn connection_base_url(connection: &Value, source: &str) -> String {
         "togetherai" => DEFAULT_TOGETHER_BASE_URL,
         "novelai" => DEFAULT_NOVELAI_BASE_URL,
         "openrouter" | "gemini_image" => DEFAULT_OPENROUTER_BASE_URL,
+        "google_image" => DEFAULT_GOOGLE_IMAGE_BASE_URL,
         "xai" => DEFAULT_XAI_BASE_URL,
         "pollinations" => DEFAULT_POLLINATIONS_BASE_URL,
         "horde" => DEFAULT_HORDE_BASE_URL,
@@ -403,7 +411,7 @@ fn http_client(timeout_secs: u64) -> AppResult<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .map_err(|error| AppError::new("image_client_error", error.to_string()))
+        .map_err(|error| AppError::new("image_client_error", image_transport_error_message(error)))
 }
 
 fn bearer(request: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
@@ -416,10 +424,9 @@ fn bearer(request: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBu
 
 async fn response_json(response: reqwest::Response, provider: &str) -> AppResult<Value> {
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|error| AppError::new("image_response_error", error.to_string()))?;
+    let text = response.text().await.map_err(|error| {
+        AppError::new("image_response_error", image_transport_error_message(error))
+    })?;
     if !status.is_success() {
         return Err(AppError::new(
             "image_provider_error",
@@ -448,10 +455,9 @@ async fn image_response_base64(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("image/png")
         .to_string();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| AppError::new("image_response_error", error.to_string()))?;
+    let bytes = response.bytes().await.map_err(|error| {
+        AppError::new("image_response_error", image_transport_error_message(error))
+    })?;
     if !status.is_success() {
         let text = String::from_utf8_lossy(&bytes);
         return Err(AppError::new(
@@ -466,13 +472,18 @@ async fn image_response_base64(
 }
 
 fn sanitize_error(text: &str) -> String {
-    text.replace(['\n', '\r', '\t'], " ")
+    redact_sensitive_text(text)
+        .replace(['\n', '\r', '\t'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .chars()
         .take(300)
         .collect()
+}
+
+fn image_transport_error_message(error: impl std::fmt::Display) -> String {
+    sanitize_error(&error.to_string())
 }
 
 fn strip_data_url(value: &str) -> (&str, &str) {
@@ -586,7 +597,9 @@ async fn response_bytes(
     let bytes = response
         .bytes()
         .await
-        .map_err(|error| AppError::new("image_response_error", error.to_string()))?
+        .map_err(|error| {
+            AppError::new("image_response_error", image_transport_error_message(error))
+        })?
         .to_vec();
     if !status.is_success() {
         let text = String::from_utf8_lossy(&bytes);
@@ -602,11 +615,9 @@ async fn response_bytes(
 }
 
 async fn fetch_image_url(client: &reqwest::Client, url: &str) -> AppResult<(String, String)> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    let response = client.get(url).send().await.map_err(|error| {
+        AppError::new("image_network_error", image_transport_error_message(error))
+    })?;
     image_response_base64(response, "image URL").await
 }
 
@@ -688,7 +699,9 @@ async fn generate_openai_compatible_image(
         )
         .send()
         .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+        .map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?;
         let json = response_json(response, source).await?;
         return parse_image_json(&client, &json).await.ok_or_else(|| {
             AppError::new(
@@ -731,7 +744,7 @@ async fn generate_openai_compatible_image(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, source).await?;
     parse_image_json(&client, &json).await.ok_or_else(|| {
         AppError::new(
@@ -844,7 +857,7 @@ async fn generate_xai(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, "xai").await?;
     parse_image_json(&client, &json)
         .await
@@ -977,7 +990,7 @@ async fn generate_nanogpt_image(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, "nanogpt").await?;
     parse_image_json(&client, &json)
         .await
@@ -1023,7 +1036,7 @@ async fn generate_together_image(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, "togetherai").await?;
     parse_image_json(&client, &json)
         .await
@@ -1073,7 +1086,7 @@ async fn generate_chat_image(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, &source).await?;
     parse_image_json(&client, &json).await.ok_or_else(|| {
         AppError::new(
@@ -1081,6 +1094,240 @@ async fn generate_chat_image(
             format!("{source} returned no image data"),
         )
     })
+}
+
+const GOOGLE_IMAGE_PROVIDER: &str = "google_image";
+
+/// Generates images via Google's *native* Generative Language API (AI Studio),
+/// distinct from the OpenRouter-proxied `gemini_image` path.
+///
+/// Two protocols live behind one Google connection:
+/// - Gemini image models ("Nano Banana", e.g. `gemini-2.5-flash-image`) use
+///   `models/{model}:generateContent` with `responseModalities` and return the
+///   image as an inline base64 part.
+/// - Imagen models (e.g. `imagen-4.0-generate-001`) use `models/{model}:predict`
+///   and return `bytesBase64Encoded`.
+///
+/// Google authenticates with an `x-goog-api-key` header — not bearer auth — which
+/// is why the generic OpenAI-style path could never work against this host.
+async fn generate_google_image(
+    connection: &Value,
+    prompt: &str,
+    width: u64,
+    height: u64,
+    options: &ImageGenerationOptions,
+) -> AppResult<(String, String)> {
+    let base = connection_base_url(connection, GOOGLE_IMAGE_PROVIDER);
+    let base = base.trim_end_matches('/');
+    let model = google_image_model(connection);
+    let api_key = connection_api_key(connection);
+    // Gemini 3 image models ("Nano Banana Pro/2") run a thinking pass before
+    // rendering and can take well over a minute, so allow more headroom than the
+    // 180s used by faster providers.
+    let client = http_client(300)?;
+
+    let prompt = match options
+        .negative_prompt
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(negative) => format!("{prompt}\n\nAvoid in the image: {negative}"),
+        None => prompt.to_string(),
+    };
+
+    if is_imagen_model(&model) {
+        if !options.reference_images.is_empty() {
+            eprintln!(
+                "Google Imagen model {model} does not support reference images; ignoring {} reference image(s).",
+                options.reference_images.len()
+            );
+        }
+        let payload = json!({
+            "instances": [{ "prompt": prompt }],
+            "parameters": {
+                "sampleCount": 1,
+                "aspectRatio": closest_imagen_aspect_ratio(width, height),
+            }
+        });
+        let response = client
+            .post(format!("{base}/models/{model}:predict"))
+            .header("x-goog-api-key", api_key.as_str())
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::new("image_network_error", image_transport_error_message(error))
+            })?;
+        let json = response_json(response, GOOGLE_IMAGE_PROVIDER).await?;
+        return parse_google_predict_image(&json).ok_or_else(|| {
+            AppError::new(
+                "image_response_error",
+                "Google Imagen returned no image data",
+            )
+        });
+    }
+
+    let mut parts: Vec<Value> = Vec::new();
+    for reference in &options.reference_images {
+        let decoded = decode_reference_image(reference)?;
+        parts.push(json!({
+            "inlineData": { "mimeType": decoded.mime_type, "data": decoded.base64 }
+        }));
+    }
+    parts.push(json!({ "text": prompt }));
+
+    let mut generation_config = json!({ "responseModalities": ["TEXT", "IMAGE"] });
+    if is_gemini3_image_model(&model) {
+        // Gemini 3 image models default to a high output resolution; pin 1K so
+        // generation finishes in a reasonable time, and honour the requested
+        // aspect ratio. (Left off the proven 2.5 path, which works without it.)
+        generation_config["imageConfig"] = json!({
+            "aspectRatio": closest_google_aspect_ratio(width, height),
+            "imageSize": "1K",
+        });
+    }
+    let payload = json!({
+        "contents": [{ "role": "user", "parts": parts }],
+        "generationConfig": generation_config,
+    });
+    let response = client
+        .post(format!("{base}/models/{model}:generateContent"))
+        .header("x-goog-api-key", api_key.as_str())
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?;
+    let json = response_json(response, GOOGLE_IMAGE_PROVIDER).await?;
+    parse_google_generate_content_image(&json).ok_or_else(|| {
+        // No inline image part — surface why (e.g. a SAFETY block or a text-only reply)
+        // instead of a generic message, since Gemini returns 200 OK in these cases.
+        let reason = json
+            .pointer("/candidates/0/finishReason")
+            .and_then(Value::as_str)
+            .or_else(|| json.pointer("/promptFeedback/blockReason").and_then(Value::as_str))
+            .unwrap_or("none");
+        let text = json
+            .pointer("/candidates/0/content/parts/0/text")
+            .and_then(Value::as_str)
+            .map(|value| format!(" Model said: {}", sanitize_error(value)))
+            .unwrap_or_default();
+        AppError::new(
+            "image_response_error",
+            format!(
+                "Gemini returned no image (finishReason: {reason}). The model may have refused the prompt or replied with text only.{text}"
+            ),
+        )
+    })
+}
+
+/// Native Google model ids are unprefixed; tolerate an OpenRouter-style `google/`
+/// prefix or a leading `models/` so a pasted id still resolves to a valid path.
+fn google_image_model(connection: &Value) -> String {
+    connection_model(connection, "gemini-2.5-flash-image")
+        .trim()
+        .trim_start_matches("models/")
+        .trim_start_matches("google/")
+        .to_string()
+}
+
+fn is_imagen_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("imagen")
+}
+
+/// Gemini 3 image models ("Nano Banana Pro" / "Nano Banana 2") accept an
+/// `imageConfig` block that earlier models do not need.
+fn is_gemini3_image_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gemini-3")
+}
+
+/// Snap requested dimensions to one of Google's supported `imageConfig` aspect ratios.
+fn closest_google_aspect_ratio(width: u64, height: u64) -> &'static str {
+    let ratio = width as f64 / height.max(1) as f64;
+    [
+        ("21:9", 21.0 / 9.0),
+        ("16:9", 16.0 / 9.0),
+        ("3:2", 3.0 / 2.0),
+        ("4:3", 4.0 / 3.0),
+        ("5:4", 5.0 / 4.0),
+        ("1:1", 1.0),
+        ("4:5", 4.0 / 5.0),
+        ("3:4", 3.0 / 4.0),
+        ("2:3", 2.0 / 3.0),
+        ("9:16", 9.0 / 16.0),
+    ]
+    .into_iter()
+    .min_by(|a, b| {
+        (a.1 - ratio)
+            .abs()
+            .partial_cmp(&(b.1 - ratio).abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .map(|item| item.0)
+    .unwrap_or("1:1")
+}
+
+fn parse_google_generate_content_image(json: &Value) -> Option<(String, String)> {
+    let parts = json.pointer("/candidates/0/content/parts")?.as_array()?;
+    for part in parts {
+        // v1beta REST emits camelCase, but accept snake_case defensively.
+        for key in ["inlineData", "inline_data"] {
+            let Some(inline) = part.get(key) else {
+                continue;
+            };
+            let data = inline
+                .get("data")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty());
+            if let Some(data) = data {
+                let mime = inline
+                    .get("mimeType")
+                    .or_else(|| inline.get("mime_type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("image/png")
+                    .to_string();
+                return Some((data.to_string(), mime));
+            }
+        }
+    }
+    None
+}
+
+fn parse_google_predict_image(json: &Value) -> Option<(String, String)> {
+    let prediction = json.pointer("/predictions/0")?;
+    let data = prediction
+        .get("bytesBase64Encoded")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())?;
+    let mime = prediction
+        .get("mimeType")
+        .and_then(Value::as_str)
+        .unwrap_or("image/png")
+        .to_string();
+    Some((data.to_string(), mime))
+}
+
+/// Imagen only accepts a fixed set of aspect ratios; snap the requested
+/// dimensions to the nearest supported one.
+fn closest_imagen_aspect_ratio(width: u64, height: u64) -> &'static str {
+    let ratio = width as f64 / height.max(1) as f64;
+    [
+        ("1:1", 1.0),
+        ("16:9", 16.0 / 9.0),
+        ("9:16", 9.0 / 16.0),
+        ("4:3", 4.0 / 3.0),
+        ("3:4", 3.0 / 4.0),
+    ]
+    .into_iter()
+    .min_by(|a, b| {
+        (a.1 - ratio)
+            .abs()
+            .partial_cmp(&(b.1 - ratio).abs())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .map(|item| item.0)
+    .unwrap_or("1:1")
 }
 
 fn chat_image_modalities(model: &str) -> Vec<&'static str> {
@@ -1316,7 +1563,9 @@ async fn upload_comfy_reference_image(base: &str, reference: &str) -> AppResult<
         .multipart(form)
         .send()
         .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+        .map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?;
     let json = response_json(response, "comfyui").await?;
     json.get("name")
         .and_then(Value::as_str)
@@ -1397,7 +1646,7 @@ async fn generate_stability(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     image_response_base64(response, "stability").await
 }
 
@@ -1445,7 +1694,7 @@ async fn generate_stability_v1(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let json = response_json(response, "stability").await?;
     let base64 = json
         .get("artifacts")
@@ -1625,7 +1874,9 @@ async fn generate_automatic1111(
         .json(&payload)
         .send()
         .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+        .map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?;
     let json = response_json(response, "automatic1111").await?;
     let image = json
         .get("images")
@@ -1681,10 +1932,9 @@ async fn generate_horde(
         },
     );
     let submit = response_json(
-        request
-            .send()
-            .await
-            .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+        request.send().await.map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?,
         "horde",
     )
     .await?;
@@ -1713,7 +1963,9 @@ async fn generate_horde(
                 )
                 .send()
                 .await
-                .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+                .map_err(|error| {
+                    AppError::new("image_network_error", image_transport_error_message(error))
+                })?,
             "horde",
         )
         .await?;
@@ -1805,7 +2057,9 @@ async fn generate_comfyui(
             .json(&json!({ "prompt": prompt_json }))
             .send()
             .await
-            .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+            .map_err(|error| {
+                AppError::new("image_network_error", image_transport_error_message(error))
+            })?,
         "comfyui",
     )
     .await?;
@@ -1821,7 +2075,9 @@ async fn generate_comfyui(
                 .get(format!("{base}/history/{prompt_id}"))
                 .send()
                 .await
-                .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+                .map_err(|error| {
+                    AppError::new("image_network_error", image_transport_error_message(error))
+                })?,
             "comfyui",
         )
         .await?;
@@ -2043,7 +2299,9 @@ async fn generate_runpod_comfyui(
         )
         .send()
         .await
-        .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+        .map_err(|error| {
+            AppError::new("image_network_error", image_transport_error_message(error))
+        })?,
         "runpod",
     )
     .await?;
@@ -2062,7 +2320,9 @@ async fn generate_runpod_comfyui(
             )
             .send()
             .await
-            .map_err(|error| AppError::new("image_network_error", error.to_string()))?,
+            .map_err(|error| {
+                AppError::new("image_network_error", image_transport_error_message(error))
+            })?,
             "runpod",
         )
         .await?;
@@ -2228,7 +2488,7 @@ async fn generate_novelai(
     )
     .send()
     .await
-    .map_err(|error| AppError::new("image_network_error", error.to_string()))?;
+    .map_err(|error| AppError::new("image_network_error", image_transport_error_message(error)))?;
     let (bytes, content_type) = response_bytes(response, "novelai").await?;
     parse_novelai_image_response(&client, bytes, &content_type).await
 }
@@ -2248,7 +2508,7 @@ fn prepare_novelai_prompt(value: &str, field_name: &str, model: &str) -> AppResu
             "NovelAI {field_name} contains only unsupported V4/V4.5 prompt characters. {NOVELAI_V4_PROMPT_HINT}"
         )));
     }
-    Ok(sanitized)
+    Ok(truncate_novelai_v4_prompt(&sanitized))
 }
 
 fn sanitize_novelai_v4_prompt(value: &str) -> String {
@@ -2271,6 +2531,46 @@ fn sanitize_novelai_v4_prompt(value: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+fn truncate_novelai_v4_prompt(value: &str) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(NOVELAI_V4_PROMPT_CHAR_LIMIT).collect();
+    if chars.next().is_none() {
+        return value.to_string();
+    }
+    truncated
+        .trim_end_matches(&[',', ' ', '\n', '\r', '\t'][..])
+        .to_string()
+}
+
+fn image_provider_json_error(json: &Value) -> Option<String> {
+    let direct = [
+        json.pointer("/error/message").and_then(Value::as_str),
+        json.pointer("/error").and_then(Value::as_str),
+        json.pointer("/message").and_then(Value::as_str),
+        json.pointer("/detail").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty());
+    if let Some(message) = direct {
+        return Some(message.to_string());
+    }
+    json.get("errors")
+        .and_then(Value::as_array)
+        .and_then(|errors| {
+            errors.iter().find_map(|entry| {
+                entry
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+        })
+        .map(str::to_string)
 }
 
 async fn parse_novelai_image_response(
@@ -2306,6 +2606,12 @@ async fn parse_novelai_image_response(
         if let Some(result) = parse_image_json(client, &json).await {
             return Ok(result);
         }
+        if let Some(error) = image_provider_json_error(&json) {
+            return Err(AppError::new(
+                "image_provider_error",
+                format!("NovelAI returned no image data: {}", sanitize_error(&error)),
+            ));
+        }
     }
     Err(AppError::new(
         "image_response_error",
@@ -2331,6 +2637,18 @@ fn find_comfyui_image<'a>(history: &'a Value, prompt_id: &str) -> Option<&'a Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_provider_error_sanitizer_redacts_secrets() {
+        let sanitized = sanitize_error(
+            r#"{"error":"bad key sk-test-secret","payment":"https://pay.example.test/retrieve/session"}"#,
+        );
+
+        assert!(sanitized.contains("[REDACTED]"));
+        assert!(sanitized.contains("[REDACTED_URL]"));
+        assert!(!sanitized.contains("sk-test-secret"));
+        assert!(!sanitized.contains("retrieve/session"));
+    }
 
     #[test]
     fn comfy_reference_name_tokens_collect_default_and_indexed_slots() {
@@ -2384,5 +2702,35 @@ mod tests {
             json!("refs: first.png, second.png, placeholder.png")
         );
         assert_eq!(resolved["invalid"], json!("%reference_image_name_00%"));
+    }
+
+    #[test]
+    fn novelai_v4_prompt_sanitization_trims_unicode_and_caps_length() {
+        let prompt = format!(
+            "{} {}",
+            "夜".repeat(20),
+            "beautiful cinematic portrait, ".repeat(200)
+        );
+        let sanitized = prepare_novelai_prompt(&prompt, "prompt", "nai-diffusion-4-5-full")
+            .expect("mixed prompt should sanitize");
+
+        assert!(sanitized.is_ascii());
+        assert!(sanitized.chars().count() <= NOVELAI_V4_PROMPT_CHAR_LIMIT);
+        assert!(!sanitized.ends_with(','));
+    }
+
+    #[tokio::test]
+    async fn novelai_json_error_is_reported() {
+        let client = http_client(1).expect("client should build");
+        let error = parse_novelai_image_response(
+            &client,
+            br#"{"error":{"message":"prompt is too long"}}"#.to_vec(),
+            "application/json",
+        )
+        .await
+        .expect_err("json error payload should fail");
+
+        assert_eq!(error.code, "image_provider_error");
+        assert!(error.message.contains("prompt is too long"));
     }
 }

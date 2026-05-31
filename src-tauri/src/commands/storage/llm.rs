@@ -1,7 +1,7 @@
+use super::prompts;
 use super::shared::*;
 use super::*;
-use super::prompts;
-use marinara_security::is_allowed_outbound_url;
+use marinara_security::{is_allowed_outbound_url, redact_sensitive_text};
 
 pub(crate) fn resolve_llm_connection_for_request(
     state: &AppState,
@@ -379,9 +379,10 @@ pub(crate) async fn connection_auth_check(state: &AppState, id: &str) -> AppResu
         .and_then(Value::as_str)
         .map(str::to_string);
     match check_connection_without_generation(&connection).await {
-        Ok(message) => Ok(json!({
-            "success": true,
-            "message": message,
+        Ok(outcome) => Ok(json!({
+            "success": !outcome.warning,
+            "warning": outcome.warning,
+            "message": outcome.message,
             "latencyMs": started.elapsed().as_millis(),
             "modelName": model_name,
         })),
@@ -401,29 +402,93 @@ pub(crate) async fn connection_auth_check(state: &AppState, id: &str) -> AppResu
     }
 }
 
-async fn check_connection_without_generation(connection: &Value) -> AppResult<String> {
+pub(crate) async fn connection_diagnose_claude_subscription(
+    state: &AppState,
+    id: &str,
+) -> AppResult<Value> {
+    let connection = get_required(state, "connections", id)?;
+    if connection.get("provider").and_then(Value::as_str) != Some("claude_subscription") {
+        return Err(AppError::invalid_input(
+            "Not a Claude (Subscription) connection",
+        ));
+    }
+    let model = connection
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let fast_mode = connection
+        .get("claudeFastMode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    marinara_llm::diagnose_claude_subscription_model(model, fast_mode)
+}
+
+#[derive(Debug)]
+struct ConnectionCheckOutcome {
+    message: String,
+    warning: bool,
+}
+
+impl ConnectionCheckOutcome {
+    fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            warning: false,
+        }
+    }
+
+    fn warning(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            warning: true,
+        }
+    }
+}
+
+async fn check_connection_without_generation(
+    connection: &Value,
+) -> AppResult<ConnectionCheckOutcome> {
     let provider = connection
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or("openai");
     match provider {
-        "openai_chatgpt" => marinara_llm::check_openai_chatgpt_auth().await,
-        "claude_subscription" => marinara_llm::check_claude_subscription_available(),
-        "openrouter" => check_openrouter_key(connection).await,
-        "image_generation" => check_image_generation_connection(connection).await,
+        "openai_chatgpt" => marinara_llm::check_openai_chatgpt_auth()
+            .await
+            .map(ConnectionCheckOutcome::success),
+        "claude_subscription" => {
+            marinara_llm::check_claude_subscription_available().map(ConnectionCheckOutcome::success)
+        }
+        "openrouter" => check_openrouter_key(connection)
+            .await
+            .map(ConnectionCheckOutcome::success),
+        "nanogpt" => check_nanogpt_connection(connection).await,
+        "image_generation" => check_image_generation_connection(connection)
+            .await
+            .map(ConnectionCheckOutcome::success),
         _ => {
             let models = fetch_provider_models(connection).await?;
             if models.is_empty() {
-                Ok("Connection successful.".to_string())
+                Ok(ConnectionCheckOutcome::success("Connection successful."))
             } else {
-                Ok(format!(
+                Ok(ConnectionCheckOutcome::success(format!(
                     "Connection successful. {} model{} available.",
                     models.len(),
                     if models.len() == 1 { "" } else { "s" }
-                ))
+                )))
             }
         }
     }
+}
+
+async fn check_nanogpt_connection(connection: &Value) -> AppResult<ConnectionCheckOutcome> {
+    let _api_key = connection_api_key(connection)?;
+    let models = fetch_provider_models(connection).await?;
+    let count = models.len();
+    let suffix = if count == 1 { "" } else { "s" };
+    Ok(ConnectionCheckOutcome::warning(format!(
+        "NanoGPT model list is reachable ({count} model{suffix} available), but this does not verify generation auth/payment. Use Send Test Message to verify the saved key can generate."
+    )))
 }
 
 async fn check_openrouter_key(connection: &Value) -> AppResult<String> {
@@ -461,6 +526,13 @@ async fn check_image_generation_connection(connection: &Value) -> AppResult<Stri
                 .to_string(),
         ),
         "openrouter" | "gemini_image" => check_openrouter_key_for_base(connection, &base).await,
+        "google_image" => {
+            // Google's native API authenticates with x-goog-api-key, not bearer auth.
+            // Listing models is a lightweight way to validate the AI Studio key.
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            check_google_api_key_get(&url, connection, "Google").await?;
+            Ok("Google AI Studio API key is valid.".to_string())
+        }
         "novelai" => {
             check_bearer_get("https://api.novelai.net/user/subscription", connection, "NovelAI")
                 .await?;
@@ -537,6 +609,19 @@ async fn check_bearer_get(url: &str, connection: &Value, label: &str) -> AppResu
     send_connection_test_request(request, label).await
 }
 
+/// Like `check_bearer_get`, but authenticates with Google's `x-goog-api-key`
+/// header. Google rejects bearer auth on the Generative Language API with a 401
+/// "Expected OAuth 2 access token" error, so the API key must travel this way.
+async fn check_google_api_key_get(url: &str, connection: &Value, label: &str) -> AppResult<Value> {
+    let api_key = connection_api_key(connection)?;
+    ensure_model_url_allowed(url)?;
+    let request = connection_test_client()?
+        .get(url)
+        .header("accept", "application/json")
+        .header("x-goog-api-key", api_key);
+    send_connection_test_request(request, label).await
+}
+
 async fn check_optional_bearer_get(url: &str, connection: &Value, label: &str) -> AppResult<Value> {
     ensure_model_url_allowed(url)?;
     let mut request = connection_test_client()?
@@ -553,10 +638,12 @@ async fn send_connection_test_request(
     request: reqwest::RequestBuilder,
     label: &str,
 ) -> AppResult<Value> {
-    let response = request
-        .send()
-        .await
-        .map_err(|error| AppError::new("connection_network_error", error.to_string()))?;
+    let response = request.send().await.map_err(|error| {
+        AppError::new(
+            "connection_network_error",
+            provider_transport_error_message(error),
+        )
+    })?;
     let status = response.status();
     let text = response
         .text()
@@ -676,11 +763,17 @@ fn provider_model_catalog(provider: &str) -> Vec<Value> {
             "chatgpt-4o-latest",
         ],
         "anthropic" => &[
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-opus-4-5",
             "claude-3-5-sonnet-latest",
             "claude-3-5-haiku-latest",
             "claude-3-opus-latest",
         ],
         "claude_subscription" => &[
+            "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-opus-4-6",
             "claude-sonnet-4-6",
@@ -757,10 +850,12 @@ async fn fetch_provider_models(connection: &Value) -> AppResult<Vec<Value>> {
     } else if !api_key.is_empty() && provider != "google" {
         request = request.bearer_auth(api_key);
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| AppError::new("models_network_error", error.to_string()))?;
+    let response = request.send().await.map_err(|error| {
+        AppError::new(
+            "models_network_error",
+            provider_transport_error_message(error),
+        )
+    })?;
     let status = response.status();
     let text = response
         .text()
@@ -791,7 +886,12 @@ async fn fetch_ollama_models(connection: &Value) -> AppResult<Vec<Value>> {
         .get(url)
         .send()
         .await
-        .map_err(|error| AppError::new("models_network_error", error.to_string()))?
+        .map_err(|error| {
+            AppError::new(
+                "models_network_error",
+                provider_transport_error_message(error),
+            )
+        })?
         .json::<Value>()
         .await
         .map_err(|error| AppError::new("models_json_error", error.to_string()))?;
@@ -928,10 +1028,12 @@ where
     {
         request = request.bearer_auth(api_key.trim());
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| AppError::new("models_network_error", error.to_string()))?;
+    let response = request.send().await.map_err(|error| {
+        AppError::new(
+            "models_network_error",
+            provider_transport_error_message(error),
+        )
+    })?;
     let status = response.status();
     let text = response
         .text()
@@ -1069,7 +1171,10 @@ fn model_endpoint(provider: &str, base: &str, connection: &Value) -> String {
                 .and_then(Value::as_str)
                 .unwrap_or("")
         ),
-        "google_vertex" => format!("{base}/models"),
+        "google_vertex" => {
+            let base = base.trim_end_matches("/publishers/google/models");
+            format!("{base}/publishers/google/models")
+        }
         _ => format!("{base}/models"),
     }
 }
@@ -1079,22 +1184,48 @@ fn connection_base_url(connection: &Value) -> String {
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or("openai");
-    connection
+    let base = connection
         .get("baseUrl")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| provider_default_base_url(provider))
         .trim_end_matches('/')
-        .to_string()
+        .to_string();
+    if provider == "google" {
+        normalize_google_base_url(base)
+    } else {
+        base
+    }
+}
+
+fn normalize_google_base_url(base: String) -> String {
+    let lower = base.to_ascii_lowercase();
+    let prefix = [
+        "https://home.linkapi.ai",
+        "https://www.linkapi.ai",
+        "https://linkapi.ai",
+    ]
+    .into_iter()
+    .find(|prefix| lower == *prefix || lower.starts_with(&format!("{prefix}/")));
+    if let Some(prefix) = prefix {
+        let suffix = &base[prefix.len()..];
+        format!("https://api.linkapi.ai{suffix}")
+    } else {
+        base
+    }
 }
 
 fn provider_default_base_url(provider: &str) -> &'static str {
     match provider {
         "anthropic" => "https://api.anthropic.com",
-        "google" | "google_vertex" => "https://generativelanguage.googleapis.com",
+        "google" => "https://generativelanguage.googleapis.com",
+        "google_vertex" => {
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        }
         "openrouter" => "https://openrouter.ai/api/v1",
         "xai" => "https://api.x.ai/v1",
+        "nanogpt" => "https://nano-gpt.com/api/v1",
         "ollama" => "http://127.0.0.1:11434",
         "mistral" => "https://api.mistral.ai/v1",
         "cohere" => "https://api.cohere.ai/v2",
@@ -1108,16 +1239,22 @@ fn ensure_model_url_allowed(url: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::invalid_input(format!(
-            "Outbound model URL is not allowed: {url}"
+            "Outbound model URL is not allowed: {}",
+            redact_sensitive_text(url)
         )))
     }
 }
 
+fn provider_transport_error_message(error: impl std::fmt::Display) -> String {
+    redact_sensitive_text(&error.to_string())
+}
+
 fn sanitize_provider_body(body: &str) -> String {
-    if body.contains("<html") || body.contains("<!DOCTYPE") {
+    let lower = body.to_ascii_lowercase();
+    if lower.contains("<html") || lower.contains("<!doctype") {
         "Provider returned HTML instead of JSON".to_string()
     } else {
-        body.chars().take(300).collect()
+        redact_sensitive_text(body).chars().take(300).collect()
     }
 }
 
@@ -1170,11 +1307,74 @@ mod tests {
         format!("http://{address}/v1")
     }
 
+    #[test]
+    fn google_vertex_model_lookup_uses_aiplatform_endpoint() {
+        assert_eq!(
+            provider_default_base_url("google_vertex"),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        );
+        assert_eq!(
+            model_endpoint(
+                "google_vertex",
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1",
+                &json!({}),
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models"
+        );
+        assert_eq!(
+            model_endpoint(
+                "google_vertex",
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models",
+                &json!({}),
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models"
+        );
+    }
+
+    #[test]
+    fn google_connection_base_normalizes_linkapi_console_hosts() {
+        assert_eq!(
+            connection_base_url(&json!({
+                "provider": "google",
+                "baseUrl": "https://home.linkapi.ai"
+            })),
+            "https://api.linkapi.ai"
+        );
+        assert_eq!(
+            connection_base_url(&json!({
+                "provider": "google",
+                "baseUrl": "https://www.linkapi.ai/v1beta"
+            })),
+            "https://api.linkapi.ai/v1beta"
+        );
+        assert_eq!(
+            connection_base_url(&json!({
+                "provider": "openai",
+                "baseUrl": "https://home.linkapi.ai"
+            })),
+            "https://home.linkapi.ai"
+        );
+    }
+
+    #[test]
+    fn model_url_rejection_redacts_query_secret() {
+        let error =
+            ensure_model_url_allowed("ftp://example.test/v1beta/models?key=AIzaSecretValue123")
+                .expect_err("disallowed model URL should fail");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("[REDACTED]"));
+        assert!(!error.message.contains("AIzaSecretValue123"));
+    }
+
     #[tokio::test]
     async fn connection_models_marks_fallback_when_provider_lookup_fails() {
         let state = test_state("provider-error");
-        let base_url =
-            serve_model_failure("500 Internal Server Error", r#"{"error":"bad key"}"#).await;
+        let base_url = serve_model_failure(
+            "500 Internal Server Error",
+            r#"{"error":"bad key sk-test-secret","api_key":"sk-test-secret"}"#,
+        )
+        .await;
         state
             .storage
             .upsert_with_id(
@@ -1198,9 +1398,78 @@ mod tests {
         assert!(result["providerError"]
             .as_str()
             .is_some_and(|message| message.contains("Provider returned HTTP")));
+        assert!(!result["providerError"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("sk-test-secret"));
         assert!(result["models"]
             .as_array()
             .is_some_and(|models| models.iter().any(|model| model["id"] == "gpt-custom")));
+    }
+
+    #[tokio::test]
+    async fn nanogpt_connection_test_requires_api_key_before_model_lookup() {
+        let base_url = serve_model_failure("200 OK", r#"{"data":[{"id":"model-a"}]}"#).await;
+
+        let error = check_connection_without_generation(&json!({
+            "provider": "nanogpt",
+            "baseUrl": base_url,
+            "apiKey": "",
+            "model": "model-a"
+        }))
+        .await
+        .expect_err("NanoGPT test should reject missing generation credentials");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("API key is required"));
+    }
+
+    #[tokio::test]
+    async fn nanogpt_connection_test_labels_model_lookup_as_generation_unverified() {
+        let base_url = serve_model_failure("200 OK", r#"{"data":[{"id":"model-a"}]}"#).await;
+
+        let outcome = check_connection_without_generation(&json!({
+            "provider": "nanogpt",
+            "baseUrl": base_url,
+            "apiKey": "sk-test-key",
+            "model": "model-a"
+        }))
+        .await
+        .expect("NanoGPT model lookup should remain usable");
+
+        assert!(outcome.warning);
+        assert!(outcome
+            .message
+            .contains("does not verify generation auth/payment"));
+    }
+
+    #[tokio::test]
+    async fn nanogpt_connection_auth_check_returns_warning_state() {
+        let state = test_state("nanogpt-warning");
+        let base_url = serve_model_failure("200 OK", r#"{"data":[{"id":"model-a"}]}"#).await;
+        state
+            .storage
+            .upsert_with_id(
+                "connections",
+                "nanogpt-warning",
+                json!({
+                    "provider": "nanogpt",
+                    "baseUrl": base_url,
+                    "apiKey": "sk-test-key",
+                    "model": "model-a"
+                }),
+            )
+            .expect("connection should be stored");
+
+        let result = connection_auth_check(&state, "nanogpt-warning")
+            .await
+            .expect("NanoGPT connection check should return model-list result");
+
+        assert_eq!(result["success"], false);
+        assert_eq!(result["warning"], true);
+        assert!(result["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("does not verify generation auth/payment")));
     }
 
     #[tokio::test]

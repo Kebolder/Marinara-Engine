@@ -12,8 +12,10 @@ import {
   useTestConnection,
   useTestMessage,
   useTestImageGeneration,
+  useDiagnoseClaudeSubscription,
   useFetchModels,
   useSaveConnectionDefaults,
+  type ClaudeSubscriptionDiagnosis,
 } from "../../../catalog/connections";
 import { usePresets } from "../../../catalog/presets";
 import {
@@ -53,11 +55,30 @@ import {
   parseEditableGenerationParameters,
   type EditableGenerationParameters,
 } from "../../../../shared/components/ui/GenerationParametersEditor";
-import { IMAGE_DEFAULTS_STORAGE_KEY, COMFYUI_SAMPLER_OPTIONS, COMFYUI_SCHEDULER_OPTIONS, NOVELAI_NOISE_SCHEDULE_OPTIONS, NOVELAI_SAMPLER_OPTIONS, SD_WEBUI_SAMPLER_OPTIONS, SD_WEBUI_SCHEDULER_OPTIONS, createDefaultImageGenerationProfile, imageSourceToDefaultsService, normalizeImageGenerationProfile, sanitizeImageGenerationProfile } from "../../../../engine/contracts/constants/image-generation-defaults";
-import { MODEL_LISTS, IMAGE_GENERATION_SOURCES, inferImageSource } from "../../../../engine/contracts/constants/model-lists";
+import {
+  IMAGE_DEFAULTS_STORAGE_KEY,
+  COMFYUI_SAMPLER_OPTIONS,
+  COMFYUI_SCHEDULER_OPTIONS,
+  NOVELAI_NOISE_SCHEDULE_OPTIONS,
+  NOVELAI_SAMPLER_OPTIONS,
+  SD_WEBUI_SAMPLER_OPTIONS,
+  SD_WEBUI_SCHEDULER_OPTIONS,
+  createDefaultImageGenerationProfile,
+  imageSourceToDefaultsService,
+  normalizeImageGenerationProfile,
+  sanitizeImageGenerationProfile,
+} from "../../../../engine/contracts/constants/image-generation-defaults";
+import {
+  MODEL_LISTS,
+  IMAGE_GENERATION_SOURCES,
+  inferImageSource,
+} from "../../../../engine/contracts/constants/model-lists";
 import { PROVIDERS, isTauriRuntimeProvider } from "../../../../engine/contracts/constants/providers";
 import type { APIProvider } from "../../../../engine/contracts/types/connection";
-import type { ImageDefaultsService, ImageGenerationDefaultsProfile } from "../../../../engine/contracts/types/image-generation-defaults";
+import type {
+  ImageDefaultsService,
+  ImageGenerationDefaultsProfile,
+} from "../../../../engine/contracts/types/image-generation-defaults";
 import { toast } from "sonner";
 
 /** Links where users can obtain API keys for each provider */
@@ -76,6 +97,19 @@ const DEFAULT_CACHING_AT_DEPTH = 5;
 const MAX_CACHING_AT_DEPTH = 100;
 const DEFAULT_MAX_PARALLEL_JOBS = 1;
 const MAX_PARALLEL_JOBS = 16;
+
+const OPENAI_CHATGPT_SETUP_STEPS = [
+  { label: "Install Codex CLI", command: "npm i -g @openai/codex" },
+  { label: "Sign in once", command: "codex login" },
+  { label: "Codex creates a local auth.json credential file that Marinara reads automatically." },
+  { label: "API Key and Base URL are not required - leave them blank." },
+] as const;
+
+const CLAUDE_SUBSCRIPTION_SETUP_STEPS = [
+  { label: "Install Claude Code", command: "npm i -g @anthropic-ai/claude-code" },
+  { label: "Sign in once", command: "claude login" },
+  { label: "API Key and Base URL are not required - leave them blank." },
+] as const;
 
 type RemoteModel = {
   id: string;
@@ -117,6 +151,7 @@ export function ConnectionEditor() {
   const testConnection = useTestConnection();
   const testMessage = useTestMessage();
   const testImageGeneration = useTestImageGeneration();
+  const diagnoseClaudeSubscription = useDiagnoseClaudeSubscription();
   const fetchModels = useFetchModels();
   const saveConnectionDefaults = useSaveConnectionDefaults();
   const { data: allConnections } = useConnections();
@@ -160,7 +195,12 @@ export function ConnectionEditor() {
   const [imageDefaultsExpanded, setImageDefaultsExpanded] = useState(false);
 
   // Test results
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs: number } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    warning?: boolean;
+    message: string;
+    latencyMs: number;
+  } | null>(null);
   const [msgResult, setMsgResult] = useState<{
     success: boolean;
     response: string;
@@ -175,6 +215,7 @@ export function ConnectionEditor() {
     prompt: string;
     error?: string;
   } | null>(null);
+  const [claudeDiagResult, setClaudeDiagResult] = useState<ClaudeSubscriptionDiagnosis | null>(null);
 
   // Model search
   const [modelSearch, setModelSearch] = useState("");
@@ -274,6 +315,7 @@ export function ConnectionEditor() {
     setTestResult(null);
     setMsgResult(null);
     setImgTestResult(null);
+    setClaudeDiagResult(null);
   }, [conn]);
 
   const comfyWorkflowValidation = useMemo(() => {
@@ -350,7 +392,14 @@ export function ConnectionEditor() {
     const knownIds = new Set(providerModels.map((m) => m.id));
     const uniqueRemote = remoteModels
       .filter((m) => !knownIds.has(m.id))
-      .map((m) => ({ id: m.id, name: m.name, context: 0, maxOutput: 0, isRemote: true as const, fallback: m.fallback }));
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        context: 0,
+        maxOutput: 0,
+        isRemote: true as const,
+        fallback: m.fallback,
+      }));
     const known = providerModels.map((m) => ({ ...m, isRemote: false as const }));
     return [...known, ...uniqueRemote];
   }, [providerModels, remoteModels]);
@@ -371,6 +420,33 @@ export function ConnectionEditor() {
     setFetchError(null);
   }, [localProvider]);
 
+  const isClaudeSubscriptionProvider = localProvider === "claude_subscription";
+  const usesLocalChatGptAuth = localProvider === "openai_chatgpt";
+  const usesLocalAuthProvider = usesLocalChatGptAuth || isClaudeSubscriptionProvider;
+  const embeddingConnectionOptions = useMemo(
+    () =>
+      ((allConnections ?? []) as Record<string, unknown>[]).filter(
+        (c) => c.id !== connectionDetailId && c.provider !== "image_generation" && c.provider !== "openai_chatgpt",
+      ),
+    [allConnections, connectionDetailId],
+  );
+  const selectedEmbeddingConnectionId =
+    localEmbeddingConnectionId &&
+    (allConnections === undefined || embeddingConnectionOptions.some((c) => c.id === localEmbeddingConnectionId))
+      ? localEmbeddingConnectionId
+      : "";
+
+  useEffect(() => {
+    if (
+      localEmbeddingConnectionId &&
+      allConnections !== undefined &&
+      !embeddingConnectionOptions.some((c) => c.id === localEmbeddingConnectionId)
+    ) {
+      setLocalEmbeddingConnectionId("");
+      setDirty(true);
+    }
+  }, [allConnections, embeddingConnectionOptions, localEmbeddingConnectionId]);
+
   const handleClose = useCallback(() => {
     if (dirty) {
       setShowUnsavedWarning(true);
@@ -379,14 +455,14 @@ export function ConnectionEditor() {
     closeConnectionDetail();
   }, [dirty, closeConnectionDetail]);
 
-  const handleSave = useCallback(async () => {
-    if (!connectionDetailId) return;
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    if (!connectionDetailId) return false;
     setSaveError(null);
     const payload: Record<string, unknown> = {
       id: connectionDetailId,
       name: localName,
       provider: localProvider,
-      baseUrl: localBaseUrl,
+      baseUrl: usesLocalAuthProvider ? "" : localBaseUrl,
       model: localModel,
       maxContext: localMaxContext,
       maxParallelJobs: localMaxParallelJobs,
@@ -394,9 +470,9 @@ export function ConnectionEditor() {
       cachingAtDepth: localCachingAtDepth,
       claudeFastMode: localProvider === "claude_subscription" ? localClaudeFastMode : false,
       defaultForAgents: localDefaultForAgents,
-      embeddingModel: localEmbeddingModel,
-      embeddingBaseUrl: localEmbeddingBaseUrl,
-      embeddingConnectionId: localEmbeddingConnectionId || null,
+      embeddingModel: usesLocalAuthProvider ? "" : localEmbeddingModel,
+      embeddingBaseUrl: usesLocalAuthProvider ? "" : localEmbeddingBaseUrl,
+      embeddingConnectionId: selectedEmbeddingConnectionId || null,
       promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
       openrouterProvider: localOpenrouterProvider || null,
       imageGenerationSource:
@@ -407,8 +483,9 @@ export function ConnectionEditor() {
         localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
     };
-    // Only send API key if user typed a new one
-    if (localApiKey.trim()) {
+    if (usesLocalAuthProvider) {
+      payload.apiKey = "";
+    } else if (localApiKey.trim()) {
       payload.apiKey = localApiKey;
     }
     try {
@@ -434,13 +511,16 @@ export function ConnectionEditor() {
       setDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save connection");
+      return false;
     }
   }, [
     connectionDetailId,
     localName,
     localProvider,
+    usesLocalAuthProvider,
     localBaseUrl,
     localApiKey,
     localModel,
@@ -452,7 +532,7 @@ export function ConnectionEditor() {
     localDefaultForAgents,
     localEmbeddingModel,
     localEmbeddingBaseUrl,
-    localEmbeddingConnectionId,
+    selectedEmbeddingConnectionId,
     localPromptPresetId,
     localOpenrouterProvider,
     localImageGenerationSource,
@@ -490,16 +570,12 @@ export function ConnectionEditor() {
   const handleTestConnection = useCallback(async () => {
     if (!connectionDetailId) return;
     // Save first if dirty, and wait for it to complete
-    if (dirty) {
-      try {
-        await handleSave();
-      } catch {
-        return;
-      }
+    if (dirty && !(await handleSave())) {
+      return;
     }
     setTestResult(null);
     testConnection.mutate(connectionDetailId, {
-      onSuccess: (data) => setTestResult(data as { success: boolean; message: string; latencyMs: number }),
+      onSuccess: (data) => setTestResult(data),
       onError: (err) =>
         setTestResult({ success: false, message: err instanceof Error ? err.message : "Failed", latencyMs: 0 }),
     });
@@ -507,12 +583,8 @@ export function ConnectionEditor() {
 
   const handleTestMessage = useCallback(async () => {
     if (!connectionDetailId) return;
-    if (dirty) {
-      try {
-        await handleSave();
-      } catch {
-        return;
-      }
+    if (dirty && !(await handleSave())) {
+      return;
     }
     setMsgResult(null);
     testMessage.mutate(connectionDetailId, {
@@ -528,14 +600,32 @@ export function ConnectionEditor() {
     });
   }, [connectionDetailId, dirty, handleSave, testMessage]);
 
+  const handleDiagnoseClaudeSubscription = useCallback(async () => {
+    if (!connectionDetailId) return;
+    if (dirty && !(await handleSave())) {
+      return;
+    }
+    setClaudeDiagResult(null);
+    diagnoseClaudeSubscription.mutate(connectionDetailId, {
+      onSuccess: (data) => setClaudeDiagResult(data),
+      onError: (err) =>
+        setClaudeDiagResult({
+          success: false,
+          requestedModel: localModel,
+          modelsBilled: [],
+          modelUsageDetail: [],
+          fastModeState: null,
+          downgraded: false,
+          response: err instanceof Error ? err.message : "Failed",
+          latencyMs: 0,
+        }),
+    });
+  }, [connectionDetailId, dirty, handleSave, diagnoseClaudeSubscription, localModel]);
+
   const handleTestImage = useCallback(async () => {
     if (!connectionDetailId) return;
-    if (dirty) {
-      try {
-        await handleSave();
-      } catch {
-        return;
-      }
+    if (dirty && !(await handleSave())) {
+      return;
     }
     setImgTestResult(null);
     testImageGeneration.mutate(connectionDetailId, {
@@ -566,12 +656,8 @@ export function ConnectionEditor() {
     if (!connectionDetailId) return;
     setFetchError(null);
     // Save first if dirty so native provider calls use the latest baseUrl/apiKey/provider.
-    if (dirty) {
-      try {
-        await handleSave();
-      } catch {
-        return;
-      }
+    if (dirty && !(await handleSave())) {
+      return;
     }
     fetchModels.mutate(connectionDetailId, {
       onSuccess: (data) => {
@@ -586,9 +672,7 @@ export function ConnectionEditor() {
           })),
         );
         setFetchError(
-          result.providerError
-            ? `Provider lookup failed: ${result.providerError}. Showing fallback models.`
-            : null,
+          result.providerError ? `Provider lookup failed: ${result.providerError}. Showing fallback models.` : null,
         );
         setShowModelDropdown(true);
         requestAnimationFrame(() => {
@@ -626,8 +710,7 @@ export function ConnectionEditor() {
       event.target.value = "";
       if (!file) return;
 
-      const isJsonFile =
-        file.type === "application/json" || file.name.trim().toLowerCase().endsWith(".json");
+      const isJsonFile = file.type === "application/json" || file.name.trim().toLowerCase().endsWith(".json");
       if (!isJsonFile) {
         toast.error("Choose a .json workflow file.");
         return;
@@ -680,7 +763,7 @@ export function ConnectionEditor() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* ── Header ── */}
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3">
+      <div className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4">
         <button
           onClick={handleClose}
           className="shrink-0 rounded-xl p-2 transition-all hover:bg-[var(--accent)] active:scale-95"
@@ -748,8 +831,9 @@ export function ConnectionEditor() {
             </button>
             <button
               onClick={async () => {
-                await handleSave();
-                closeConnectionDetail();
+                if (await handleSave()) {
+                  closeConnectionDetail();
+                }
               }}
               className="rounded-lg bg-amber-500/20 px-3 py-1 hover:bg-amber-500/30"
             >
@@ -805,6 +889,13 @@ export function ConnectionEditor() {
                     setLocalProvider(key);
                     // Auto-fill base URL
                     setLocalBaseUrl(info.defaultBaseUrl);
+                    if (key === "openai_chatgpt" || key === "claude_subscription") {
+                      setLocalApiKey("");
+                    }
+                    if (key === "openai_chatgpt") {
+                      setLocalEmbeddingModel("");
+                      setLocalEmbeddingBaseUrl("");
+                    }
                     // Clear model when switching providers, except xAI where
                     // we can seed the newest supported Grok model.
                     setLocalModel(key === "xai" ? (defaultModel?.id ?? "grok-4.3") : "");
@@ -825,6 +916,9 @@ export function ConnectionEditor() {
               ))}
             </div>
           </FieldGroup>
+
+          {isClaudeSubscriptionProvider && <ClaudeSubscriptionAuthHelp />}
+          {usesLocalChatGptAuth && <OpenAiChatGptAuthHelp />}
 
           {/* ── OpenRouter Provider Preference ── */}
           {localProvider === "openrouter" && (
@@ -861,22 +955,37 @@ export function ConnectionEditor() {
           <FieldGroup
             label="API Key"
             icon={<Key size="0.875rem" className="text-sky-400" />}
-            help="Your authentication key from the AI provider. You can get one from their website. It's like a password that lets Marinara talk to the AI service."
+            help={
+              usesLocalAuthProvider
+                ? "This provider uses your local subscription login instead of a provider API key."
+                : "Your authentication key from the AI provider. You can get one from their website. It's like a password that lets Marinara talk to the AI service."
+            }
           >
             <input
-              value={localApiKey}
+              value={usesLocalAuthProvider ? "" : localApiKey}
               onChange={(e) => {
                 setLocalApiKey(e.target.value);
                 markDirty();
               }}
               type="password"
+              disabled={usesLocalAuthProvider}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70"
-              placeholder="••••••••  (leave empty to keep existing key)"
+              placeholder={
+                isClaudeSubscriptionProvider
+                  ? "Not used - read from local Claude Code login"
+                  : usesLocalChatGptAuth
+                    ? "Not used - read from local Codex ChatGPT login"
+                    : "••••••••  (leave empty to keep existing key)"
+              }
             />
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              Your key is encrypted at rest. Leave blank when editing to keep the existing key.
+              {isClaudeSubscriptionProvider
+                ? "Authentication is read from your local Claude Code session."
+                : usesLocalChatGptAuth
+                  ? "Authentication is read from your local Codex auth.json credential file; this field stays locked."
+                  : "Your key is encrypted at rest. Leave blank when editing to keep the existing key."}
             </p>
-            {API_KEY_LINKS[localProvider] && (
+            {!usesLocalAuthProvider && API_KEY_LINKS[localProvider] && (
               <a
                 href={API_KEY_LINKS[localProvider]!.url}
                 target="_blank"
@@ -899,22 +1008,42 @@ export function ConnectionEditor() {
           <FieldGroup
             label="Base URL"
             icon={<Globe size="0.875rem" className="text-sky-400" />}
-            help="The API endpoint URL. Usually auto-filled for known providers. Only change this if you're using a proxy, local server, or custom endpoint."
+            help={
+              usesLocalAuthProvider
+                ? "This provider selects its endpoint automatically from your local subscription tooling."
+                : "The API endpoint URL. Usually auto-filled for known providers. Only change this if you're using a proxy, local server, or custom endpoint."
+            }
           >
             <input
-              value={localBaseUrl}
+              value={usesLocalAuthProvider ? "" : localBaseUrl}
               onChange={(e) => {
                 setLocalBaseUrl(e.target.value);
                 markDirty();
               }}
+              disabled={usesLocalAuthProvider}
               className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm font-mono ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-70"
-              placeholder={providerDef?.defaultBaseUrl || "https://api.example.com/v1"}
+              placeholder={
+                isClaudeSubscriptionProvider
+                  ? "Not used - Claude Code selects the endpoint automatically"
+                  : usesLocalChatGptAuth
+                    ? "Not used - ChatGPT Codex endpoint is selected automatically"
+                    : providerDef?.defaultBaseUrl || "https://api.example.com/v1"
+              }
             />
-            {providerDef?.defaultBaseUrl && !localBaseUrl && (
+            {isClaudeSubscriptionProvider ? (
+              <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                Marinara sends requests through the local Claude Code command using your Claude subscription login.
+              </p>
+            ) : usesLocalChatGptAuth ? (
+              <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                Marinara sends requests to the ChatGPT Codex endpoint automatically using your local Codex auth; this
+                endpoint field stays locked.
+              </p>
+            ) : providerDef?.defaultBaseUrl && !localBaseUrl ? (
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Default: {providerDef.defaultBaseUrl}
               </p>
-            )}
+            ) : null}
             {localProvider === "custom" && (
               <p className="mt-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
                 Local model examples: Ollama →{" "}
@@ -923,13 +1052,15 @@ export function ConnectionEditor() {
                 <code className="rounded bg-[var(--secondary)] px-1">http://localhost:5001/v1</code>
               </p>
             )}
-            <p className="mt-1.5 flex items-start gap-1 text-[0.625rem] text-amber-400/80">
-              <AlertCircle size="0.625rem" className="mt-px shrink-0" />
-              <span>
-                Only use URLs from providers you trust. A malicious endpoint could intercept your messages and API
-                keys.
-              </span>
-            </p>
+            {!usesLocalAuthProvider && (
+              <p className="mt-1.5 flex items-start gap-1 text-[0.625rem] text-amber-400/80">
+                <AlertCircle size="0.625rem" className="mt-px shrink-0" />
+                <span>
+                  Only use URLs from providers you trust. A malicious endpoint could intercept your messages and API
+                  keys.
+                </span>
+              </p>
+            )}
             {localProvider === "custom" && (
               <p className="mt-1.5 flex items-start gap-1 text-[0.625rem] text-sky-400/80">
                 <AlertCircle size="0.625rem" className="mt-px shrink-0" />
@@ -1258,93 +1389,93 @@ export function ConnectionEditor() {
           {/* ── ComfyUI Workflow ── */}
           {localProvider === "image_generation" &&
             (selectedImageService === "comfyui" || selectedImageService === "runpod_comfyui") && (
-            <FieldGroup
-              label={selectedImageService === "runpod_comfyui" ? "ComfyUI Workflow" : "ComfyUI Workflow (Optional)"}
-              icon={<Zap size="0.875rem" className="text-sky-400" />}
-              help={
-                selectedImageService === "runpod_comfyui"
-                  ? "RunPod requires a ComfyUI workflow JSON in API format. Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%."
-                  : "Paste a custom ComfyUI workflow JSON (API format). Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%. Leave empty to use the built-in default txt2img workflow."
-              }
-            >
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <input
-                  ref={comfyWorkflowFileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  className="hidden"
-                  onChange={handleImportComfyWorkflowFile}
-                />
-                <button
-                  type="button"
-                  onClick={() => comfyWorkflowFileInputRef.current?.click()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] active:scale-[0.98]"
-                >
-                  <Upload size="0.8125rem" />
-                  Import JSON
-                </button>
-              </div>
-              <textarea
-                ref={comfyWorkflowTextareaRef}
-                value={localComfyuiWorkflow}
-                onChange={(e) => {
-                  setLocalComfyuiWorkflow(e.target.value);
-                  markDirty();
-                }}
-                placeholder='Paste workflow JSON here (exported from ComfyUI via "Save (API Format)")…'
-                className={cn(
-                  "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-mono outline-none ring-1 transition-shadow placeholder:text-[var(--muted-foreground)]/50 min-h-[120px] max-h-[300px] resize-y",
-                  comfyWorkflowValidation?.parseError
-                    ? "ring-red-400/60 focus:ring-red-400"
-                    : "ring-[var(--border)] focus:ring-sky-400/50",
-                )}
-              />
-              {comfyWorkflowValidation?.parseError && (
-                <p className="mt-1 flex items-start gap-1 text-[0.625rem] text-red-400">
-                  <AlertCircle size="0.625rem" className="mt-px shrink-0" />
-                  {comfyWorkflowValidation.charPos !== null ? (
-                    <button
-                      onClick={handleJumpToJsonError}
-                      className="underline decoration-dotted cursor-pointer text-left hover:text-red-300"
-                    >
-                      {comfyWorkflowValidation.label}
-                    </button>
-                  ) : (
-                    comfyWorkflowValidation.label
+              <FieldGroup
+                label={selectedImageService === "runpod_comfyui" ? "ComfyUI Workflow" : "ComfyUI Workflow (Optional)"}
+                icon={<Zap size="0.875rem" className="text-sky-400" />}
+                help={
+                  selectedImageService === "runpod_comfyui"
+                    ? "RunPod requires a ComfyUI workflow JSON in API format. Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%."
+                    : "Paste a custom ComfyUI workflow JSON (API format). Use placeholders like %prompt%, %negative_prompt%, %width%, %height%, %seed%, %model%, %steps%, %cfg%, %sampler%, %scheduler%, and %denoise%. Leave empty to use the built-in default txt2img workflow."
+                }
+              >
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <input
+                    ref={comfyWorkflowFileInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={handleImportComfyWorkflowFile}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => comfyWorkflowFileInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] active:scale-[0.98]"
+                  >
+                    <Upload size="0.8125rem" />
+                    Import JSON
+                  </button>
+                </div>
+                <textarea
+                  ref={comfyWorkflowTextareaRef}
+                  value={localComfyuiWorkflow}
+                  onChange={(e) => {
+                    setLocalComfyuiWorkflow(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder='Paste workflow JSON here (exported from ComfyUI via "Save (API Format)")…'
+                  className={cn(
+                    "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-mono outline-none ring-1 transition-shadow placeholder:text-[var(--muted-foreground)]/50 min-h-[120px] max-h-[300px] resize-y",
+                    comfyWorkflowValidation?.parseError
+                      ? "ring-red-400/60 focus:ring-red-400"
+                      : "ring-[var(--border)] focus:ring-sky-400/50",
                   )}
-                </p>
-              )}
-              {comfyWorkflowValidation &&
-                !comfyWorkflowValidation.parseError &&
-                comfyWorkflowValidation.missing.length > 0 && (
-                  <p className="mt-1 flex items-start gap-1 text-[0.625rem] text-amber-400">
+                />
+                {comfyWorkflowValidation?.parseError && (
+                  <p className="mt-1 flex items-start gap-1 text-[0.625rem] text-red-400">
                     <AlertCircle size="0.625rem" className="mt-px shrink-0" />
-                    <span>
-                      {comfyWorkflowValidation.missing.some((m) => m.critical) && (
-                        <>
-                          <strong>%prompt%</strong> placeholder not found — prompts won&apos;t be injected.{" "}
-                        </>
-                      )}
-                      {comfyWorkflowValidation.missing.some((m) => !m.critical) && (
-                        <>
-                          Unused:{" "}
-                          {comfyWorkflowValidation.missing
-                            .filter((m) => !m.critical)
-                            .map((m) => m.label)
-                            .join(", ")}
-                          .
-                        </>
-                      )}
-                    </span>
+                    {comfyWorkflowValidation.charPos !== null ? (
+                      <button
+                        onClick={handleJumpToJsonError}
+                        className="underline decoration-dotted cursor-pointer text-left hover:text-red-300"
+                      >
+                        {comfyWorkflowValidation.label}
+                      </button>
+                    ) : (
+                      comfyWorkflowValidation.label
+                    )}
                   </p>
                 )}
-              <p className="text-[0.55rem] text-[var(--muted-foreground)] mt-1">
-                Export your workflow from ComfyUI using <strong>Save (API Format)</strong> in the menu. Placeholders
-                like <code>%prompt%</code>, <code>%steps%</code>, and <code>%sampler%</code> will be replaced at
-                generation time.
-              </p>
-            </FieldGroup>
-          )}
+                {comfyWorkflowValidation &&
+                  !comfyWorkflowValidation.parseError &&
+                  comfyWorkflowValidation.missing.length > 0 && (
+                    <p className="mt-1 flex items-start gap-1 text-[0.625rem] text-amber-400">
+                      <AlertCircle size="0.625rem" className="mt-px shrink-0" />
+                      <span>
+                        {comfyWorkflowValidation.missing.some((m) => m.critical) && (
+                          <>
+                            <strong>%prompt%</strong> placeholder not found — prompts won&apos;t be injected.{" "}
+                          </>
+                        )}
+                        {comfyWorkflowValidation.missing.some((m) => !m.critical) && (
+                          <>
+                            Unused:{" "}
+                            {comfyWorkflowValidation.missing
+                              .filter((m) => !m.critical)
+                              .map((m) => m.label)
+                              .join(", ")}
+                            .
+                          </>
+                        )}
+                      </span>
+                    </p>
+                  )}
+                <p className="text-[0.55rem] text-[var(--muted-foreground)] mt-1">
+                  Export your workflow from ComfyUI using <strong>Save (API Format)</strong> in the menu. Placeholders
+                  like <code>%prompt%</code>, <code>%steps%</code>, and <code>%sampler%</code> will be replaced at
+                  generation time.
+                </p>
+              </FieldGroup>
+            )}
 
           {localProvider === "image_generation" && selectedImageDefaultsService && localImageDefaults && (
             <ImageGenerationDefaultsPanel
@@ -1640,7 +1771,34 @@ export function ConnectionEditor() {
           </FieldGroup>
 
           {/* ── Embedding Model (for lorebook vectorization) ── */}
-          {localProvider !== "image_generation" && (
+          {usesLocalAuthProvider ? (
+            <FieldGroup
+              label="Embedding Connection"
+              icon={<Server size="0.875rem" className="text-violet-400" />}
+              help="Local subscription providers cannot create embeddings through their chat login. Choose a separate embedding-capable connection if this chat should use semantic lorebook matching."
+            >
+              <select
+                value={selectedEmbeddingConnectionId}
+                onChange={(e) => {
+                  setLocalEmbeddingConnectionId(e.target.value);
+                  markDirty();
+                }}
+                className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              >
+                <option value="">No semantic embeddings</option>
+                {embeddingConnectionOptions.map((c) => (
+                  <option key={c.id as string} value={c.id as string}>
+                    {c.name as string}
+                    {c.embeddingModel ? ` (${c.embeddingModel})` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Embedding model and endpoint settings come from the selected connection. Local subscription auth remains
+                only for chat generation.
+              </p>
+            </FieldGroup>
+          ) : localProvider !== "image_generation" ? (
             <FieldGroup
               label="Embedding Model"
               icon={<Server size="0.875rem" className="text-violet-400" />}
@@ -1687,7 +1845,7 @@ export function ConnectionEditor() {
                   Embedding Connection
                 </label>
                 <select
-                  value={localEmbeddingConnectionId}
+                  value={selectedEmbeddingConnectionId}
                   onChange={(e) => {
                     setLocalEmbeddingConnectionId(e.target.value);
                     markDirty();
@@ -1695,14 +1853,12 @@ export function ConnectionEditor() {
                   className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 >
                   <option value="">Same as this connection</option>
-                  {((allConnections ?? []) as Record<string, unknown>[])
-                    .filter((c) => c.id !== connectionDetailId && c.provider !== "image_generation")
-                    .map((c) => (
-                      <option key={c.id as string} value={c.id as string}>
-                        {c.name as string}
-                        {c.embeddingModel ? ` (${c.embeddingModel})` : ""}
-                      </option>
-                    ))}
+                  {embeddingConnectionOptions.map((c) => (
+                    <option key={c.id as string} value={c.id as string}>
+                      {c.name as string}
+                      {c.embeddingModel ? ` (${c.embeddingModel})` : ""}
+                    </option>
+                  ))}
                 </select>
                 <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                   Use a different connection&apos;s API key and base URL for embeddings. The embedding model name above
@@ -1710,7 +1866,7 @@ export function ConnectionEditor() {
                 </p>
               </div>
             </FieldGroup>
-          )}
+          ) : null}
 
           {/* ── Test Section ── */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 space-y-4">
@@ -1757,14 +1913,42 @@ export function ConnectionEditor() {
                   Test Image
                 </button>
               )}
+              {isClaudeSubscriptionProvider && (
+                <button
+                  onClick={handleDiagnoseClaudeSubscription}
+                  disabled={diagnoseClaudeSubscription.isPending || !localModel}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-400/10 px-4 py-2.5 text-xs font-medium text-amber-400 ring-1 ring-amber-400/20 transition-all hover:bg-amber-400/20 active:scale-[0.98] disabled:opacity-50"
+                  title="Run a real Claude Code request and report the model usage metadata it returns."
+                >
+                  {diagnoseClaudeSubscription.isPending ? (
+                    <Loader2 size="0.8125rem" className="animate-spin" />
+                  ) : (
+                    <AlertCircle size="0.8125rem" />
+                  )}
+                  Diagnose Routing
+                </button>
+              )}
             </div>
 
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-              <strong>Test Connection</strong> verifies your API key works.
+              <strong>Test Connection</strong>{" "}
+              {isClaudeSubscriptionProvider
+                ? "verifies your local Claude Code command is available."
+                : usesLocalChatGptAuth
+                  ? "verifies your local Codex ChatGPT login."
+                  : localProvider === "nanogpt"
+                    ? "checks NanoGPT's model list only. Use Send Test Message to verify generation auth and account balance."
+                    : "verifies your API key works."}
               {localProvider !== "image_generation" && (
                 <>
                   {" "}
                   <strong>Send Test Message</strong> sends "hi" to the model and shows the response.
+                </>
+              )}
+              {isClaudeSubscriptionProvider && (
+                <>
+                  {" "}
+                  <strong>Diagnose Routing</strong> runs a real Claude Code prompt and reports model usage metadata.
                 </>
               )}
               {localProvider === "image_generation" && (
@@ -1777,7 +1961,12 @@ export function ConnectionEditor() {
 
             {/* Connection test result */}
             {testResult && (
-              <TestResultCard label="Connection Test" success={testResult.success} latencyMs={testResult.latencyMs}>
+              <TestResultCard
+                label="Connection Test"
+                success={testResult.success}
+                warning={testResult.warning}
+                latencyMs={testResult.latencyMs}
+              >
                 {testResult.message}
               </TestResultCard>
             )}
@@ -1812,6 +2001,43 @@ export function ConnectionEditor() {
               </TestResultCard>
             )}
 
+            {claudeDiagResult && (
+              <TestResultCard
+                label="Model Routing Diagnosis"
+                success={claudeDiagResult.success}
+                latencyMs={claudeDiagResult.latencyMs}
+              >
+                <div className="space-y-2 text-xs leading-relaxed">
+                  <div>
+                    Requested <strong>{claudeDiagResult.requestedModel || "unknown"}</strong>
+                    {claudeDiagResult.modelsBilled.length > 0 ? (
+                      <>
+                        {" "}
+                        and Claude reported <strong>{claudeDiagResult.modelsBilled.join(", ")}</strong>.
+                      </>
+                    ) : (
+                      " and Claude did not return modelUsage metadata."
+                    )}
+                  </div>
+                  {claudeDiagResult.fastModeState && (
+                    <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                      Fast mode state: <code>{claudeDiagResult.fastModeState}</code>
+                    </div>
+                  )}
+                  {claudeDiagResult.downgraded && (
+                    <div className="rounded-lg bg-[var(--destructive)]/10 p-2 text-[0.6875rem] text-[var(--destructive)] ring-1 ring-[var(--destructive)]/25">
+                      The usage metadata does not include the requested model. Claude Code may be routing differently
+                      than this connection expects.
+                    </div>
+                  )}
+                  {claudeDiagResult.response && (
+                    <div className="rounded-lg bg-[var(--secondary)] p-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                      {claudeDiagResult.response}
+                    </div>
+                  )}
+                </div>
+              </TestResultCard>
+            )}
           </div>
         </div>
       </div>
@@ -1846,32 +2072,118 @@ function FieldGroup({
   );
 }
 
+function OpenAiChatGptAuthHelp() {
+  return (
+    <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 p-3 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+      <div className="flex items-start gap-2">
+        <AlertCircle size="0.8125rem" className="mt-0.5 shrink-0 text-sky-300" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sky-200">
+            Routes chat through your local Codex ChatGPT login so it uses your ChatGPT account instead of an OpenAI API
+            key.
+          </p>
+          <p className="mt-1 text-sky-200/90">Prerequisites on the Marinara host:</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+            {OPENAI_CHATGPT_SETUP_STEPS.map((step) => {
+              return (
+                <li key={step.label}>
+                  {"command" in step ? (
+                    <>
+                      {step.label}:{" "}
+                      <code className="rounded bg-[var(--secondary)] px-1 py-0.5 text-[0.625rem]">{step.command}</code>
+                    </>
+                  ) : (
+                    step.label
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="mt-2">
+            Marinara reads the local Codex <code className="rounded bg-[var(--secondary)] px-1">auth.json</code>{" "}
+            credential file and refreshes the ChatGPT session when possible. Embeddings are not available on this
+            provider; configure a separate connection for embedding work.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClaudeSubscriptionAuthHelp() {
+  return (
+    <div className="rounded-xl border border-sky-400/25 bg-sky-400/5 p-3 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+      <div className="flex items-start gap-2">
+        <AlertCircle size="0.8125rem" className="mt-0.5 shrink-0 text-sky-300" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sky-200">
+            Routes chat through your local Claude Code login so it bills against your Anthropic subscription instead of
+            an API key.
+          </p>
+          <p className="mt-1 text-sky-200/90">Prerequisites on the Marinara host:</p>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-4">
+            {CLAUDE_SUBSCRIPTION_SETUP_STEPS.map((step) => {
+              return (
+                <li key={step.label}>
+                  {"command" in step ? (
+                    <>
+                      {step.label}:{" "}
+                      <code className="rounded bg-[var(--secondary)] px-1 py-0.5 text-[0.625rem]">{step.command}</code>
+                    </>
+                  ) : (
+                    step.label
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          <p className="mt-2">
+            Marinara reads the local <code className="rounded bg-[var(--secondary)] px-1 py-0.5">claude</code> session
+            and lets the Claude Code tooling choose its endpoint. Embeddings need a separate connection.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TestResultCard({
   label,
   success,
+  warning = false,
   latencyMs,
   children,
 }: {
   label: string;
   success: boolean;
+  warning?: boolean;
   latencyMs: number;
   children: React.ReactNode;
 }) {
+  const tone = warning ? "warning" : success ? "success" : "error";
+  const isSuccess = tone === "success";
+  const isWarning = tone === "warning";
+  const statusLabel = isWarning ? "Warning" : isSuccess ? "Success" : "Failed";
+
   return (
     <div
       className={cn(
         "rounded-lg border p-3",
-        success ? "border-emerald-400/20 bg-emerald-400/5" : "border-[var(--destructive)]/20 bg-[var(--destructive)]/5",
+        isWarning
+          ? "border-amber-400/25 bg-amber-400/5"
+          : isSuccess
+            ? "border-emerald-400/20 bg-emerald-400/5"
+            : "border-[var(--destructive)]/20 bg-[var(--destructive)]/5",
       )}
     >
       <div className="flex items-center gap-2 text-xs font-medium">
-        {success ? (
+        {isSuccess ? (
           <Check size="0.8125rem" className="text-emerald-400" />
         ) : (
-          <AlertCircle size="0.8125rem" className="text-[var(--destructive)]" />
+          <AlertCircle size="0.8125rem" className={isWarning ? "text-amber-300" : "text-[var(--destructive)]"} />
         )}
-        <span className={success ? "text-emerald-400" : "text-[var(--destructive)]"}>
-          {label}: {success ? "Success" : "Failed"}
+        <span className={isWarning ? "text-amber-300" : isSuccess ? "text-emerald-400" : "text-[var(--destructive)]"}>
+          {label}: {statusLabel}
         </span>
         <span className="ml-auto text-[0.625rem] text-[var(--muted-foreground)]">{latencyMs}ms</span>
       </div>

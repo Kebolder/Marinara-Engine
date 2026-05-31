@@ -1,28 +1,137 @@
 // ──────────────────────────────────────────────
-// React Query: Character, Group & Persona hooks
+// React Query: Character & Group hooks
 // ──────────────────────────────────────────────
+import { useMemo } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { characterKeys, spriteKeys } from "../query-keys";
+import { characterKeys } from "../query-keys";
+import {
+  createCharacterSchema,
+  createGroupSchema,
+  updateCharacterSchema,
+  updateGroupSchema,
+} from "../../../../engine/contracts/schemas/character.schema";
+import { characterApi } from "../../../../shared/api/character-api";
+import { ApiError } from "../../../../shared/api/api-errors";
 import { storageApi } from "../../../../shared/api/storage-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
-import { galleryApi, spriteApi } from "../../../../shared/api/image-generation-api";
+import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
+import { galleryApi } from "../../../../shared/api/image-generation-api";
 import type { CharacterCardVersion } from "../../../../engine/contracts/types/character";
-import type { SpriteCapabilities, SpriteCleanupEngine } from "../../../../shared/types/sprite-capabilities";
+import { characterAvatarUrl, type CharacterAvatarSource } from "../lib/character-avatar-url";
 
-export { characterKeys, spriteKeys } from "../query-keys";
+export { characterKeys } from "../query-keys";
 
 type CharacterListRecord = Record<string, unknown> & { id?: string };
+export type CharacterSummary = {
+  id: string;
+  data?: {
+    name?: string;
+    creator?: string;
+    creator_notes?: string;
+    character_version?: string;
+    tags?: unknown[];
+    extensions?: Record<string, unknown>;
+  };
+  comment?: string | null;
+  avatarPath?: string | null;
+  avatarFilePath?: string | null;
+  avatarFilename?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+const CHARACTER_LIST_FIELDS = [
+  "id",
+  "data",
+  "comment",
+  "avatarPath",
+  "avatarFilePath",
+  "avatarFilename",
+  "createdAt",
+  "updatedAt",
+];
+
+const CHARACTER_SUMMARY_OPTIONS = {
+  fields: CHARACTER_LIST_FIELDS,
+  fieldSelections: { data: ["name", "creator", "creator_notes", "character_version", "tags", "extensions"] },
+};
+const CHARACTER_LIST_OPTIONS = {
+  fields: CHARACTER_LIST_FIELDS,
+};
+const CHARACTER_SUMMARY_BY_ID_CONCURRENCY = 8;
+const EMPTY_CHARACTER_SUMMARIES: CharacterSummary[] = [];
 
 function isCharacterListRecord(value: unknown): value is CharacterListRecord & { id: string } {
   return Boolean(
-    value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      typeof (value as { id?: unknown }).id === "string",
+    value && typeof value === "object" && !Array.isArray(value) && typeof (value as { id?: unknown }).id === "string",
   );
 }
 
-export function upsertCharacterListRecord(current: unknown[] | undefined, record: unknown): unknown[] | undefined {
+function isPresent<T>(value: T | null | undefined): value is NonNullable<T> {
+  return value != null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeCharacterAvatarFields<T>(character: T): T {
+  if (!isRecord(character)) return character;
+  const avatarPath = characterAvatarUrl(character as CharacterAvatarSource);
+  const hasAvatarPath = Object.prototype.hasOwnProperty.call(character, "avatarPath");
+  const currentAvatarPath = character.avatarPath as string | null | undefined;
+  if (hasAvatarPath && currentAvatarPath === avatarPath) return character;
+  return { ...character, avatarPath } as T;
+}
+
+function normalizeSearchQuery(search: string | null | undefined): string {
+  return search?.trim() ?? "";
+}
+
+async function listCharacters(): Promise<unknown[]> {
+  const characters = await storageApi.list<unknown>("characters", CHARACTER_LIST_OPTIONS);
+  return characters.map(normalizeCharacterAvatarFields);
+}
+
+async function listCharacterSummaries(search?: string): Promise<CharacterSummary[]> {
+  const query = normalizeSearchQuery(search);
+  const characters = await storageApi.list<CharacterSummary>("characters", {
+    ...CHARACTER_SUMMARY_OPTIONS,
+    ...(query ? { search: query } : {}),
+  });
+  return characters.map(normalizeCharacterAvatarFields);
+}
+
+async function getCharacter(id: string): Promise<unknown> {
+  return normalizeCharacterAvatarFields(await storageApi.get<unknown>("characters", id));
+}
+
+async function listCharacterSummariesByIds(ids: string[]): Promise<CharacterSummary[]> {
+  const results = new Array<CharacterSummary | null>(ids.length).fill(null);
+  let nextIndex = 0;
+  const workerCount = Math.min(CHARACTER_SUMMARY_BY_ID_CONCURRENCY, ids.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < ids.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          results[index] = normalizeCharacterAvatarFields(
+            await storageApi.get<CharacterSummary>("characters", ids[index]!, CHARACTER_SUMMARY_OPTIONS),
+          );
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            results[index] = null;
+            continue;
+          }
+          throw error;
+        }
+      }
+    }),
+  );
+  return results.filter(isPresent);
+}
+
+function upsertCharacterListRecord(current: unknown[] | undefined, record: unknown): unknown[] | undefined {
   if (!isCharacterListRecord(record)) return current;
   if (!Array.isArray(current)) return current;
 
@@ -34,9 +143,33 @@ export function upsertCharacterListRecord(current: unknown[] | undefined, record
   );
 }
 
-export function removeCharacterListRecord(current: unknown[] | undefined, id: string): unknown[] | undefined {
+function removeCharacterListRecord(current: unknown[] | undefined, id: string): unknown[] | undefined {
   if (!Array.isArray(current)) return current;
   return current.filter((item) => !isCharacterListRecord(item) || item.id !== id);
+}
+
+export function invalidateCharacterCollectionQueries(queryClient: Pick<QueryClient, "invalidateQueries">): void {
+  queryClient.invalidateQueries({ queryKey: characterKeys.list() });
+  queryClient.invalidateQueries({ queryKey: characterKeys.summaries() });
+}
+
+function upsertCharacterCollectionRecord(
+  queryClient: Pick<QueryClient, "getQueryData" | "setQueryData">,
+  queryKey: readonly unknown[],
+  record: CharacterListRecord & { id: string },
+): boolean {
+  const current = queryClient.getQueryData<unknown[] | undefined>(queryKey);
+  if (!Array.isArray(current)) return false;
+  queryClient.setQueryData<unknown[] | undefined>(queryKey, (value) => upsertCharacterListRecord(value, record));
+  return true;
+}
+
+function removeCharacterCollectionRecord(
+  queryClient: Pick<QueryClient, "setQueryData">,
+  queryKey: readonly unknown[],
+  id: string,
+): void {
+  queryClient.setQueryData<unknown[] | undefined>(queryKey, (value) => removeCharacterListRecord(value, id));
 }
 
 export function cacheCharacterListRecordFromResult(
@@ -44,16 +177,55 @@ export function cacheCharacterListRecordFromResult(
   result: unknown,
 ): boolean {
   if (!result || typeof result !== "object" || Array.isArray(result)) return false;
-  const record = (result as { character?: unknown }).character;
+  const record = normalizeCharacterAvatarFields((result as { character?: unknown }).character);
   if (!isCharacterListRecord(record)) return false;
 
-  const current = queryClient.getQueryData<unknown[] | undefined>(characterKeys.list());
-  if (!Array.isArray(current)) return false;
+  const updatedList = upsertCharacterCollectionRecord(queryClient, characterKeys.list(), record);
+  const updatedSummaries = upsertCharacterCollectionRecord(queryClient, characterKeys.summaries(), record);
+  queryClient.setQueryData(characterKeys.detail(record.id), record);
+  queryClient.setQueryData(characterKeys.summaryDetail(record.id), record);
+  return updatedList || updatedSummaries;
+}
 
-  queryClient.setQueryData<unknown[] | undefined>(characterKeys.list(), (value) =>
-    upsertCharacterListRecord(value, record),
-  );
-  return true;
+export function removeCachedCharacterRecord(
+  queryClient: Pick<QueryClient, "setQueryData" | "removeQueries" | "invalidateQueries">,
+  id: string,
+) {
+  removeCharacterCollectionRecord(queryClient, characterKeys.list(), id);
+  removeCharacterCollectionRecord(queryClient, characterKeys.summaries(), id);
+  queryClient.removeQueries({ queryKey: characterKeys.detail(id) });
+  queryClient.removeQueries({ queryKey: characterKeys.summaryDetail(id) });
+  queryClient.invalidateQueries({ queryKey: characterKeys.summaries() });
+}
+
+function refreshCharacterCollectionAfterMutation(
+  queryClient: Pick<QueryClient, "getQueryData" | "setQueryData" | "invalidateQueries">,
+  result: unknown,
+): void {
+  const updated = cacheCharacterListRecordFromResult(queryClient, { character: result });
+  if (!updated) invalidateCharacterCollectionQueries(queryClient);
+  else queryClient.invalidateQueries({ queryKey: characterKeys.summaries() });
+}
+
+function invalidateCharacterDetailQueries(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  id: string,
+  options: { includeVersions?: boolean } = {},
+): void {
+  queryClient.invalidateQueries({ queryKey: characterKeys.detail(id) });
+  queryClient.invalidateQueries({ queryKey: characterKeys.summaryDetail(id) });
+  if (options.includeVersions) {
+    queryClient.invalidateQueries({ queryKey: characterKeys.versions(id) });
+  }
+}
+
+function invalidateCharacterRecordQueries(
+  queryClient: Pick<QueryClient, "invalidateQueries">,
+  id: string,
+  options: { includeVersions?: boolean } = {},
+): void {
+  invalidateCharacterCollectionQueries(queryClient);
+  invalidateCharacterDetailQueries(queryClient, id, options);
 }
 
 // ── Characters ──
@@ -61,18 +233,31 @@ export function cacheCharacterListRecordFromResult(
 export function useCharacters(enabled = true) {
   return useQuery({
     queryKey: characterKeys.list(),
-    queryFn: () => storageApi.list<unknown>("characters"),
+    queryFn: listCharacters,
     enabled,
     staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCharacterSummaries(enabled = true, search?: string) {
+  const query = normalizeSearchQuery(search);
+  return useQuery({
+    queryKey: query ? characterKeys.summarySearch(query) : characterKeys.summaries(),
+    queryFn: () => listCharacterSummaries(query),
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
 export function useCharacter(id: string | null) {
   return useQuery({
     queryKey: characterKeys.detail(id ?? ""),
-    queryFn: () => storageApi.get("characters", id!),
+    queryFn: () => getCharacter(id!),
     enabled: !!id,
     staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -81,26 +266,56 @@ export function useCharactersByIds(ids: string[], enabled = true) {
   const queries = useQueries({
     queries: uniqueIds.map((id) => ({
       queryKey: characterKeys.detail(id),
-      queryFn: () => storageApi.get("characters", id),
+      queryFn: () => getCharacter(id),
       enabled: enabled && !!id,
       staleTime: 5 * 60_000,
+      refetchOnWindowFocus: false,
     })),
   });
 
   return {
-    data: queries.map((query) => query.data).filter(Boolean),
+    data: queries.map((query) => query.data).filter(isPresent),
     isLoading: queries.some((query) => query.isLoading),
     isFetching: queries.some((query) => query.isFetching),
+  };
+}
+
+export function useCharacterSummariesByIds(ids: string[], enabled = true) {
+  const normalizedIdKey = ids
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .join("\0");
+  const uniqueIds = useMemo(
+    () => (normalizedIdKey ? Array.from(new Set(normalizedIdKey.split("\0").filter(Boolean))) : []),
+    [normalizedIdKey],
+  );
+  const shouldRead = enabled && normalizedIdKey.length > 0;
+  const query = useQuery({
+    queryKey: characterKeys.summaryByIds(uniqueIds),
+    queryFn: () => listCharacterSummariesByIds(uniqueIds),
+    enabled: shouldRead,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const data = useMemo(() => {
+    if (!shouldRead) return EMPTY_CHARACTER_SUMMARIES;
+    const byId = new Map((query.data ?? []).map((character) => [character.id, character]));
+    return uniqueIds.map((id) => byId.get(id)).filter(isPresent);
+  }, [query.data, shouldRead, uniqueIds]);
+
+  return {
+    data,
+    isLoading: shouldRead ? query.isLoading : false,
+    isFetching: shouldRead ? query.isFetching : false,
   };
 }
 
 export function useCreateCharacter() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) => storageApi.create("characters", data),
+    mutationFn: (data: Record<string, unknown>) => storageApi.create("characters", createCharacterSchema.parse(data)),
     onSuccess: (character) => {
-      const updated = cacheCharacterListRecordFromResult(qc, { character });
-      if (!updated) qc.invalidateQueries({ queryKey: characterKeys.list() });
+      refreshCharacterCollectionAfterMutation(qc, character);
     },
   });
 }
@@ -119,11 +334,9 @@ export function useUpdateCharacter() {
       versionSource?: string;
       versionReason?: string;
       skipVersionSnapshot?: boolean;
-    }) => storageApi.update("characters", id, data),
+    }) => storageApi.update("characters", id, updateCharacterSchema.parse(data)),
     onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: characterKeys.list() });
-      qc.invalidateQueries({ queryKey: characterKeys.detail(variables.id) });
-      qc.invalidateQueries({ queryKey: characterKeys.versions(variables.id) });
+      invalidateCharacterRecordQueries(qc, variables.id, { includeVersions: true });
     },
   });
 }
@@ -140,12 +353,9 @@ export function useCharacterVersions(id: string | null) {
 export function useRestoreCharacterVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, versionId }: { id: string; versionId: string }) =>
-      invokeTauri("character_restore_version", { characterId: id, versionId }),
+    mutationFn: ({ id, versionId }: { id: string; versionId: string }) => characterApi.restoreVersion(id, versionId),
     onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: characterKeys.list() });
-      qc.invalidateQueries({ queryKey: characterKeys.detail(variables.id) });
-      qc.invalidateQueries({ queryKey: characterKeys.versions(variables.id) });
+      invalidateCharacterRecordQueries(qc, variables.id, { includeVersions: true });
     },
   });
 }
@@ -153,7 +363,8 @@ export function useRestoreCharacterVersion() {
 export function useDeleteCharacterVersion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ versionId }: { id: string; versionId: string }) => storageApi.delete("character-versions", versionId),
+    mutationFn: ({ versionId }: { id: string; versionId: string }) =>
+      storageApi.delete("character-versions", versionId),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: characterKeys.versions(variables.id) });
     },
@@ -163,11 +374,9 @@ export function useDeleteCharacterVersion() {
 export function useUploadAvatar() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, avatar }: { id: string; avatar: string }) =>
-      invokeTauri("character_avatar_upload", { id, body: { avatar } }),
+    mutationFn: ({ id, avatar }: { id: string; avatar: string }) => characterApi.uploadAvatar(id, avatar),
     onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: characterKeys.list() });
-      qc.invalidateQueries({ queryKey: characterKeys.detail(variables.id) });
+      invalidateCharacterRecordQueries(qc, variables.id);
     },
   });
 }
@@ -178,17 +387,17 @@ export function useDeleteCharacter() {
     mutationFn: (id: string) => storageApi.delete("characters", id),
     onSuccess: (result, id) => {
       if (result?.deleted !== true) {
-        qc.invalidateQueries({ queryKey: characterKeys.list() });
+        invalidateCharacterCollectionQueries(qc);
         return;
       }
 
-      const current = qc.getQueryData<unknown[] | undefined>(characterKeys.list());
-      if (!Array.isArray(current)) {
-        qc.invalidateQueries({ queryKey: characterKeys.list() });
-        return;
+      const hasListCache = Array.isArray(qc.getQueryData<unknown[] | undefined>(characterKeys.list()));
+      const hasSummaryCache = Array.isArray(qc.getQueryData<unknown[] | undefined>(characterKeys.summaries()));
+      if (!hasListCache && !hasSummaryCache) {
+        invalidateCharacterCollectionQueries(qc);
       }
 
-      qc.setQueryData<unknown[] | undefined>(characterKeys.list(), (value) => removeCharacterListRecord(value, id));
+      removeCachedCharacterRecord(qc, id);
     },
   });
 }
@@ -196,49 +405,11 @@ export function useDeleteCharacter() {
 export function useDuplicateCharacter() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => invokeTauri("storage_duplicate", { entity: "characters", id }),
+    mutationFn: (id: string) => storageCommandsApi.duplicate("characters", id),
     onSuccess: (character) => {
-      const updated = cacheCharacterListRecordFromResult(qc, { character });
-      if (!updated) qc.invalidateQueries({ queryKey: characterKeys.list() });
+      refreshCharacterCollectionAfterMutation(qc, character);
     },
   });
-}
-
-// ── Character Sprites ──
-
-export interface SpriteInfo {
-  expression: string;
-  filename: string;
-  url: string;
-}
-
-export interface SpriteUploadItem {
-  expression: string;
-  image: string;
-}
-
-export interface SpriteBulkUploadResult {
-  imported: number;
-  failed: Array<{ expression: string; filename?: string; error: string }>;
-  sprites: SpriteInfo[];
-}
-
-export interface SpriteCleanupResult {
-  processed: number;
-  failed: Array<{ expression: string; error: string }>;
-  restorePointId?: string | null;
-  engine?: SpriteCleanupEngine;
-  externalCleanupProcessed?: number;
-  builtinProcessed?: number;
-  sprites: SpriteInfo[];
-  error?: string;
-}
-
-export interface SpriteCleanupRestoreResult {
-  restored: number;
-  failed: Array<{ expression: string; error: string }>;
-  sprites: SpriteInfo[];
-  error?: string;
 }
 
 export interface CharacterGalleryImage {
@@ -252,87 +423,6 @@ export interface CharacterGalleryImage {
   height: number | null;
   createdAt: string;
   url: string;
-}
-
-export function useSpriteCapabilities() {
-  return useQuery({
-    queryKey: spriteKeys.capabilities(),
-    queryFn: () => spriteApi.capabilities<SpriteCapabilities>(),
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useCharacterSprites(characterId: string | null) {
-  return useQuery({
-    queryKey: spriteKeys.list(characterId ?? ""),
-    queryFn: () => spriteApi.list<SpriteInfo[]>(characterId!),
-    enabled: !!characterId,
-  });
-}
-
-export function useUploadSprite() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ characterId, expression, image }: { characterId: string; expression: string; image: string }) =>
-      spriteApi.upload<SpriteInfo>(characterId, { expression, image }),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: spriteKeys.list(variables.characterId) });
-    },
-  });
-}
-
-export function useUploadSprites() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ characterId, sprites }: { characterId: string; sprites: SpriteUploadItem[] }) =>
-      spriteApi.bulkUpload<SpriteBulkUploadResult>(characterId, { sprites }),
-    onSuccess: (data, variables) => {
-      qc.setQueryData(spriteKeys.list(variables.characterId), data.sprites);
-    },
-  });
-}
-
-export function useDeleteSprite() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ characterId, expression }: { characterId: string; expression: string }) =>
-      spriteApi.delete(characterId, expression),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: spriteKeys.list(variables.characterId) });
-    },
-  });
-}
-
-export function useCleanupSavedSprites() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      characterId,
-      expressions,
-      cleanupStrength = 35,
-      engine = "auto",
-    }: {
-      characterId: string;
-      expressions?: string[];
-      cleanupStrength?: number;
-      engine?: SpriteCleanupEngine;
-    }) =>
-      spriteApi.cleanupSaved<SpriteCleanupResult>(characterId, { expressions, cleanupStrength, engine }),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: spriteKeys.list(variables.characterId) });
-    },
-  });
-}
-
-export function useRestoreSpriteCleanupPoint() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ characterId, restorePointId }: { characterId: string; restorePointId: string }) =>
-      spriteApi.cleanupRestore<SpriteCleanupRestoreResult>(characterId, { restorePointId }),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: spriteKeys.list(variables.characterId) });
-    },
-  });
 }
 
 export function useCharacterGalleryImages(characterId: string | null) {
@@ -383,148 +473,6 @@ export function useDeleteCharacterGalleryImage(characterId: string) {
   });
 }
 
-// ── Personas ──
-
-export function usePersonas(enabled = true) {
-  return useQuery({
-    queryKey: characterKeys.personas,
-    queryFn: () => storageApi.list<unknown>("personas"),
-    enabled,
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function usePersona(id: string | null, enabled = true) {
-  return useQuery({
-    queryKey: characterKeys.personaDetail(id ?? ""),
-    queryFn: () => storageApi.get("personas", id!),
-    enabled: enabled && !!id,
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useActivePersona(enabled = true) {
-  return useQuery({
-    queryKey: characterKeys.activePersona,
-    queryFn: async () => {
-      for (const filters of [
-        { isActive: true },
-        { isActive: "true" },
-        { active: true },
-        { active: "true" },
-      ]) {
-        const [persona] = await storageApi.list<unknown>("personas", { filters, limit: 1 });
-        if (persona) return persona;
-      }
-      return null;
-    },
-    enabled,
-    staleTime: 5 * 60_000,
-  });
-}
-
-export function useCreatePersona() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: {
-      name: string;
-      description?: string;
-      comment?: string;
-      personality?: string;
-      scenario?: string;
-      backstory?: string;
-      appearance?: string;
-      nameColor?: string;
-      dialogueColor?: string;
-      boxColor?: string;
-      trackerCardColors?: string;
-      personaStats?: unknown;
-      altDescriptions?: unknown[];
-      tags?: string[];
-      savedStatusOptions?: string[];
-      avatarCrop?: unknown;
-    }) => storageApi.create("personas", data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
-  });
-}
-
-export function useUpdatePersona() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      id,
-      ...data
-    }: {
-      id: string;
-      name?: string;
-      comment?: string;
-      description?: string;
-      personality?: string;
-      scenario?: string;
-      backstory?: string;
-      appearance?: string;
-      nameColor?: string;
-      dialogueColor?: string;
-      boxColor?: string;
-      trackerCardColors?: string;
-      personaStats?: unknown;
-      altDescriptions?: unknown[];
-      tags?: string[];
-      savedStatusOptions?: string[];
-      avatarCrop?: unknown;
-    }) => storageApi.update("personas", id, data),
-    onSuccess: (updatedPersona, variables) => {
-      qc.setQueryData<unknown[] | undefined>(characterKeys.personas, (old) => {
-        if (!Array.isArray(old)) return old;
-        const updatedId = (updatedPersona as { id?: string } | null)?.id ?? variables.id;
-        if (!updatedId) return old;
-
-        return old.map((p) => {
-          const row = p as Record<string, unknown> & { id?: string };
-          if (row?.id !== updatedId) return p;
-          if (!updatedPersona || typeof updatedPersona !== "object") return p;
-          return { ...row, ...(updatedPersona as Record<string, unknown>) };
-        });
-      });
-
-      qc.invalidateQueries({ queryKey: characterKeys.personas });
-    },
-  });
-}
-
-export function useDeletePersona() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => storageApi.delete("personas", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
-  });
-}
-
-export function useDuplicatePersona() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => invokeTauri("storage_duplicate", { entity: "personas", id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
-  });
-}
-
-export function useActivatePersona() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => invokeTauri("persona_activate", { id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
-  });
-}
-
-export function useUploadPersonaAvatar() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, avatar, filename }: { id: string; avatar: string; filename?: string }) =>
-      invokeTauri("persona_avatar_upload", { id, body: { avatar, filename } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personas }),
-  });
-}
-
 // ── Character Groups ──
 
 export function useCharacterGroups() {
@@ -534,19 +482,11 @@ export function useCharacterGroups() {
   });
 }
 
-export function useCharacterGroup(id: string | null) {
-  return useQuery({
-    queryKey: characterKeys.groupDetail(id ?? ""),
-    queryFn: () => storageApi.get("character-groups", id!),
-    enabled: !!id,
-  });
-}
-
 export function useCreateGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { name: string; description?: string; characterIds?: string[] }) =>
-      storageApi.create("character-groups", data),
+      storageApi.create("character-groups", createGroupSchema.parse(data)),
     onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.groups }),
   });
 }
@@ -555,7 +495,7 @@ export function useUpdateGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; name?: string; description?: string; characterIds?: string[] }) =>
-      storageApi.update("character-groups", id, data),
+      storageApi.update("character-groups", id, updateGroupSchema.parse(data)),
     onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.groups }),
   });
 }
@@ -565,41 +505,5 @@ export function useDeleteGroup() {
   return useMutation({
     mutationFn: (id: string) => storageApi.delete("character-groups", id),
     onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.groups }),
-  });
-}
-
-// ── Persona Groups ──
-
-export function usePersonaGroups(enabled = true) {
-  return useQuery({
-    queryKey: characterKeys.personaGroups,
-    queryFn: () => storageApi.list<unknown>("persona-groups"),
-    enabled,
-  });
-}
-
-export function useCreatePersonaGroup() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { name: string; description?: string; personaIds?: string[] }) =>
-      storageApi.create("persona-groups", data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personaGroups }),
-  });
-}
-
-export function useUpdatePersonaGroup() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...data }: { id: string; name?: string; description?: string; personaIds?: string[] }) =>
-      storageApi.update("persona-groups", id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personaGroups }),
-  });
-}
-
-export function useDeletePersonaGroup() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => storageApi.delete("persona-groups", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.personaGroups }),
   });
 }

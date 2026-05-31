@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { StorageGateway } from "../capabilities/storage";
 import { DEFAULT_GENERATION_PARAMS } from "../contracts/constants/defaults";
 import { fingerprintChatSummary } from "../shared/text/chat-summary-fingerprint";
+import { scanActiveLorebookEntries } from "./active-lorebooks";
 import { assembleGenerationPrompt } from "./prompt-assembly";
 
 type Row = Record<string, unknown>;
@@ -21,48 +22,79 @@ function section(overrides: Row & Pick<Row, "id" | "name" | "role">): Row {
 
 function storageWithSections(sections: Row[]): StorageGateway {
   return {
-    list: async <T,>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
       if (entity === "prompts") return [{ id: "preset", isDefault: false }] as T[];
       if (entity === "prompt-sections") {
         return sections.filter((row) => row.presetId === options?.filters?.presetId) as T[];
       }
       return [] as T[];
     },
-    get: async <T,>() => null as T | null,
-    create: async <T,>() => ({}) as T,
-    update: async <T,>() => ({}) as T,
+    get: async <T>() => null as T | null,
+    create: async <T>() => ({}) as T,
+    update: async <T>() => ({}) as T,
     delete: async () => ({ deleted: true }),
     listChatMessages: async () => [],
-    createChatMessage: async <T,>() => ({}) as T,
-    updateChatMessage: async <T,>() => ({}) as T,
+    createChatMessage: async <T>() => ({}) as T,
+    updateChatMessage: async <T>() => ({}) as T,
     deleteChatMessage: async () => ({ deleted: true }),
-    patchChatMessageExtra: async <T,>() => ({}) as T,
-    addChatMessageSwipe: async <T,>() => ({}) as T,
-    patchChatMetadata: async <T,>() => ({}) as T,
-    patchChatSummaries: async <T,>() => ({}) as T,
+    patchChatMessageExtra: async <T>() => ({}) as T,
+    addChatMessageSwipe: async <T>() => ({}) as T,
+    patchChatMetadata: async <T>() => ({}) as T,
+    patchChatSummaries: async <T>() => ({}) as T,
     listChatMemories: async () => [],
-    getWorldState: async <T,>() => null as T | null,
-    saveTrackerSnapshot: async <T,>() => ({}) as T,
+    getWorldState: async <T>() => null as T | null,
+    saveTrackerSnapshot: async <T>() => ({}) as T,
     listLorebookEntries: async () => [],
     createLorebookEntries: async () => [],
-    promptFull: async <T,>() => null as T | null,
+    promptFull: async <T>() => null as T | null,
   };
 }
 
-function storageWithPreset(preset: Row, sections: Row[], variables: Row[] = []): StorageGateway {
+function storageWithPreset(preset: Row, sections: Row[], variables: Row[] = [], groups: Row[] = []): StorageGateway {
   return {
     ...storageWithSections(sections),
-    get: async <T,>(entity: string, id: string) => {
+    get: async <T>(entity: string, id: string) => {
       if (entity === "prompts" && id === preset.id) return preset as T;
       return null;
     },
-    list: async <T,>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
       if (entity === "prompts") return [preset] as T[];
       if (entity === "prompt-sections") {
         return sections.filter((row) => row.presetId === options?.filters?.presetId) as T[];
       }
       if (entity === "prompt-variables") {
         return variables.filter((row) => row.presetId === options?.filters?.presetId) as T[];
+      }
+      if (entity === "prompt-groups") {
+        return groups.filter((row) => row.presetId === options?.filters?.presetId) as T[];
+      }
+      return [] as T[];
+    },
+  };
+}
+
+function storageWithPrompts(
+  prompts: Row[],
+  sections: Row[],
+  variables: Row[] = [],
+  groups: Row[] = [],
+): StorageGateway {
+  return {
+    ...storageWithSections(sections),
+    get: async <T>(entity: string, id: string) => {
+      if (entity === "prompts") return (prompts.find((prompt) => prompt.id === id) as T) ?? null;
+      return null;
+    },
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+      if (entity === "prompts") return prompts as T[];
+      if (entity === "prompt-sections") {
+        return sections.filter((row) => row.presetId === options?.filters?.presetId) as T[];
+      }
+      if (entity === "prompt-variables") {
+        return variables.filter((row) => row.presetId === options?.filters?.presetId) as T[];
+      }
+      if (entity === "prompt-groups") {
+        return groups.filter((row) => row.presetId === options?.filters?.presetId) as T[];
       }
       return [] as T[];
     },
@@ -73,7 +105,7 @@ function storageWithSectionsAndRegex(sections: Row[], regexScripts: Row[]): Stor
   const base = storageWithSections(sections);
   return {
     ...base,
-    list: async <T,>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
       if (entity === "regex-scripts") return regexScripts as T[];
       return base.list<T>(entity, options);
     },
@@ -83,7 +115,7 @@ function storageWithSectionsAndRegex(sections: Row[], regexScripts: Row[]): Stor
 function storageWithCharacters(characters: Row[]): StorageGateway {
   return {
     ...storageWithSections([]),
-    list: async <T,>(entity: string) => {
+    list: async <T>(entity: string) => {
       if (entity === "characters") return characters as T[];
       if (entity === "personas") return [] as T[];
       if (entity === "prompts") return [] as T[];
@@ -91,9 +123,24 @@ function storageWithCharacters(characters: Row[]): StorageGateway {
       if (entity === "regex-scripts") return [] as T[];
       return [] as T[];
     },
-    get: async <T,>(entity: string, id: string) => {
+    get: async <T>(entity: string, id: string) => {
       if (entity === "characters") return (characters.find((character) => character.id === id) as T) ?? null;
       return null;
+    },
+  };
+}
+
+function storageWithPersonas(sections: Row[], personas: Row[]): StorageGateway {
+  const base = storageWithSections(sections);
+  return {
+    ...base,
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+      if (entity === "personas") return personas as T[];
+      return base.list<T>(entity, options);
+    },
+    get: async <T>(entity: string, id: string) => {
+      if (entity === "personas") return (personas.find((persona) => persona.id === id) as T) ?? null;
+      return base.get<T>(entity, id);
     },
   };
 }
@@ -102,29 +149,41 @@ function storageWithSectionsAndCharacters(sections: Row[], characters: Row[]): S
   const base = storageWithSections(sections);
   return {
     ...base,
-    list: async <T,>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
       if (entity === "characters") return characters as T[];
       return base.list<T>(entity, options);
     },
-    get: async <T,>(entity: string, id: string) => {
+    get: async <T>(entity: string, id: string) => {
       if (entity === "characters") return (characters.find((character) => character.id === id) as T) ?? null;
       return base.get<T>(entity, id);
     },
   };
 }
 
-function storageWithLore(entries: Row[]): StorageGateway {
+function storageWithLore(
+  entries: Row[],
+  lorebooks: Row[] = [{ id: "lorebook", enabled: true, isGlobal: true }],
+  folders: Row[] = [],
+): StorageGateway {
   return {
     ...storageWithSections([]),
-    list: async <T,>(entity: string) => {
-      if (entity === "lorebooks") return [{ id: "lorebook", enabled: true, isGlobal: true }] as T[];
+    list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+      if (entity === "lorebooks") return lorebooks as T[];
+      if (entity === "lorebook-folders") {
+        return folders.filter((folder) => folder.lorebookId === options?.filters?.lorebookId) as T[];
+      }
       if (entity === "regex-scripts") return [] as T[];
       if (entity === "personas") return [] as T[];
       if (entity === "prompts") return [] as T[];
       return [] as T[];
     },
-    listLorebookEntries: async <T,>() => entries as T[],
+    listLorebookEntries: async <T>(lorebookId: string) =>
+      entries.filter((entry) => !entry.lorebookId || entry.lorebookId === lorebookId) as T[],
   };
+}
+
+function promptText(assembly: Awaited<ReturnType<typeof assembleGenerationPrompt>>): string {
+  return assembly.messages.map((message) => message.content).join("\n\n");
 }
 
 const request = {
@@ -136,6 +195,85 @@ const request = {
 };
 
 describe("assembleGenerationPrompt macro parity", () => {
+  it("injects roleplay author notes at the configured depth", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "chat",
+        mode: "roleplay",
+        metadata: {
+          authorNotes: "A5_AUTHOR_NOTES_MARKER\n{{// hidden author note }}",
+          authorNotesDepth: 1,
+        },
+      },
+      storedMessages: [
+        { role: "user", content: "First user" },
+        { role: "assistant", content: "Assistant response" },
+        { role: "user", content: "Latest user" },
+      ],
+      connection: {},
+      request,
+      latestUserInput: "Latest user",
+    });
+
+    const previewAuthorIndex = assembly.previewMessages.findIndex((message) =>
+      message.content.includes("A5_AUTHOR_NOTES_MARKER"),
+    );
+    expect(previewAuthorIndex).toBeGreaterThanOrEqual(0);
+    expect(assembly.previewMessages[previewAuthorIndex]?.role).toBe("system");
+    expect(assembly.previewMessages[previewAuthorIndex + 1]?.content).toBe("Latest user");
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("A5_AUTHOR_NOTES_MARKER");
+    expect(prompt).not.toContain("hidden author note");
+    expect(prompt).not.toContain("{{//");
+  });
+
+  it("strips prompt comments from persona fields and preset sections", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPersonas(
+        [
+          section({
+            id: "persona",
+            name: "Persona",
+            role: "system",
+            markerConfig: { type: "persona" },
+            sortOrder: 0,
+          }),
+          section({
+            id: "main",
+            name: "Main",
+            role: "system",
+            content: "Visible preset instruction. {{// hidden preset note }}",
+            sortOrder: 1,
+          }),
+        ],
+        [
+          {
+            id: "persona-1",
+            name: "Mari",
+            description: "Visible persona details. {{// hidden persona note }}",
+            personality: "{{// remove this line }}\nPrecise and curious.",
+          },
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", personaId: "persona-1" },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("Visible persona details.");
+    expect(prompt).toContain("Precise and curious.");
+    expect(prompt).toContain("Visible preset instruction.");
+    expect(prompt).not.toContain("hidden persona note");
+    expect(prompt).not.toContain("hidden preset note");
+    expect(prompt).not.toContain("{{//");
+  });
+
   it("resolves charSysInfo and charPostHistory from active character instruction fields", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithSectionsAndCharacters(
@@ -174,6 +312,179 @@ describe("assembleGenerationPrompt macro parity", () => {
     expect(prompt).toContain("Post=Always keep Aster's post-history guidance.");
     expect(prompt).not.toContain("{{charSysInfo}}");
     expect(prompt).not.toContain("{{charPostHistory}}");
+  });
+
+  it("loads extension fields and dialogue examples into wrapped character markers", async () => {
+    const assembly = await assembleGenerationPrompt(
+      {
+        ...storageWithPreset({ id: "preset", wrapFormat: "xml" }, [
+          section({
+            id: "character",
+            name: "Character Definitions",
+            role: "system",
+            markerConfig: { type: "character" },
+            sortOrder: 0,
+          }),
+        ]),
+        get: async <T>(entity: string, id: string) => {
+          if (entity === "prompts" && id === "preset") return { id: "preset", wrapFormat: "xml" } as T;
+          if (entity === "characters" && id === "char-a") {
+            return {
+              id: "char-a",
+              data: {
+                name: "Aster",
+                description: "Base description.",
+                personality: "Sharp.",
+                first_mes: "Hello.",
+                mes_example: "{{char}}: Example line.",
+                system_prompt: "Keep secrets.",
+                post_history_instructions: "Remember the last clue.",
+                creator_notes: "Author note.",
+                extensions: {
+                  backstory: "Extension backstory.",
+                  appearance: "Extension appearance.",
+                  altDescriptions: [{ active: true, content: "Active description extension." }],
+                },
+              },
+            } as T;
+          }
+          return null;
+        },
+      },
+      {
+        chat: { id: "chat", mode: "roleplay", characterIds: ["char-a"] },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<description>");
+    expect(prompt).toContain("Base description.");
+    expect(prompt).toContain("Active description extension.");
+    expect(prompt).toContain("<backstory>");
+    expect(prompt).toContain("Extension backstory.");
+    expect(prompt).toContain("<appearance>");
+    expect(prompt).toContain("Extension appearance.");
+    expect(prompt).toContain("<example_dialogue>");
+    expect(prompt).toContain("Aster: Example line.");
+    expect(prompt).not.toContain("Author note.");
+    expect(prompt).not.toContain("<creator_notes>");
+  });
+
+  it("keeps preset XML wrappers when prompt-only regex cleanup strips HTML from history", async () => {
+    const baseStorage = storageWithPreset({ id: "preset", wrapFormat: "xml" }, [
+      section({
+        id: "role",
+        name: "Role",
+        role: "system",
+        content: "You are {{char}}.",
+        sortOrder: 0,
+      }),
+      section({
+        id: "character",
+        name: "Characters",
+        role: "system",
+        markerConfig: { type: "character" },
+        sortOrder: 1,
+      }),
+      section({
+        id: "history",
+        name: "History",
+        role: "system",
+        markerConfig: { type: "chat_history" },
+        sortOrder: 2,
+      }),
+    ]);
+    const assembly = await assembleGenerationPrompt(
+      {
+        ...baseStorage,
+        get: async <T>(entity: string, id: string) => {
+          if (entity === "prompts" && id === "preset") return { id: "preset", wrapFormat: "xml" } as T;
+          if (entity === "characters" && id === "char-a") {
+            return { id: "char-a", data: { name: "Aster", description: "A roleplay card." } } as T;
+          }
+          return null;
+        },
+        list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+          if (entity === "regex-scripts") {
+            return [
+              {
+                id: "clean-html",
+                enabled: true,
+                promptOnly: true,
+                placement: ["user_input", "ai_output"],
+                findRegex: "[ \t]?<(?!--)(?!\\/?(?:font|lie|filter)\\b)(?:\"[^\"]*\"|'[^']*'|[^'\">])*>",
+                flags: "g",
+                replaceString: "",
+                trimStrings: [],
+              },
+            ] as T[];
+          }
+          return baseStorage.list<T>(entity, options);
+        },
+      },
+      {
+        chat: { id: "chat", mode: "roleplay", characterIds: ["char-a"] },
+        storedMessages: [{ id: "old", role: "assistant", content: "<b>Old reply</b>" }],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<role>");
+    expect(prompt).toContain("<characters>");
+    expect(prompt).toContain("<description>");
+    expect(prompt).toContain("Old reply");
+    expect(prompt).not.toContain("<b>Old reply</b>");
+  });
+
+  it("sends only the responding character card for individual roleplay groups", async () => {
+    const storage = {
+      ...storageWithPreset({ id: "preset", wrapFormat: "xml" }, [
+        section({
+          id: "character",
+          name: "Character Definitions",
+          role: "system",
+          markerConfig: { type: "character" },
+          sortOrder: 0,
+        }),
+      ]),
+      get: async <T>(entity: string, id: string) => {
+        if (entity === "prompts" && id === "preset") return { id: "preset", wrapFormat: "xml" } as T;
+        if (entity === "characters" && id === "char-a") {
+          return { id: "char-a", data: { name: "Aster", description: "ASTER CARD" } } as T;
+        }
+        if (entity === "characters" && id === "char-b") {
+          return { id: "char-b", data: { name: "Briar", description: "BRIAR CARD" } } as T;
+        }
+        return null;
+      },
+    };
+    const assembly = await assembleGenerationPrompt(storage, {
+      chat: {
+        id: "chat",
+        mode: "roleplay",
+        characterIds: ["char-a", "char-b"],
+        metadata: { groupChatMode: "individual" },
+      },
+      storedMessages: [],
+      connection: {},
+      request: { ...request, forCharacterId: "char-b" },
+      latestUserInput: "",
+    });
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("BRIAR CARD");
+    expect(prompt).not.toContain("ASTER CARD");
+    expect(assembly.previewMessages.at(-1)).toMatchObject({
+      role: "system",
+      content: "Respond only as Briar",
+    });
   });
 
   it("uses selected preset wrap format and chat choice variables", async () => {
@@ -221,6 +532,275 @@ describe("assembleGenerationPrompt macro parity", () => {
     expect(prompt).not.toContain("{{POV}}");
     expect(prompt).not.toContain("{{TAGS}}");
   });
+
+  it("wraps adjacent preset sections in their configured XML group", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPreset(
+        { id: "preset", wrapFormat: "xml" },
+        [
+          section({
+            id: "role",
+            name: "Role",
+            role: "system",
+            content: "You are {{char}}.",
+            sortOrder: 0,
+          }),
+          section({
+            id: "setting",
+            name: "Setting",
+            role: "system",
+            content: "Teyvat.",
+            groupId: "group-lore",
+            sortOrder: 1,
+          }),
+          section({
+            id: "world-info",
+            name: "World Info",
+            role: "system",
+            content: "Snezhnaya is cold.",
+            groupId: "group-lore",
+            sortOrder: 2,
+          }),
+          section({
+            id: "style",
+            name: "Style",
+            role: "system",
+            content: "Write sharply.",
+            sortOrder: 3,
+          }),
+        ],
+        [],
+        [{ id: "group-lore", presetId: "preset", name: "Lore", enabled: true, sortOrder: 0 }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "preset" },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<lore>");
+    expect(prompt).toContain("<setting>");
+    expect(prompt).toContain("Teyvat.");
+    expect(prompt).toContain("<world_info>");
+    expect(prompt).toContain("Snezhnaya is cold.");
+    expect(prompt).toContain("</lore>");
+    expect(prompt.indexOf("<lore>")).toBeLessThan(prompt.indexOf("<style>"));
+  });
+
+  it("does not append the generic roleplay scene scaffold after a selected preset", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPreset({ id: "preset", wrapFormat: "xml" }, [
+        section({
+          id: "role",
+          name: "Role",
+          role: "system",
+          content: "<role>You are {{char}}.</role>",
+          sortOrder: 0,
+        }),
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "preset" },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<role>");
+    expect(prompt).toContain("You are Character.");
+    expect(prompt).not.toContain("This is a dedicated roleplay scene");
+    expect(prompt).not.toContain("Continue directly from the last visible message");
+    expect(prompt).not.toContain("<scene_role>");
+    expect(prompt).not.toContain("<output_format>");
+  });
+
+  it("keeps explicit scene metadata without adding the generic roleplay scaffold", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPreset({ id: "preset", wrapFormat: "xml" }, [
+        section({
+          id: "role",
+          name: "Role",
+          role: "system",
+          content: "Preset role only.",
+          sortOrder: 0,
+        }),
+      ]),
+      {
+        chat: {
+          id: "chat",
+          mode: "roleplay",
+          promptPresetId: "preset",
+          metadata: {
+            sceneScenario: "A moonlit laboratory scene.",
+            sceneSystemPrompt: "Keep the current scene objective in focus.",
+          },
+        },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<scene_scenario>");
+    expect(prompt).toContain("A moonlit laboratory scene.");
+    expect(prompt).toContain("<scene_instructions>");
+    expect(prompt).toContain("Keep the current scene objective in focus.");
+    expect(prompt).not.toContain("This is a dedicated roleplay scene");
+    expect(prompt).not.toContain("Continue directly from the last visible message");
+  });
+
+  it("falls back to the chat preset when a connection override points at a missing preset", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPrompts(
+        [{ id: "chat-preset", isDefault: false, wrapFormat: "xml", parameters: {} }],
+        [
+          section({
+            id: "main",
+            presetId: "chat-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the Dottore XML format.",
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "chat-preset" },
+        storedMessages: [],
+        connection: { promptPresetId: "missing-connection-preset" },
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.promptPresetId).toBe("chat-preset");
+    expect(assembly.messages[0]?.content).toContain("<main_prompt>");
+    expect(assembly.messages[0]?.content).toContain("Use the Dottore XML format.");
+  });
+
+  it("uses the chat preset before an existing connection preset", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPrompts(
+        [
+          { id: "chat-preset", isDefault: false, wrapFormat: "xml", parameters: {} },
+          { id: "connection-preset", isDefault: false, wrapFormat: "xml", parameters: {} },
+        ],
+        [
+          section({
+            id: "chat-main",
+            presetId: "chat-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the selected Dottore chat preset.",
+            sortOrder: 0,
+          }),
+          section({
+            id: "connection-main",
+            presetId: "connection-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the generic connection preset.",
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "chat-preset" },
+        storedMessages: [],
+        connection: { promptPresetId: "connection-preset" },
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(assembly.promptPresetId).toBe("chat-preset");
+    expect(prompt).toContain("Use the selected Dottore chat preset.");
+    expect(prompt).not.toContain("Use the generic connection preset.");
+  });
+
+  it("uses the chat preset before a request preset for roleplay generations", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPrompts(
+        [
+          { id: "chat-preset", isDefault: false, wrapFormat: "xml", parameters: {} },
+          { id: "request-preset", isDefault: false, wrapFormat: "markdown", parameters: {} },
+        ],
+        [
+          section({
+            id: "chat-main",
+            presetId: "chat-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the selected chat settings preset.",
+            sortOrder: 0,
+          }),
+          section({
+            id: "request-main",
+            presetId: "request-preset",
+            name: "Main Prompt",
+            role: "system",
+            content: "Use the transient request preset.",
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "chat-preset" },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "request-preset" },
+        latestUserInput: "",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(assembly.promptPresetId).toBe("chat-preset");
+    expect(prompt).toContain("Use the selected chat settings preset.");
+    expect(prompt).not.toContain("Use the transient request preset.");
+  });
+
+  it("collapses excessive blank lines in preset sections and history messages", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithPreset(
+        {
+          id: "preset",
+          isDefault: false,
+          wrapFormat: "xml",
+          parameters: {},
+        },
+        [
+          section({
+            id: "main",
+            name: "Main",
+            role: "system",
+            content: "Rules.\n\n\n\nKeep prose tight.",
+            sortOrder: 0,
+          }),
+        ],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", promptPresetId: "preset" },
+        storedMessages: [{ role: "user", content: "Hello.\n\n\n\nContinue.", contextKind: "history" }],
+        connection: {},
+        request,
+        latestUserInput: "Continue.",
+      },
+    );
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toMatch(/Rules\.\n\n\s+Keep prose tight\./);
+    expect(prompt).toContain("Hello.\n\nContinue.");
+    expect(prompt).not.toMatch(/\n{3,}/);
+  });
 });
 
 describe("assembleGenerationPrompt preset parameters", () => {
@@ -260,11 +840,92 @@ describe("assembleGenerationPrompt preset parameters", () => {
     expect(assembly.messages[0]?.content).toContain("Rules.");
     expect(assembly.messages[0]?.content).toContain("[ASSISTANT]");
     expect(assembly.messages[0]?.content).toContain("Welcome back.");
+    expect(assembly.previewMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "system", displayName: "Main" }),
+        expect.objectContaining({ role: "assistant", content: "Welcome back." }),
+      ]),
+    );
+  });
+
+  it("uses connection and chat-scoped formatting parameters during prompt assembly", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSections([
+        section({ id: "main", name: "Main", role: "system", content: "Rules.", sortOrder: 0 }),
+        section({
+          id: "history",
+          name: "History",
+          role: "user",
+          markerConfig: { type: "chat_history" },
+          sortOrder: 1,
+        }),
+      ]),
+      {
+        chat: {
+          id: "chat",
+          mode: "roleplay",
+          metadata: {
+            chatParameters: {
+              singleUserMessage: true,
+            },
+          },
+        },
+        storedMessages: [{ role: "assistant", content: "Welcome back.", contextKind: "history" }],
+        connection: {
+          defaultParameters: {
+            strictRoleFormatting: false,
+          },
+        },
+        request: { promptPresetId: "preset", historyLimit: 10 },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.parameters).toBeNull();
+    expect(assembly.messages).toHaveLength(1);
+    expect(assembly.messages[0]).toMatchObject({ role: "user" });
+    expect(assembly.messages[0]?.content).toContain("[SYSTEM]");
+    expect(assembly.messages[0]?.content).toContain("Rules.");
+    expect(assembly.messages[0]?.content).toContain("[ASSISTANT]");
+    expect(assembly.messages[0]?.content).toContain("Welcome back.");
   });
 });
 
 describe("assembleGenerationPrompt strict roles", () => {
-  it("preserves preset chat history roles when history begins with an assistant greeting", async () => {
+  it("keeps leading system history out of the merged prompt scaffold", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSections([
+        section({ id: "main", name: "main", role: "system", content: "Main rules.", sortOrder: 0 }),
+        section({
+          id: "history",
+          name: "chat_history",
+          role: "user",
+          markerConfig: { type: "chat_history" },
+          sortOrder: 1,
+        }),
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay" },
+        storedMessages: [
+          { role: "system", content: "Imported provider system turn.", contextKind: "history" },
+          { role: "user", content: "Continue from here.", contextKind: "history" },
+        ],
+        connection: {},
+        request,
+        latestUserInput: "Continue from here.",
+      },
+    );
+
+    expect(assembly.messages[0]).toMatchObject({ role: "system", contextKind: "prompt" });
+    expect(assembly.messages[0]?.content).toContain("Main rules.");
+    expect(assembly.messages[0]?.content).not.toContain("Imported provider system turn.");
+    expect(assembly.messages.slice(1).map((message) => [message.role, message.contextKind, message.content])).toEqual([
+      ["system", "history", "Imported provider system turn."],
+      ["user", "history", "Continue from here."],
+    ]);
+  });
+
+  it("forces preset chat history into strict user/assistant order when history begins with an assistant greeting", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithSections([
         section({ id: "main", name: "main", role: "system", content: "Main rules.", sortOrder: 0 }),
@@ -290,12 +951,11 @@ describe("assembleGenerationPrompt strict roles", () => {
 
     const history = assembly.messages.filter((message) => message.contextKind === "history");
     expect(history.map((message) => [message.role, message.content])).toEqual([
-      ["assistant", "Welcome back."],
-      ["user", "I missed you."],
+      ["user", "Welcome back.\n\nI missed you."],
     ]);
   });
 
-  it("preserves fallback chat history roles when no preset is active", async () => {
+  it("forces fallback chat history into strict user/assistant order when no preset is active", async () => {
     const assembly = await assembleGenerationPrompt(storageWithSections([]), {
       chat: { id: "chat", mode: "roleplay" },
       storedMessages: [
@@ -309,8 +969,157 @@ describe("assembleGenerationPrompt strict roles", () => {
 
     const history = assembly.messages.filter((message) => message.contextKind === "history");
     expect(history.map((message) => [message.role, message.content])).toEqual([
-      ["assistant", "Welcome back."],
-      ["user", "I missed you."],
+      ["user", "Welcome back.\n\nI missed you."],
+    ]);
+  });
+
+  it("scopes individual group history around the responding character before enforcing strict roles", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSectionsAndCharacters(
+        [
+          section({ id: "main", name: "main", role: "system", content: "Main rules.", sortOrder: 0 }),
+          section({
+            id: "history",
+            name: "chat_history",
+            role: "user",
+            markerConfig: { type: "chat_history" },
+            sortOrder: 1,
+          }),
+        ],
+        [
+          { id: "char-a", name: "Ada", description: "Target character." },
+          { id: "char-b", name: "Bryn", description: "Other character." },
+        ],
+      ),
+      {
+        chat: {
+          id: "chat",
+          mode: "roleplay",
+          characterIds: ["char-a", "char-b"],
+          metadata: { groupChatMode: "individual" },
+        },
+        storedMessages: [
+          { role: "user", content: "User opens.", contextKind: "history" },
+          { role: "assistant", characterId: "char-b", content: "Bryn reacts.", contextKind: "history" },
+          { role: "assistant", characterId: "char-a", content: "Ada answers.", contextKind: "history" },
+          { role: "assistant", characterId: "char-b", content: "Bryn follows up.", contextKind: "history" },
+        ],
+        connection: {},
+        request: { ...request, forCharacterId: "char-a" },
+        latestUserInput: "User opens.",
+      },
+    );
+
+    const history = assembly.messages.filter((message) => message.contextKind === "history");
+    expect(history.map((message) => [message.role, message.content])).toEqual([
+      ["user", "User opens.\n\nBryn reacts."],
+      ["assistant", "Ada answers."],
+      ["user", "Bryn follows up."],
+    ]);
+  });
+
+  it("preserves only the responding character as assistant in individual roleplay group history", async () => {
+    const storage = storageWithSectionsAndCharacters(
+      [
+        section({ id: "main", name: "main", role: "system", content: "Main rules.", sortOrder: 0 }),
+        section({
+          id: "history",
+          name: "chat_history",
+          role: "user",
+          markerConfig: { type: "chat_history" },
+          sortOrder: 1,
+        }),
+      ],
+      [
+        { id: "char-dottore", name: "Dottore", description: "Target scientist." },
+        { id: "char-pantalone", name: "Pantalone", description: "Banker." },
+      ],
+    );
+    const input = {
+      chat: {
+        id: "chat",
+        mode: "roleplay",
+        characterIds: ["char-dottore", "char-pantalone"],
+        metadata: { groupChatMode: "individual" },
+      },
+      storedMessages: [
+        { role: "assistant", characterId: "char-dottore", content: "Dottore opens.", contextKind: "history" },
+        { role: "assistant", characterId: "char-pantalone", content: "Pantalone replies.", contextKind: "history" },
+        { role: "user", content: "Mari answers.", contextKind: "history" },
+      ],
+      connection: {},
+      latestUserInput: "Mari answers.",
+    };
+
+    const dottoreAssembly = await assembleGenerationPrompt(storage, {
+      ...input,
+      request: { ...request, forCharacterId: "char-dottore" },
+    });
+    const pantaloneAssembly = await assembleGenerationPrompt(storage, {
+      ...input,
+      request: { ...request, forCharacterId: "char-pantalone" },
+    });
+
+    expect(dottoreAssembly.messages.filter((message) => message.contextKind === "history")).toMatchObject([
+      { role: "assistant", content: "Dottore opens." },
+      { role: "user", content: "Pantalone replies.\n\nMari answers." },
+    ]);
+    expect(pantaloneAssembly.messages.filter((message) => message.contextKind === "history")).toMatchObject([
+      { role: "user", content: "Dottore opens." },
+      { role: "assistant", content: "Pantalone replies." },
+      { role: "user", content: "Mari answers." },
+    ]);
+  });
+
+  it("keeps all conversation cards visible while scoping history to the responding character", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSectionsAndCharacters(
+        [
+          section({
+            id: "character",
+            name: "Characters",
+            role: "system",
+            markerConfig: { type: "character" },
+            sortOrder: 0,
+          }),
+          section({
+            id: "history",
+            name: "chat_history",
+            role: "user",
+            markerConfig: { type: "chat_history" },
+            sortOrder: 1,
+          }),
+        ],
+        [
+          { id: "char-a", name: "Aster", description: "ASTER CARD" },
+          { id: "char-b", name: "Briar", description: "BRIAR CARD" },
+        ],
+      ),
+      {
+        chat: {
+          id: "chat",
+          mode: "conversation",
+          characterIds: ["char-a", "char-b"],
+        },
+        storedMessages: [
+          { role: "assistant", characterId: "char-a", content: "Aster opened.", contextKind: "history" },
+          { role: "assistant", characterId: "char-b", content: "Briar replied.", contextKind: "history" },
+          { role: "user", content: "User follows up.", contextKind: "history" },
+        ],
+        connection: {},
+        request: { ...request, forCharacterId: "char-b" },
+        latestUserInput: "User follows up.",
+      },
+    );
+
+    const prompt = promptText(assembly);
+    expect(prompt).toContain("ASTER CARD");
+    expect(prompt).toContain("BRIAR CARD");
+    expect(prompt).toContain("Respond only as Briar");
+    expect(assembly.messages.filter((message) => message.contextKind === "history")).toMatchObject([
+      { role: "user", content: "Aster opened." },
+      { role: "assistant", content: "Briar replied." },
+      { role: "user", content: "User follows up." },
     ]);
   });
 
@@ -355,7 +1164,7 @@ describe("assembleGenerationPrompt strict roles", () => {
     expect(history[0]?.content).toContain("brief provider summary");
   });
 
-  it("merges post-history system sections into the preceding user-side message", async () => {
+  it("preserves post-history system sections as system messages", async () => {
     const assembly = await assembleGenerationPrompt(
       storageWithSections([
         section({ id: "main", name: "main", role: "system", content: "Main rules.", sortOrder: 0 }),
@@ -378,11 +1187,14 @@ describe("assembleGenerationPrompt strict roles", () => {
     );
 
     const finalMessage = assembly.messages.at(-1);
-    expect(finalMessage?.role).toBe("user");
-    expect(finalMessage?.content).toMatch(/Pantalone speaks first\./);
+    expect(finalMessage?.role).toBe("system");
     expect(finalMessage?.content).toMatch(/<output_format>\s*Return only prose\.\s*<\/output_format>/);
     expect(finalMessage?.characterId).toBeUndefined();
-    expect(assembly.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    expect(assembly.messages.filter((message) => message.role === "system")).toHaveLength(2);
+    expect(assembly.messages.find((message) => message.contextKind === "history")).toMatchObject({
+      role: "user",
+      content: "Pantalone speaks first.",
+    });
   });
 
   it("merges same-role post-history preset sections instead of forcing alternation", async () => {
@@ -463,6 +1275,541 @@ describe("assembleGenerationPrompt connected conversation notes", () => {
     expect(joined).toContain("<ooc_influences>");
     expect(joined).toContain("- Let the next scene reveal the locked lab door.");
     expect(joined).not.toContain("This one was already spent.");
+  });
+
+  it("injects roleplay direct-message command guidance only when enabled", async () => {
+    const enabled = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "roleplay-1",
+        mode: "roleplay",
+        metadata: { roleplayDmCommandsEnabled: true },
+      },
+      storedMessages: [{ role: "user", content: "What happens?", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "", strictRoleFormatting: false },
+      latestUserInput: "What happens?",
+    });
+    const disabled = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "roleplay-2",
+        mode: "roleplay",
+        metadata: { roleplayDmCommandsEnabled: false },
+      },
+      storedMessages: [{ role: "user", content: "What happens?", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "", strictRoleFormatting: false },
+      latestUserInput: "What happens?",
+    });
+    const conversation = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "conversation-1",
+        mode: "conversation",
+        metadata: { roleplayDmCommandsEnabled: true },
+      },
+      storedMessages: [{ role: "user", content: "What happens?", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "", strictRoleFormatting: false },
+      latestUserInput: "What happens?",
+    });
+
+    expect(promptText(enabled)).toContain("<direct_message_commands>");
+    expect(promptText(enabled)).toContain('[dm: character="Character Name" message="Message text"]');
+    expect(promptText(disabled)).not.toContain("<direct_message_commands>");
+    expect(promptText(conversation)).not.toContain("<direct_message_commands>");
+  });
+});
+
+describe("assembleGenerationPrompt game character sheets", () => {
+  it("includes RPG stats from game character cards in the GM context", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithSectionsAndCharacters(
+        [],
+        [
+          {
+            id: "char-a",
+            data: {
+              name: "Aster",
+              description: "A careful scout.",
+            },
+          },
+        ],
+      ),
+      {
+        chat: {
+          id: "game-chat",
+          mode: "game",
+          characterIds: ["char-a"],
+          metadata: {
+            gameSetupConfig: { genre: "Fantasy", setting: "Ruins", tone: "Tense", difficulty: "Normal" },
+            gameCharacterCards: [
+              {
+                name: "Aster",
+                class: "Scout",
+                rpgStats: {
+                  attributes: [
+                    { name: "Strength", value: 8 },
+                    { name: "Dexterity", value: 16 },
+                  ],
+                  hp: { value: 18, max: 24 },
+                },
+              },
+            ],
+          },
+        },
+        storedMessages: [{ role: "user", content: "What happens?", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "What happens?",
+      },
+    );
+
+    const joined = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(joined).toContain("RPG Attributes: Strength: 8, Dexterity: 16");
+    expect(joined).toContain("RPG HP: 18/24");
+  });
+});
+
+describe("assembleGenerationPrompt lorebook activation settings", () => {
+  it("skips entries inside disabled lorebook folders", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-disabled-folder",
+            lorebookId: "lorebook",
+            folderId: "folder-disabled",
+            name: "Disabled folder entry",
+            content: "LQA_DISABLED_FOLDER_CONTENT_SHOULD_NOT_APPEAR",
+            enabled: true,
+            constant: true,
+          },
+        ],
+        [{ id: "lorebook", enabled: true, isGlobal: true }],
+        [{ id: "folder-disabled", lorebookId: "lorebook", enabled: false }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay" },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(promptText(assembly)).not.toContain("LQA_DISABLED_FOLDER_CONTENT_SHOULD_NOT_APPEAR");
+  });
+
+  it("activates chat-scoped lorebooks without activeLorebookIds metadata", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-chat-scoped",
+            lorebookId: "chat-book",
+            name: "Chat scoped entry",
+            content: "LQA_CHAT_SCOPED_CONTENT_SHOULD_APPEAR",
+            enabled: true,
+            constant: true,
+          },
+        ],
+        [{ id: "chat-book", enabled: true, isGlobal: false, chatId: "chat" }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", metadata: {} },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual(["Chat scoped entry"]);
+    expect(promptText(assembly)).toContain("LQA_CHAT_SCOPED_CONTENT_SHOULD_APPEAR");
+  });
+
+  it("uses character and persona additional matching sources during activation", async () => {
+    const baseStorage = storageWithLore([
+      {
+        id: "entry-character-source",
+        lorebookId: "lorebook",
+        name: "Character source entry",
+        content: "LQA_ADDITIONAL_CHARACTER_SOURCE_CONTENT",
+        keys: ["LQA_CHAR_SOURCE_KEY"],
+        additionalMatchingSources: ["character_description"],
+        enabled: true,
+        order: 0,
+      },
+      {
+        id: "entry-persona-source",
+        lorebookId: "lorebook",
+        name: "Persona source entry",
+        content: "LQA_ADDITIONAL_PERSONA_SOURCE_CONTENT",
+        keys: ["LQA_PERSONA_SOURCE_KEY"],
+        additionalMatchingSources: ["persona_description"],
+        enabled: true,
+        order: 1,
+      },
+    ]);
+    const storage: StorageGateway = {
+      ...baseStorage,
+      get: async <T>(entity: string, id: string) => {
+        if (entity === "characters" && id === "char-a") {
+          return {
+            id: "char-a",
+            data: { name: "Aster", description: "Character detail with LQA_CHAR_SOURCE_KEY." },
+          } as T;
+        }
+        if (entity === "personas" && id === "persona-1") {
+          return {
+            id: "persona-1",
+            data: { name: "Mari", description: "Persona detail with LQA_PERSONA_SOURCE_KEY." },
+          } as T;
+        }
+        return baseStorage.get<T>(entity, id);
+      },
+    };
+
+    const assembly = await assembleGenerationPrompt(storage, {
+      chat: { id: "chat", mode: "roleplay", characterIds: ["char-a"], personaId: "persona-1" },
+      storedMessages: [{ role: "user", content: "No lorebook keys are in chat history.", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "" },
+      latestUserInput: "No lorebook keys are in chat history.",
+    });
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual([
+      "Character source entry",
+      "Persona source entry",
+    ]);
+    expect(promptText(assembly)).toContain("LQA_ADDITIONAL_CHARACTER_SOURCE_CONTENT");
+    expect(promptText(assembly)).toContain("LQA_ADDITIONAL_PERSONA_SOURCE_CONTENT");
+  });
+
+  it("applies lorebook-level scan depth to entries without an override", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-scan-depth",
+            lorebookId: "lorebook",
+            name: "Scan depth entry",
+            content: "LQA_SCAN_DEPTH_CONTENT_SHOULD_NOT_APPEAR",
+            keys: ["LQA_OLD_KEY"],
+            enabled: true,
+          },
+        ],
+        [{ id: "lorebook", enabled: true, isGlobal: true, scanDepth: 1 }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay" },
+        storedMessages: [
+          { role: "user", content: "Older message has LQA_OLD_KEY.", contextKind: "history" },
+          { role: "assistant", content: "Latest message has no trigger.", contextKind: "history" },
+        ],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(promptText(assembly)).not.toContain("LQA_SCAN_DEPTH_CONTENT_SHOULD_NOT_APPEAR");
+  });
+
+  it("recursively scans activated lorebook content when the lorebook enables recursion", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-recursive-parent",
+            lorebookId: "lorebook",
+            name: "Recursive parent",
+            content: "LQA_RECURSIVE_PARENT_CONTENT mentions LQA_CHILD_KEY.",
+            keys: ["LQA_PARENT_KEY"],
+            enabled: true,
+            order: 0,
+          },
+          {
+            id: "entry-recursive-child",
+            lorebookId: "lorebook",
+            name: "Recursive child",
+            content: "LQA_RECURSIVE_CHILD_CONTENT_SHOULD_APPEAR",
+            keys: ["LQA_CHILD_KEY"],
+            enabled: true,
+            order: 1,
+          },
+        ],
+        [{ id: "lorebook", enabled: true, isGlobal: true, recursiveScanning: true, maxRecursionDepth: 3 }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay" },
+        storedMessages: [{ role: "user", content: "Trigger LQA_PARENT_KEY.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "Trigger LQA_PARENT_KEY.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual([
+      "Recursive parent",
+      "Recursive child",
+    ]);
+    expect(promptText(assembly)).toContain("LQA_RECURSIVE_CHILD_CONTENT_SHOULD_APPEAR");
+  });
+
+  it("caps malformed lorebook recursion depth to the schema maximum", async () => {
+    const chainEntries = Array.from({ length: 12 }, (_, index) => ({
+      id: `entry-recursive-cap-${index}`,
+      lorebookId: "lorebook",
+      name: `Recursive cap ${index}`,
+      content: `LQA_RECURSION_CAP_CONTENT_${index}${index < 11 ? ` LQA_CAP_KEY_${index + 1}` : ""}`,
+      keys: [`LQA_CAP_KEY_${index}`],
+      enabled: true,
+      order: index,
+    }));
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(chainEntries, [
+        { id: "lorebook", enabled: true, isGlobal: true, recursiveScanning: true, maxRecursionDepth: 99 },
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay" },
+        storedMessages: [{ role: "user", content: "Trigger LQA_CAP_KEY_0.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "Trigger LQA_CAP_KEY_0.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual(
+      Array.from({ length: 11 }, (_, index) => `Recursive cap ${index}`),
+    );
+    expect(promptText(assembly)).not.toContain("LQA_RECURSION_CAP_CONTENT_11");
+  });
+
+  it("applies chat metadata lorebook token budget during prompt injection", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore([
+        {
+          id: "entry-chat-budget",
+          lorebookId: "lorebook",
+          name: "Chat budgeted entry",
+          content: "LQA_CHAT_BUDGET_CONTENT_SHOULD_NOT_APPEAR",
+          enabled: true,
+          constant: true,
+        },
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay", metadata: { lorebookTokenBudget: 1 } },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(assembly.budgetSkippedLorebookEntries).toMatchObject([
+      {
+        id: "entry-chat-budget",
+        blockedBy: "chat",
+        chatBudget: 1,
+        chatUsedTokens: 0,
+      },
+    ]);
+    expect(promptText(assembly)).not.toContain("LQA_CHAT_BUDGET_CONTENT_SHOULD_NOT_APPEAR");
+  });
+
+  it("does not advance timing state for entries skipped by the chat lorebook budget", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore([
+        {
+          id: "entry-budgeted-cooldown",
+          lorebookId: "lorebook",
+          name: "Budgeted cooldown entry",
+          content: "LQA_CHAT_BUDGET_TIMING_CONTENT_SHOULD_NOT_APPEAR",
+          enabled: true,
+          constant: true,
+          cooldown: 3,
+        },
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay", metadata: { lorebookTokenBudget: 1 } },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(assembly.budgetSkippedLorebookEntries).toMatchObject([
+      {
+        id: "entry-budgeted-cooldown",
+        blockedBy: "chat",
+        chatBudget: 1,
+      },
+    ]);
+    expect(assembly.lorebookTimingStates).toBeNull();
+  });
+
+  it("returns budget skipped lorebook entries for active-world-info scans", async () => {
+    const baseStorage = storageWithLore(
+      [
+        {
+          id: "entry-active-scan-budget",
+          lorebookId: "lorebook",
+          name: "Active scan budgeted entry",
+          content: "LQA_ACTIVE_SCAN_BUDGET_CONTENT_SHOULD_NOT_APPEAR",
+          enabled: true,
+          constant: true,
+        },
+      ],
+      [{ id: "lorebook", name: "Budget test book", enabled: true, isGlobal: true }],
+    );
+    const storage: StorageGateway = {
+      ...baseStorage,
+      get: async <T>(entity: string, id: string) => {
+        if (entity === "chats" && id === "chat") {
+          return { id: "chat", mode: "roleplay", metadata: { lorebookTokenBudget: 1 } } as T;
+        }
+        return baseStorage.get<T>(entity, id);
+      },
+      list: async <T>(entity: string, options?: { filters?: Record<string, unknown> }) => {
+        if (entity === "connections") return [{}] as T[];
+        return baseStorage.list<T>(entity, options);
+      },
+      listChatMessages: async () => [],
+    };
+
+    const scan = await scanActiveLorebookEntries(storage, "chat");
+
+    expect(scan.entries).toHaveLength(0);
+    expect(scan.budgetSkippedEntries).toMatchObject([
+      {
+        id: "entry-active-scan-budget",
+        lorebookName: "Budget test book",
+        blockedBy: "chat",
+        chatBudget: 1,
+      },
+    ]);
+  });
+
+  it("applies per-lorebook token budgets before prompt injection", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-book-budget",
+            lorebookId: "lorebook",
+            name: "Book budgeted entry",
+            content: "LQA_LOREBOOK_BUDGET_CONTENT_SHOULD_NOT_APPEAR",
+            enabled: true,
+            constant: true,
+          },
+        ],
+        [{ id: "lorebook", enabled: true, isGlobal: true, tokenBudget: 1 }],
+      ),
+      {
+        chat: { id: "chat", mode: "roleplay", metadata: { lorebookTokenBudget: 0 } },
+        storedMessages: [],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(assembly.budgetSkippedLorebookEntries).toMatchObject([
+      {
+        id: "entry-book-budget",
+        blockedBy: "lorebook",
+        lorebookBudget: 1,
+        lorebookUsedTokens: 0,
+      },
+    ]);
+    expect(promptText(assembly)).not.toContain("LQA_LOREBOOK_BUDGET_CONTENT_SHOULD_NOT_APPEAR");
+  });
+
+  it("returns next timing state when a delayed lorebook entry is still waiting", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore([
+        {
+          id: "entry-delay",
+          lorebookId: "lorebook",
+          name: "Delayed moonlit lore",
+          content: "LQA_DELAYED_CONTENT_SHOULD_NOT_APPEAR_YET",
+          keys: ["moonlit"],
+          enabled: true,
+          delay: 1,
+        },
+      ]),
+      {
+        chat: { id: "chat", mode: "roleplay", metadata: {} },
+        storedMessages: [{ role: "user", content: "Tell me about the moonlit path.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "Tell me about the moonlit path.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+    expect(promptText(assembly)).not.toContain("LQA_DELAYED_CONTENT_SHOULD_NOT_APPEAR_YET");
+    expect(assembly.lorebookTimingStates).toEqual({
+      "entry-delay": {
+        lastActivatedAt: null,
+        stickyCount: 0,
+        cooldownRemaining: 0,
+        delayRemaining: 0,
+      },
+    });
+  });
+
+  it("uses persisted sticky timing state when scanning active lore", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore([
+        {
+          id: "entry-sticky",
+          lorebookId: "lorebook",
+          name: "Sticky moonlit lore",
+          content: "LQA_STICKY_CONTENT_FROM_PRIOR_TRIGGER",
+          keys: ["moonlit"],
+          enabled: true,
+          sticky: 2,
+        },
+      ]),
+      {
+        chat: {
+          id: "chat",
+          mode: "roleplay",
+          metadata: {
+            entryTimingStates: {
+              "entry-sticky": {
+                lastActivatedAt: 1,
+                stickyCount: 2,
+                cooldownRemaining: 0,
+                delayRemaining: 0,
+              },
+            },
+          },
+        },
+        storedMessages: [{ role: "user", content: "No keyword in this turn.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "No keyword in this turn.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual(["Sticky moonlit lore"]);
+    expect(promptText(assembly)).toContain("LQA_STICKY_CONTENT_FROM_PRIOR_TRIGGER");
+    expect(assembly.lorebookTimingStates).toEqual({
+      "entry-sticky": {
+        lastActivatedAt: 1,
+        stickyCount: 1,
+        cooldownRemaining: 0,
+        delayRemaining: 0,
+      },
+    });
   });
 });
 
@@ -555,6 +1902,113 @@ describe("assembleGenerationPrompt lorebook game-state gates", () => {
 
     expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual(["Ungated moonlit lore"]);
   });
+
+  it("excludes generated game lorebook-keeper books when the keeper is disabled", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-keeper",
+            lorebookId: "keeper-book",
+            name: "Keeper generated moonlit lore",
+            content: "This lore came from the game lorebook keeper.",
+            keys: ["moonlit"],
+            enabled: true,
+          },
+        ],
+        [{ id: "keeper-book", enabled: true, isGlobal: true, sourceAgentId: "game-lorebook-keeper" }],
+      ),
+      {
+        chat: {
+          id: "chat",
+          mode: "game",
+          metadata: {
+            gameLorebookKeeperEnabled: false,
+            gameLorebookKeeperLorebookId: "keeper-book",
+          },
+        },
+        storedMessages: [{ role: "user", content: "Tell me about the moonlit path.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "Tell me about the moonlit path.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries).toHaveLength(0);
+  });
+
+  it("keeps generated game lorebook-keeper books active when the keeper is enabled", async () => {
+    const assembly = await assembleGenerationPrompt(
+      storageWithLore(
+        [
+          {
+            id: "entry-keeper",
+            lorebookId: "keeper-book",
+            name: "Keeper generated moonlit lore",
+            content: "This lore came from the game lorebook keeper.",
+            keys: ["moonlit"],
+            enabled: true,
+          },
+        ],
+        [{ id: "keeper-book", enabled: true, isGlobal: true, sourceAgentId: "game-lorebook-keeper" }],
+      ),
+      {
+        chat: {
+          id: "chat",
+          mode: "game",
+          metadata: {
+            gameLorebookKeeperEnabled: true,
+            gameLorebookKeeperLorebookId: "keeper-book",
+          },
+        },
+        storedMessages: [{ role: "user", content: "Tell me about the moonlit path.", contextKind: "history" }],
+        connection: {},
+        request: { ...request, promptPresetId: "" },
+        latestUserInput: "Tell me about the moonlit path.",
+      },
+    );
+
+    expect(assembly.activatedLorebookEntries.map((entry) => entry.name)).toEqual(["Keeper generated moonlit lore"]);
+  });
+
+  it("injects passive perception hints into game GM prompts", async () => {
+    const assembly = await assembleGenerationPrompt(storageWithSections([]), {
+      chat: {
+        id: "game-chat",
+        mode: "game",
+        characterIds: [],
+        gameState: {
+          playerStats: {
+            attributes: { WIS: 14 },
+            skills: { Perception: 5 },
+            stats: [],
+            inventory: [],
+            activeQuests: [],
+            status: "",
+          },
+          presentCharacters: [{ name: "Mira" }],
+        },
+        metadata: {
+          gameActiveState: "dialogue",
+          gameSetupConfig: {
+            genre: "fantasy",
+            setting: "market district",
+            tone: "tense",
+            difficulty: "normal",
+          },
+        },
+      },
+      storedMessages: [{ role: "user", content: "Watch Mira closely.", contextKind: "history" }],
+      connection: {},
+      request: { ...request, promptPresetId: "" },
+      latestUserInput: "Watch Mira closely.",
+    });
+
+    const prompt = assembly.messages.map((message) => message.content).join("\n\n");
+    expect(prompt).toContain("<passive_perception>");
+    expect(prompt).toContain("notices Mira glancing nervously at exits");
+    expect(prompt).toContain("Weave these observations naturally into the narration.");
+  });
 });
 
 describe("assembleGenerationPrompt inactive chat characters", () => {
@@ -592,7 +2046,40 @@ describe("assembleGenerationPrompt inactive chat characters", () => {
 });
 
 describe("assembleGenerationPrompt chat summary fingerprints", () => {
-  it("fingerprints the current summary even when prompt regex scripts transform the final prompt text", async () => {
+  it("appends roleplay summaries to the system prompt when a preset has no summary marker", async () => {
+    const summary = "The party escaped the greenhouse and Nia still has the brass key.";
+    const assembly = await assembleGenerationPrompt(
+      storageWithSections([
+        section({
+          id: "main",
+          name: "Main",
+          role: "system",
+          content: "Continue the roleplay with careful continuity.",
+          sortOrder: 0,
+        }),
+      ]),
+      {
+        chat: {
+          id: "roleplay-chat",
+          mode: "roleplay",
+          characterIds: [],
+          metadata: { summary },
+        },
+        storedMessages: [],
+        connection: {},
+        request,
+        latestUserInput: "continue",
+      },
+    );
+
+    expect(assembly.messages[0]?.role).toBe("system");
+    expect(assembly.messages[0]?.content).toContain("Continue the roleplay with careful continuity.");
+    expect(assembly.messages[0]?.content).toContain("<chat_summary>");
+    expect(assembly.messages[0]?.content).toContain(summary);
+    expect(assembly.chatSummaryFingerprint).toBe(fingerprintChatSummary(summary));
+  });
+
+  it("keeps prompt summaries stable when prompt-only regex scripts clean chat content", async () => {
     const summary = "The user met Nia at the market.";
     const assembly = await assembleGenerationPrompt(
       storageWithSectionsAndRegex(
@@ -630,8 +2117,8 @@ describe("assembleGenerationPrompt chat summary fingerprints", () => {
     );
 
     const prompt = assembly.messages.map((message) => message.content).join("\n\n");
-    expect(prompt).toContain("The user met Nia near the docks.");
-    expect(prompt).not.toContain(summary);
+    expect(prompt).toContain(summary);
+    expect(prompt).not.toContain("The user met Nia near the docks.");
     expect(assembly.chatSummaryFingerprint).toBe(fingerprintChatSummary(summary));
   });
 });
@@ -664,7 +2151,7 @@ describe("assembleGenerationPrompt conversation scene awareness gates", () => {
     const base = storageWithSections([]);
     const storage: StorageGateway = {
       ...base,
-      listChatMemories: async <T,>() =>
+      listChatMemories: async <T>() =>
         [
           {
             id: "provider-hit",

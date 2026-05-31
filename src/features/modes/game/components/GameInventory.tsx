@@ -10,7 +10,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { Check, ChevronLeft, ChevronRight, Minus, Package, Plus, Wand2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Minus, Package, Plus, Trash2, Wand2, X } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
 
 export interface InventoryItem {
@@ -25,11 +25,13 @@ interface GameInventoryProps {
   /** Called when the user wants to add a new item */
   onAddItem?: () => Promise<string | null> | string | null;
   /** Called when the user wants to use an item during input phase */
-  onUseItem?: (itemName: string) => void;
+  onUseItem?: (itemName: string) => void | Promise<void>;
   /** Called when the user wants to rename an item */
   onRenameItem?: (currentName: string, nextName: string) => Promise<string | null> | string | null;
   /** Called when the user wants to manually remove one unit of an item */
   onRemoveItem?: (itemName: string) => void | Promise<void>;
+  /** Called when the user wants to remove the entire item stack */
+  onClearItem?: (itemName: string) => void | Promise<void>;
   /** Called when the user wants to manually add one unit of an item */
   onIncrementItem?: (itemName: string) => void | Promise<void>;
   /** Called when the user drags one item onto another to swap their positions */
@@ -48,6 +50,7 @@ export function GameInventory({
   onUseItem,
   onRenameItem,
   onRemoveItem,
+  onClearItem,
   onIncrementItem,
   onReorderItem,
   canInteract,
@@ -56,7 +59,8 @@ export function GameInventory({
   const [renameDraft, setRenameDraft] = useState("");
   const [renamePending, setRenamePending] = useState(false);
   const [addPending, setAddPending] = useState(false);
-  const [amountPending, setAmountPending] = useState<"increment" | "decrement" | null>(null);
+  const [amountPending, setAmountPending] = useState<"increment" | "decrement" | "clear" | null>(null);
+  const [usePending, setUsePending] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
 
   // Mouse: 4px distance threshold so quick clicks still select.
@@ -79,9 +83,16 @@ export function GameInventory({
   );
 
   const handleUse = useCallback(
-    (itemName: string) => {
-      onUseItem?.(itemName);
-      setSelectedItem(null);
+    async (itemName: string) => {
+      if (!onUseItem) return;
+
+      setUsePending(true);
+      try {
+        await onUseItem(itemName);
+        setSelectedItem(null);
+      } finally {
+        setUsePending(false);
+      }
     },
     [onUseItem],
   );
@@ -175,6 +186,21 @@ export function GameInventory({
       }
     },
     [onRemoveItem],
+  );
+
+  const handleClear = useCallback(
+    async (itemName: string) => {
+      if (!onClearItem) return;
+
+      setAmountPending("clear");
+      try {
+        await onClearItem(itemName);
+        setSelectedItem(null);
+      } finally {
+        setAmountPending(null);
+      }
+    },
+    [onClearItem],
   );
 
   const handleDragEnd = useCallback(
@@ -321,11 +347,23 @@ export function GameInventory({
                   Add
                 </button>
               )}
-              {selectedInventoryItem && (onRemoveItem || onIncrementItem) && (
+              {selectedInventoryItem && (onRemoveItem || onIncrementItem || onClearItem) && (
                 <div
                   className="flex h-7 shrink-0 items-center overflow-hidden rounded border border-white/8 bg-white/[0.03]"
                   aria-label={`${selectedInventoryItem.name} amount controls`}
                 >
+                  {onClearItem && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClear(selectedInventoryItem.name)}
+                      disabled={amountPending !== null}
+                      className="flex h-full w-7 items-center justify-center text-rose-300/70 transition-colors hover:bg-rose-500/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Remove all ${selectedInventoryItem.name}`}
+                      title="Remove item stack"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
                   {onRemoveItem && (
                     <button
                       type="button"
@@ -361,11 +399,12 @@ export function GameInventory({
               )}
               {selectedItem && canInteract && onUseItem && (
                 <button
-                  onClick={() => handleUse(selectedItem)}
-                  className="flex flex-1 items-center justify-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 py-1.5 text-[0.7rem] font-semibold text-amber-400 transition-colors hover:bg-amber-500/15"
+                  onClick={() => void handleUse(selectedItem)}
+                  disabled={usePending}
+                  className="flex flex-1 items-center justify-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 py-1.5 text-[0.7rem] font-semibold text-amber-400 transition-colors hover:bg-amber-500/15 disabled:cursor-wait disabled:opacity-60"
                 >
                   <Wand2 size={12} />
-                  Use
+                  {usePending ? "Using..." : "Use"}
                 </button>
               )}
             </div>

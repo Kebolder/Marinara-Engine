@@ -5,29 +5,11 @@ import { useState, useCallback, useEffect, useRef, type PointerEvent, type RefOb
 import { motion } from "framer-motion";
 import type { GameMap, GameActiveState } from "../../../../engine/contracts/types/game";
 import { GameGridMap } from "./GameGridMap";
-import { GameNodeMap } from "./GameNodeMap";
-import {
-  ChevronDown,
-  ChevronUp,
-  Map as MapIcon,
-  Wand2,
-  X,
-  Compass,
-  MessageCircle,
-  Swords,
-  Moon,
-  Minus,
-  Plus,
-} from "lucide-react";
+import { GameNodeMap, type GameNodeEditPatch } from "./GameNodeMap";
+import { ChevronDown, ChevronUp, Map as MapIcon, Wand2, X, Compass, Minus, Plus } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
 import { PanelLockButton, useDraggablePanel } from "./DraggablePanel";
-
-const STATE_CONFIG: Record<GameActiveState, { icon: typeof Compass; label: string; color: string }> = {
-  exploration: { icon: Compass, label: "Exploration", color: "text-emerald-300" },
-  dialogue: { icon: MessageCircle, label: "Dialogue", color: "text-sky-300" },
-  combat: { icon: Swords, label: "Combat", color: "text-red-300" },
-  travel_rest: { icon: Moon, label: "Travel & Rest", color: "text-amber-300" },
-};
+import { GameStateIndicator, getGameStateConfig } from "./GameStateIndicator";
 
 const MAP_ZOOM_MIN = 0.75;
 const MAP_ZOOM_MAX = 1.8;
@@ -354,6 +336,13 @@ function nextMapZoom(current: number, delta: number): number {
   return Math.min(MAP_ZOOM_MAX, Math.max(MAP_ZOOM_MIN, next));
 }
 
+function updateNodeInMap(map: GameMap, nodeId: string, patch: GameNodeEditPatch): GameMap {
+  return {
+    ...map,
+    nodes: (map.nodes ?? []).map((node) => (node.id === nodeId ? { ...node, ...patch } : node)),
+  };
+}
+
 interface MapZoomControlsProps {
   zoom: number;
   onZoomOut: () => void;
@@ -411,6 +400,7 @@ interface GameMapProps {
   activeMapId?: string | null;
   viewedMapId?: string | null;
   onViewedMapChange?: (mapId: string) => void;
+  onMapChange?: (map: GameMap) => void | Promise<void>;
   onMove: (position: { x: number; y: number } | string) => void;
   selectedPosition?: { x: number; y: number } | string | null;
   onGenerateMap?: () => void;
@@ -467,6 +457,7 @@ export function GameMapPanel({
   activeMapId,
   viewedMapId,
   onViewedMapChange,
+  onMapChange,
   onMove,
   selectedPosition,
   onGenerateMap,
@@ -482,7 +473,7 @@ export function GameMapPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [stateHovered, setStateHovered] = useState(false);
   const [mapZoom, setMapZoom] = useState(1);
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, "map");
+  const { locked, toggleLocked, x, y, panelRef, handleDragEnd } = useDraggablePanel(chatId, "map");
   const mapOptions = buildMapOptions(map, maps);
   const selectedMapId = viewedMapId ?? getMapId(map);
   const activeMap = activeMapId == null || selectedMapId === activeMapId;
@@ -501,11 +492,12 @@ export function GameMapPanel({
         data-tour="game-map"
         className="flex w-52 flex-col items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)]/92 p-3 text-[var(--muted-foreground)] shadow-lg backdrop-blur-sm"
       >
+        {gameState && <GameStateIndicator state={gameState} />}
         <span className="text-[0.625rem]">No map yet</span>
         {onGenerateMap && (
           <button
             onClick={onGenerateMap}
-            disabled={disabled}
+            disabled={disabled || generateMapDisabled}
             className="flex items-center gap-1 rounded-md bg-[var(--primary)] px-2 py-1 text-[0.625rem] font-medium text-[var(--primary-foreground)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50"
           >
             <Wand2 size={10} />
@@ -518,12 +510,13 @@ export function GameMapPanel({
 
   const mapName = map.name || "Map";
   const shouldMarquee = mapName.length > 18;
-  const stateCfg = gameState ? STATE_CONFIG[gameState] : null;
+  const stateCfg = getGameStateConfig(gameState);
   const StateIcon = stateCfg?.icon ?? null;
   const hasLeadingStatus = Boolean(StateIcon || timeOfDay || day);
 
   return (
     <motion.div
+      ref={panelRef}
       data-tour="game-map"
       data-game-skip-bg-nav="true"
       drag={!locked}
@@ -628,6 +621,7 @@ export function GameMapPanel({
               onGenerateMap ? <MapGenerateButton onGenerateMap={onGenerateMap} disabled={generateMapDisabled} /> : null
             }
             topRightAction={zoomControls}
+            onEditNode={onMapChange ? (nodeId, patch) => onMapChange(updateNodeInMap(map, nodeId, patch)) : undefined}
           />
         ))}
     </motion.div>
@@ -642,6 +636,7 @@ interface MobileMapButtonProps {
   activeMapId?: string | null;
   viewedMapId?: string | null;
   onViewedMapChange?: (mapId: string) => void;
+  onMapChange?: (map: GameMap) => void | Promise<void>;
   onMove: (position: { x: number; y: number } | string) => void;
   selectedPosition?: { x: number; y: number } | string | null;
   onGenerateMap?: () => void;
@@ -660,6 +655,7 @@ export function MobileMapButton({
   activeMapId,
   viewedMapId,
   onViewedMapChange,
+  onMapChange,
   onMove,
   selectedPosition,
   onGenerateMap,
@@ -690,7 +686,7 @@ export function MobileMapButton({
     setSelectedNode(typeof selectedPosition === "string" ? selectedPosition : null);
   }, [open, selectedPosition]);
 
-  const stateCfg = gameState ? STATE_CONFIG[gameState] : null;
+  const stateCfg = getGameStateConfig(gameState);
   const StateIcon = stateCfg?.icon ?? Compass;
 
   const handleNodeTap = useCallback((nodeId: string) => {
@@ -821,7 +817,7 @@ export function MobileMapButton({
                         onGenerateMap();
                         setOpen(false);
                       }}
-                      disabled={disabled}
+                      disabled={disabled || generateMapDisabled}
                       className="flex items-center gap-1 rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Wand2 size={12} />
@@ -875,6 +871,9 @@ export function MobileMapButton({
                     ) : null
                   }
                   topRightAction={zoomControls}
+                  onEditNode={
+                    onMapChange ? (nodeId, patch) => onMapChange(updateNodeInMap(map, nodeId, patch)) : undefined
+                  }
                 />
               )}
             </div>

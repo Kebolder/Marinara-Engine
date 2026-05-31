@@ -28,6 +28,11 @@ import { cn } from "../../../../shared/lib/utils";
 import { ApiError } from "../../../../shared/api/api-errors";
 import { importApi } from "../../../../shared/api/import-api";
 import { remoteRuntimeTarget } from "../../../../shared/api/remote-runtime";
+import { invalidateCharacterCollectionQueries } from "../../../catalog/characters/index";
+import { personaKeys } from "../../../catalog/personas/index";
+import { chatKeys } from "../../../catalog/chats/index";
+import { lorebookKeys } from "../../../catalog/lorebooks/index";
+import { presetKeys } from "../../../catalog/presets/index";
 
 interface Props {
   open: boolean;
@@ -131,6 +136,10 @@ function normalizeImportProgress(value: unknown): ImportProgress | null {
     total: Number(record.total ?? 0),
     imported: result.imported,
   };
+}
+
+function hasImported(imported: ImportResult["imported"], category: keyof ImportResult["imported"]): boolean {
+  return Number(imported[category] ?? 0) > 0;
 }
 
 function buildInitialSelection(scan: ScanResult): SelectionState {
@@ -349,7 +358,25 @@ export function STBulkImportModal({ open, onClose }: Props) {
       if (data.success) {
         setImportResult(data);
         setPhase("done");
-        qc.invalidateQueries();
+        if (hasImported(data.imported, "characters")) {
+          invalidateCharacterCollectionQueries(qc);
+        }
+        if (hasImported(data.imported, "chats") || hasImported(data.imported, "groupChats")) {
+          qc.invalidateQueries({ queryKey: chatKeys.list() });
+        }
+        if (hasImported(data.imported, "lorebooks")) {
+          qc.invalidateQueries({ queryKey: lorebookKeys.all });
+        }
+        if (hasImported(data.imported, "presets")) {
+          qc.invalidateQueries({ queryKey: presetKeys.all });
+        }
+        if (hasImported(data.imported, "personas")) {
+          qc.invalidateQueries({ queryKey: personaKeys.list });
+        }
+        if (hasImported(data.imported, "backgrounds")) {
+          qc.invalidateQueries({ queryKey: ["backgrounds"] });
+          qc.invalidateQueries({ queryKey: ["background-tags"] });
+        }
       } else {
         setError(`Import failed${data.error ? `: ${data.error}` : ""}`);
         setPhase("preview");

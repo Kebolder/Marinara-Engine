@@ -29,7 +29,7 @@ describe("streaming TTS sentence chunker", () => {
   it("strips closed thinking blocks and pauses at unclosed ones", () => {
     const state = createChunkerState();
 
-    expect(extractNewSentences("Visible. <thought type=\"cot\">secret.</thought> Spoken.", state)).toBe(
+    expect(extractNewSentences('Visible. <thought type="cot">secret.</thought> Spoken.', state)).toBe(
       "Visible. Spoken.",
     );
     const unclosedState = createChunkerState();

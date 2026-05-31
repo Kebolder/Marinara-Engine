@@ -6,12 +6,14 @@ import {
   normalizeMariApprovalRequest,
   runProfessorMariEntry,
   type MariApprovalRequest,
+  type MariAttachment,
   type MariMessage,
   type MariTraceEvent,
 } from "../../../../engine/mari/mari-entry";
 import {
   compactProfessorMariHistory,
   EMPTY_MARI_COMPACTION,
+  PROFESSOR_MARI_CHAT_ID,
   isMariResetCommand,
   mariContextMessages,
   type MariCompactionState,
@@ -19,7 +21,7 @@ import {
 import { llmApi } from "../../../../shared/api/llm-api";
 import { mariApi, type ProfessorMariPreferences } from "../../../../shared/api/mari-api";
 import { useConnections } from "../../../catalog/connections/index";
-import { usePersonas } from "../../../catalog/characters/index";
+import { usePersonaSummaries } from "../../../catalog/personas/index";
 import { ConversationMessage } from "../../../modes/conversation/message-shell";
 import type { CharacterMap, PersonaInfo } from "../../../modes/shared/chat-ui/types";
 import type { Message } from "../../../../engine/contracts/types/chat";
@@ -37,14 +39,10 @@ const MARI_CONNECTION_SETUP_CONTENT =
 const MARI_NO_CONNECTION_SELECTED_ERROR =
   'No connection set for this chat! Click the "chains" icon in the input box to select one.';
 const MARI_INPUT_PLACEHOLDER = "Message @Professor Mari, /reset to reset the conversation and only then clear it";
+const MARI_ATTACHMENT_CLIENT_TEXT_BYTES = 64 * 1024;
+const MARI_IMAGE_ATTACHMENT_EXTENSIONS = new Set(["avif", "gif", "jpeg", "jpg", "png", "webp"]);
 
-type MariAttachment = {
-  id: string;
-  name: string;
-  type: string;
-  size: number;
-  content: string;
-};
+type ClientMariAttachment = MariAttachment & { id: string };
 
 type MariConnection = {
   id: string;
@@ -71,6 +69,12 @@ function newId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function isMariImageFile(file: File) {
+  if (file.type.startsWith("image/")) return true;
+  const extension = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() : null;
+  return !!extension && MARI_IMAGE_ATTACHMENT_EXTENSIONS.has(extension);
+}
+
 function formatDaySeparator(value: string) {
   const date = new Date(value);
   const now = new Date();
@@ -90,7 +94,7 @@ function getDayKey(value: string) {
 function toConversationMessage(message: MariMessage): Message {
   return {
     id: message.id,
-    chatId: "professor-mari",
+    chatId: PROFESSOR_MARI_CHAT_ID,
     role: message.role,
     characterId: message.role === "assistant" ? MARI_CHARACTER_ID : null,
     content: message.content,
@@ -109,7 +113,7 @@ function toConversationMessage(message: MariMessage): Message {
 export function ProfessorMariSurface() {
   const queryClient = useQueryClient();
   const { data: rawConnections } = useConnections();
-  const { data: rawPersonas } = usePersonas();
+  const { data: rawPersonas } = usePersonaSummaries();
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
@@ -117,7 +121,7 @@ export function ProfessorMariSurface() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [compaction, setCompaction] = useState<MariCompactionState>(EMPTY_MARI_COMPACTION);
   const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<MariAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ClientMariAttachment[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
@@ -272,11 +276,13 @@ export function ProfessorMariSurface() {
     const nextPersonaId = selectedPersonaId;
     persistedConnectionIdRef.current = nextConnectionId;
     persistedPersonaIdRef.current = nextPersonaId;
-    void mariApi.preferences.save({ selectedConnectionId: nextConnectionId, selectedPersonaId: nextPersonaId }).catch((error) => {
-      persistedConnectionIdRef.current = undefined;
-      persistedPersonaIdRef.current = undefined;
-      setSendError(error instanceof Error ? error.message : "Professor Mari preferences could not be saved.");
-    });
+    void mariApi.preferences
+      .save({ selectedConnectionId: nextConnectionId, selectedPersonaId: nextPersonaId })
+      .catch((error) => {
+        persistedConnectionIdRef.current = undefined;
+        persistedPersonaIdRef.current = undefined;
+        setSendError(error instanceof Error ? error.message : "Professor Mari preferences could not be saved.");
+      });
   }, [preferencesLoaded, selectedConnectionId, selectedPersonaId]);
 
   useEffect(() => {
@@ -309,7 +315,7 @@ export function ProfessorMariSurface() {
     const nextAttachments = await Promise.all(
       Array.from(files).map(
         (file) =>
-          new Promise<MariAttachment>((resolve, reject) => {
+          new Promise<ClientMariAttachment>((resolve, reject) => {
             const finish = (content: string) =>
               resolve({
                 id: newId("mari-file"),
@@ -318,14 +324,23 @@ export function ProfessorMariSurface() {
                 size: file.size,
                 content,
               });
-            if (file.type.startsWith("image/")) {
-              const reader = new FileReader();
-              reader.onload = () => finish(String(reader.result ?? ""));
-              reader.onerror = () => reject(reader.error);
-              reader.readAsDataURL(file);
+            if (isMariImageFile(file)) {
+              finish("");
               return;
             }
-            file.text().then(finish).catch(reject);
+            file
+              .slice(0, MARI_ATTACHMENT_CLIENT_TEXT_BYTES)
+              .text()
+              .then((content) => {
+                if (file.size <= MARI_ATTACHMENT_CLIENT_TEXT_BYTES) {
+                  finish(content);
+                  return;
+                }
+                finish(
+                  `${content}\n\n[Attachment truncated in the browser after ${MARI_ATTACHMENT_CLIENT_TEXT_BYTES} bytes.]`,
+                );
+              })
+              .catch(reject);
           }),
       ),
     );
@@ -953,7 +968,9 @@ function MariContextMenu({
                 >
                   <span className="min-w-0 flex-1 truncate">{connection.name || connection.id}</span>
                   {connection.provider && (
-                    <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">{connection.provider}</span>
+                    <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">
+                      {connection.provider}
+                    </span>
                   )}
                   {active && <Check size="0.75rem" />}
                 </button>

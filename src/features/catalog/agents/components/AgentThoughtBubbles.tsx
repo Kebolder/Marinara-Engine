@@ -9,6 +9,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles, ChevronDown, ChevronUp, X } from "lucide-react";
 import { useAgentStore } from "../../../../shared/stores/agent.store";
 import { cn } from "../../../../shared/lib/utils";
+import { ContinuityIssueChecklist } from "./ContinuityIssueChecklist";
 
 export function AgentThoughtBubbles({ enabledAgentTypes }: { enabledAgentTypes?: Set<string> }) {
   const allThoughtBubbles = useAgentStore((s) => s.thoughtBubbles);
@@ -18,11 +19,21 @@ export function AgentThoughtBubbles({ enabledAgentTypes }: { enabledAgentTypes?:
   const [collapsed, setCollapsed] = useState(false);
 
   // Filter bubbles to only agents active in the current chat
-  const thoughtBubbles = enabledAgentTypes
-    ? allThoughtBubbles.filter((b) => enabledAgentTypes.has(b.agentId))
-    : allThoughtBubbles;
+  const thoughtBubbles = allThoughtBubbles
+    .map((bubble, index) => ({ bubble, storeIndex: index }))
+    .filter(({ bubble }) => !enabledAgentTypes || enabledAgentTypes.has(bubble.agentId));
+  const showProcessing = isProcessing && (!enabledAgentTypes || enabledAgentTypes.size > 0);
+  const handleClearVisibleBubbles = () => {
+    if (!enabledAgentTypes) {
+      clearThoughtBubbles();
+      return;
+    }
+    for (const { storeIndex } of [...thoughtBubbles].reverse()) {
+      dismissThoughtBubble(storeIndex);
+    }
+  };
 
-  if (thoughtBubbles.length === 0 && !isProcessing) return null;
+  if (thoughtBubbles.length === 0 && !showProcessing) return null;
 
   return (
     <motion.div
@@ -58,7 +69,7 @@ export function AgentThoughtBubbles({ enabledAgentTypes }: { enabledAgentTypes?:
         </button>
         {thoughtBubbles.length > 0 && (
           <button
-            onClick={clearThoughtBubbles}
+            onClick={handleClearVisibleBubbles}
             className="rounded p-0.5 text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             title="Dismiss all"
           >
@@ -77,7 +88,7 @@ export function AgentThoughtBubbles({ enabledAgentTypes }: { enabledAgentTypes?:
             className="overflow-hidden rounded-b-lg border border-t-0 border-[var(--border)] bg-[var(--card)] shadow-lg shadow-black/20"
           >
             <div className="max-h-48 overflow-y-auto p-2 flex flex-col gap-1.5">
-              {thoughtBubbles.map((bubble, i) => (
+              {thoughtBubbles.map(({ bubble, storeIndex }) => (
                 <motion.div
                   key={`${bubble.agentId}-${bubble.timestamp}`}
                   initial={{ opacity: 0, x: 20 }}
@@ -86,16 +97,20 @@ export function AgentThoughtBubbles({ enabledAgentTypes }: { enabledAgentTypes?:
                   className="relative rounded-md bg-[var(--primary)]/8 p-2 text-xs"
                 >
                   <button
-                    onClick={() => dismissThoughtBubble(i)}
+                    onClick={() => dismissThoughtBubble(storeIndex)}
                     className="absolute right-1 top-1 rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
                   >
                     <X size="0.75rem" />
                   </button>
                   <div className="pr-4">
                     <span className="font-semibold text-[var(--primary)]">{bubble.agentName}</span>
-                    <p className="mt-0.5 whitespace-pre-wrap text-[var(--muted-foreground)] leading-relaxed">
-                      {bubble.content}
-                    </p>
+                    {bubble.agentId === "continuity" ? (
+                      <ContinuityIssueChecklist content={bubble.content} />
+                    ) : (
+                      <p className="mt-0.5 whitespace-pre-wrap text-[var(--muted-foreground)] leading-relaxed">
+                        {bubble.content}
+                      </p>
+                    )}
                   </div>
                 </motion.div>
               ))}

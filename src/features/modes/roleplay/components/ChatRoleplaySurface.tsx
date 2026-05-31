@@ -19,14 +19,12 @@ import {
   Image,
   Loader2,
   MoreHorizontal,
-  Move,
   PenLine,
   ScrollText,
   Settings2,
   Swords,
   ChevronUp,
   ArrowRightLeft,
-  FlipHorizontal2,
 } from "lucide-react";
 import { cn } from "../../../../shared/lib/utils";
 import { getConnectedChatDisplayName } from "../../../../shared/lib/chat-display";
@@ -48,6 +46,7 @@ import type {
   MessageSelectionToggle,
   MessageWithSwipes,
   PeekPromptData,
+  PeekPromptOptions,
   PersonaInfo,
 } from "../../shared/chat-ui/types";
 
@@ -91,12 +90,12 @@ const AuthorNotesPanel = lazy(async () => {
 const PANEL_BACKDROP =
   "fixed inset-0 z-[9999] flex items-center justify-center p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]";
 const TRACKER_FOREGROUND_AVOIDANCE_CLASS =
-  "md:pl-[var(--tracker-chat-avoid-left)] md:pr-[var(--tracker-chat-avoid-right)] md:transition-[padding] md:duration-200 md:ease-[cubic-bezier(0.16,1,0.3,1)]";
+  "pl-[var(--tracker-chat-avoid-left)] pr-[var(--tracker-chat-avoid-right)] transition-[padding] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]";
 const PANEL_CONTAINER =
   "relative max-h-[calc(100dvh-4rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 shadow-2xl shadow-black/40 animate-message-in";
 
-function WeatherEffectsConnected() {
-  const gs = useGameStateStore((s) => s.current);
+function WeatherEffectsConnected({ chatId }: { chatId: string | null }) {
+  const gs = useGameStateStore((s) => (chatId && s.current?.chatId === chatId ? s.current : null));
   return (
     <Suspense fallback={null}>
       <WeatherEffects weather={gs?.weather ?? null} timeOfDay={gs?.time ?? null} />
@@ -113,8 +112,8 @@ function CrossfadeBackground({
   className?: string;
   blurPx?: number;
 }) {
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(url);
-  const [bgA, setBgA] = useState<string | null>(url);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [bgA, setBgA] = useState<string | null>(null);
   const [bgB, setBgB] = useState<string | null>(null);
   const [aActive, setAActive] = useState(true);
   const activeSlot = useRef<"a" | "b">("a");
@@ -129,6 +128,7 @@ function CrossfadeBackground({
 
   useEffect(() => {
     let cancelled = false;
+    setResolvedUrl(null);
     resolveManagedLocalAssetUrl(url)
       .then((nextUrl) => {
         if (!cancelled) setResolvedUrl(nextUrl);
@@ -164,14 +164,14 @@ function CrossfadeBackground({
     <>
       <div
         className={cn(
-          "mari-background absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
+          "mari-background pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
           className,
         )}
         style={{ ...blurStyle, backgroundImage: bgA ? `url(${bgA})` : "none", opacity: aActive ? 1 : 0 }}
       />
       <div
         className={cn(
-          "mari-background absolute inset-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
+          "mari-background pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-opacity duration-700 ease-in-out",
           className,
         )}
         style={{ ...blurStyle, backgroundImage: bgB ? `url(${bgB})` : "none", opacity: aActive ? 0 : 1 }}
@@ -517,7 +517,6 @@ type RoleplaySurfaceProps = {
   spritePlacements: Record<string, SpritePlacement>;
   spriteScale: number;
   spriteOpacity: number;
-  hasCustomSpritePlacements: boolean;
   spriteArrangeMode: boolean;
   enabledAgentTypes: Set<string>;
   chatCharIds: string[];
@@ -552,11 +551,11 @@ type RoleplaySurfaceProps = {
   onLoadMore: () => void;
   onDelete: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
-  onEdit: (messageId: string, content: string) => void;
+  onEdit: (messageId: string, content: string) => void | Promise<void>;
   onSetActiveSwipe: (messageId: string, index: number) => void;
   onToggleConversationStart: (messageId: string, current: boolean) => void;
   onToggleHiddenFromAI: (messageId: string, current: boolean) => void;
-  onPeekPrompt: () => void;
+  onPeekPrompt: (options?: PeekPromptOptions) => void;
   onBranch?: (messageId: string) => void;
   onCloneSceneFromHere?: (messageId: string) => void;
   isCloneSceneFromHereDisabled?: boolean;
@@ -582,7 +581,6 @@ type RoleplaySurfaceProps = {
   onResetSpritePlacements: () => void;
   onSpriteSideChange: (side: SpriteSide) => void;
   onToggleSpriteArrange: () => void;
-  onToggleSpritePosition: () => void;
   onExpressionChange: (characterId: string, expression: string, options?: { immediate?: boolean }) => void;
   onSpritePlacementChange: (characterId: string, placement: SpritePlacement) => void;
   onDeleteConfirm: () => void;
@@ -620,7 +618,6 @@ export function ChatRoleplaySurface({
   spritePlacements,
   spriteScale,
   spriteOpacity,
-  hasCustomSpritePlacements,
   spriteArrangeMode,
   enabledAgentTypes,
   chatCharIds,
@@ -684,7 +681,6 @@ export function ChatRoleplaySurface({
   onResetSpritePlacements,
   onSpriteSideChange,
   onToggleSpriteArrange,
-  onToggleSpritePosition,
   onExpressionChange,
   onSpritePlacementChange,
   onDeleteConfirm,
@@ -705,6 +701,7 @@ export function ChatRoleplaySurface({
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const chatBackgroundBlur = useUIStore((s) => s.chatBackgroundBlur);
   const isConcludedScene = chatMeta.sceneStatus === "concluded";
+  const [addonsReady, setAddonsReady] = useState(false);
   const messageActions = isConcludedScene
     ? {
         onDelete: undefined,
@@ -747,23 +744,26 @@ export function ChatRoleplaySurface({
     [activeChatCharIds, characterMap],
   );
   const overlaySpriteDisplayModes = useMemo(
-    () =>
-      expressionAvatarsEnabled
-        ? spriteDisplayModes.filter((mode) => mode !== "expressions")
-        : spriteDisplayModes,
+    () => (expressionAvatarsEnabled ? spriteDisplayModes.filter((mode) => mode !== "expressions") : spriteDisplayModes),
     [expressionAvatarsEnabled, spriteDisplayModes],
   );
   const showSpriteOverlay =
     expressionAgentEnabled && spriteCharacterIds.length > 0 && overlaySpriteDisplayModes.length > 0;
 
+  useEffect(() => {
+    setAddonsReady(false);
+    const id = window.setTimeout(() => setAddonsReady(true), 180);
+    return () => window.clearTimeout(id);
+  }, [activeChatId]);
+
   return (
-    <div data-component="ChatArea.Roleplay" className="flex flex-1 overflow-hidden">
-      <div className="rpg-chat-area mari-chat-area relative flex flex-1 flex-col overflow-hidden">
+    <div data-component="ChatArea.Roleplay" className="flex h-full min-h-0 flex-1 basis-0 overflow-hidden">
+      <div className="rpg-chat-area mari-chat-area relative isolate flex h-full min-h-0 flex-1 basis-0 flex-col overflow-hidden">
         <CrossfadeBackground url={chatBackground} blurPx={chatBackgroundBlur} />
-        <div className="rpg-overlay absolute inset-0" />
-        <div className="rpg-vignette pointer-events-none absolute inset-0" />
-        {weatherEffects && <WeatherEffectsConnected />}
-        {showSpriteOverlay && (
+        <div className="rpg-overlay pointer-events-none absolute inset-0 z-0" />
+        <div className="rpg-vignette pointer-events-none absolute inset-0 z-0" />
+        {weatherEffects && addonsReady && <WeatherEffectsConnected chatId={activeChatId} />}
+        {showSpriteOverlay && addonsReady && (
           <Suspense fallback={null}>
             <SpriteOverlay
               characterIds={spriteCharacterIds}
@@ -781,13 +781,13 @@ export function ChatRoleplaySurface({
           </Suspense>
         )}
 
-        <div className="flex flex-1 overflow-hidden">
-          <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="relative z-20 flex h-full min-h-0 flex-1 basis-0 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-1 basis-0 flex-col overflow-hidden">
             <>
               <div
                 data-tracker-panel-anchor="roleplay-hud"
                 className={cn(
-                  "pointer-events-none relative z-40 items-center py-2 max-md:hidden",
+                  "pointer-events-none relative z-30 items-center py-2 max-md:hidden",
                   centerCompact ? "hidden" : "flex",
                 )}
                 style={{
@@ -795,7 +795,7 @@ export function ChatRoleplaySurface({
                   paddingRight: "calc(1rem + var(--tracker-panel-hud-clear-right, 0px))",
                 }}
               >
-                {chat && agentsUiEnabled && (
+                {chat && agentsUiEnabled && addonsReady && (
                   <div className="pointer-events-auto flex-1 overflow-x-auto">
                     <Suspense fallback={null}>
                       <RoleplayHUD
@@ -835,24 +835,6 @@ export function ChatRoleplaySurface({
                       title="Manage Chat Files"
                       onClick={onOpenFiles}
                     />
-                    {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
-                      <RpToolbarButton
-                        icon={<Move size="0.875rem" />}
-                        title={spriteArrangeMode ? "Finish arranging sprites" : "Arrange sprites"}
-                        onClick={onToggleSpriteArrange}
-                      />
-                    )}
-                    {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
-                      <RpToolbarButton
-                        icon={<FlipHorizontal2 size="0.875rem" />}
-                        title={
-                          hasCustomSpritePlacements
-                            ? `Mirror sprites to the ${spritePosition === "left" ? "right" : "left"}`
-                            : `Sprite default side: ${spritePosition}`
-                        }
-                        onClick={onToggleSpritePosition}
-                      />
-                    )}
                     <RpToolbarButton icon={<Image size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
                     {chat?.connectedChatId && (
                       <RpToolbarButton
@@ -872,11 +854,11 @@ export function ChatRoleplaySurface({
               <div
                 data-tracker-panel-anchor={centerCompact ? "roleplay-hud" : undefined}
                 className={cn(
-                  "pointer-events-auto relative z-40 w-full flex-col",
+                  "pointer-events-auto relative z-30 w-full flex-col",
                   centerCompact ? "flex" : "flex md:hidden",
                 )}
               >
-                {chat && agentsUiEnabled && (
+                {chat && agentsUiEnabled && addonsReady && (
                   <div
                     className="flex w-full items-center justify-between pb-1 pt-2"
                     style={{
@@ -922,24 +904,6 @@ export function ChatRoleplaySurface({
                           title="Manage Chat Files"
                           onClick={onOpenFiles}
                         />
-                        {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
-                          <RpToolbarButton
-                            icon={<Move size="0.875rem" />}
-                            title={spriteArrangeMode ? "Finish arranging sprites" : "Arrange sprites"}
-                            onClick={onToggleSpriteArrange}
-                          />
-                        )}
-                        {expressionAgentEnabled && spriteCharacterIds.length > 0 && (
-                          <RpToolbarButton
-                            icon={<FlipHorizontal2 size="0.875rem" />}
-                            title={
-                              hasCustomSpritePlacements
-                                ? `Mirror sprites to the ${spritePosition === "left" ? "right" : "left"}`
-                                : `Sprite default side: ${spritePosition}`
-                            }
-                            onClick={onToggleSpritePosition}
-                          />
-                        )}
                         <RpToolbarButton icon={<Image size="0.875rem" />} title="Gallery" onClick={onOpenGallery} />
                         {chat?.connectedChatId && (
                           <RpToolbarButton
@@ -1006,7 +970,9 @@ export function ChatRoleplaySurface({
               </Suspense>
             )}
 
-            <div className={cn("relative z-10 flex-1 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div
+              className={cn("relative z-10 min-h-0 flex-1 basis-0 overflow-hidden", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}
+            >
               <div
                 ref={scrollRef}
                 data-chat-scroll
@@ -1131,7 +1097,7 @@ export function ChatRoleplaySurface({
               </div>
             </div>
 
-            <div className={cn("relative z-20", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
+            <div className={cn("relative z-30 shrink-0", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}>
               <div className={cn("relative", centerCompact ? "px-3" : "px-3 md:px-[12%]")}>
                 {chatMeta.sceneStatus === "active" && (
                   <EndSceneBar
@@ -1192,10 +1158,11 @@ export function ChatRoleplaySurface({
           </div>
         </div>
 
-        {/* Always mount so stagger timer runs even when panel is hidden */}
-        <Suspense fallback={null}>
-          <EchoChamberPanel hiddenOnMobile={hideEchoChamberOnMobile} />
-        </Suspense>
+        {addonsReady && (
+          <Suspense fallback={null}>
+            <EchoChamberPanel hiddenOnMobile={hideEchoChamberOnMobile} />
+          </Suspense>
+        )}
       </div>
 
       <ChatCommonOverlays

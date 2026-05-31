@@ -1,6 +1,25 @@
 import type { Chat } from "../../../../engine/contracts/types/chat";
-import type { CombatAttack, CombatEnemy, CombatInitState, CombatMechanic, CombatPartyMember, EncounterSettings } from "../../../../engine/contracts/types/combat-encounter";
-import type { Combatant, CombatPlayerAction, GameActiveState, GameCheckpoint, GameMap, GameNpc, GameSetupConfig, HudWidget, SessionSummary } from "../../../../engine/contracts/types/game";
+import type {
+  CombatAttack,
+  CombatEnemy,
+  CombatInitState,
+  CombatMechanic,
+  CombatPartyMember,
+  EncounterSettings,
+} from "../../../../engine/contracts/types/combat-encounter";
+import type {
+  Combatant,
+  CombatPlayerAction,
+  GameActiveState,
+  GameCheckpoint,
+  GameMap,
+  GameNpc,
+  GameSetupConfig,
+  HudWidget,
+  PartyArc,
+  SessionSummary,
+  SkillCheckResult,
+} from "../../../../engine/contracts/types/game";
 import type { RPGAttributes } from "../../../../engine/contracts/types/game-state";
 import { ApiError, type JsonRepairRequest } from "../../../../shared/api/api-errors";
 import { gameAssetsApi } from "../../../../shared/api/assets-api";
@@ -9,21 +28,64 @@ import { integrationGateway } from "../../../../shared/api/integration-gateway";
 import { spotifyApi } from "../../../../shared/api/integration-utility-api";
 import { llmApi } from "../../../../shared/api/llm-api";
 import { storageApi } from "../../../../shared/api/storage-api";
+import {
+  createLorebookEntrySchema,
+  createLorebookSchema,
+} from "../../../../engine/contracts/schemas/lorebook.schema";
 import { resolveCombatRound } from "../../../../engine/modes/game/mechanics/combat.service";
 import { rollDice as rollGameDice } from "../../../../engine/modes/game/mechanics/dice.service";
-import { rollEncounter as rollGameEncounter, rollEnemyCount } from "../../../../engine/modes/game/mechanics/encounter.service";
-import { generateCombatLoot, generateLootTable, type LootDrop } from "../../../../engine/modes/game/mechanics/loot.service";
+import {
+  rollEncounter as rollGameEncounter,
+  rollEnemyCount,
+} from "../../../../engine/modes/game/mechanics/encounter.service";
+import {
+  generateCombatLoot,
+  generateLootTable,
+  type LootDrop,
+} from "../../../../engine/modes/game/mechanics/loot.service";
 import { processReputationActions } from "../../../../engine/modes/game/mechanics/reputation.service";
-import { getGoverningAttribute, mapSheetAttributesToRPG, resolveSkillCheck } from "../../../../engine/modes/game/mechanics/skill-check.service";
-import { applyMoraleEvent, getMoraleTier, type MoraleEvent } from "../../../../engine/modes/game/mechanics/morale.service";
-import { getElementPreset, listElementPresets } from "../../../../engine/modes/game/mechanics/element-reactions.service";
+import {
+  getGoverningAttribute,
+  mapSheetAttributesToRPG,
+  resolveSkillCheck,
+} from "../../../../engine/modes/game/mechanics/skill-check.service";
+import { serializeResolvedSkillCheckTag } from "../../../../engine/shared/scoring/skill-check-format";
+import {
+  applyMoraleEvent,
+  getMoraleTier,
+  type MoraleEvent,
+} from "../../../../engine/modes/game/mechanics/morale.service";
+import {
+  getElementPreset,
+  listElementPresets,
+} from "../../../../engine/modes/game/mechanics/element-reactions.service";
+import { buildPartySystemPrompt } from "../../../../engine/modes/game/prompts/party-prompts";
 import { buildSessionConclusionPrompt, buildSetupPrompt } from "../../../../engine/modes/game/prompts/gm-prompts";
+import { dedupeSessionSummaryLists } from "../../../../engine/modes/game/state/session-summary-normalization";
 import { buildRecapPrompt, buildSessionCarryoverContext } from "../../../../engine/modes/game/state/session.service";
 import { validateTransition } from "../../../../engine/modes/game/state/state-machine.service";
-import { addCombatEntry, addEventEntry, addInventoryEntry, addLocationEntry, addNoteEntry, buildDeterministicSummary, buildStructuredRecap, createJournal, type Journal, type JournalEntry } from "../../../../engine/modes/game/world/journal.service";
+import {
+  addCombatEntry,
+  addEventEntry,
+  addInventoryEntry,
+  addLocationEntry,
+  addNoteEntry,
+  buildDeterministicSummary,
+  buildStructuredRecap,
+  createJournal,
+  type Journal,
+  type JournalEntry,
+} from "../../../../engine/modes/game/world/journal.service";
+import { buildMapGenerationPrompt } from "../../../../engine/modes/game/world/map.service";
 import { withActiveGameMapMeta } from "../../../../engine/modes/game/world/map-position.service";
-import { createInitialTime, formatGameTime, advanceTime as advanceGameTime, type GameTime } from "../../../../engine/modes/game/world/time.service";
+import {
+  createInitialTime,
+  formatGameTime,
+  advanceTime as advanceGameTime,
+  type GameTime,
+} from "../../../../engine/modes/game/world/time.service";
 import { generateWeather, inferBiome, type WeatherState } from "../../../../engine/modes/game/world/weather.service";
+import { parsePartyDialogue } from "../lib/party-dialogue-parser";
 
 export interface CreateGameResponse {
   sessionChat: Chat;
@@ -33,11 +95,13 @@ export interface CreateGameResponse {
 export interface SetupResponse {
   setup: Record<string, unknown>;
   worldOverview: string | null;
+  sessionChat: Chat;
 }
 
 export interface StartGameResponse {
   status: string;
   alreadyStarted?: boolean;
+  sessionChat: Chat;
 }
 
 export interface StartSessionResponse {
@@ -48,12 +112,14 @@ export interface StartSessionResponse {
 
 export interface SessionSummaryResponse {
   summary: SessionSummary;
+  sessionChat: Chat;
 }
 
 export interface RegenerateSessionLorebookResponse {
   sessionNumber: number;
   lorebookId: string;
   entryCount: number;
+  sessionChat: Chat;
 }
 
 export interface UpdateCampaignProgressionResponse {
@@ -79,6 +145,7 @@ export interface MapResponse {
   map: GameMap;
   maps?: GameMap[];
   activeGameMapId?: string | null;
+  sessionChat: Chat;
 }
 
 export interface GameJournalResponse {
@@ -101,7 +168,13 @@ export interface GameAssetGenerationResult {
   fallbackBackground: string | null;
   generatedIllustration: { tag: string; segment?: number } | null;
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
+  sessionChat?: Chat;
 }
+
+type ImagePromptSettings = {
+  includeAppearances?: boolean;
+  format?: "descriptive" | "tags";
+};
 
 export type GameAssetGenerationPayload = {
   chatId: string;
@@ -112,6 +185,7 @@ export type GameAssetGenerationPayload = {
   imageConnectionId?: string | null;
   artStylePrompt?: string | null;
   imageSizes?: Record<string, { width?: number; height?: number }>;
+  imagePromptSettings?: ImagePromptSettings;
   promptOverrides?: PromptOverride[];
   [key: string]: unknown;
 };
@@ -128,15 +202,18 @@ type PromptOverride = {
   prompt?: string;
 };
 
-type GameJsonRepairKind = "game_setup" | "session_conclusion" | "session_lorebook" | "campaign_progression";
+type GameJsonRepairKind =
+  | "game_setup"
+  | "game_map"
+  | "session_conclusion"
+  | "session_lorebook"
+  | "campaign_progression";
 
 type GameJsonRepairContext = {
   kind: GameJsonRepairKind;
   title: string;
   applyBody: Record<string, unknown>;
 };
-
-const EMPTY_JOURNAL: Journal = createJournal();
 
 function newId(prefix = ""): string {
   const id =
@@ -222,7 +299,9 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
     if (start >= 0 && end > start) {
       try {
         const parsed = JSON.parse(text.slice(start, end + 1));
-        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
       } catch {
         return null;
       }
@@ -319,6 +398,250 @@ function setupMapFromResponse(setup: Record<string, unknown>): GameMap {
   } as GameMap;
 }
 
+function readOptionalString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+type GeneratedMapNodeNormalization = {
+  rawId: string | null;
+  node: NonNullable<GameMap["nodes"]>[number];
+};
+
+function readNumber(value: unknown, fallback: number): number {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return fallback;
+  const parsed = typeof value === "number" ? value : Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.floor(readNumber(value, fallback))));
+}
+
+function clampPercent(value: unknown, fallback: number): number {
+  return Math.max(0, Math.min(100, readNumber(value, fallback)));
+}
+
+function normalizeGeneratedGridCell(
+  value: unknown,
+  index: number,
+  width: number,
+  height: number,
+): NonNullable<GameMap["cells"]>[number] | null {
+  const record = asRecord(value);
+  const x = clampInteger(record.x, index % width, 0, width - 1);
+  const y = clampInteger(record.y, Math.floor(index / width), 0, height - 1);
+  const label = readOptionalString(record, "label") ?? `Area ${index + 1}`;
+  return {
+    x,
+    y,
+    emoji: readOptionalString(record, "emoji") ?? "",
+    label,
+    discovered: record.discovered !== false,
+    terrain: readOptionalString(record, "terrain") ?? "unknown",
+    ...(readOptionalString(record, "description") ? { description: readOptionalString(record, "description")! } : {}),
+  };
+}
+
+function uniqueGeneratedNodeId(rawId: string, usedIds: Set<string>): string {
+  const base = rawId.trim() || "location";
+  let candidate = base;
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${suffix++}`;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function normalizeGeneratedMapNode(
+  value: unknown,
+  index: number,
+  usedIds: Set<string>,
+): GeneratedMapNodeNormalization | null {
+  const record = asRecord(value);
+  const label = readOptionalString(record, "label") ?? readOptionalString(record, "name") ?? `Area ${index + 1}`;
+  const rawId = readOptionalString(record, "id") ?? generatedAssetSlug(label);
+  const id = uniqueGeneratedNodeId(rawId, usedIds);
+  if (!id) return null;
+  return {
+    rawId,
+    node: {
+      id,
+      emoji: readOptionalString(record, "emoji") ?? "",
+      label,
+      x: clampPercent(record.x, 50),
+      y: clampPercent(record.y, 50),
+      discovered: record.discovered !== false,
+      ...(readOptionalString(record, "description") ? { description: readOptionalString(record, "description")! } : {}),
+    },
+  };
+}
+
+function resolveGeneratedNodeReference(
+  rawId: string | null,
+  knownNodeIds: Set<string>,
+  normalizedIdsByRawId: Map<string, string[]>,
+): string | null {
+  if (!rawId) return null;
+  if (knownNodeIds.has(rawId)) return rawId;
+  return normalizedIdsByRawId.get(rawId)?.[0] ?? null;
+}
+
+function normalizeGeneratedMapEdge(
+  value: unknown,
+  knownNodeIds: Set<string>,
+  normalizedIdsByRawId: Map<string, string[]>,
+): NonNullable<GameMap["edges"]>[number] | null {
+  const record = asRecord(value);
+  const rawFrom = readOptionalString(record, "from");
+  const rawTo = readOptionalString(record, "to");
+  const duplicateAliases = rawFrom && rawFrom === rawTo ? normalizedIdsByRawId.get(rawFrom) : null;
+  const from =
+    duplicateAliases && duplicateAliases.length > 1
+      ? duplicateAliases[0]!
+      : resolveGeneratedNodeReference(rawFrom, knownNodeIds, normalizedIdsByRawId);
+  const to =
+    duplicateAliases && duplicateAliases.length > 1
+      ? duplicateAliases[1]!
+      : resolveGeneratedNodeReference(rawTo, knownNodeIds, normalizedIdsByRawId);
+  if (!from || !to || from === to) return null;
+  return {
+    from,
+    to,
+    ...(readOptionalString(record, "label") ? { label: readOptionalString(record, "label")! } : {}),
+  };
+}
+
+function normalizeGridPartyPosition(
+  value: unknown,
+  fallback: { x: number; y: number },
+  width: number,
+  height: number,
+  knownCoordinates: Set<string>,
+): { x: number; y: number } {
+  const record = asRecord(value);
+  const candidate = {
+    x: clampInteger(record.x, fallback.x, 0, width - 1),
+    y: clampInteger(record.y, fallback.y, 0, height - 1),
+  };
+  return knownCoordinates.has(`${candidate.x},${candidate.y}`) ? candidate : fallback;
+}
+
+function normalizeGeneratedMap(raw: unknown, fallback: GameMap): GameMap | null {
+  const record = asRecord(raw);
+  const type = record.type === "grid" || record.type === "node" ? record.type : null;
+  if (!type) return null;
+  const name = readOptionalString(record, "name") ?? fallback.name;
+  const base = {
+    id: readOptionalString(record, "id") ?? generatedAssetSlug(name),
+    type,
+    name,
+    description: readOptionalString(record, "description") ?? fallback.description,
+  };
+  if (type === "grid") {
+    const width = clampInteger(record.width, fallback.width ?? 6, 1, 12);
+    const height = clampInteger(record.height, fallback.height ?? 6, 1, 12);
+    const cellByCoordinate = new Map<string, NonNullable<GameMap["cells"]>[number]>();
+    if (Array.isArray(record.cells)) {
+      record.cells.slice(0, width * height).forEach((cell, index) => {
+        const normalizedCell = normalizeGeneratedGridCell(cell, index, width, height);
+        if (!normalizedCell) return;
+        const key = `${normalizedCell.x},${normalizedCell.y}`;
+        if (!cellByCoordinate.has(key)) cellByCoordinate.set(key, normalizedCell);
+      });
+    }
+    const cells = [...cellByCoordinate.values()];
+    if (cells.length === 0) return null;
+    const fallbackCell = cells.find((cell) => cell.discovered) ?? cells[0]!;
+    const fallbackPosition = { x: fallbackCell.x, y: fallbackCell.y };
+    const knownCoordinates = new Set(cells.map((cell) => `${cell.x},${cell.y}`));
+    const partyPosition = normalizeGridPartyPosition(
+      record.partyPosition,
+      fallbackPosition,
+      width,
+      height,
+      knownCoordinates,
+    );
+    return {
+      ...base,
+      type: "grid",
+      width,
+      height,
+      cells: cells.map((cell) =>
+        cell.x === partyPosition.x && cell.y === partyPosition.y ? { ...cell, discovered: true } : cell,
+      ),
+      partyPosition,
+    };
+  }
+  const usedNodeIds = new Set<string>();
+  const nodeEntries = Array.isArray(record.nodes)
+    ? record.nodes
+        .slice(0, 80)
+        .map((node, index) => normalizeGeneratedMapNode(node, index, usedNodeIds))
+        .filter((entry): entry is GeneratedMapNodeNormalization => !!entry)
+    : [];
+  const nodes = nodeEntries.map((entry) => entry.node);
+  if (nodes.length === 0) return null;
+  const knownNodeIds = new Set(nodes.map((node) => node.id));
+  const normalizedIdsByRawId = new Map<string, string[]>();
+  for (const entry of nodeEntries) {
+    if (!entry.rawId) continue;
+    normalizedIdsByRawId.set(entry.rawId, [...(normalizedIdsByRawId.get(entry.rawId) ?? []), entry.node.id]);
+  }
+  const edges = Array.isArray(record.edges)
+    ? record.edges
+        .slice(0, 160)
+        .map((edge) => normalizeGeneratedMapEdge(edge, knownNodeIds, normalizedIdsByRawId))
+        .filter((edge): edge is NonNullable<GameMap["edges"]>[number] => !!edge)
+    : [];
+  const partyPosition =
+    typeof record.partyPosition === "string" && knownNodeIds.has(record.partyPosition.trim())
+      ? record.partyPosition.trim()
+      : nodes[0]!.id;
+  return {
+    ...base,
+    type: "node",
+    nodes,
+    edges,
+    partyPosition,
+  };
+}
+
+function gameMapJsonRepairContext(data: {
+  chatId: string;
+  locationType: string;
+  context: string;
+  connectionId?: string | null;
+}): GameJsonRepairContext {
+  return {
+    kind: "game_map",
+    title: "Repair Game Map JSON",
+    applyBody: {
+      chatId: data.chatId,
+      locationType: data.locationType,
+      context: data.context,
+      connectionId: data.connectionId,
+    },
+  };
+}
+
+function mapJsonCouldNotApplyError(
+  generated: Record<string, unknown>,
+  data: { chatId: string; locationType: string; context: string; connectionId?: string | null },
+): ApiError {
+  const repair = gameMapJsonRepairContext(data);
+  return new ApiError("The model returned map JSON that needs review before it can be applied.", 422, {
+    jsonRepair: {
+      kind: repair.kind,
+      title: repair.title,
+      rawJson: JSON.stringify(generated, null, 2),
+      applyEndpoint: `local://game/${repair.kind}`,
+      applyBody: repair.applyBody,
+    },
+  });
+}
+
 function setupNpcsFromResponse(setup: Record<string, unknown>): GameNpc[] {
   const raw = Array.isArray(setup.startingNpcs) ? setup.startingNpcs : [];
   return raw.map((npc, index) => {
@@ -349,7 +672,8 @@ function setupBlueprint(setup: Record<string, unknown>, fallback: Record<string,
     ...rawBlueprint,
     hudWidgets: Array.isArray(rawBlueprint.hudWidgets) ? rawBlueprint.hudWidgets : fallbackWidgets,
     introSequence: Array.isArray(rawBlueprint.introSequence) ? rawBlueprint.introSequence : fallback.introSequence,
-    visualTheme: Object.keys(asRecord(rawBlueprint.visualTheme)).length > 0 ? rawBlueprint.visualTheme : fallback.visualTheme,
+    visualTheme:
+      Object.keys(asRecord(rawBlueprint.visualTheme)).length > 0 ? rawBlueprint.visualTheme : fallback.visualTheme,
     campaignPlan:
       Object.keys(asRecord(rawBlueprint.campaignPlan)).length > 0
         ? rawBlueprint.campaignPlan
@@ -424,11 +748,15 @@ function journalFromMeta(meta: Record<string, unknown>): Journal {
 
 function isGameSetupConfig(value: unknown): value is GameSetupConfig {
   const record = asRecord(value);
-  return typeof record.genre === "string" && typeof record.setting === "string" && Array.isArray(record.partyCharacterIds);
+  return (
+    typeof record.genre === "string" && typeof record.setting === "string" && Array.isArray(record.partyCharacterIds)
+  );
 }
 
 function gameSetupChatPatch(config: GameSetupConfig, connectionId?: string | null): Record<string, unknown> {
-  const characterIds = (config.partyCharacterIds ?? []).filter((id) => typeof id === "string" && !id.startsWith("npc:"));
+  const characterIds = (config.partyCharacterIds ?? []).filter(
+    (id) => typeof id === "string" && !id.startsWith("npc:"),
+  );
   return {
     characterIds,
     personaId: config.personaId ?? null,
@@ -473,8 +801,16 @@ function normalizeSessionSummaryPayload(
   nextSessionRequest?: string | null,
 ): SessionSummary {
   const record = asRecord(raw);
+  const factLists = dedupeSessionSummaryLists({
+    keyDiscoveries: normalizeSessionSummaryTextList(record.keyDiscoveries, fallback.keyDiscoveries),
+    characterMoments: normalizeSessionSummaryTextList(record.characterMoments, fallback.characterMoments),
+    littleDetails: normalizeSessionSummaryTextList(record.littleDetails, fallback.littleDetails),
+    npcUpdates: normalizeSessionSummaryTextList(record.npcUpdates, fallback.npcUpdates),
+  });
   return {
-    sessionNumber: Number.isFinite(Number(record.sessionNumber)) ? Number(record.sessionNumber) : fallback.sessionNumber,
+    sessionNumber: Number.isFinite(Number(record.sessionNumber))
+      ? Number(record.sessionNumber)
+      : fallback.sessionNumber,
     summary: typeof record.summary === "string" && record.summary.trim() ? record.summary : fallback.summary,
     resumePoint:
       typeof record.resumePoint === "string" && record.resumePoint.trim() ? record.resumePoint : fallback.resumePoint,
@@ -484,22 +820,81 @@ function normalizeSessionSummaryPayload(
         : fallback.partyDynamics,
     partyState:
       typeof record.partyState === "string" && record.partyState.trim() ? record.partyState : fallback.partyState,
-    keyDiscoveries: Array.isArray(record.keyDiscoveries)
-      ? record.keyDiscoveries.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : fallback.keyDiscoveries,
-    characterMoments: Array.isArray(record.characterMoments)
-      ? record.characterMoments.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : fallback.characterMoments,
-    littleDetails: Array.isArray(record.littleDetails)
-      ? record.littleDetails.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : fallback.littleDetails,
-    statsSnapshot: Object.keys(asRecord(record.statsSnapshot)).length > 0 ? asRecord(record.statsSnapshot) : fallback.statsSnapshot,
-    npcUpdates: Array.isArray(record.npcUpdates)
-      ? record.npcUpdates.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-      : fallback.npcUpdates,
-    nextSessionRequest: nextSessionRequest ?? (typeof record.nextSessionRequest === "string" ? record.nextSessionRequest : fallback.nextSessionRequest ?? null),
+    keyDiscoveries: factLists.keyDiscoveries,
+    characterMoments: factLists.characterMoments,
+    littleDetails: factLists.littleDetails,
+    statsSnapshot:
+      Object.keys(asRecord(record.statsSnapshot)).length > 0 ? asRecord(record.statsSnapshot) : fallback.statsSnapshot,
+    npcUpdates: factLists.npcUpdates,
+    nextSessionRequest:
+      nextSessionRequest ??
+      (typeof record.nextSessionRequest === "string"
+        ? record.nextSessionRequest
+        : (fallback.nextSessionRequest ?? null)),
     timestamp: typeof record.timestamp === "string" ? record.timestamp : nowIso(),
   };
+}
+
+function normalizeSessionSummaryTextList(raw: unknown, fallback: string[]): string[] {
+  return Array.isArray(raw)
+    ? raw.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : fallback;
+}
+
+function gameCardName(card: Record<string, unknown>, fallback: string): string {
+  const value = card.name;
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function gameCardTextList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function gameCardRpgStatsPrompt(value: unknown): Record<string, unknown> {
+  const stats = asRecord(value);
+  const promptStats: Record<string, unknown> = {};
+  const attributes = Array.isArray(stats.attributes)
+    ? stats.attributes
+        .map(asRecord)
+        .map((attribute) => {
+          const name = typeof attribute.name === "string" ? attribute.name.trim() : "";
+          const numericValue = Number(attribute.value);
+          const next: Record<string, unknown> = {};
+          if (name) next.name = name;
+          if (Number.isFinite(numericValue)) next.value = numericValue;
+          return next;
+        })
+        .filter((attribute) => Object.keys(attribute).length > 0)
+    : [];
+  if (attributes.length) promptStats.attributes = attributes;
+
+  const hp = asRecord(stats.hp);
+  const promptHp: Record<string, number> = {};
+  const hpValue = Number(hp.value);
+  const hpMax = Number(hp.max);
+  if (Number.isFinite(hpValue)) promptHp.value = hpValue;
+  if (Number.isFinite(hpMax)) promptHp.max = hpMax;
+  if (Object.keys(promptHp).length) promptStats.hp = promptHp;
+
+  return promptStats;
+}
+
+function gameCardPromptText(card: Record<string, unknown>): string {
+  return JSON.stringify(
+    {
+      name: gameCardName(card, "Party member"),
+      shortDescription: typeof card.shortDescription === "string" ? card.shortDescription : "",
+      class: typeof card.class === "string" ? card.class : "",
+      abilities: gameCardTextList(card.abilities),
+      strengths: gameCardTextList(card.strengths),
+      weaknesses: gameCardTextList(card.weaknesses),
+      rpgStats: gameCardRpgStatsPrompt(card.rpgStats),
+    },
+    null,
+    2,
+  );
 }
 
 function gameSessionSortValue(chat: Chat): number {
@@ -555,7 +950,10 @@ function gameStateCarryoverPatch(previousChat: Chat | null | undefined, nextChat
   };
 }
 
-function normalizeJournalEntry(type: string, data: Record<string, unknown>): Pick<JournalEntry, "type" | "title" | "content"> {
+function normalizeJournalEntry(
+  type: string,
+  data: Record<string, unknown>,
+): Pick<JournalEntry, "type" | "title" | "content"> {
   const title =
     typeof data.title === "string"
       ? data.title
@@ -642,6 +1040,50 @@ function playerAttributes(meta: Record<string, unknown>): Partial<RPGAttributes>
   return mapSheetAttributesToRPG(Array.isArray(rpgStats.attributes) ? (rpgStats.attributes as any[]) : undefined);
 }
 
+function replaceFirstUnresolvedSkillCheckTag(content: string, resolvedTag: string): string {
+  let replaced = false;
+  return content.replace(/\[skill_check:\s*([^\]]+)\]/gi, (fullTag, body: string) => {
+    if (replaced) return fullTag;
+    if (/\bresult\s*=/i.test(body)) return fullTag;
+    replaced = true;
+    return resolvedTag;
+  });
+}
+
+const SKILL_CHECK_HISTORY_PERSIST_ATTEMPTS = 3;
+
+async function persistResolvedSkillCheckTag(
+  chatId: string,
+  messageId: string | undefined,
+  result: SkillCheckResult,
+): Promise<string | undefined> {
+  const id = typeof messageId === "string" ? messageId.trim() : "";
+  if (!id) return undefined;
+  try {
+    const conditionalUpdate = storageApi.updateChatMessageContentIfUnchanged;
+    if (typeof conditionalUpdate !== "function") {
+      throw new Error("Conditional chat message content update is unavailable");
+    }
+    const resolvedTag = serializeResolvedSkillCheckTag(result);
+    for (let attempt = 0; attempt < SKILL_CHECK_HISTORY_PERSIST_ATTEMPTS; attempt += 1) {
+      const message = await storageApi.get<ChatMessage>("messages", id);
+      if (typeof message?.chatId !== "string" || message.chatId !== chatId) return undefined;
+      const content = typeof message?.content === "string" ? message.content : "";
+      if (!content) return undefined;
+      const updatedContent = replaceFirstUnresolvedSkillCheckTag(content, resolvedTag);
+      if (updatedContent === content) return undefined;
+      const update = await conditionalUpdate<ChatMessage>(chatId, id, content, updatedContent);
+      if (update.updated) {
+        return typeof update.message?.content === "string" ? update.message.content : updatedContent;
+      }
+    }
+    return undefined;
+  } catch (error) {
+    console.warn("[game] skill check history persist failed", error);
+    return undefined;
+  }
+}
+
 function generatedAssetSlug(value: string): string {
   const slug = value
     .trim()
@@ -662,19 +1104,90 @@ function promptOverride(payload: Record<string, unknown>, id: string): string | 
   return override?.prompt?.trim() ?? null;
 }
 
-function imageSize(payload: Record<string, unknown>, bucket: string, axis: "width" | "height", fallback: number): number {
+function imageSize(
+  payload: Record<string, unknown>,
+  bucket: string,
+  axis: "width" | "height",
+  fallback: number,
+): number {
   const bucketSize = asRecord(asRecord(payload.imageSizes)[bucket]);
   const value = Number(bucketSize[axis]);
   return Number.isFinite(value) && value >= 128 && value <= 2048 ? value : fallback;
 }
 
-function sceneAssetPrompt(kind: string, label: string, detail: string, artStyle: string): string {
+function imagePromptSettings(payload: Record<string, unknown>): ImagePromptSettings {
+  const raw = asRecord(payload.imagePromptSettings);
+  return {
+    includeAppearances: raw.includeAppearances !== false,
+    format: raw.format === "tags" ? "tags" : "descriptive",
+  };
+}
+
+function joinedImageTags(parts: string[]): string {
+  const seen = new Set<string>();
+  return parts
+    .flatMap((part) => part.split(/[,.]/))
+    .map((part) => part.trim())
+    .filter((part) => {
+      const key = part.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(", ");
+}
+
+function sceneAssetPrompt(
+  kind: string,
+  label: string,
+  detail: string,
+  artStyle: string,
+  settings: ImagePromptSettings,
+): string {
   const style = artStyle.trim() || "polished fantasy visual novel art, cinematic lighting, high detail";
+  if (settings.format === "tags") {
+    const detailPart = kind === "portrait" && settings.includeAppearances === false ? "" : detail;
+    if (kind === "background") {
+      return joinedImageTags([
+        "wide establishing background",
+        label,
+        detail,
+        style,
+        "no characters",
+        "no text",
+        "immersive environment art",
+      ]);
+    }
+    if (kind === "illustration") {
+      return joinedImageTags([
+        "cinematic scene illustration",
+        label,
+        detail,
+        style,
+        "dynamic composition",
+        "no text",
+        "high detail",
+      ]);
+    }
+    return joinedImageTags([
+      "portrait",
+      label,
+      detailPart,
+      style,
+      "centered bust portrait",
+      "expressive face",
+      "clean readable silhouette",
+      "no text",
+    ]);
+  }
   if (kind === "background") {
     return `Wide establishing background of ${label}. ${detail}. ${style}. No characters, no text, immersive environment art.`;
   }
   if (kind === "illustration") {
     return `Cinematic scene illustration: ${label}. ${detail}. ${style}. Dynamic composition, no text, high detail.`;
+  }
+  if (settings.includeAppearances === false) {
+    return `Portrait of ${label}. ${style}. Centered bust portrait, expressive face, clean readable silhouette, no text.`;
   }
   return `Portrait of ${label}. ${detail}. ${style}. Centered bust portrait, expressive face, clean readable silhouette, no text.`;
 }
@@ -703,26 +1216,33 @@ async function uploadGeneratedAsset(
   base64: string,
   mimeType: string,
 ): Promise<string> {
-  const uploaded = await gameAssetsApi.upload({
+  const uploaded = (await gameAssetsApi.upload({
     category,
     subcategory,
     file: base64File(base64, `${slug}.${imageExt(mimeType)}`, mimeType),
-  }) as { item?: { path?: string } };
+  })) as { item?: { path?: string } };
   const path = uploaded.item?.path;
   if (!path) throw new Error("Generated asset path missing.");
   return assetTagFromPath(path);
 }
 
 function spotifyQuery(payload: Record<string, unknown>): string {
-  const text = [payload.narration, payload.playerAction].filter((value): value is string => typeof value === "string").join(" ");
-  const words = text.split(/[^a-zA-Z0-9]+/).filter((word) => word.length > 3).slice(0, 8);
+  const text = [payload.narration, payload.playerAction]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const words = text
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((word) => word.length > 3)
+    .slice(0, 8);
   return words.length ? words.join(" ") : "cinematic adventure soundtrack";
 }
 
 function recentSpotifyTracks(payload: Record<string, unknown>): string[] {
   const context = asRecord(payload.context);
   return Array.isArray(context.recentSpotifyTracks)
-    ? context.recentSpotifyTracks.filter((uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"))
+    ? context.recentSpotifyTracks.filter(
+        (uri): uri is string => typeof uri === "string" && uri.startsWith("spotify:track:"),
+      )
     : [];
 }
 
@@ -875,7 +1395,9 @@ export const gameApi = {
     const characterCards = setupCharacterCards(setup);
     const campaignProgression = {
       storyArc: typeof setup.storyArc === "string" ? setup.storyArc : null,
-      plotTwists: Array.isArray(setup.plotTwists) ? setup.plotTwists.filter((item): item is string => typeof item === "string") : [],
+      plotTwists: Array.isArray(setup.plotTwists)
+        ? setup.plotTwists.filter((item): item is string => typeof item === "string")
+        : [],
       partyArcs: Array.isArray(setup.partyArcs) ? setup.partyArcs : [],
     };
     if (setupConfig) {
@@ -884,7 +1406,7 @@ export const gameApi = {
         gameSetupChatPatch(setupConfig, data.connectionId ?? existingChat.connectionId ?? null),
       );
     }
-    await patchChatMetadata(data.chatId, {
+    const sessionChat = await patchChatMetadata(data.chatId, {
       ...(setupConfig ? gameSetupMetadataPatch(setupConfig) : { gameSetupPreferences: data.preferences ?? null }),
       gameSessionStatus: "ready",
       gameWorldOverview: worldOverview,
@@ -896,11 +1418,12 @@ export const gameApi = {
       gameNpcs: startingNpcs,
       gameCharacterCards: characterCards,
       gamePartyArcs: campaignProgression.partyArcs,
-      gameArtStylePrompt: typeof setup.artStylePrompt === "string" ? setup.artStylePrompt : setupConfig?.artStylePrompt ?? null,
+      gameArtStylePrompt:
+        typeof setup.artStylePrompt === "string" ? setup.artStylePrompt : (setupConfig?.artStylePrompt ?? null),
       gameTime: createInitialTime(),
       gameJournal: createJournal(),
     });
-    return { setup, worldOverview };
+    return { setup, worldOverview, sessionChat };
   },
 
   async startGame(data: { chatId: string }): Promise<StartGameResponse> {
@@ -914,27 +1437,34 @@ export const gameApi = {
       return asRecord(message.extra).hiddenFromAi !== true;
     });
     if (sessionStatus === "active" && hasExistingGmTurn) {
-      return { status: "active", alreadyStarted: true };
+      return { status: "active", alreadyStarted: true, sessionChat: chat };
     }
     if (sessionStatus !== "ready" && sessionStatus !== "active") {
       throw new Error(`Cannot start game: status is "${sessionStatus}", expected "ready"`);
     }
     if (hasExistingGmTurn) {
-      await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
-      return { status: "active", alreadyStarted: true };
+      const sessionChat = await patchChatMetadata(data.chatId, { gameSessionStatus: "active" });
+      return { status: "active", alreadyStarted: true, sessionChat };
     }
-    await patchChatMetadata(data.chatId, { gameSessionStatus: "active", gameActiveState: "exploration" });
-    return { status: "active", alreadyStarted: false };
+    const sessionChat = await patchChatMetadata(data.chatId, {
+      gameSessionStatus: "active",
+      gameActiveState: "exploration",
+    });
+    return { status: "active", alreadyStarted: false, sessionChat };
   },
 
   async startSession(data: { gameId: string; connectionId?: string }): Promise<StartSessionResponse> {
     const chats = await storageApi.list<Chat>("chats");
-    const existing = chats.filter((chat) => chatMeta(chat).gameId === data.gameId).sort((a, b) => gameSessionSortValue(a) - gameSessionSortValue(b));
+    const existing = chats
+      .filter((chat) => chatMeta(chat).gameId === data.gameId)
+      .sort((a, b) => gameSessionSortValue(a) - gameSessionSortValue(b));
     const sessionNumber = existing.length + 1;
     const previousChat = existing[existing.length - 1] ?? null;
     const previousMeta = chatMeta(previousChat);
     const summaries = Array.isArray(previousMeta.gamePreviousSessionSummaries)
-      ? [...(previousMeta.gamePreviousSessionSummaries as SessionSummary[])].sort((a, b) => a.sessionNumber - b.sessionNumber)
+      ? [...(previousMeta.gamePreviousSessionSummaries as SessionSummary[])].sort(
+          (a, b) => a.sessionNumber - b.sessionNumber,
+        )
       : [];
     const latestEndingBeat = (await sessionTranscript(existing[existing.length - 1]?.id ?? "", 8).catch(() => ""))
       .split("\n")
@@ -1004,7 +1534,11 @@ export const gameApi = {
     let campaignProgression = meta.gameCampaignProgression;
     let characterCards = Array.isArray(meta.gameCharacterCards) ? meta.gameCharacterCards : [];
     if (!data.summary && data.generated) {
-      summary = normalizeSessionSummaryPayload(asRecord(data.generated.summary), fallback, data.nextSessionRequest ?? null);
+      summary = normalizeSessionSummaryPayload(
+        asRecord(data.generated.summary),
+        fallback,
+        data.nextSessionRequest ?? null,
+      );
       campaignProgression = asRecord(data.generated.campaignProgression);
       characterCards = Array.isArray(data.generated.characterCards) ? data.generated.characterCards : characterCards;
     } else if (!data.summary && data.connectionId) {
@@ -1013,7 +1547,10 @@ export const gameApi = {
         connectionId: data.connectionId,
         fallback: { summary, campaignProgression, characterCards },
         system: buildSessionConclusionPrompt({
-          language: typeof asRecord(meta.gameSetupConfig).language === "string" ? (asRecord(meta.gameSetupConfig).language as string) : null,
+          language:
+            typeof asRecord(meta.gameSetupConfig).language === "string"
+              ? (asRecord(meta.gameSetupConfig).language as string)
+              : null,
           includeCharacterCards: characterCards.length > 0,
         }),
         user: [
@@ -1045,13 +1582,13 @@ export const gameApi = {
       ? [...(meta.gamePreviousSessionSummaries as SessionSummary[])]
       : [];
     const nextSummaries = summaries.filter((item) => item.sessionNumber !== sessionNumber).concat(summary);
-    await patchChatMetadata(data.chatId, {
+    const sessionChat = await patchChatMetadata(data.chatId, {
       gameSessionStatus: "concluded",
       gamePreviousSessionSummaries: nextSummaries,
       gameCampaignProgression: campaignProgression,
       gameCharacterCards: characterCards,
     });
-    return { summary };
+    return { summary, sessionChat };
   },
 
   async regenerateSessionLorebook(data: {
@@ -1062,8 +1599,20 @@ export const gameApi = {
   }): Promise<RegenerateSessionLorebookResponse> {
     const transcript = await sessionTranscript(data.chatId);
     const fallbackEntries = transcript.trim()
-      ? [{ name: `Session ${data.sessionNumber} Recap`, content: transcript.split("\n").slice(0, 12).join("\n"), keys: [`session ${data.sessionNumber}`, "recap", "campaign"] }]
-      : [{ name: `Session ${data.sessionNumber} State`, content: "No transcript was available; preserve the current campaign state from the chat metadata.", keys: [`session ${data.sessionNumber}`] }];
+      ? [
+          {
+            name: `Session ${data.sessionNumber} Recap`,
+            content: transcript.split("\n").slice(0, 12).join("\n"),
+            keys: [`session ${data.sessionNumber}`, "recap", "campaign"],
+          },
+        ]
+      : [
+          {
+            name: `Session ${data.sessionNumber} State`,
+            content: "No transcript was available; preserve the current campaign state from the chat metadata.",
+            keys: [`session ${data.sessionNumber}`],
+          },
+        ];
     const parsed =
       data.generated ??
       (await llmJson({
@@ -1084,39 +1633,44 @@ export const gameApi = {
         },
       }));
     const entries = Array.isArray(parsed.entries) && parsed.entries.length ? parsed.entries : fallbackEntries;
-    const lorebook = await storageApi.create<{ id: string }>("lorebooks", {
-      name: `Game Session ${data.sessionNumber} Lore`,
-      description: "Generated from local game session state.",
-      category: "game",
-      chatId: data.chatId,
-      enabled: true,
-      generatedBy: "game-session",
-    });
+    const lorebook = await storageApi.create<{ id: string }>(
+      "lorebooks",
+      createLorebookSchema.parse({
+        name: `Game Session ${data.sessionNumber} Lore`,
+        description: "Generated from local game session state.",
+        category: "game",
+        chatId: data.chatId,
+        enabled: true,
+        generatedBy: "game-session",
+      }),
+    );
     let entryCount = 0;
     for (const [index, rawEntry] of entries.entries()) {
       const entry = asRecord(rawEntry);
-      await storageApi.create("lorebook-entries", {
-        lorebookId: lorebook.id,
-        name: typeof entry.name === "string" ? entry.name : "Session Lore",
-        content: typeof entry.content === "string" ? entry.content : "",
-        keys: Array.isArray(entry.keys) ? entry.keys : [`session ${data.sessionNumber}`],
-        secondaryKeys: [],
-        enabled: true,
-        constant: false,
-        selective: false,
-        order: index,
-        sortOrder: index,
-        position: 0,
-        role: "system",
-        excludeFromVectorization: false,
-      });
+      await storageApi.create(
+        "lorebook-entries",
+        createLorebookEntrySchema.parse({
+          lorebookId: lorebook.id,
+          name: typeof entry.name === "string" ? entry.name : "Session Lore",
+          content: typeof entry.content === "string" ? entry.content : "",
+          keys: Array.isArray(entry.keys) ? entry.keys : [`session ${data.sessionNumber}`],
+          secondaryKeys: [],
+          enabled: true,
+          constant: false,
+          selective: false,
+          order: index,
+          position: 0,
+          role: "system",
+          excludeFromVectorization: false,
+        }),
+      );
       entryCount += 1;
     }
-    await patchChatMetadata(data.chatId, {
+    const sessionChat = await patchChatMetadata(data.chatId, {
       gameSessionLorebookId: lorebook.id,
       gameSessionLorebookEntryCount: entryCount,
     });
-    return { sessionNumber: data.sessionNumber, lorebookId: lorebook.id, entryCount };
+    return { sessionNumber: data.sessionNumber, lorebookId: lorebook.id, entryCount, sessionChat };
   },
 
   async updateCampaignProgression(data: {
@@ -1137,7 +1691,8 @@ export const gameApi = {
       (await llmJson({
         connectionId: data.connectionId,
         fallback,
-        system: "Update campaign progression from this game session. Return strict JSON with storyArc, plotTwists, and partyArcs.",
+        system:
+          "Update campaign progression from this game session. Return strict JSON with storyArc, plotTwists, and partyArcs.",
         user: transcript,
         parameters: { temperature: 0.4, maxTokens: 1800 },
         repair: {
@@ -1157,7 +1712,13 @@ export const gameApi = {
     return { sessionChat, gameId: String(meta.gameId ?? ""), campaignProgression };
   },
 
-  async upsertPartyCard(data: { chatId: string; characterName: string; characterId?: string; connectionId?: string; added?: boolean }): Promise<PartyCardResponse> {
+  async upsertPartyCard(data: {
+    chatId: string;
+    characterName: string;
+    characterId?: string;
+    connectionId?: string;
+    added?: boolean;
+  }): Promise<PartyCardResponse> {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const cards = Array.isArray(meta.gameCharacterCards) ? [...meta.gameCharacterCards] : [];
@@ -1194,22 +1755,24 @@ export const gameApi = {
     disadvantage?: boolean;
     preRolledD20?: number;
     skillModifier?: number;
+    messageId?: string;
   }) {
     const meta = chatMeta(await getChat(data.chatId));
     const attrs = playerAttributes(meta);
     const attr = getGoverningAttribute(data.skill);
     const attrScore = Number(attrs[attr] ?? 10);
+    const result = resolveSkillCheck({
+      skill: data.skill,
+      dc: data.dc,
+      skillModifier: Number(data.skillModifier ?? 0),
+      attributeModifier: Math.floor((attrScore - 10) / 2),
+      advantage: data.advantage,
+      disadvantage: data.disadvantage,
+      preRolledD20: data.preRolledD20,
+    });
     return {
-      result: resolveSkillCheck({
-        skill: data.skill,
-        dc: data.dc,
-        skillModifier: Number(data.skillModifier ?? 0),
-        attributeModifier: Math.floor((attrScore - 10) / 2),
-        advantage: data.advantage,
-        disadvantage: data.disadvantage,
-        preRolledD20: data.preRolledD20,
-      }),
-      updatedContent: undefined as string | undefined,
+      result,
+      updatedContent: await persistResolvedSkillCheckTag(data.chatId, data.messageId, result),
     };
   },
 
@@ -1217,36 +1780,70 @@ export const gameApi = {
     const meta = chatMeta(await getChat(data.chatId));
     const previousState = (meta.gameActiveState as GameActiveState | undefined) ?? "exploration";
     const newState = validateTransition(previousState, data.newState);
-    await patchChatMetadata(data.chatId, { gameActiveState: newState });
-    return { previousState, newState };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameActiveState: newState });
+    return { previousState, newState, sessionChat };
   },
 
-  async generateMap(data: { chatId: string; locationType: string; context: string }): Promise<MapResponse> {
-    const map = defaultGameMap(data.locationType || "Area", data.context || "");
+  async generateMap(data: {
+    chatId: string;
+    locationType: string;
+    context: string;
+    connectionId?: string | null;
+    generated?: Record<string, unknown>;
+  }): Promise<MapResponse> {
+    const fallbackMap = defaultGameMap(data.locationType || "Area", data.context || "");
+    let map = fallbackMap;
+    if (data.generated || data.connectionId) {
+      const generated =
+        data.generated ??
+        (await llmJson({
+          connectionId: data.connectionId,
+          fallback: fallbackMap as unknown as Record<string, unknown>,
+          system: "You generate compact RPG map JSON for Marinara Engine Game mode.",
+          user: buildMapGenerationPrompt(data.locationType || "Area", data.context || ""),
+          repair: gameMapJsonRepairContext(data),
+        }));
+      const normalizedMap = normalizeGeneratedMap(generated, fallbackMap);
+      if (!normalizedMap) {
+        if (data.generated) throw new Error("The repaired map JSON object could not be applied.");
+        throw mapJsonCouldNotApplyError(generated, data);
+      }
+      map = normalizedMap;
+    }
     const chat = await getChat(data.chatId);
     const meta = withActiveGameMapMeta(chatMeta(chat), map);
-    await patchChatMetadata(data.chatId, meta);
-    return { map, maps: [map], activeGameMapId: map.id ?? null };
+    const sessionChat = await patchChatMetadata(data.chatId, meta);
+    const savedMap = (meta.gameMap as GameMap | undefined) ?? map;
+    const savedMaps = Array.isArray(meta.gameMaps) ? (meta.gameMaps as GameMap[]) : [savedMap];
+    const activeGameMapId = typeof meta.activeGameMapId === "string" ? meta.activeGameMapId : (savedMap.id ?? null);
+    return { map: savedMap, maps: savedMaps, activeGameMapId, sessionChat };
   },
 
-  async moveOnMap(data: { chatId: string; position: { x: number; y: number } | string; mapId?: string | null }): Promise<MapResponse> {
+  async moveOnMap(data: {
+    chatId: string;
+    position: { x: number; y: number } | string;
+    mapId?: string | null;
+  }): Promise<MapResponse> {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const maps = Array.isArray(meta.gameMaps) ? (meta.gameMaps as GameMap[]) : [];
-    const current = (maps.find((map) => map.id === data.mapId) ?? (meta.gameMap as GameMap | undefined) ?? defaultGameMap()) as GameMap;
+    const current = (maps.find((map) => map.id === data.mapId) ??
+      (meta.gameMap as GameMap | undefined) ??
+      defaultGameMap()) as GameMap;
     const map = { ...current, partyPosition: data.position } as GameMap;
     const nextMeta = withActiveGameMapMeta(meta, map);
-    await patchChatMetadata(data.chatId, nextMeta);
+    const sessionChat = await patchChatMetadata(data.chatId, nextMeta);
     return {
       map,
       maps: Array.isArray(nextMeta.gameMaps) ? (nextMeta.gameMaps as GameMap[]) : [map],
       activeGameMapId: typeof nextMeta.activeGameMapId === "string" ? nextMeta.activeGameMapId : (map.id ?? null),
+      sessionChat,
     };
   },
 
   async updateWidgets(data: { chatId: string; widgets: HudWidget[] }) {
-    await patchChatMetadata(data.chatId, { gameWidgetState: data.widgets });
-    return { ok: true };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameWidgetState: data.widgets });
+    return { ok: true, sessionChat };
   },
 
   async gameSessions(gameId: string): Promise<Chat[]> {
@@ -1262,7 +1859,14 @@ export const gameApi = {
     elementPreset?: string;
   }) {
     const combatants = data.combatants.map((combatant) => ({ ...combatant })) as any[];
-    const result = resolveCombatRound(combatants, data.round, "normal", data.elementPreset, data.playerAction as any, data.mechanics);
+    const result = resolveCombatRound(
+      combatants,
+      data.round,
+      "normal",
+      data.elementPreset,
+      data.playerAction as any,
+      data.mechanics,
+    );
     return { result, combatants: combatants as Combatant[] };
   },
 
@@ -1305,43 +1909,64 @@ export const gameApi = {
     return { drops: generateLootTable(Math.max(0, Math.min(10, data.count ?? 1)), data.difficulty ?? "normal") };
   },
 
-  async advanceTime(data: { chatId: string; action: string }): Promise<{ time: GameTime; formatted: string }> {
+  async advanceTime(data: {
+    chatId: string;
+    action: string;
+  }): Promise<{ time: GameTime; formatted: string; sessionChat: Chat }> {
     const meta = chatMeta(await getChat(data.chatId));
     const time = advanceGameTime(gameTimeFromMeta(meta), data.action);
     const formatted = formatGameTime(time);
-    await patchChatMetadata(data.chatId, { gameTime: time, gameTimeFormatted: formatted });
-    return { time, formatted };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameTime: time, gameTimeFormatted: formatted });
+    return { time, formatted, sessionChat };
   },
 
-  async updateWeather(data: { chatId: string; action: string; location?: string; season?: string; type?: string }): Promise<{ changed: boolean; weather: WeatherState }> {
+  async updateWeather(data: {
+    chatId: string;
+    action: string;
+    location?: string;
+    season?: string;
+    type?: string;
+  }): Promise<{ changed: boolean; weather: WeatherState; sessionChat: Chat }> {
+    const chat = await getChat(data.chatId);
     const forced = data.type
       ? ({ type: data.type, temperature: 20, description: "", wind: "calm", visibility: "clear" } as WeatherState)
       : generateWeather(inferBiome(data.location ?? ""), (data.season as any) ?? "summer");
-    const changed = Boolean(data.type) || Math.random() < (data.action === "travel" ? 0.35 : data.action === "rest_long" ? 0.6 : data.action === "explore" ? 0.2 : 0.08);
-    if (changed) await patchChatMetadata(data.chatId, { gameWeather: forced });
-    return { changed, weather: forced };
+    const changed =
+      Boolean(data.type) ||
+      Math.random() <
+        (data.action === "travel" ? 0.35 : data.action === "rest_long" ? 0.6 : data.action === "explore" ? 0.2 : 0.08);
+    const sessionChat = changed ? await patchChatMetadata(data.chatId, { gameWeather: forced }) : chat;
+    return { changed, weather: forced, sessionChat };
   },
 
   async rollEncounter(data: { action: string; location?: string; difficulty?: string; partySize?: number }) {
     const encounter = rollGameEncounter(data.action, data.difficulty ?? "normal", data.location ?? "");
-    const enemyCount = encounter.type === "combat" ? rollEnemyCount(data.partySize ?? 1, data.difficulty ?? "normal") : 0;
+    const enemyCount =
+      encounter.type === "combat" ? rollEnemyCount(data.partySize ?? 1, data.difficulty ?? "normal") : 0;
     return { encounter, enemyCount };
   },
 
-  async updateReputation(data: { chatId: string; actions: Array<{ npcId: string; action: string; modifier?: number }> }) {
+  async updateReputation(data: {
+    chatId: string;
+    actions: Array<{ npcId: string; action: string; modifier?: number }>;
+  }) {
     const chat = await getChat(data.chatId);
     const meta = chatMeta(chat);
     const npcs = Array.isArray(meta.gameNpcs) ? (meta.gameNpcs as GameNpc[]) : [];
     const result = processReputationActions(npcs, data.actions);
-    await patchChatMetadata(data.chatId, { gameNpcs: result.npcs });
-    return { npcs: result.npcs, changes: result.changes };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameNpcs: result.npcs });
+    return { npcs: result.npcs, changes: result.changes, sessionChat };
   },
 
-  async addJournalEntry(data: { chatId: string; type: string; data: Record<string, unknown> }): Promise<{ journal: Journal }> {
+  async addJournalEntry(data: {
+    chatId: string;
+    type: string;
+    data: Record<string, unknown>;
+  }): Promise<{ journal: Journal; sessionChat: Chat }> {
     const chat = await getChat(data.chatId);
     const journal = applyJournalEntry(journalFromMeta(chatMeta(chat)), data.type, data.data);
-    await patchChatMetadata(data.chatId, { gameJournal: journal });
-    return { journal };
+    const sessionChat = await patchChatMetadata(data.chatId, { gameJournal: journal });
+    return { journal, sessionChat };
   },
 
   async getJournal(chatId: string): Promise<GameJournalResponse> {
@@ -1356,8 +1981,8 @@ export const gameApi = {
   },
 
   async updateNotes(chatId: string, notes: string) {
-    await patchChatMetadata(chatId, { gamePlayerNotes: notes });
-    return { ok: true };
+    const sessionChat = await patchChatMetadata(chatId, { gamePlayerNotes: notes });
+    return { ok: true, sessionChat };
   },
 
   async listCheckpoints(chatId: string) {
@@ -1421,34 +2046,51 @@ export const gameApi = {
     return { ok: Boolean(result.deleted) };
   },
 
-  async partyTurn(input: { chatId: string; narration: string; playerAction?: string; connectionId?: string | null; debugMode?: boolean }) {
+  async partyTurn(input: {
+    chatId: string;
+    narration: string;
+    playerAction?: string;
+    connectionId?: string | null;
+    debugMode?: boolean;
+  }) {
     const meta = chatMeta(await getChat(input.chatId));
-    const cards = Array.isArray(meta.gameCharacterCards) ? meta.gameCharacterCards : [];
-    const names = cards.map((card) => asRecord(card).name).filter((name): name is string => typeof name === "string" && !!name.trim());
+    const cards = Array.isArray(meta.gameCharacterCards) ? meta.gameCharacterCards.map(asRecord) : [];
+    const names = cards.map((card, index) => gameCardName(card, `Party member ${index + 1}`));
     const partyNames = names.length ? names.join(", ") : "The party";
-    let raw = `[${partyNames}] [dialogue] [neutral]: We take this in and prepare for what comes next.`;
-    if (input.connectionId) {
-      try {
-        raw = await llmApi.complete({
-          connectionId: input.connectionId,
-          messages: [
-            {
-              role: "system",
-              content: `You write short party banter for a game. Reply using lines like [Name] [dialogue] [neutral]: text. Party: ${partyNames}.`,
-            },
-            {
-              role: "user",
-              content: `GM narration:\n${input.narration}\n\nPlayer action:\n${input.playerAction ?? ""}\n\nWrite the party's immediate reactions.`,
-            },
-          ],
-          parameters: { temperature: 0.9, maxTokens: 1200 },
-        });
-      } catch {
-        raw = `[${partyNames}] [dialogue] [neutral]: We take this in and prepare for what comes next.`;
-      }
+    const connectionId = input.connectionId?.trim();
+    if (!connectionId) {
+      throw new Error("Choose a chat connection before asking the party.");
     }
-    const clean = raw.replace(/\[party-turn\]/gi, "").trim();
-    await createChatMessage(input.chatId, {
+    const raw = await llmApi.complete({
+      connectionId,
+      messages: [
+        {
+          role: "system",
+          content: buildPartySystemPrompt({
+            partyCards: cards.length
+              ? cards.map((card, index) => ({
+                  name: gameCardName(card, `Party member ${index + 1}`),
+                  card: gameCardPromptText(card),
+                }))
+              : [{ name: partyNames, card: partyNames }],
+            playerName:
+              typeof meta.gamePlayerName === "string" && meta.gamePlayerName.trim() ? meta.gamePlayerName : "Player",
+            gameActiveState: typeof meta.gameActiveState === "string" ? meta.gameActiveState : "exploration",
+            partyArcs: Array.isArray(meta.gamePartyArcs) ? (meta.gamePartyArcs as PartyArc[]) : [],
+          }),
+        },
+        {
+          role: "user",
+          content: `GM narration:\n${input.narration}\n\nPlayer action:\n${input.playerAction ?? ""}\n\nWrite the party's immediate reactions.`,
+        },
+      ],
+      parameters: { temperature: 0.9, maxTokens: 1200 },
+    });
+    const clean = raw.replace(/\[(?:party-turn|party-chat)\]/gi, "").trim();
+    if (!clean || parsePartyDialogue(clean).length === 0) {
+      throw new Error("The party response was empty or malformed.");
+    }
+    const message = await createChatMessage(input.chatId, {
       role: "assistant",
       characterId: null,
       content: `[party-turn]\n${clean}`,
@@ -1457,7 +2099,7 @@ export const gameApi = {
       activeSwipeIndex: 0,
     });
     mirrorGameMessageToDiscord(meta, clean, "Party");
-    return { raw: clean };
+    return { raw: clean, messageId: typeof message.id === "string" ? message.id : null };
   },
 
   async initCombatEncounter(input: {
@@ -1570,6 +2212,7 @@ export const gameApi = {
       (typeof record.artStylePrompt === "string" && record.artStylePrompt) ||
       (typeof setup.artStylePrompt === "string" && setup.artStylePrompt) ||
       "";
+    const promptSettings = imagePromptSettings(record);
     const items: GameImagePromptReviewItem[] = [];
     if (typeof record.backgroundTag === "string" && record.backgroundTag.trim()) {
       const id = imageReviewId("background", record.backgroundTag);
@@ -1577,7 +2220,9 @@ export const gameApi = {
         id,
         kind: "background",
         title: `Background: ${record.backgroundTag}`,
-        prompt: promptOverride(record, id) ?? sceneAssetPrompt("background", record.backgroundTag, record.backgroundTag, artStyle),
+        prompt:
+          promptOverride(record, id) ??
+          sceneAssetPrompt("background", record.backgroundTag, record.backgroundTag, artStyle, promptSettings),
         width: imageSize(record, "background", "width", 1280),
         height: imageSize(record, "background", "height", 720),
       });
@@ -1594,7 +2239,9 @@ export const gameApi = {
         id,
         kind: "illustration",
         title: `Illustration: ${label}`,
-        prompt: promptOverride(record, id) ?? sceneAssetPrompt("illustration", label, String(illustration.prompt ?? label), artStyle),
+        prompt:
+          promptOverride(record, id) ??
+          sceneAssetPrompt("illustration", label, String(illustration.prompt ?? label), artStyle, promptSettings),
         width: imageSize(record, "background", "width", 1280),
         height: imageSize(record, "background", "height", 720),
       });
@@ -1612,7 +2259,7 @@ export const gameApi = {
         id,
         kind: "portrait",
         title: `Portrait: ${name}`,
-        prompt: promptOverride(record, id) ?? sceneAssetPrompt("portrait", name, detail, artStyle),
+        prompt: promptOverride(record, id) ?? sceneAssetPrompt("portrait", name, detail, artStyle, promptSettings),
         width: imageSize(record, "portrait", "width", 768),
         height: imageSize(record, "portrait", "height", 1024),
       });
@@ -1625,19 +2272,22 @@ export const gameApi = {
     const chatId = String(record.chatId);
     const chat = await getChat(chatId);
     const meta = chatMeta(chat);
+    let sessionChat = chat;
     if (!meta.enableSpriteGeneration) {
       return {
         generatedBackground: null,
         fallbackBackground: null,
         generatedIllustration: null,
         generatedNpcAvatars: [],
+        sessionChat,
       };
     }
     const imageConnectionId =
       (typeof record.imageConnectionId === "string" && record.imageConnectionId) ||
       (typeof meta.gameImageConnectionId === "string" && meta.gameImageConnectionId) ||
       (typeof meta.imageConnectionId === "string" && meta.imageConnectionId) ||
-      (typeof asRecord(meta.gameSetupConfig).imageConnectionId === "string" && (asRecord(meta.gameSetupConfig).imageConnectionId as string));
+      (typeof asRecord(meta.gameSetupConfig).imageConnectionId === "string" &&
+        (asRecord(meta.gameSetupConfig).imageConnectionId as string));
     if (!imageConnectionId) throw new Error("Game image generation requires an image connection.");
 
     const preview = await gameApi.previewGeneratedAssets(payload);
@@ -1647,7 +2297,6 @@ export const gameApi = {
 
     for (const item of preview.items) {
       if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
-      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
       const image = await imageGenerationApi.generate<{ base64: string; mimeType: string; image?: string }>({
         connectionId: imageConnectionId,
         prompt: item.prompt,
@@ -1656,16 +2305,25 @@ export const gameApi = {
       });
       if (item.kind === "background") {
         const key = typeof record.backgroundTag === "string" ? record.backgroundTag : "generated-background";
-        const tag = await uploadGeneratedAsset("backgrounds", "generated", generatedAssetSlug(key), image.base64, image.mimeType);
+        const tag = await uploadGeneratedAsset(
+          "backgrounds",
+          "generated",
+          generatedAssetSlug(key),
+          image.base64,
+          image.mimeType,
+        );
         generatedBackground = tag;
-        await patchChatMetadata(chatId, { gameSceneBackground: tag });
+        sessionChat = await patchChatMetadata(chatId, { gameSceneBackground: tag });
       } else if (item.kind === "illustration") {
         const illustration = asRecord(record.illustration);
-        const key =
-          (typeof illustration.slug === "string" && illustration.slug) ||
-          item.title ||
-          "scene-illustration";
-        const tag = await uploadGeneratedAsset("backgrounds", "illustrations", generatedAssetSlug(key), image.base64, image.mimeType);
+        const key = (typeof illustration.slug === "string" && illustration.slug) || item.title || "scene-illustration";
+        const tag = await uploadGeneratedAsset(
+          "backgrounds",
+          "illustrations",
+          generatedAssetSlug(key),
+          image.base64,
+          image.mimeType,
+        );
         generatedIllustration = {
           tag,
           ...(Number.isInteger(illustration.segment) ? { segment: illustration.segment as number } : {}),
@@ -1699,10 +2357,10 @@ export const gameApi = {
           } as GameNpc);
         }
       }
-      await patchChatMetadata(chatId, { gameNpcs: npcs });
+      sessionChat = await patchChatMetadata(chatId, { gameNpcs: npcs });
     }
 
-    return { generatedBackground, fallbackBackground: null, generatedIllustration, generatedNpcAvatars };
+    return { generatedBackground, fallbackBackground: null, generatedIllustration, generatedNpcAvatars, sessionChat };
   },
 };
 
@@ -1726,6 +2384,14 @@ export async function applyGameJsonRepair(request: JsonRepairRequest, rawJson: s
         preferences: typeof body.preferences === "string" ? body.preferences : "",
         setupConfig: isGameSetupConfig(body.setupConfig) ? body.setupConfig : undefined,
         setup: repaired,
+      });
+    case "game_map":
+      return gameApi.generateMap({
+        chatId,
+        connectionId,
+        locationType: typeof body.locationType === "string" ? body.locationType : "Area",
+        context: typeof body.context === "string" ? body.context : "",
+        generated: repaired,
       });
     case "session_conclusion":
       return gameApi.concludeSession({
@@ -1751,8 +2417,4 @@ export async function applyGameJsonRepair(request: JsonRepairRequest, rawJson: s
     default:
       throw new Error("Unsupported game JSON repair request.");
   }
-}
-
-export function getEmptyJournal(): Journal {
-  return { ...EMPTY_JOURNAL, entries: [], quests: [], locations: [], npcLog: [], inventoryLog: [] };
 }

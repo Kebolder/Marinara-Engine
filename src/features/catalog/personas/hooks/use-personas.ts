@@ -1,16 +1,148 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { personaKeys } from "../query-keys";
+import { personaApi } from "../../../../shared/api/persona-api";
 import { storageApi } from "../../../../shared/api/storage-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
+import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
+import { personaAvatarUrl, type PersonaAvatarSource } from "../lib/persona-avatar-url";
 
 export { personaKeys } from "../query-keys";
 
+export type PersonaSummary = {
+  id: string;
+  name?: string;
+  comment?: string | null;
+  description?: string;
+  tags?: string[];
+  avatarPath?: string | null;
+  avatarFilePath?: string | null;
+  avatarFilename?: string | null;
+  avatarCrop?: unknown;
+  isActive?: string | boolean;
+  active?: string | boolean;
+  createdAt?: string;
+  nameColor?: string;
+  dialogueColor?: string;
+  boxColor?: string;
+};
 
-export function usePersonas() {
+const PERSONA_SUMMARY_OPTIONS = {
+  fields: [
+    "id",
+    "name",
+    "comment",
+    "description",
+    "tags",
+    "avatarPath",
+    "avatarFilePath",
+    "avatarFilename",
+    "avatarCrop",
+    "isActive",
+    "active",
+    "createdAt",
+    "nameColor",
+    "dialogueColor",
+    "boxColor",
+  ],
+};
+
+function personaIsActive(persona: PersonaSummary): boolean {
+  return (
+    persona.isActive === true || persona.isActive === "true" || persona.active === true || persona.active === "true"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizePersonaAvatarFields<T>(persona: T): T {
+  if (!isRecord(persona)) return persona;
+  const avatarPath = personaAvatarUrl(persona as PersonaAvatarSource);
+  const hasAvatarPath = Object.prototype.hasOwnProperty.call(persona, "avatarPath");
+  const currentAvatarPath = persona.avatarPath as string | null | undefined;
+  if (hasAvatarPath && currentAvatarPath === avatarPath) return persona;
+  return { ...persona, avatarPath } as T;
+}
+
+async function listPersonas(): Promise<unknown[]> {
+  const personas = await storageApi.list<unknown>("personas");
+  return personas.map(normalizePersonaAvatarFields);
+}
+
+async function getPersona(id: string): Promise<unknown> {
+  return normalizePersonaAvatarFields(await storageApi.get<unknown>("personas", id));
+}
+
+async function listPersonaSummaries(): Promise<PersonaSummary[]> {
+  const personas = await storageApi.list<PersonaSummary>("personas", PERSONA_SUMMARY_OPTIONS);
+  return personas.map(normalizePersonaAvatarFields);
+}
+
+export function usePersonas(enabled = true) {
   return useQuery({
     queryKey: personaKeys.list,
-    queryFn: () => storageApi.list<unknown>("personas"),
+    queryFn: listPersonas,
+    enabled,
     staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function usePersonaSummaries(enabled = true) {
+  return useQuery({
+    queryKey: personaKeys.summaries,
+    queryFn: listPersonaSummaries,
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function usePersona(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: personaKeys.detail(id ?? ""),
+    queryFn: () => getPersona(id!),
+    enabled: enabled && !!id,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useActivePersona(enabled = true) {
+  return useQuery({
+    queryKey: personaKeys.active,
+    queryFn: async () => (await listPersonaSummaries()).find(personaIsActive) ?? null,
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreatePersona() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      name: string;
+      description?: string;
+      comment?: string;
+      personality?: string;
+      scenario?: string;
+      backstory?: string;
+      appearance?: string;
+      nameColor?: string;
+      dialogueColor?: string;
+      boxColor?: string;
+      trackerCardColors?: string;
+      personaStats?: unknown;
+      altDescriptions?: unknown[];
+      tags?: string[];
+      savedStatusOptions?: string[];
+      avatarCrop?: unknown;
+    }) => storageApi.create("personas", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+    },
   });
 }
 
@@ -29,13 +161,38 @@ export function useUpdatePersona() {
       scenario?: string;
       backstory?: string;
       appearance?: string;
+      nameColor?: string;
+      dialogueColor?: string;
+      boxColor?: string;
+      trackerCardColors?: string;
       tags?: string[];
       altDescriptions?: unknown[];
       savedStatusOptions?: string[];
       avatarCrop?: unknown;
       personaStats?: unknown;
     }) => storageApi.update("personas", id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: personaKeys.list }),
+    onSuccess: (updatedPersona, variables) => {
+      const normalizedPersona = normalizePersonaAvatarFields(updatedPersona);
+      qc.setQueryData(personaKeys.detail(variables.id), normalizedPersona);
+      qc.setQueryData<unknown[] | undefined>(personaKeys.list, (old) => {
+        if (!Array.isArray(old)) return old;
+        const updatedId = (normalizedPersona as { id?: string } | null)?.id ?? variables.id;
+        if (!updatedId) return old;
+
+        return old.map((persona) => {
+          const row = persona as Record<string, unknown> & { id?: string };
+          if (row?.id !== updatedId) return persona;
+          if (!normalizedPersona || typeof normalizedPersona !== "object") return persona;
+          return { ...row, ...(normalizedPersona as Record<string, unknown>) };
+        });
+      });
+
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+      qc.invalidateQueries({ queryKey: personaKeys.detail(variables.id) });
+      qc.invalidateQueries({ queryKey: personaKeys.summaryDetail(variables.id) });
+      qc.invalidateQueries({ queryKey: personaKeys.active });
+    },
   });
 }
 
@@ -43,23 +200,36 @@ export function useDeletePersona() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => storageApi.delete("personas", id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: personaKeys.list }),
+    onSuccess: (_data, id) => {
+      qc.removeQueries({ queryKey: personaKeys.detail(id) });
+      qc.removeQueries({ queryKey: personaKeys.summaryDetail(id) });
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+      qc.invalidateQueries({ queryKey: personaKeys.active });
+    },
   });
 }
 
 export function useDuplicatePersona() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => invokeTauri("storage_duplicate", { entity: "personas", id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: personaKeys.list }),
+    mutationFn: (id: string) => storageCommandsApi.duplicate("personas", id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+    },
   });
 }
 
 export function useActivatePersona() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => invokeTauri("persona_activate", { id }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: personaKeys.list }),
+    mutationFn: (id: string) => personaApi.activate(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+      qc.invalidateQueries({ queryKey: personaKeys.active });
+    },
   });
 }
 
@@ -67,15 +237,22 @@ export function useUploadPersonaAvatar() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, avatar, filename }: { id: string; avatar: string; filename?: string }) =>
-      invokeTauri("persona_avatar_upload", { id, body: { avatar, filename } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: personaKeys.list }),
+      personaApi.uploadAvatar(id, avatar, filename),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: personaKeys.list });
+      qc.invalidateQueries({ queryKey: personaKeys.summaries });
+      qc.invalidateQueries({ queryKey: personaKeys.detail(variables.id) });
+      qc.invalidateQueries({ queryKey: personaKeys.summaryDetail(variables.id) });
+      qc.invalidateQueries({ queryKey: personaKeys.active });
+    },
   });
 }
 
-export function usePersonaGroups() {
+export function usePersonaGroups(enabled = true) {
   return useQuery({
     queryKey: personaKeys.groups,
     queryFn: () => storageApi.list<unknown>("persona-groups"),
+    enabled,
   });
 }
 

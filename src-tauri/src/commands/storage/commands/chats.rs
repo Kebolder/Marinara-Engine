@@ -1,4 +1,4 @@
-use super::chats;
+use super::{chats, shared};
 use crate::state::AppState;
 use marinara_core::AppError;
 use serde_json::{json, Value};
@@ -99,6 +99,11 @@ pub fn chat_messages_bulk_delete(
 }
 
 #[tauri::command]
+pub fn chat_message_count(state: State<'_, AppState>, chat_id: String) -> Result<Value, AppError> {
+    Ok(json!({ "count": state.storage.count_messages_for_chat(&chat_id)? }))
+}
+
+#[tauri::command]
 pub fn chat_branch(
     state: State<'_, AppState>,
     chat_id: String,
@@ -127,17 +132,50 @@ pub fn chat_message_add_swipe(
     message_id: String,
     body: Value,
 ) -> Result<Value, AppError> {
-    chats::message_swipes(&state, "POST", &chat_id, &message_id, body)
+    Ok(shared::project_timeline_message(chats::message_swipes(
+        &state,
+        "POST",
+        &chat_id,
+        &message_id,
+        body,
+    )?))
 }
 
 #[tauri::command]
-pub fn chat_message_set_active_swipe(
+pub fn chat_message_update_content_if_unchanged(
+    state: State<'_, AppState>,
+    chat_id: String,
+    message_id: String,
+    expected_content: String,
+    content: String,
+) -> Result<Value, AppError> {
+    chats::update_message_content_if_unchanged(
+        &state,
+        &chat_id,
+        &message_id,
+        &expected_content,
+        &content,
+    )
+}
+
+#[tauri::command]
+pub async fn chat_message_set_active_swipe(
     state: State<'_, AppState>,
     chat_id: String,
     message_id: String,
     index: i64,
 ) -> Result<Value, AppError> {
-    chats::set_active_swipe(&state, &chat_id, &message_id, json!({ "index": index }))
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(shared::project_timeline_message(chats::set_active_swipe(
+            &state,
+            &chat_id,
+            &message_id,
+            json!({ "index": index }),
+        )?))
+    })
+    .await
+    .map_err(|error| AppError::new("task_join_error", error.to_string()))?
 }
 
 #[tauri::command]
@@ -147,7 +185,12 @@ pub fn chat_message_delete_swipe(
     message_id: String,
     index: String,
 ) -> Result<Value, AppError> {
-    chats::delete_swipe(&state, &chat_id, &message_id, &index)
+    Ok(shared::project_timeline_message(chats::delete_swipe(
+        &state,
+        &chat_id,
+        &message_id,
+        &index,
+    )?))
 }
 
 #[tauri::command]

@@ -3,6 +3,7 @@ import type { IntegrationGateway } from "../capabilities/integrations";
 import type { LlmGateway } from "../capabilities/llm";
 import {
   parseCharacterCommands,
+  parseDirectMessageCommands,
   type CharacterCommand,
   type CreateCharacterCommand,
   type CreateLorebookCommand,
@@ -25,12 +26,13 @@ import {
   type JsonRecord,
 } from "./runtime-records";
 
-export type ConnectedCommandEvent =
+type ConnectedCommandEvent =
   | { type: "cross_post"; data: JsonRecord }
   | { type: "assistant_action"; data: JsonRecord }
   | { type: "ooc_posted"; data: JsonRecord }
   | { type: "selfie"; data: JsonRecord }
   | { type: "selfie_error"; data: JsonRecord }
+  | { type: "command_error"; data: JsonRecord }
   | { type: "scene_created"; data: JsonRecord };
 
 export interface ConnectedCommandResult {
@@ -41,6 +43,11 @@ export interface ConnectedCommandResult {
   assistantAttachments: JsonRecord[];
   suppressAssistantMessage?: boolean;
 }
+
+type ImagePromptSettings = {
+  includeAppearances?: boolean;
+  format?: "descriptive" | "tags";
+};
 
 function parseData(row: JsonRecord | null | undefined): JsonRecord {
   const raw = row?.data;
@@ -87,6 +94,48 @@ async function findConversationChatByTarget(
   );
 }
 
+function roleplayDirectMessageCommandsEnabled(chat: JsonRecord): boolean {
+  const mode = readString(chat.mode || chat.chatMode);
+  return mode === "roleplay" && boolish(parseRecord(chat.metadata).roleplayDmCommandsEnabled, false);
+}
+
+function parseConnectedCommands(chat: JsonRecord, content: string): {
+  cleanContent: string;
+  commands: CharacterCommand[];
+  parseEvents: ConnectedCommandEvent[];
+  strippedHiddenContent: boolean;
+} {
+  if (!roleplayDirectMessageCommandsEnabled(chat)) {
+    const parsed = parseCharacterCommands(content);
+    return {
+      ...parsed,
+      parseEvents: [],
+      strippedHiddenContent: parsed.cleanContent !== content,
+    };
+  }
+
+  const directMessages = parseDirectMessageCommands(content);
+  const parsed = parseCharacterCommands(directMessages.cleanContent);
+  const parseEvents: ConnectedCommandEvent[] =
+    directMessages.invalidCommands > 0
+      ? [
+          {
+            type: "command_error",
+            data: {
+              command: "dm",
+              error: "Direct-message command must include both character and message.",
+            },
+          },
+        ]
+      : [];
+  return {
+    cleanContent: parsed.cleanContent,
+    commands: [...parsed.commands, ...directMessages.commands],
+    parseEvents,
+    strippedHiddenContent: directMessages.cleanContent !== content || parsed.cleanContent !== directMessages.cleanContent,
+  };
+}
+
 function messageDefaults(chatId: string, value: Record<string, unknown>): Record<string, unknown> {
   const content = readString(value.content);
   return {
@@ -99,17 +148,16 @@ function messageDefaults(chatId: string, value: Record<string, unknown>): Record
   };
 }
 
-async function connectedNoteStorageChatId(
-  storage: StorageGateway,
-  chat: JsonRecord,
-): Promise<string> {
+async function connectedNoteStorageChatId(storage: StorageGateway, chat: JsonRecord): Promise<string> {
   const sourceChatId = readString(chat.id);
   const connectedChatId = readString(chat.connectedChatId).trim();
   const mode = readString(chat.mode || chat.chatMode);
   if (!sourceChatId || !connectedChatId || mode !== "conversation") return sourceChatId;
   const target = await storage.get<JsonRecord>("chats", connectedChatId).catch(() => null);
   const targetMode = readString(target?.mode || target?.chatMode);
-  return target && (targetMode === "roleplay" || targetMode === "game") ? readString(target.id) || connectedChatId : sourceChatId;
+  return target && (targetMode === "roleplay" || targetMode === "game")
+    ? readString(target.id) || connectedChatId
+    : sourceChatId;
 }
 
 async function persistNoteWrites(
@@ -252,18 +300,20 @@ async function buildSelfiePrompt(args: {
   chat: JsonRecord;
   commandContext?: string;
   characterId: string | null;
+  imagePromptSettings?: ImagePromptSettings;
 }): Promise<{ prompt: string; characterName: string }> {
   const character = args.characterId ? await args.storage.get<JsonRecord>("characters", args.characterId) : null;
   const data = parseData(character ?? undefined);
   const characterName = nameOf(character ?? {}) || readString(data.name, "character") || "character";
-  const appearance =
-    readString(parseRecord(data.extensions).appearance).trim() ||
-    readString(data.appearance).trim() ||
-    readString(data.description).trim();
+  const includeAppearances = args.imagePromptSettings?.includeAppearances !== false;
+  const promptFormat = args.imagePromptSettings?.format === "tags" ? "tags" : "descriptive";
+  const appearance = includeAppearances
+    ? readString(parseRecord(data.extensions).appearance).trim() ||
+      readString(data.appearance).trim() ||
+      readString(data.description).trim()
+    : "";
   const metadata = parseRecord(args.chat.metadata);
-  const positive =
-    readString(metadata.selfiePositivePrompt).trim() ||
-    stringArray(metadata.selfieTags).join(", ");
+  const positive = readString(metadata.selfiePositivePrompt).trim() || stringArray(metadata.selfieTags).join(", ");
   const template = readString(metadata.selfiePrompt).trim();
   const systemPrompt = await resolveConversationSelfieSystemPrompt({
     storage: args.storage,
@@ -272,6 +322,10 @@ async function buildSelfiePrompt(args: {
     charName: characterName,
     selfieTagsBlock: selfieTagsBlock(positive),
   });
+  const formatInstruction =
+    promptFormat === "tags"
+      ? "Write the final image prompt as concise comma-separated image tags. Put the subject, outfit, expression, pose, camera, and quality tags first."
+      : "Write the final image prompt as a clear natural-language description suitable for an image model.";
   const userPrompt = args.commandContext
     ? `Context for the selfie: ${args.commandContext}`
     : `Generate a casual selfie of ${characterName} based on the current conversation context.`;
@@ -289,6 +343,7 @@ async function buildSelfiePrompt(args: {
               `Character: ${characterName}`,
               appearance ? `Appearance: ${appearance}` : "",
               positive ? `Required image tags: ${positive}` : "",
+              formatInstruction,
               userPrompt,
             ]
               .filter(Boolean)
@@ -305,7 +360,9 @@ async function buildSelfiePrompt(args: {
       `selfie of ${characterName}`,
       appearance,
       args.commandContext,
-      "casual camera angle, expressive face, detailed lighting",
+      promptFormat === "tags"
+        ? "selfie, casual camera angle, expressive face, detailed lighting"
+        : "casual camera angle, expressive face, detailed lighting",
       positive,
     ]
       .filter((part) => readString(part).trim())
@@ -323,6 +380,7 @@ async function generateSelfie(args: {
   command: Extract<CharacterCommand, { type: "selfie" }>;
   events: ConnectedCommandEvent[];
   assistantAttachments: JsonRecord[];
+  imagePromptSettings?: ImagePromptSettings;
 }): Promise<boolean> {
   const metadata = parseRecord(args.chat.metadata);
   const imageConnectionId = readString(metadata.imageGenConnectionId).trim();
@@ -344,6 +402,7 @@ async function generateSelfie(args: {
       chat: args.chat,
       commandContext: args.command.context,
       characterId,
+      imagePromptSettings: args.imagePromptSettings,
     });
     const negativePrompt = readString(metadata.selfieNegativePrompt).trim();
     const size = parseSelfieSize(metadata.selfieResolution);
@@ -355,6 +414,9 @@ async function generateSelfie(args: {
       model?: string;
     }>({
       connectionId: imageConnectionId,
+      kind: "selfie",
+      reviewId: `selfie:${readString(args.chat.id)}:${characterId ?? "active"}`,
+      reviewTitle: `Selfie: ${characterName}`,
       prompt,
       negativePrompt: negativePrompt || undefined,
       width: size.width,
@@ -396,13 +458,21 @@ async function generateSelfie(args: {
     });
     return true;
   } catch (error) {
-    eventsPushSelfieError(args.events, characterId, error instanceof Error ? error.message : "Image generation failed.");
+    eventsPushSelfieError(
+      args.events,
+      characterId,
+      error instanceof Error ? error.message : "Image generation failed.",
+    );
     return false;
   }
 }
 
 function eventsPushSelfieError(events: ConnectedCommandEvent[], characterId: string | null, error: string): void {
   events.push({ type: "selfie_error", data: { characterId, error } });
+}
+
+function eventsPushCommandError(events: ConnectedCommandEvent[], command: string, error: string): void {
+  events.push({ type: "command_error", data: { command, error } });
 }
 
 async function createSceneFromCommand(args: {
@@ -550,7 +620,11 @@ function personaPatch(command: CreatePersonaCommand | UpdatePersonaCommand): Jso
   };
 }
 
-async function createLorebookEntries(storage: StorageGateway, lorebookId: string, command: CreateLorebookCommand | UpdateLorebookCommand) {
+async function createLorebookEntries(
+  storage: StorageGateway,
+  lorebookId: string,
+  command: CreateLorebookCommand | UpdateLorebookCommand,
+) {
   if (!command.entries?.length) return;
   for (const entry of command.entries) {
     await storage.create("lorebook-entries", {
@@ -580,6 +654,7 @@ async function executeCommand(
   events: ConnectedCommandEvent[],
   assistantAttachments: JsonRecord[],
   visibleContent: string,
+  imagePromptSettings?: ImagePromptSettings,
 ): Promise<{ name: string; suppressSourceMessage?: boolean } | null> {
   const chatId = readString(chat.id);
   switch (command.type) {
@@ -622,6 +697,7 @@ async function executeCommand(
         });
         return { name: "haptic" };
       }
+      eventsPushCommandError(events, command.type, "Haptic integration is not connected.");
       return null;
     case "spotify":
       if (integrations) {
@@ -633,6 +709,7 @@ async function executeCommand(
         if (track) await integrations.spotify.playTrack({ track });
         return { name: "spotify" };
       }
+      eventsPushCommandError(events, command.type, "Spotify integration is not connected.");
       return null;
     case "create_persona":
       await storage.create("personas", personaPatch(command));
@@ -739,24 +816,50 @@ async function executeCommand(
     }
     case "dm": {
       const character = await findByName(storage, "characters", command.character);
-      const targetChat = character?.id
-        ? (await storage.list<JsonRecord>("chats")).find((candidate) => {
-            const ids = stringArray(candidate.characterIds);
-            return readString(candidate.mode) === "conversation" && ids.includes(readString(character.id));
-          })
-        : null;
-      const targetChatId = readString(targetChat?.id);
-      if (!targetChatId) return null;
+      const characterId = readString(character?.id);
+      if (!character || !characterId) {
+        eventsPushCommandError(
+          events,
+          command.type,
+          `No character named "${command.character}" was found for the direct-message command.`,
+        );
+        return null;
+      }
+      let targetChat =
+        (await storage.list<JsonRecord>("chats")).find((candidate) => {
+          const ids = stringArray(candidate.characterIds);
+          return readString(candidate.mode) === "conversation" && ids.includes(characterId);
+        }) ?? null;
+      const createdChat = !targetChat;
+      if (!targetChat) {
+        const characterName = nameOf(character) || command.character;
+        targetChat = await storage.create<JsonRecord>("chats", {
+          name: characterName,
+          mode: "conversation",
+          characterIds: [characterId],
+          folderId: chat.folderId ?? null,
+          metadata: {},
+        });
+      }
+      const targetChatId = readString(targetChat.id);
+      if (!targetChatId) {
+        eventsPushCommandError(events, command.type, "Could not resolve a conversation for the direct-message command.");
+        return null;
+      }
+      const targetChatName = readString(targetChat.name) || nameOf(character) || command.character;
       await storage.createChatMessage(
         targetChatId,
         messageDefaults(targetChatId, {
           role: "assistant",
-          characterId: readString(character?.id) || null,
+          characterId,
           content: command.message,
         }),
       );
-      events.push({ type: "ooc_posted", data: { chatId: targetChatId, count: 1 } });
-      return { name: "dm" };
+      events.push({
+        type: "ooc_posted",
+        data: { chatId: targetChatId, chatName: targetChatName, count: 1, createdChat },
+      });
+      return { name: "dm", suppressSourceMessage: !visibleContent.trim() };
     }
     case "schedule_update":
       return (await applyScheduleUpdate(storage, chat, command)) ? { name: "schedule_update" } : null;
@@ -770,6 +873,7 @@ async function executeCommand(
         command,
         events,
         assistantAttachments,
+        imagePromptSettings,
       }))
         ? { name: "selfie" }
         : null;
@@ -787,32 +891,42 @@ export async function persistConnectedCommandTags(
   integrations?: IntegrationGateway,
   llm?: LlmGateway,
   llmConnectionId?: string | null,
+  imagePromptSettings?: ImagePromptSettings,
 ): Promise<ConnectedCommandResult> {
   const createdNotes: JsonRecord[] = [];
   const pendingNoteWrites: Array<{ chatId: string; note: JsonRecord }> = [];
-  const parsed = parseCharacterCommands(content);
+  const parsed = parseConnectedCommands(chat, content);
   const executedCommands: string[] = [];
-  const events: ConnectedCommandEvent[] = [];
+  const events: ConnectedCommandEvent[] = [...parsed.parseEvents];
   const assistantAttachments: JsonRecord[] = [];
   let suppressAssistantMessage = false;
 
   for (const command of parsed.commands) {
-    const executed = await executeCommand(
-      storage,
-      integrations,
-      llm,
-      llmConnectionId,
-      chat,
-      command,
-      createdNotes,
-      pendingNoteWrites,
-      events,
-      assistantAttachments,
-      parsed.cleanContent,
-    ).catch(() => null);
-    if (executed) {
-      executedCommands.push(executed.name);
-      suppressAssistantMessage = suppressAssistantMessage || executed.suppressSourceMessage === true;
+    try {
+      const executed = await executeCommand(
+        storage,
+        integrations,
+        llm,
+        llmConnectionId,
+        chat,
+        command,
+        createdNotes,
+        pendingNoteWrites,
+        events,
+        assistantAttachments,
+        parsed.cleanContent,
+        imagePromptSettings,
+      );
+      if (executed) {
+        executedCommands.push(executed.name);
+        suppressAssistantMessage = suppressAssistantMessage || executed.suppressSourceMessage === true;
+      }
+    } catch (error) {
+      eventsPushCommandError(
+        events,
+        command.type,
+        error instanceof Error ? error.message : "Command execution failed.",
+      );
     }
   }
 
@@ -820,12 +934,16 @@ export async function persistConnectedCommandTags(
     await persistNoteWrites(storage, chat, pendingNoteWrites);
   }
 
+  const hasVisibleSourceOutput = parsed.cleanContent.trim().length > 0 || assistantAttachments.length > 0;
+  const suppressEmptyHiddenCommandSource =
+    !hasVisibleSourceOutput && parsed.strippedHiddenContent && content.trim().length > 0;
+
   return {
     displayContent: parsed.cleanContent,
     createdNotes,
     executedCommands,
     events,
     assistantAttachments,
-    suppressAssistantMessage,
+    suppressAssistantMessage: suppressAssistantMessage || suppressEmptyHiddenCommandSource,
   };
 }

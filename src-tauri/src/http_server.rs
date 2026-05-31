@@ -18,7 +18,7 @@ use std::env;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path as FsPath, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -131,8 +131,30 @@ pub fn router(state: AppState) -> Router {
         .with_state(HttpState { app: state })
 }
 
-async fn health() -> Json<Value> {
-    Json(json!({ "ok": true, "runtime": "marinara-server" }))
+async fn health(State(state): State<HttpState>) -> Json<Value> {
+    let writable = probe_data_dir_writable(&state.app.data_dir.join("data")).await;
+    Json(json!({ "ok": true, "runtime": "marinara-server", "writable": writable }))
+}
+
+fn health_probe_filename() -> String {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!(".marinara-health-{}-{suffix}.tmp", std::process::id())
+}
+
+async fn probe_data_dir_writable(data_dir: &FsPath) -> bool {
+    if tokio::fs::create_dir_all(data_dir).await.is_err() {
+        return false;
+    }
+
+    let path = data_dir.join(health_probe_filename());
+    if tokio::fs::write(&path, b"ok").await.is_err() {
+        return false;
+    }
+
+    tokio::fs::remove_file(&path).await.is_ok()
 }
 
 async fn managed_asset(
@@ -173,6 +195,7 @@ async fn managed_asset(
 
 fn managed_asset_path(state: &AppState, kind: &str, path: &str) -> Result<PathBuf, AppError> {
     match kind {
+        "avatar" => avatar_asset_path(state, path),
         "background" => Ok(PathBuf::from(state.backgrounds.absolute_path_string(path)?)),
         "font" => fonts::font_file_path(state, path),
         "game" => Ok(PathBuf::from(state.game_assets.absolute_path_string(path)?)),
@@ -186,6 +209,29 @@ fn managed_asset_path(state: &AppState, kind: &str, path: &str) -> Result<PathBu
         }
         _ => Err(AppError::not_found("Managed asset type was not found")),
     }
+}
+
+fn avatar_asset_path(state: &AppState, path: &str) -> Result<PathBuf, AppError> {
+    let filename = avatar_asset_filename(path)?;
+    Ok(state
+        .data_dir
+        .join("avatars")
+        .join("characters")
+        .join(filename))
+}
+
+fn avatar_asset_filename(path: &str) -> Result<String, AppError> {
+    let filename = path.trim();
+    if filename.is_empty()
+        || filename == "."
+        || filename == ".."
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains(':')
+    {
+        return Err(AppError::not_found("Avatar asset was not found"));
+    }
+    Ok(filename.to_string())
 }
 
 fn content_type_for_path(path: &FsPath) -> &'static str {
@@ -690,9 +736,9 @@ impl SecurityConfig {
     }
 
     fn is_exact_cors_origin_allowed(&self, origin: &str) -> bool {
-        self.cors_origins.iter().any(|allowed| {
-            allowed != "*" && normalize_origin(allowed).as_deref() == Some(origin)
-        })
+        self.cors_origins
+            .iter()
+            .any(|allowed| allowed != "*" && normalize_origin(allowed).as_deref() == Some(origin))
     }
 
     fn is_origin_trusted(&self, origin_or_referer: &str) -> bool {
@@ -1001,6 +1047,23 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn health_probe_reports_writable_storage_and_cleans_up() {
+        let root =
+            std::env::temp_dir().join(format!("marinara-health-test-{}", health_probe_filename()));
+        std::fs::create_dir_all(&root).expect("health test directory should be created");
+
+        assert!(probe_data_dir_writable(&root).await);
+        assert_eq!(
+            std::fs::read_dir(&root)
+                .expect("health test directory should remain readable")
+                .count(),
+            0
+        );
+
+        std::fs::remove_dir_all(&root).expect("health test directory should be removed");
+    }
+
     #[test]
     fn request_logging_disable_values_match_legacy_env_knobs() {
         assert!(is_prompt_connection_log_preset_value(Some(
@@ -1037,6 +1100,20 @@ mod tests {
         );
         assert!(sidecar_embedding_inputs(&json!({ "input": [] })).is_err());
         assert!(sidecar_embedding_inputs(&json!({ "input": [1] })).is_err());
+    }
+
+    #[test]
+    fn avatar_asset_filename_rejects_parent_directory_tokens() {
+        assert!(avatar_asset_filename("..").is_err());
+        assert!(avatar_asset_filename(".").is_err());
+        assert!(avatar_asset_filename("characters/avatar.png").is_err());
+        assert!(avatar_asset_filename("characters\\avatar.png").is_err());
+        assert!(avatar_asset_filename("C:evil.png").is_err());
+        assert!(avatar_asset_filename("X:avatar.png").is_err());
+        assert_eq!(
+            avatar_asset_filename("avatar one.png").expect("valid avatar filename"),
+            "avatar one.png"
+        );
     }
 
     #[test]

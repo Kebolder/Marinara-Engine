@@ -91,15 +91,19 @@ function BudgetSkippedEntriesNotice({ entries }: { entries: BudgetSkippedLoreboo
 
   return (
     <div className="mb-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-2 text-xs text-amber-50/85">
-      <button type="button" className="flex w-full items-start gap-2 text-left" onClick={() => setExpanded((prev) => !prev)}>
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 text-left"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
         <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0 text-amber-300" />
         <span className="min-w-0 flex-1">
           <span className="block font-medium text-amber-100">
             {entries.length} matching lore {entries.length === 1 ? "entry was" : "entries were"} skipped by token budget
           </span>
           <span className="mt-0.5 block text-[0.625rem] leading-relaxed text-amber-50/65">
-            Expand for budget details. Knowledge Retrieval or Knowledge Router may fit large lorebooks better than simply
-            raising caps.
+            Expand for budget details. Knowledge Retrieval or Knowledge Router may fit large lorebooks better than
+            simply raising caps.
           </span>
         </span>
         {expanded ? <ChevronDown size="0.75rem" /> : <ChevronRight size="0.75rem" />}
@@ -124,9 +128,10 @@ export function WorldInfoPanel({
   isMobile: boolean;
   onClose: () => void;
 }) {
-  const { data, isLoading } = useActiveLorebookEntries(chatId, true);
+  const { data, isLoading, isError, error } = useActiveLorebookEntries(chatId, true);
   const entries = data?.entries ?? [];
   const skippedEntries = data?.budgetSkippedEntries ?? [];
+  const errorMessage = error instanceof Error ? error.message : "The active world info scan could not complete.";
 
   return (
     <>
@@ -146,6 +151,14 @@ export function WorldInfoPanel({
         <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
           <Loader2 size="0.75rem" className="animate-spin" />
           Scanning entries...
+        </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 p-2 text-xs text-[var(--destructive)]">
+          <div className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle size="0.75rem" />
+            World info scan failed
+          </div>
+          <p className="mt-1 leading-relaxed text-[var(--destructive)]/80">{errorMessage}</p>
         </div>
       ) : entries.length === 0 ? (
         <>

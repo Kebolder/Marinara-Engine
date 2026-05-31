@@ -53,7 +53,7 @@ export interface SlashCommandContext {
   setSpriteExpression?: (characterId: string, expression: string) => void | Promise<void>;
 }
 
-export interface SlashCommandResult {
+interface SlashCommandResult {
   /** If true, don't send to the LLM / don't do normal send */
   handled: boolean;
   /** Optional feedback to show (ephemeral, not persisted) */
@@ -119,6 +119,8 @@ function buildMacroHelpText(): string {
   return [
     "Supported Macros:",
     "Tip: In group chats, a bracketed block containing character macros like {{char}} and {{description}} repeats once per character.",
+    'Conditional blocks: {{#if character == "Dottore"}}Dottore prompt{{else}}Fallback prompt{{/if}}',
+    "Conditionals support char, character, speaker, user, preset variables, ==, !=, contains, and straight or typographic quotes.",
     ...Array.from(sections.entries()).flatMap(([category, lines], index) =>
       index === 0 ? ["", `${category}:`, ...lines] : ["", `${category}:`, ...lines],
     ),
@@ -131,9 +133,11 @@ function buildMacroHelpText(): string {
 const MACRO_HELP_TEXT = buildMacroHelpText();
 
 function buildSlashHelpText(): string {
-  return ["Available Commands:", "", ...COMMANDS.map((command) => `${command.usage} - ${command.description}`)].join(
-    "\n",
-  );
+  return [
+    "Available Commands:",
+    "",
+    ...SLASH_COMMANDS.map((command) => `${command.usage} - ${command.description}`),
+  ].join("\n");
 }
 
 function parseImpersonatePromptArg(args: string): string {
@@ -141,9 +145,10 @@ function parseImpersonatePromptArg(args: string): string {
   if (!prompt) return "";
 
   const quote = prompt[0];
-  if (quote === '"' || quote === "'") {
+  const closeQuote = quote === "\u201c" ? "\u201d" : quote === "\u2018" ? "\u2019" : quote;
+  if (quote === '"' || quote === "'" || quote === "\u201c" || quote === "\u2018") {
     prompt = prompt.slice(1);
-    if (prompt.endsWith(quote)) {
+    if (prompt.endsWith(closeQuote)) {
       prompt = prompt.slice(0, -1);
     }
   }
@@ -153,16 +158,36 @@ function parseImpersonatePromptArg(args: string): string {
 
 function parseNamedArgs(input: string): Record<string, string> {
   const values: Record<string, string> = {};
-  const argPattern = /([A-Za-z][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))/g;
+  const argPattern =
+    /([A-Za-z][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|\u201c([^\u201d]*)\u201d|\u2018([^\u2019]*)\u2019|([^\s]+))/g;
   let match: RegExpExecArray | null;
   while ((match = argPattern.exec(input))) {
-    values[match[1]!.toLowerCase()] = (match[2] ?? match[3] ?? match[4] ?? "").trim();
+    values[match[1]!.toLowerCase()] = (match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6] ?? "").trim();
   }
   return values;
 }
 
+function parseCommandTokens(input: string): Array<{ value: string; quoted: boolean }> {
+  const tokens: Array<{ value: string; quoted: boolean }> = [];
+  const tokenPattern =
+    /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|\u201c([^\u201d\\]*(?:\\.[^\u201d\\]*)*)\u201d|\u2018([^\u2019\\]*(?:\\.[^\u2019\\]*)*)\u2019|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(input))) {
+    const quoted = match[1] !== undefined || match[2] !== undefined || match[3] !== undefined || match[4] !== undefined;
+    const raw = (match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? "").trim();
+    if (!raw) continue;
+    tokens.push({ value: raw.replace(/\\(["'\u201c\u201d\u2018\u2019\\])/g, "$1"), quoted });
+  }
+  return tokens;
+}
+
 function normalizeLookup(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function isAllEmoteTarget(value: string): boolean {
+  const normalized = normalizeLookup(value);
+  return normalized === "all" || normalized === "*";
 }
 
 function findSceneCharacter(
@@ -214,7 +239,7 @@ async function buildEmoteListFeedback(characters: Array<{ id: string; name: stri
     "",
     ...rows,
     "",
-    'Use /emote name="Character" expression="expression" to switch one manually.',
+    'Use /emote joy, /emote "Character" joy, or /emote "all" joy to switch expressions.',
   ].join("\n");
 }
 
@@ -279,7 +304,7 @@ function isMessageHidden(msg: { extra?: unknown }): boolean {
 
 // ── Command definitions ────────────────
 
-const COMMANDS: SlashCommand[] = [
+const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: "roll",
     aliases: ["r", "dice"],
@@ -365,7 +390,7 @@ const COMMANDS: SlashCommand[] = [
     name: "emote",
     aliases: ["emotion", "sprite"],
     description: "List or switch roleplay sprite expressions",
-    usage: '/emote name="Character" expression="expression"',
+    usage: '/emote [expression] | /emote "Character" <expression>',
     local: true,
     async execute(args, ctx) {
       const sceneCharacters = ctx.characters ?? [];
@@ -377,11 +402,88 @@ const COMMANDS: SlashCommand[] = [
       }
 
       const namedArgs = parseNamedArgs(args);
-      const requestedName = namedArgs.name ?? namedArgs.character ?? "";
-      const requestedExpression = namedArgs.expression ?? namedArgs.emotion ?? namedArgs.sprite ?? "";
+      let requestedName = namedArgs.name ?? namedArgs.character ?? "";
+      let requestedExpression = namedArgs.expression ?? namedArgs.emotion ?? namedArgs.sprite ?? "";
+      let applyToAll = false;
 
       if (!args.trim() || (!requestedExpression && !requestedName)) {
-        return { handled: true, feedback: await buildEmoteListFeedback(sceneCharacters) };
+        const tokens = parseCommandTokens(args);
+        if (tokens.length === 0) {
+          return { handled: true, feedback: await buildEmoteListFeedback(sceneCharacters) };
+        }
+
+        if (tokens.length === 1) {
+          const token = tokens[0]!;
+          if (isAllEmoteTarget(token.value)) {
+            return { handled: true, feedback: await buildEmoteListFeedback(sceneCharacters) };
+          }
+
+          const quotedTarget = token.quoted ? findSceneCharacter(sceneCharacters, token.value) : null;
+          if (quotedTarget) {
+            requestedName = token.value;
+          } else if (sceneCharacters.length === 1) {
+            requestedExpression = token.value;
+          } else {
+            requestedExpression = token.value;
+            applyToAll = true;
+          }
+        } else {
+          const [targetToken, ...expressionTokens] = tokens;
+          requestedExpression = expressionTokens
+            .map((token) => token.value)
+            .join(" ")
+            .trim();
+          if (targetToken && isAllEmoteTarget(targetToken.value)) {
+            applyToAll = true;
+          } else {
+            requestedName = targetToken?.value ?? "";
+          }
+        }
+      }
+
+      if (requestedName && isAllEmoteTarget(requestedName)) {
+        requestedName = "";
+        applyToAll = true;
+      }
+
+      if (applyToAll) {
+        if (!requestedExpression) {
+          return { handled: true, feedback: await buildEmoteListFeedback(sceneCharacters) };
+        }
+        if (!ctx.setSpriteExpression) {
+          return {
+            handled: true,
+            feedback: "Sprite switching is only available in roleplay chats with sprites enabled.",
+          };
+        }
+
+        const matches = await Promise.all(
+          sceneCharacters.map(async (character) => {
+            const availableExpressions = await listSpriteExpressions(character.id);
+            return {
+              character,
+              expression: matchSpriteExpression(availableExpressions, requestedExpression),
+            };
+          }),
+        );
+        const missing = matches.filter((entry) => !entry.expression);
+        if (missing.length > 0) {
+          return {
+            handled: true,
+            feedback: `Expression "${requestedExpression}" is not available for all characters. Missing: ${missing
+              .map((entry) => entry.character.name)
+              .join(", ")}.`,
+          };
+        }
+
+        for (const match of matches) {
+          await ctx.setSpriteExpression(match.character.id, match.expression!);
+        }
+        ctx.invalidate();
+        return {
+          handled: true,
+          feedback: `Emote updated for ${matches.length} character${matches.length === 1 ? "" : "s"} -> ${requestedExpression}`,
+        };
       }
 
       let target = requestedName ? findSceneCharacter(sceneCharacters, requestedName) : null;
@@ -407,7 +509,7 @@ const COMMANDS: SlashCommand[] = [
             "",
             availableExpressions.length > 0 ? availableExpressions.join(", ") : "No uploaded expression sprites.",
             "",
-            `Use /emote name="${target.name}" expression="expression" to switch one manually.`,
+            `Use /emote "${target.name}" expression to switch one manually.`,
           ].join("\n"),
         };
       }
@@ -738,7 +840,7 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
   const cmdName = (spaceIdx === -1 ? input.slice(1) : input.slice(1, spaceIdx)).toLowerCase();
   const args = spaceIdx === -1 ? "" : input.slice(spaceIdx + 1);
 
-  for (const cmd of COMMANDS) {
+  for (const cmd of SLASH_COMMANDS) {
     if (cmd.name === cmdName || cmd.aliases?.includes(cmdName)) {
       return { command: cmd, args };
     }
@@ -750,8 +852,6 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
 export function getSlashCompletions(partial: string): SlashCommand[] {
   if (!partial.startsWith("/")) return [];
   const prefix = partial.slice(1).toLowerCase();
-  if (!prefix) return COMMANDS;
-  return COMMANDS.filter((c) => c.name.startsWith(prefix) || c.aliases?.some((a) => a.startsWith(prefix)));
+  if (!prefix) return SLASH_COMMANDS;
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix) || c.aliases?.some((a) => a.startsWith(prefix)));
 }
-
-export { COMMANDS as SLASH_COMMANDS };

@@ -64,7 +64,9 @@ export function chatGalleryUploadFailureError(fileCount: number, failures: unkno
 
   const failedCount = failures.length;
   return new Error(
-    failedCount === 1 ? "One chat gallery image failed to upload." : `${failedCount} chat gallery images failed to upload.`,
+    failedCount === 1
+      ? "One chat gallery image failed to upload."
+      : `${failedCount} chat gallery images failed to upload.`,
   );
 }
 

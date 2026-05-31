@@ -10,12 +10,64 @@ pub(crate) mod storage_commands;
 
 use tauri::Manager;
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn center_main_window_on_primary_monitor(app: &tauri::App) {
+    use tauri::{PhysicalPosition, Position};
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
+    let Ok(Some(monitor)) = window.primary_monitor() else {
+        return;
+    };
+    let Ok(window_size) = window.outer_size() else {
+        return;
+    };
+
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let x =
+        monitor_position.x + ((monitor_size.width as i32 - window_size.width as i32) / 2).max(0);
+    let y =
+        monitor_position.y + ((monitor_size.height as i32 - window_size.height as i32) / 2).max(0);
+    if let Err(error) = window.set_position(Position::Physical(PhysicalPosition { x, y })) {
+        eprintln!("failed to center main window on primary monitor: {error}");
+    }
+}
+
+#[cfg(all(debug_assertions, not(any(target_os = "android", target_os = "ios"))))]
+fn open_main_window_devtools_if_requested(app: &tauri::App) {
+    if std::env::var("MARINARA_TAURI_AUTO_DEVTOOLS").as_deref() != Ok("1") {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    window.open_devtools();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
 
+    #[cfg(feature = "devtools")]
+    let builder = builder.plugin(tauri_plugin_devtools::init());
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let builder = builder.plugin(tauri_plugin_window_state::Builder::new().build());
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::new()
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::SIZE
+                    | tauri_plugin_window_state::StateFlags::MAXIMIZED
+                    | tauri_plugin_window_state::StateFlags::VISIBLE
+                    | tauri_plugin_window_state::StateFlags::DECORATIONS
+                    | tauri_plugin_window_state::StateFlags::FULLSCREEN,
+            )
+            .build(),
+    );
 
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -25,6 +77,10 @@ pub fn run() {
             let state = app::build_state(app.handle())
                 .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
             app.manage(state);
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            center_main_window_on_primary_monitor(app);
+            #[cfg(all(debug_assertions, not(any(target_os = "android", target_os = "ios"))))]
+            open_main_window_devtools_if_requested(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -158,9 +214,11 @@ pub fn run() {
             storage_commands::chat_commands::chat_autonomous_unread_mark,
             storage_commands::chat_commands::chat_autonomous_unread_clear,
             storage_commands::chat_commands::chat_messages_bulk_delete,
+            storage_commands::chat_commands::chat_message_count,
             storage_commands::chat_commands::chat_branch,
             storage_commands::chat_commands::chat_message_swipes,
             storage_commands::chat_commands::chat_message_add_swipe,
+            storage_commands::chat_commands::chat_message_update_content_if_unchanged,
             storage_commands::chat_commands::chat_message_set_active_swipe,
             storage_commands::chat_commands::chat_message_delete_swipe,
             storage_commands::chat_commands::chat_connect,
@@ -192,6 +250,7 @@ pub fn run() {
             storage_commands::media_commands::connection_test_message,
             storage_commands::media_commands::connection_test_image,
             storage_commands::media_commands::connection_models,
+            storage_commands::media_commands::connection_diagnose_claude_subscription,
             storage_commands::media_commands::connection_save_default_parameters,
             storage_commands::media_commands::persona_activate,
             storage_commands::media_commands::character_avatar_upload,

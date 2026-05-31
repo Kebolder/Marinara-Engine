@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import type { Message, SpriteSide } from "../../../../engine/contracts/types/chat";
 import { ConversationView } from "./ConversationView";
+import { AgentThoughtBubbles } from "../../../catalog/agents/activity";
 import { ChatCommonOverlays } from "../../shared/chat-ui/index";
 import type { CharacterMap, MessageSelectionToggle, PeekPromptData, PersonaInfo } from "../../shared/chat-ui/types";
 
@@ -32,6 +33,7 @@ type ConversationSurfaceProps = {
   personaInfo?: PersonaInfo;
   chatMeta: Record<string, any>;
   chatCharIds: string[];
+  enabledAgentTypes?: Set<string>;
   connectedChatName?: string;
   sceneInfo?: SceneInfo;
   settingsOpen: boolean;
@@ -48,7 +50,7 @@ type ConversationSurfaceProps = {
   spriteArrangeMode: boolean;
   onDelete: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
-  onEdit: (messageId: string, content: string) => void;
+  onEdit: (messageId: string, content: string) => void | Promise<void>;
   onSetActiveSwipe: (messageId: string, index: number) => void;
   onPeekPrompt: () => void;
   onToggleHiddenFromAI: (messageId: string, current: boolean) => void;
@@ -96,6 +98,7 @@ export function ChatConversationSurface({
   personaInfo,
   chatMeta,
   chatCharIds,
+  enabledAgentTypes,
   connectedChatName,
   sceneInfo,
   settingsOpen,
@@ -221,6 +224,7 @@ export function ChatConversationSurface({
         onSelectAllAboveSelection={onSelectAllAboveSelection}
         onSelectAllBelowSelection={onSelectAllBelowSelection}
       />
+      <AgentThoughtBubbles enabledAgentTypes={enabledAgentTypes} />
     </div>
   );
 }

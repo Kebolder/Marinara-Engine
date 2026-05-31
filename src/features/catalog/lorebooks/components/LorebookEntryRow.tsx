@@ -35,7 +35,12 @@ import {
 import { cn } from "../../../../shared/lib/utils";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { useUpdateLorebookEntry, useDeleteLorebookEntry } from "../hooks/use-lorebooks";
-import type { LorebookEntry, LorebookFilterMode, LorebookFolder, LorebookMatchingSource } from "../../../../engine/contracts/types/lorebook";
+import type {
+  LorebookEntry,
+  LorebookFilterMode,
+  LorebookFolder,
+  LorebookMatchingSource,
+} from "../../../../engine/contracts/types/lorebook";
 import {
   ExpandableTextarea,
   FieldGroup,
@@ -141,7 +146,6 @@ const MATCHING_SOURCE_OPTIONS: Array<{ value: LorebookMatchingSource; label: str
 const GENERATION_TRIGGER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "conversation", label: "Conversation" },
   { value: "roleplay", label: "Roleplay" },
-  { value: "visual_novel", label: "VN" },
   { value: "game", label: "Game" },
   { value: "chat", label: "Chat reply" },
   { value: "continue", label: "Continue" },
@@ -483,8 +487,8 @@ export function LorebookEntryRow({
             isVectorExcluded
               ? "bg-rose-400/10 text-rose-400 ring-rose-400/20"
               : isVectorized
-              ? "bg-emerald-400/10 text-emerald-400 ring-emerald-400/20"
-              : "bg-[var(--background)]/55 text-[var(--muted-foreground)] ring-[var(--border)] hover:text-[var(--foreground)]",
+                ? "bg-emerald-400/10 text-emerald-400 ring-emerald-400/20"
+                : "bg-[var(--background)]/55 text-[var(--muted-foreground)] ring-[var(--border)] hover:text-[var(--foreground)]",
           )}
           title={vectorStatusTitle}
           aria-label={vectorStatusTitle}
@@ -908,8 +912,7 @@ function toggleStringValue(values: string[] | undefined, value: string) {
 }
 
 function buildEntrySavePayload(form: Partial<LorebookEntry>) {
-  return {
-    name: form.name,
+  const payload: Partial<LorebookEntry> = {
     content: form.content,
     description: form.description,
     keys: form.keys,
@@ -936,6 +939,9 @@ function buildEntrySavePayload(form: Partial<LorebookEntry>) {
     preventRecursion: form.preventRecursion,
     excludeFromVectorization: form.excludeFromVectorization,
   };
+  const name = typeof form.name === "string" ? form.name.trim() : "";
+  if (name) payload.name = name;
+  return payload;
 }
 
 function FilterModeSelect({

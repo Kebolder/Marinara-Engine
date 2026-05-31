@@ -15,7 +15,7 @@ export interface PromptMessage {
  * Position 0 = WORLD_INFO_BEFORE (before character defs)
  * Position 1 = WORLD_INFO_AFTER (after character defs)
  */
-export function buildWorldInfoBlocks(activatedEntries: ActivatedEntry[]): {
+function buildWorldInfoBlocks(activatedEntries: ActivatedEntry[]): {
   before: string;
   after: string;
 } {
@@ -45,7 +45,7 @@ export function buildWorldInfoBlocks(activatedEntries: ActivatedEntry[]): {
  * Only entries with position >= 2 (depth injection mode) are included.
  * Position 0/1 entries always go to worldInfoBefore/After via buildWorldInfoBlocks.
  */
-export function getDepthInjectedEntries(activatedEntries: ActivatedEntry[]): Array<{
+function getDepthInjectedEntries(activatedEntries: ActivatedEntry[]): Array<{
   content: string;
   role: LorebookRole;
   depth: number;
@@ -111,12 +111,38 @@ export function injectAtDepth(
  * Trims entries (by priority/order) until total tokens are within budget.
  * Uses a rough estimate of 4 characters per token.
  */
-export function applyTokenBudget(activatedEntries: ActivatedEntry[], tokenBudget: number): ActivatedEntry[] {
-  if (tokenBudget <= 0) return activatedEntries;
+export interface BudgetSkippedActivatedEntry {
+  activatedEntry: ActivatedEntry;
+  estimatedTokens: number;
+  usedTokensBefore: number;
+}
+
+/**
+ * Apply token-budget ordering while preserving the
+ * entries that were dropped so callers can surface budget diagnostics.
+ */
+export function applyTokenBudgetWithSkipped(
+  activatedEntries: ActivatedEntry[],
+  tokenBudget: number,
+): {
+  includedEntries: ActivatedEntry[];
+  skippedEntries: BudgetSkippedActivatedEntry[];
+  totalTokensEstimate: number;
+} {
+  if (tokenBudget <= 0) {
+    const totalChars = activatedEntries.reduce((sum, entry) => sum + entry.entry.content.length, 0);
+    return {
+      includedEntries: activatedEntries,
+      skippedEntries: [],
+      totalTokensEstimate: Math.ceil(totalChars / 4),
+    };
+  }
 
   const CHARS_PER_TOKEN = 4;
   let totalTokens = 0;
-  const result: ActivatedEntry[] = [];
+  let budgetExhausted = false;
+  const includedEntries: ActivatedEntry[] = [];
+  const skippedEntries: BudgetSkippedActivatedEntry[] = [];
 
   // Sort: constant entries first, then by order
   const sorted = [...activatedEntries].sort((a, b) => {
@@ -126,16 +152,21 @@ export function applyTokenBudget(activatedEntries: ActivatedEntry[], tokenBudget
   });
 
   for (const entry of sorted) {
-    const entryTokens = Math.ceil(entry.entry.content.length / CHARS_PER_TOKEN);
-    if (totalTokens + entryTokens > tokenBudget) {
-      // Budget exhausted — skip remaining entries
-      break;
+    const estimatedTokens = Math.ceil(entry.entry.content.length / CHARS_PER_TOKEN);
+    if (budgetExhausted || totalTokens + estimatedTokens > tokenBudget) {
+      budgetExhausted = true;
+      skippedEntries.push({ activatedEntry: entry, estimatedTokens, usedTokensBefore: totalTokens });
+      continue;
     }
-    totalTokens += entryTokens;
-    result.push(entry);
+    totalTokens += estimatedTokens;
+    includedEntries.push(entry);
   }
 
-  return result;
+  return {
+    includedEntries,
+    skippedEntries,
+    totalTokensEstimate: totalTokens,
+  };
 }
 
 /**
@@ -148,26 +179,28 @@ export function processActivatedEntries(
   worldInfoBefore: string;
   worldInfoAfter: string;
   depthEntries: Array<{ content: string; role: LorebookRole; depth: number; order: number }>;
+  includedEntries: ActivatedEntry[];
+  skippedEntries: BudgetSkippedActivatedEntry[];
   totalEntries: number;
   totalTokensEstimate: number;
 } {
   // Apply budget
-  const budgeted = applyTokenBudget(activatedEntries, tokenBudget);
+  const budgeted = applyTokenBudgetWithSkipped(activatedEntries, tokenBudget);
+  const includedEntries = budgeted.includedEntries;
 
   // Build blocks
-  const { before, after } = buildWorldInfoBlocks(budgeted);
+  const { before, after } = buildWorldInfoBlocks(includedEntries);
 
   // Get depth entries
-  const depthEntries = getDepthInjectedEntries(budgeted);
-
-  // Estimate tokens
-  const totalChars = budgeted.reduce((sum, a) => sum + a.entry.content.length, 0);
+  const depthEntries = getDepthInjectedEntries(includedEntries);
 
   return {
     worldInfoBefore: before,
     worldInfoAfter: after,
     depthEntries,
-    totalEntries: budgeted.length,
-    totalTokensEstimate: Math.ceil(totalChars / 4),
+    includedEntries,
+    skippedEntries: budgeted.skippedEntries,
+    totalEntries: includedEntries.length,
+    totalTokensEstimate: budgeted.totalTokensEstimate,
   };
 }

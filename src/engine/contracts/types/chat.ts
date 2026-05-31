@@ -4,8 +4,10 @@
 
 import type { GenerationGuideSource } from "../../shared/text/generation-guide.js";
 
-/** The four primary chat modes the engine supports. */
-export type ChatMode = "conversation" | "roleplay" | "visual_novel" | "game";
+/** The primary chat modes the engine supports. */
+export type ChatMode = "conversation" | "roleplay" | "game";
+/** Legacy persisted/imported mode name. New inputs should migrate this to "roleplay". */
+export type LegacyChatMode = "visual_novel";
 export type SpotifySourceType = "liked" | "playlist" | "artist" | "any";
 
 /** How a multi-character (group) chat is handled. */
@@ -144,6 +146,8 @@ export interface ChatMetadata {
   activeSummaryPromptTemplateId?: string | null;
   /** Custom tags for organisation */
   tags: string[];
+  /** When true, this chat is pinned to the top of the sidebar for its mode. */
+  pinned?: boolean;
   /** Whether agents are enabled for this chat */
   enableAgents: boolean;
   /** Per-agent enable overrides (agentId → boolean) */
@@ -154,6 +158,8 @@ export interface ChatMetadata {
   lorebookKeeperTargetLorebookId?: string | null;
   /** How many assistant responses behind the latest available one Lorebook Keeper should read from. */
   lorebookKeeperReadBehindMessages?: number;
+  /** When true/omitted, Lorebook Keeper proposals wait for approve/reject instead of writing immediately. */
+  lorebookKeeperReviewRequired?: boolean;
   /** Tool/function IDs scoped to this chat. Non-empty = only these tools are sent; empty = use all enabled tools. */
   activeToolIds: string[];
   /** Per-chat variable selections for preset variables (variableName → value or values) */
@@ -379,6 +385,10 @@ export interface MessageExtra {
   isConversationStart?: boolean;
   /** Model's reasoning/thinking content (if available) */
   thinking?: string | null;
+  /** Provider-shaped reasoning content from OpenAI-compatible responses. */
+  reasoning?: string | null;
+  /** Provider-shaped reasoning content from OpenAI-compatible streaming deltas. */
+  reasoning_content?: string | null;
   /** Per-swipe sprite expressions from the Expression Engine agent */
   spriteExpressions?: Record<string, string> | null;
   /** Per-swipe CYOA choices from the CYOA Choices agent */
@@ -419,6 +429,10 @@ export interface MessageExtra {
     impersonateBlockAgents?: boolean;
     impersonatePromptTemplate?: string | null;
   } | null;
+  /** Exact main-generation LLM request saved for Peek Prompt on the active response. */
+  generationPromptSnapshot?: GenerationPromptSnapshot | null;
+  /** Exact main-generation LLM requests keyed by swipe index for regenerated alternatives. */
+  generationPromptSnapshotsBySwipe?: Record<string, GenerationPromptSnapshot>;
 }
 
 /** Metadata about how a message was generated. */
@@ -434,6 +448,49 @@ export interface GenerationInfo {
   finishReason: string | null;
 }
 
+export interface GenerationPromptSnapshotMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  name?: string;
+  images?: string[];
+  tool_call_id?: string;
+  tool_calls?: unknown;
+  [key: string]: unknown;
+}
+
+export interface GenerationPromptSnapshotInfo {
+  model?: string;
+  provider?: string;
+  temperature?: number | null;
+  maxTokens?: number | null;
+  topP?: number | null;
+  topK?: number | null;
+  frequencyPenalty?: number | null;
+  presencePenalty?: number | null;
+  showThoughts?: boolean | null;
+  reasoningEffort?: string | null;
+  verbosity?: string | null;
+  serviceTier?: string | null;
+  assistantPrefill?: string | null;
+  tokensPrompt?: number | null;
+  tokensCompletion?: number | null;
+  tokensCachedPrompt?: number | null;
+  tokensCacheWritePrompt?: number | null;
+  durationMs?: number | null;
+  finishReason?: string | null;
+}
+
+export interface GenerationPromptSnapshot {
+  messages: GenerationPromptSnapshotMessage[];
+  parameters: Record<string, unknown>;
+  tools?: unknown[] | null;
+  generationInfo?: GenerationPromptSnapshotInfo | null;
+  promptPresetId?: string | null;
+  createdAt?: string;
+}
+
+export type MessageSwipeExtra = Partial<MessageExtra> & Record<string, unknown>;
+
 /** A swipe (alternate response) for a message. */
 export interface MessageSwipe {
   id: string;
@@ -441,7 +498,7 @@ export interface MessageSwipe {
   index: number;
   content: string;
   createdAt: string;
-  extra: MessageExtra;
+  extra?: MessageSwipeExtra;
 }
 
 /** Payload sent to start a generation. */

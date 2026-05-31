@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useChat,
   useChatMessageCount,
@@ -6,7 +6,11 @@ import {
   type Chat,
   type ChatMode,
 } from "../../../../catalog/chats/index";
-import { useActivePersona, useCharactersByIds, usePersona } from "../../../../catalog/characters/index";
+import {
+  characterAvatarUrl,
+  useCharactersByIds,
+} from "../../../../catalog/characters/index";
+import { useActivePersona, usePersona } from "../../../../catalog/personas/index";
 import { ApiError } from "../../../../../shared/api/api-errors";
 import { getConnectedChatDisplayName, parseChatMetadata } from "../../../../../shared/lib/chat-display";
 import { parseCharacterDisplayData } from "../../../../../shared/lib/character-display";
@@ -30,6 +34,8 @@ type CharacterRow = {
   data: Record<string, any>;
   comment?: string | null;
   avatarPath: string | null;
+  avatarFilePath?: string | null;
+  avatarFilename?: string | null;
 };
 
 type PersonaRow = {
@@ -76,12 +82,32 @@ function extractMessageCharacterIds(messages: MessageWithSwipes[] | undefined): 
   return normalizeIds(messages.map((message) => message.characterId));
 }
 
+function parseMessageExtra(extra: unknown): Record<string, unknown> {
+  if (typeof extra === "string") {
+    try {
+      const parsed = JSON.parse(extra);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return extra && typeof extra === "object" && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {};
+}
+
+function isLegacyGenerationFailureNotice(message: MessageWithSwipes): boolean {
+  const extra = parseMessageExtra(message.extra);
+  return extra.generationError === true && message.role === "system";
+}
+
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
 }
 
 function collectGameCharacterIds(chatMeta: Record<string, any>): string[] {
-  const setup = chatMeta.gameSetupConfig && typeof chatMeta.gameSetupConfig === "object" ? chatMeta.gameSetupConfig : {};
+  const setup =
+    chatMeta.gameSetupConfig && typeof chatMeta.gameSetupConfig === "object" ? chatMeta.gameSetupConfig : {};
   const ids: Array<string | null | undefined> = [
     typeof setup.gmCharacterId === "string" ? setup.gmCharacterId : null,
     ...stringArray(setup.partyCharacterIds),
@@ -135,7 +161,13 @@ export function useChatSurfaceData({
   const resolvedMessagePageSize =
     Number.isFinite(messagePageSize) && messagePageSize > 0 ? Math.floor(messagePageSize) : DEFAULT_MESSAGE_PAGE_SIZE;
   const setActiveChatId = useChatStore((state) => state.setActiveChatId);
-  const { data: chat, error: chatError } = useChat(activeChatId);
+  const {
+    data: chat,
+    error: chatError,
+    isLoading: isChatLoading,
+    isFetching: isChatFetching,
+    refetch: refetchChat,
+  } = useChat(activeChatId);
   const {
     data: msgData,
     isLoading,
@@ -144,7 +176,6 @@ export function useChatSurfaceData({
     isFetchingNextPage,
     refetch: refetchMessages,
   } = useChatMessages(activeChatId, resolvedMessagePageSize, !!chat);
-  const { data: messageCountData } = useChatMessageCount(chat ? activeChatId : null);
 
   useEffect(() => {
     if (!(chatError instanceof ApiError) || chatError.status !== 404) return;
@@ -160,7 +191,7 @@ export function useChatSurfaceData({
   const chatMeta = useMemo(() => parseChatMetadata(chat?.metadata), [chat]);
   const connectedChatId =
     typeof (chat as unknown as { connectedChatId?: unknown } | null | undefined)?.connectedChatId === "string"
-      ? ((chat as unknown as { connectedChatId: string }).connectedChatId.trim() || null)
+      ? (chat as unknown as { connectedChatId: string }).connectedChatId.trim() || null
       : null;
   const activeSceneChatId =
     typeof chatMeta.activeSceneChatId === "string" && chatMeta.activeSceneChatId.trim()
@@ -173,10 +204,26 @@ export function useChatSurfaceData({
       : null,
   );
   const messages = useMemo<MessageWithSwipes[] | undefined>(
-    () => (msgData ? [...msgData.pages].reverse().flat() : undefined),
+    () =>
+      msgData
+        ? [...msgData.pages]
+            .reverse()
+            .flat()
+            .filter((message) => !isLegacyGenerationFailureNotice(message))
+        : undefined,
     [msgData],
   );
   const loadedMessageCount = messages?.length ?? 0;
+  const [messageCountEnabledForChatId, setMessageCountEnabledForChatId] = useState<string | null>(null);
+  useEffect(() => {
+    setMessageCountEnabledForChatId(null);
+    if (!chat?.id || !msgData?.pages.length) return;
+    const id = window.setTimeout(() => setMessageCountEnabledForChatId(activeChatId), 350);
+    return () => window.clearTimeout(id);
+  }, [activeChatId, chat?.id, msgData?.pages.length]);
+  const { data: messageCountData } = useChatMessageCount(
+    chat && messageCountEnabledForChatId === activeChatId ? activeChatId : null,
+  );
   const totalMessageCount =
     typeof messageCountData?.count === "number"
       ? Math.max(messageCountData.count, loadedMessageCount)
@@ -212,7 +259,7 @@ export function useChatSurfaceData({
           example: parsed.mes_example ?? "",
           systemPrompt: parsed.system_prompt ?? parsed.systemPrompt ?? "",
           postHistoryInstructions: parsed.post_history_instructions ?? parsed.postHistoryInstructions ?? "",
-          avatarUrl: character.avatarPath ?? null,
+          avatarUrl: characterAvatarUrl(character),
           nameColor: parsed.extensions?.nameColor || undefined,
           dialogueColor: parsed.extensions?.dialogueColor || undefined,
           boxColor: parsed.extensions?.boxColor || undefined,
@@ -233,7 +280,7 @@ export function useChatSurfaceData({
   );
   const chatPersonaId =
     typeof (chat as unknown as { personaId?: unknown } | null | undefined)?.personaId === "string"
-      ? ((chat as unknown as { personaId: string }).personaId.trim() || null)
+      ? (chat as unknown as { personaId: string }).personaId.trim() || null
       : null;
   const { data: chatPersona } = usePersona(chatPersonaId, !!chatPersonaId);
   const { data: activePersona } = useActivePersona(personaFallback === "active-persona" && !chatPersonaId);
@@ -261,7 +308,7 @@ export function useChatSurfaceData({
                 id: character.id,
                 name: display.name,
                 comment: display.comment,
-                avatarUrl: character.avatarPath ?? undefined,
+                avatarUrl: characterAvatarUrl(character) ?? undefined,
                 avatarCrop: parsed.extensions?.avatarCrop || null,
                 nameColor: parsed.extensions?.nameColor || undefined,
                 dialogueColor: parsed.extensions?.dialogueColor || undefined,
@@ -281,6 +328,10 @@ export function useChatSurfaceData({
 
   return {
     chat,
+    chatError,
+    isChatLoading,
+    isChatFetching,
+    refetchChat,
     chatMode,
     chatMeta,
     messages,

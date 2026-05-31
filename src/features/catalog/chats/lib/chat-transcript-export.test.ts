@@ -62,7 +62,10 @@ describe("chat transcript export", () => {
     ];
 
     const exported = formatChatJsonl(messages);
-    const lines = exported.trimEnd().split("\n").map((line) => JSON.parse(line));
+    const lines = exported
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
 
     expect(lines).toEqual([
       expect.objectContaining({ id: "message-1", role: "user", content: "Hello" }),
@@ -108,11 +111,11 @@ describe("chat transcript export", () => {
     expect(buildChatTranscriptZipFiles(chats, "jsonl")).toEqual([
       {
         name: "My_Chat.jsonl",
-        data: expect.stringContaining("\"content\":\"One\""),
+        data: expect.stringContaining('"content":"One"'),
       },
       {
         name: "Branched_Scene.jsonl",
-        data: expect.stringContaining("\"content\":\"Two\""),
+        data: expect.stringContaining('"content":"Two"'),
       },
     ]);
     expect(buildChatTranscriptZipFiles(chats, "text")).toEqual([

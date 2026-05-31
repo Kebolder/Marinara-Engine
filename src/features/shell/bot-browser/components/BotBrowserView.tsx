@@ -28,13 +28,20 @@ import {
   Cookie,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { cacheCharacterListRecordFromResult, characterKeys } from "../../../catalog/characters/index";
+import {
+  cacheCharacterListRecordFromResult,
+  invalidateCharacterCollectionQueries,
+} from "../../../catalog/characters/index";
 import { lorebookKeys } from "../../../catalog/lorebooks/index";
 import { parsePngCharacterCard } from "../../../../shared/lib/png-parser";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { toast } from "sonner";
 import { cn } from "../../../../shared/lib/utils";
-import { confirmEmbeddedLorebookImport, readEmbeddedLorebookFromCharacterPayload } from "../../../../shared/lib/character-import";
+import {
+  confirmEmbeddedLorebookImport,
+  hasLorebookEntries,
+  readEmbeddedLorebookFromCharacterPayload,
+} from "../../../../shared/lib/character-import";
 import {
   botBrowserAssetUrl,
   botBrowserBlob,
@@ -157,13 +164,6 @@ const STAT_ICONS = {
   message: MessageSquare,
   hash: Hash,
 };
-
-function hasLorebookEntries(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const entries = (value as Record<string, unknown>).entries;
-  if (Array.isArray(entries)) return entries.length > 0;
-  return !!entries && typeof entries === "object" && Object.keys(entries).length > 0;
-}
 
 function attachEmbeddedLorebookToCharacterJson(raw: Record<string, unknown>, embeddedLorebook: unknown) {
   if (!hasLorebookEntries(embeddedLorebook)) return raw;
@@ -415,7 +415,8 @@ const chubProvider: ProviderConfig = {
     };
   },
   fetchDetail: async (card) => {
-    const raw = await botBrowserGet<any>(`chub/character/${card.id}`).catch(() => null);
+    // Let transport/API errors throw — only a successful-but-empty response returns null.
+    const raw = await botBrowserGet<any>(`chub/character/${card.id}`);
     if (!raw) return null;
     const node = raw?.data?.node ?? raw?.node;
     if (!node) return null;
@@ -578,29 +579,24 @@ const jannyProvider: ProviderConfig = {
       .replace(/^-|-$/g, "");
 
     // Fetch through the Tauri backend so browser UI no longer calls provider APIs directly.
-    try {
-      const data = await botBrowserGet<any>(`janny/character/${charId}?slug=character-${slug}`).catch(() => null);
-      if (data) {
-        const char = data?.character;
-        if (char && (char.personality || char.firstMessage)) {
-          return {
-            description: char.personality || undefined,
-            scenario: char.scenario || undefined,
-            firstMessage: char.firstMessage || undefined,
-            exampleDialogs: char.exampleDialogs || undefined,
-            creatorNotes: char.description
-              ? typeof char.description === "string"
-                ? char.description.replace(/<[^>]*>/g, "").trim()
-                : undefined
-              : undefined,
-          };
-        }
-      }
-    } catch {
-      /* fall through */
+    // Transport/API errors throw — they are not swallowed into the empty-result fallback below.
+    const data = await botBrowserGet<any>(`janny/character/${charId}?slug=character-${slug}`);
+    const char = data?.character;
+    if (char && (char.personality || char.firstMessage)) {
+      return {
+        description: char.personality || undefined,
+        scenario: char.scenario || undefined,
+        firstMessage: char.firstMessage || undefined,
+        exampleDialogs: char.exampleDialogs || undefined,
+        creatorNotes: char.description
+          ? typeof char.description === "string"
+            ? char.description.replace(/<[^>]*>/g, "").trim()
+            : undefined
+          : undefined,
+      };
     }
 
-    // Fallback: use search result data
+    // Fallback: successful response with no usable detail — use search result data
     const rawDesc = raw?.description || "";
     const plainDesc = typeof rawDesc === "string" ? rawDesc.replace(/<[^>]*>/g, "").trim() : "";
     if (plainDesc) {
@@ -608,7 +604,6 @@ const jannyProvider: ProviderConfig = {
     }
     return null;
   },
-
 };
 
 // ════════════════════════════════════════════════
@@ -680,7 +675,8 @@ const chartavernProvider: ProviderConfig = {
   fetchDetail: async (card) => {
     const parts = card.id.split("/");
     if (parts.length < 2) return null;
-    const data = await botBrowserGet<any>(`chartavern/character/${parts[0]}/${parts[1]}`).catch(() => null);
+    // Let transport/API errors throw — only a successful-but-empty response returns null.
+    const data = await botBrowserGet<any>(`chartavern/character/${parts[0]}/${parts[1]}`);
     if (!data) return null;
     const c = data?.card;
     if (!c) return null;
@@ -778,7 +774,8 @@ const pygmalionProvider: ProviderConfig = {
     };
   },
   fetchDetail: async (card) => {
-    const data = await botBrowserGet<any>(`pygmalion/character?id=${card.id}`).catch(() => null);
+    // Let transport/API errors throw — only a successful-but-empty response returns null.
+    const data = await botBrowserGet<any>(`pygmalion/character?id=${card.id}`);
     if (!data) return null;
     const char = data?.character;
     if (!char) return null;
@@ -880,8 +877,8 @@ const wyvernProvider: ProviderConfig = {
     };
   },
   fetchDetail: async (card) => {
-    const c = await botBrowserGet<any>(`wyvern/character/${card.id}`).catch(() => null);
-    if (!c) return null;
+    // Let transport/API errors throw — only a successful-but-empty response returns null.
+    const c = await botBrowserGet<any>(`wyvern/character/${card.id}`);
     if (!c) return null;
     return {
       description: c.description || undefined,
@@ -1078,42 +1075,40 @@ const datacatProvider: ProviderConfig = {
   fetchDetail: async (card) => {
     const id = (card._raw as any)?.characterId || (card._raw as any)?.character_id || card.id;
     if (!id) return null;
-    // Prefer the download endpoint for V2-shaped data, fall back to character endpoint
+    // Prefer the download endpoint for V2-shaped data, fall back to the character endpoint.
+    // The download endpoint is optional and best-effort (commonly a 404 for cards with no V2
+    // download), so ANY failure here falls through to the character endpoint. The character
+    // endpoint is authoritative — its transport/API errors throw rather than being swallowed
+    // into a benign empty result.
     try {
-      const dl = await botBrowserGet<any>(`datacat/download/${encodeURIComponent(id)}`).catch(() => null);
-      if (dl) {
-        const d = dl?.data;
-        if (d) {
-          return {
-            description: d.description || d.personality || undefined,
-            personality: d.personality || undefined,
-            scenario: d.scenario || undefined,
-            firstMessage: d.first_mes || undefined,
-            exampleDialogs: d.mes_example || undefined,
-            creatorNotes: d.creator_notes || undefined,
-            alternateGreetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.filter(Boolean) : [],
-          };
-        }
+      const dl = await botBrowserGet<any>(`datacat/download/${encodeURIComponent(id)}`);
+      const d = dl?.data;
+      if (d) {
+        return {
+          description: d.description || d.personality || undefined,
+          personality: d.personality || undefined,
+          scenario: d.scenario || undefined,
+          firstMessage: d.first_mes || undefined,
+          exampleDialogs: d.mes_example || undefined,
+          creatorNotes: d.creator_notes || undefined,
+          alternateGreetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.filter(Boolean) : [],
+        };
       }
     } catch {
-      /* fall through */
+      /* optional download endpoint failed (commonly a 404); fall through to the authoritative character endpoint */
     }
-    try {
-      const data = await botBrowserGet<any>(`datacat/character/${encodeURIComponent(id)}`).catch(() => null);
-      if (!data) return null;
-      const c = data?.character || data;
-      if (!c) return null;
-      const rawDesc = c.description || "";
-      const plainDesc = typeof rawDesc === "string" ? rawDesc.replace(/<[^>]*>/g, "").trim() : "";
-      return {
-        description: c.personality || undefined,
-        scenario: c.scenario || undefined,
-        firstMessage: c.first_message || undefined,
-        creatorNotes: plainDesc || undefined,
-      };
-    } catch {
-      return null;
-    }
+    const data = await botBrowserGet<any>(`datacat/character/${encodeURIComponent(id)}`);
+    if (!data) return null;
+    const c = data?.character || data;
+    if (!c) return null;
+    const rawDesc = c.description || "";
+    const plainDesc = typeof rawDesc === "string" ? rawDesc.replace(/<[^>]*>/g, "").trim() : "";
+    return {
+      description: c.personality || undefined,
+      scenario: c.scenario || undefined,
+      firstMessage: c.first_message || undefined,
+      creatorNotes: plainDesc || undefined,
+    };
   },
 };
 
@@ -1178,6 +1173,7 @@ export function BotBrowserView() {
   const [selectedCard, setSelectedCard] = useState<BrowseCard | null>(null);
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [tagImportMode, setTagImportMode] = useState<TagImportMode>("all");
 
@@ -1196,6 +1192,8 @@ export function BotBrowserView() {
     setPersistLogin("chartavern", val);
   }, []);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const searchRequestIdRef = useRef(0);
+  const searchCriteriaKeyRef = useRef("");
 
   // ── Check auth sessions on mount — sync persisted state with server ──
   useEffect(() => {
@@ -1257,6 +1255,7 @@ export function BotBrowserView() {
     setError(null);
     setSelectedCard(null);
     setDetail(null);
+    setDetailError(null);
     setShowLoginModal(false);
   }, []);
 
@@ -1302,7 +1301,43 @@ export function BotBrowserView() {
     };
   }, [sourceId]);
 
+  const searchCriteriaKey = useMemo(
+    () =>
+      JSON.stringify({
+        providerId: provider.id,
+        query,
+        page,
+        sort,
+        nsfw,
+        includeTags,
+        excludeTags,
+        sortAsc,
+        minTokens,
+        maxTokens,
+        features,
+        extraToggles,
+      }),
+    [
+      provider.id,
+      query,
+      page,
+      sort,
+      nsfw,
+      includeTags,
+      excludeTags,
+      sortAsc,
+      minTokens,
+      maxTokens,
+      features,
+      extraToggles,
+    ],
+  );
+  searchCriteriaKeyRef.current = searchCriteriaKey;
+
   const doSearch = useCallback(async () => {
+    const requestId = searchRequestIdRef.current + 1;
+    searchRequestIdRef.current = requestId;
+    const requestCriteriaKey = searchCriteriaKey;
     setLoading(true);
     setError(null);
     try {
@@ -1320,13 +1355,17 @@ export function BotBrowserView() {
         extraToggles,
       });
 
+      if (searchRequestIdRef.current !== requestId || searchCriteriaKeyRef.current !== requestCriteriaKey) return;
       setResults(result.cards);
       setTotalCount(result.totalCount);
     } catch (err) {
+      if (searchRequestIdRef.current !== requestId || searchCriteriaKeyRef.current !== requestCriteriaKey) return;
       setError(err instanceof Error ? err.message : "Search failed");
       setResults([]);
     } finally {
-      setLoading(false);
+      if (searchRequestIdRef.current === requestId && searchCriteriaKeyRef.current === requestCriteriaKey) {
+        setLoading(false);
+      }
     }
   }, [
     provider,
@@ -1341,6 +1380,7 @@ export function BotBrowserView() {
     maxTokens,
     features,
     extraToggles,
+    searchCriteriaKey,
   ]);
 
   useEffect(() => {
@@ -1354,13 +1394,15 @@ export function BotBrowserView() {
   const openDetail = async (card: BrowseCard) => {
     setSelectedCard(card);
     setDetail(null);
+    setDetailError(null);
     setDetailLoading(true);
     try {
       const d = await provider.fetchDetail(card);
       setDetail(d);
-    } catch {
-      toast.error("Failed to load character details");
-      setSelectedCard(null);
+    } catch (err) {
+      // A real transport/API failure — surface it with a Retry instead of the benign
+      // "no detailed definition" empty state, which only applies to successful-but-empty fetches.
+      setDetailError(err instanceof Error ? err.message : "Failed to load character details");
     } finally {
       setDetailLoading(false);
     }
@@ -1379,7 +1421,11 @@ export function BotBrowserView() {
         });
         const file = new File([blob], "character.png", { type: "image/png" });
         const { json, imageDataUrl } = await parsePngCharacterCard(file);
-        const cardDetail = sourceId === "chub" ? (detail ?? (await provider.fetchDetail(card))) : detail;
+        // Import-time enrichment re-fetch is optional: the authoritative PNG is
+        // already downloaded and parsed, so a transient detail failure must not
+        // abort the import (the detail-view path surfaces failures; this one degrades).
+        const cardDetail =
+          sourceId === "chub" ? (detail ?? (await provider.fetchDetail(card).catch(() => null))) : detail;
         const importJson = attachEmbeddedLorebookToCharacterJson(
           json as Record<string, unknown>,
           cardDetail?.embeddedLorebook,
@@ -1398,12 +1444,14 @@ export function BotBrowserView() {
         if (data.success) {
           toast.success(`Imported "${data.name ?? "character"}" successfully!`);
           const cached = cacheCharacterListRecordFromResult(qc, data);
-          if (!cached) qc.invalidateQueries({ queryKey: characterKeys.list() });
+          if (!cached) invalidateCharacterCollectionQueries(qc);
           if (data.lorebook) qc.invalidateQueries({ queryKey: lorebookKeys.all });
         } else throw new Error(data.error ?? "Import failed");
       } else {
+        // Optional enrichment re-fetch: degrade to the search-result-backed card
+        // on failure rather than aborting the import (see the chub branch above).
         let cardDetail = detail;
-        if (!cardDetail) cardDetail = await provider.fetchDetail(card);
+        if (!cardDetail) cardDetail = await provider.fetchDetail(card).catch(() => null);
         const importEmbeddedLorebook = confirmEmbeddedLorebookImport(card.name, cardDetail?.embeddedLorebook);
         // For extracted JanitorAI data, description contains the full personality definition
         const descriptionText = cardDetail?.description || "";
@@ -1445,7 +1493,7 @@ export function BotBrowserView() {
         if (data.success) {
           toast.success(`Imported "${data.name ?? card.name}" successfully!`);
           const cached = cacheCharacterListRecordFromResult(qc, data);
-          if (!cached) qc.invalidateQueries({ queryKey: characterKeys.list() });
+          if (!cached) invalidateCharacterCollectionQueries(qc);
           if (data.lorebook) qc.invalidateQueries({ queryKey: lorebookKeys.all });
         } else throw new Error(data.error ?? "Import failed");
       }
@@ -1787,11 +1835,14 @@ export function BotBrowserView() {
               card={selectedCard}
               detail={detail}
               loading={detailLoading}
+              error={detailError}
+              onRetry={() => openDetail(selectedCard)}
               importing={importing}
               provider={provider}
               onBack={() => {
                 setSelectedCard(null);
                 setDetail(null);
+                setDetailError(null);
               }}
               onImport={handleImport}
               tagImportMode={tagImportMode}
@@ -2553,6 +2604,8 @@ function DetailView({
   card,
   detail,
   loading,
+  error,
+  onRetry,
   importing,
   provider,
   onBack,
@@ -2563,6 +2616,8 @@ function DetailView({
   card: BrowseCard;
   detail: CardDetail | null;
   loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   importing: boolean;
   provider: ProviderConfig;
   onBack: () => void;
@@ -2638,6 +2693,16 @@ function DetailView({
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 size="1.5rem" className="animate-spin text-[var(--muted-foreground)]" />
+        </div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-16">
+          <span className="text-sm text-[var(--destructive)]">{error}</span>
+          <button
+            onClick={onRetry}
+            className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)]/15 px-4 py-2 text-xs font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/25"
+          >
+            <RefreshCw size="0.75rem" /> Retry
+          </button>
         </div>
       ) : (
         <div className="flex gap-5 max-md:flex-col">

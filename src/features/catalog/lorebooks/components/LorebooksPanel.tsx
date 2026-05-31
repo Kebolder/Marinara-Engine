@@ -24,11 +24,13 @@ import {
   Trash2,
   Zap,
   Camera,
+  Gamepad2,
 } from "lucide-react";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useLorebooks, useDeleteLorebook, useUpdateLorebook, useUploadLorebookImage } from "../hooks/use-lorebooks";
-import { useCharacters, usePersonas } from "../../characters/index";
+import { useCharacterSummariesByIds } from "../../characters/index";
+import { usePersonaSummaries } from "../../personas/index";
 import type { Lorebook, LorebookCategory } from "../../../../engine/contracts/types/lorebook";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { cn } from "../../../../shared/lib/utils";
@@ -44,6 +46,7 @@ const CATEGORIES: Array<{ id: LorebookCategory | "all" | "active"; label: string
   { id: "character", label: "Character", icon: Users },
   { id: "npc", label: "NPC", icon: UserRound },
   { id: "spellbook", label: "Spellbook", icon: Wand2 },
+  { id: "game", label: "Game", icon: Gamepad2 },
   { id: "uncategorized", label: "Other", icon: BookOpen },
 ];
 
@@ -52,6 +55,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   character: "from-violet-400 to-purple-500",
   npc: "from-rose-400 to-pink-500",
   spellbook: "from-blue-400 to-indigo-500",
+  game: "from-cyan-400 to-sky-500",
   uncategorized: "from-amber-400 to-orange-500",
   all: "from-amber-400 to-orange-500",
 };
@@ -89,8 +93,22 @@ export function LorebooksPanel() {
   const { data: lorebooks, isLoading } = useLorebooks(
     activeCategory === "active" || activeCategory === "all" ? undefined : activeCategory,
   );
-  const { data: rawCharacters } = useCharacters();
-  const { data: rawPersonas } = usePersonas();
+  const lorebookCharacterIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const lorebook of (lorebooks ?? []) as Lorebook[]) {
+      if (Array.isArray(lorebook.characterIds)) {
+        for (const id of lorebook.characterIds) {
+          if (typeof id === "string" && id.trim()) ids.add(id.trim());
+        }
+      }
+      if (typeof lorebook.characterId === "string" && lorebook.characterId.trim()) {
+        ids.add(lorebook.characterId.trim());
+      }
+    }
+    return Array.from(ids);
+  }, [lorebooks]);
+  const { data: rawCharacters } = useCharacterSummariesByIds(lorebookCharacterIds, lorebookCharacterIds.length > 0);
+  const { data: rawPersonas } = usePersonaSummaries();
   const deleteLorebook = useDeleteLorebook();
   const updateLorebook = useUpdateLorebook();
   const uploadLorebookImage = useUploadLorebookImage();
@@ -100,8 +118,8 @@ export function LorebooksPanel() {
   const characterNameById = useMemo(() => {
     const map = new Map<string, string>();
     if (!rawCharacters) return map;
-    for (const c of rawCharacters as Array<{ id: string; data: Record<string, unknown> }>) {
-      const d = c.data;
+    for (const c of rawCharacters) {
+      const d = c.data ?? {};
       map.set(c.id, typeof d?.name === "string" ? d.name : "Unknown");
     }
     return map;
@@ -109,7 +127,7 @@ export function LorebooksPanel() {
   const personaNameById = useMemo(() => {
     const map = new Map<string, string>();
     if (!rawPersonas) return map;
-    for (const p of rawPersonas as Array<{ id: string; name: string; comment?: string | null }>) {
+    for (const p of rawPersonas) {
       map.set(p.id, p.comment ? `${p.name} - ${p.comment}` : p.name || "Unknown");
     }
     return map;
@@ -610,7 +628,10 @@ export function LorebooksPanel() {
           {activeCategory === "all" && grouped
             ? // Grouped view
               Array.from(grouped.entries()).map(([category, books]) => {
-                const catMeta = CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[5];
+                const catMeta =
+                  CATEGORIES.find((c) => c.id === category) ??
+                  CATEGORIES.find((c) => c.id === "uncategorized") ??
+                  CATEGORIES[0];
                 const CatIcon = catMeta.icon;
                 return (
                   <div key={category} className="mb-2">
@@ -677,7 +698,7 @@ export function LorebooksPanel() {
                       ) {
                         deleteLorebook.mutate(lb.id);
                       }
-                      }}
+                    }}
                     onImagePick={() => handlePickLorebookImage(lb.id)}
                     selectionMode={selectionMode}
                     isSelected={selectedLorebookIds.has(lb.id)}

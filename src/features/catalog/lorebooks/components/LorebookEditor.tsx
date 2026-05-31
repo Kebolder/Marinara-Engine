@@ -32,9 +32,11 @@ import {
   useUpdateLorebookEntry,
   useReorderLorebookFolders,
   useTransferLorebookEntries,
+  useBulkUnvectorizeLorebookEntries,
   lorebookKeys,
 } from "../hooks/use-lorebooks";
-import { useCharacters, usePersonas } from "../../characters/index";
+import { useCharacterSummaries, useCharacterSummariesByIds } from "../../characters/index";
+import { usePersonaSummaries } from "../../personas/index";
 import { useConnections } from "../../connections/index";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { useUIStore } from "../../../../shared/stores/ui.store";
@@ -59,6 +61,7 @@ import {
   ArrowUpDown,
   Hash,
   Sparkles,
+  Eraser,
   Loader2,
   Check,
   CheckSquare2,
@@ -72,8 +75,13 @@ import {
 import { cn } from "../../../../shared/lib/utils";
 import { HelpTooltip } from "../../../../shared/components/ui/HelpTooltip";
 import { exportApi } from "../../../../shared/api/export-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
-import type { Lorebook, LorebookEntry, LorebookFolder, LorebookCategory } from "../../../../engine/contracts/types/lorebook";
+import { lorebookCommandApi } from "../../../../shared/api/lorebook-command-api";
+import type {
+  Lorebook,
+  LorebookEntry,
+  LorebookFolder,
+  LorebookCategory,
+} from "../../../../engine/contracts/types/lorebook";
 import { testPrimaryKeys, testSecondaryKeys } from "../../../../engine/shared/regex/lorebook-keyword-matching";
 import { LorebookEntryRow } from "./LorebookEntryRow";
 import { LorebookFolderRow } from "./LorebookFolderRow";
@@ -109,13 +117,47 @@ function writeCollapsedFolderIds(lorebookId: string, ids: Set<string>) {
   }
 }
 
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === "") {
+      setDebounced("");
+      return;
+    }
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [delayMs, value]);
+  return debounced;
+}
+
+function splitSearchTerms(value: string): string[] {
+  return value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function searchValuesMatchTerms(values: string[], terms: string[]): boolean {
+  if (terms.length === 0) return true;
+  const normalizedValues = values.map((value) => value.toLowerCase());
+  return terms.every((term) => normalizedValues.some((value) => value.includes(term)));
+}
+
 // ── Types ──
 type LinkedResourceItem = {
   id: string;
   name: string;
   description?: string | null;
+  searchText?: string[];
   deleted?: boolean;
 };
+
+function readBoolFlag(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  return false;
+}
 
 function LinkedResourcePicker({
   label,
@@ -128,6 +170,8 @@ function LinkedResourcePicker({
   selectedIds,
   search,
   onSearchChange,
+  isLoading = false,
+  isError = false,
   isOpen,
   onOpen,
   onClose,
@@ -144,6 +188,8 @@ function LinkedResourcePicker({
   selectedIds: string[];
   search: string;
   onSearchChange: (value: string) => void;
+  isLoading?: boolean;
+  isError?: boolean;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -159,10 +205,11 @@ function LinkedResourcePicker({
         deleted: true,
       },
   );
+  const searchTerms = useMemo(() => splitSearchTerms(search), [search]);
   const availableItems = items.filter(
     (item) =>
       !selectedIds.includes(item.id) &&
-      [item.name, item.description ?? ""].some((value) => value.toLowerCase().includes(search.toLowerCase())),
+      searchValuesMatchTerms(item.searchText ?? [item.name, item.description ?? ""], searchTerms),
   );
 
   return (
@@ -247,7 +294,13 @@ function LinkedResourcePicker({
             ))}
             {availableItems.length === 0 && (
               <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                {items.length === selectedItems.length ? `All ${label.toLowerCase()} already added.` : "No matches."}
+                {isLoading
+                  ? "Loading..."
+                  : isError
+                    ? `${label} could not be loaded.`
+                    : items.length === selectedItems.length
+                      ? `All ${label.toLowerCase()} already added.`
+                      : "No matches."}
               </p>
             )}
           </div>
@@ -291,8 +344,7 @@ export function LorebookEditor() {
   const { data: rawLorebooks } = useLorebooks();
   const { data: rawEntries } = useLorebookEntries(lorebookId);
   const { data: rawFolders } = useLorebookFolders(lorebookId);
-  const { data: rawCharacters } = useCharacters();
-  const { data: rawPersonas } = usePersonas();
+  const { data: rawPersonas } = usePersonaSummaries();
   const updateLorebook = useUpdateLorebook();
   const deleteLorebook = useDeleteLorebook();
   const createEntry = useCreateLorebookEntry();
@@ -301,26 +353,15 @@ export function LorebookEditor() {
   const createFolder = useCreateLorebookFolder();
   const reorderFolders = useReorderLorebookFolders();
   const transferEntries = useTransferLorebookEntries();
+  const unvectorizeEntries = useBulkUnvectorizeLorebookEntries();
 
   const lorebook = rawLorebook as Lorebook | undefined;
   const lorebooks = useMemo(() => (rawLorebooks ?? []) as Lorebook[], [rawLorebooks]);
   const entries = useMemo(() => (rawEntries ?? []) as LorebookEntry[], [rawEntries]);
   const folders = useMemo(() => (rawFolders ?? []) as LorebookFolder[], [rawFolders]);
-  const characters = useMemo(() => {
-    if (!rawCharacters) return [] as Array<{ id: string; name: string; tags: string[] }>;
-    return (rawCharacters as Array<{ id: string; data: Record<string, unknown> }>).map((c) => {
-      const parsed = c.data;
-      const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
-      return { id: c.id, name: typeof parsed?.name === "string" ? parsed.name : "Unknown", tags };
-    });
-  }, [rawCharacters]);
-  const characterTags = useMemo(
-    () => Array.from(new Set(characters.flatMap((character) => character.tags))).sort((a, b) => a.localeCompare(b)),
-    [characters],
-  );
   const personas = useMemo(() => {
     if (!rawPersonas) return [] as Array<{ id: string; name: string; comment?: string | null }>;
-    return (rawPersonas as Array<{ id: string; name: string; comment?: string | null }>).map((p) => ({
+    return rawPersonas.map((p) => ({
       id: p.id,
       name: p.name || "Unknown",
       comment: p.comment ?? null,
@@ -421,9 +462,48 @@ export function LorebookEditor() {
   const [formTags, setFormTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState("");
   const [characterLinkSearch, setCharacterLinkSearch] = useState("");
+  const debouncedCharacterLinkSearch = useDebouncedValue(characterLinkSearch, 180);
   const [personaLinkSearch, setPersonaLinkSearch] = useState("");
   const [characterLinkPickerOpen, setCharacterLinkPickerOpen] = useState(false);
   const [personaLinkPickerOpen, setPersonaLinkPickerOpen] = useState(false);
+
+  const { data: linkedRawCharacters } = useCharacterSummariesByIds(formCharacterIds, formCharacterIds.length > 0);
+  const shouldLoadAllCharacters = characterLinkPickerOpen || activeTab === "entries";
+  const {
+    data: allRawCharacters,
+    isFetching: allRawCharactersFetching,
+    isError: allRawCharactersError,
+  } = useCharacterSummaries(
+    shouldLoadAllCharacters,
+    characterLinkPickerOpen ? debouncedCharacterLinkSearch : undefined,
+  );
+  const rawCharacters = useMemo(() => {
+    const byId = new Map<string, NonNullable<typeof linkedRawCharacters>[number]>();
+    for (const character of linkedRawCharacters ?? []) byId.set(character.id, character);
+    for (const character of allRawCharacters ?? []) byId.set(character.id, character);
+    return Array.from(byId.values());
+  }, [allRawCharacters, linkedRawCharacters]);
+  const characters = useMemo(() => {
+    return rawCharacters.map((c) => {
+      const parsed = c.data ?? {};
+      const tags = Array.isArray(parsed?.tags) ? parsed.tags.map(String).filter(Boolean) : [];
+      const name = typeof parsed?.name === "string" ? parsed.name : "Unknown";
+      const searchText = [
+        c.id,
+        name,
+        c.comment,
+        typeof parsed?.creator === "string" ? parsed.creator : null,
+        typeof parsed?.creator_notes === "string" ? parsed.creator_notes : null,
+        typeof parsed?.character_version === "string" ? parsed.character_version : null,
+        ...tags,
+      ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      return { id: c.id, name, tags, searchText };
+    });
+  }, [rawCharacters]);
+  const characterTags = useMemo(
+    () => Array.from(new Set(characters.flatMap((character) => character.tags))).sort((a, b) => a.localeCompare(b)),
+    [characters],
+  );
 
   const characterNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -484,7 +564,7 @@ export function LorebookEditor() {
     setFormCategory(lorebook.category);
     setFormEnabled(lorebook.enabled);
     setFormIsGlobal(lorebook.isGlobal ?? false);
-    setFormExcludeFromVectorization(lorebook.excludeFromVectorization ?? false);
+    setFormExcludeFromVectorization(readBoolFlag(lorebook.excludeFromVectorization));
     setFormScanDepth(lorebook.scanDepth);
     setFormTokenBudget(lorebook.tokenBudget);
     setFormRecursive(lorebook.recursiveScanning);
@@ -586,8 +666,8 @@ export function LorebookEditor() {
   const canReorderFolders = showFolderGrouping && folders.length > 1 && !reorderFolders.isPending;
 
   // Keyword-test verdicts: for each entry, would the debounced preview text
-  // activate it? Honors useRegex / matchWholeWords / caseSensitive / selective
-  // + secondaryKeys + selectiveLogic / enabled / constant. Skips runtime gates
+  // activate it? Honors useRegex / matchWholeWords / caseSensitive /
+  // secondaryKeys + selectiveLogic / enabled / constant. Skips runtime gates
   // that have no meaning outside a live chat (timing, probability, character
   // filters, semantic embeddings, recursive scan, group selection).
   // Logic mirrors the original lorebook keyword scanner —
@@ -609,7 +689,7 @@ export function LorebookEditor() {
       };
       const { matched } = testPrimaryKeys(entry.keys, text, opts);
       if (!matched) continue;
-      if (entry.selective && entry.secondaryKeys.length > 0) {
+      if (entry.secondaryKeys.length > 0) {
         if (!testSecondaryKeys(entry.secondaryKeys, text, entry.selectiveLogic, opts)) continue;
       }
       result.set(entry.id, "matched");
@@ -677,6 +757,35 @@ export function LorebookEditor() {
       transferTargetLorebooks,
     ],
   );
+
+  const handleUnvectorizeSelectedEntries = useCallback(async () => {
+    if (!lorebookId || selectedEntryIds.size === 0) return;
+    const selectedIds = Array.from(selectedEntryIds);
+    const vectorizedSelectedCount = entries.filter(
+      (entry) => selectedEntryIds.has(entry.id) && Array.isArray(entry.embedding) && entry.embedding.length > 0,
+    ).length;
+    if (vectorizedSelectedCount === 0) {
+      toast.info("No selected entries are vectorized.");
+      return;
+    }
+    if (
+      !(await showConfirmDialog({
+        title: "Unvectorize Entries",
+        message: `Clear stored embeddings for ${vectorizedSelectedCount} selected ${
+          vectorizedSelectedCount === 1 ? "entry" : "entries"
+        }? Keyword and regex matching will keep working.`,
+        confirmLabel: "Unvectorize",
+      }))
+    ) {
+      return;
+    }
+    try {
+      const result = await unvectorizeEntries.mutateAsync({ lorebookId, entryIds: selectedIds });
+      toast.success(`Cleared embeddings for ${result.cleared} ${result.cleared === 1 ? "entry" : "entries"}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to clear embeddings.");
+    }
+  }, [entries, lorebookId, selectedEntryIds, unvectorizeEntries]);
 
   // Toggle the inline drawer for an entry. Single-expand keeps the page
   // tidy; users can collapse the open one and click another to jump.
@@ -1265,6 +1374,12 @@ export function LorebookEditor() {
                         selectedIds={formCharacterIds}
                         search={characterLinkSearch}
                         onSearchChange={setCharacterLinkSearch}
+                        isLoading={
+                          characterLinkPickerOpen &&
+                          (allRawCharactersFetching ||
+                            characterLinkSearch.trim() !== debouncedCharacterLinkSearch.trim())
+                        }
+                        isError={characterLinkPickerOpen && allRawCharactersError}
                         isOpen={characterLinkPickerOpen}
                         onOpen={() => {
                           setCharacterLinkPickerOpen(true);
@@ -1496,6 +1611,9 @@ export function LorebookEditor() {
                   lorebookId={lorebookId!}
                   entries={entries}
                   excludeFromVectorization={formExcludeFromVectorization}
+                  hasUnsavedVectorizationToggle={
+                    formExcludeFromVectorization !== readBoolFlag(lorebook.excludeFromVectorization)
+                  }
                 />
               </div>
             )}
@@ -1532,9 +1650,9 @@ export function LorebookEditor() {
                     <div className="space-y-2 border-t border-[var(--border)] px-3 py-3">
                       <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
                         Paste sample chat text and entries whose keys would trigger get an emerald accent and a
-                        &quot;Would activate&quot; chip. Constant entries are flagged separately because they
-                        activate regardless of text. Out of scope: timing, probability, character/persona filters,
-                        and semantic matching.
+                        &quot;Would activate&quot; chip. Constant entries are flagged separately because they activate
+                        regardless of text. Out of scope: timing, probability, character/persona filters, and semantic
+                        matching.
                       </p>
                       <div className="relative">
                         <textarea
@@ -1695,6 +1813,19 @@ export function LorebookEditor() {
                         <MoveRight size="0.6875rem" />
                       )}
                       Move
+                    </button>
+                    <button
+                      onClick={() => void handleUnvectorizeSelectedEntries()}
+                      disabled={selectedEntryIds.size === 0 || unvectorizeEntries.isPending}
+                      className="inline-flex items-center gap-1 rounded-lg bg-violet-500/12 px-2.5 py-1.5 text-[0.625rem] font-medium text-violet-300 transition-all hover:bg-violet-500/20 disabled:opacity-40"
+                      title="Clear stored embeddings for selected entries"
+                    >
+                      {unvectorizeEntries.isPending ? (
+                        <Loader2 size="0.6875rem" className="animate-spin" />
+                      ) : (
+                        <Eraser size="0.6875rem" />
+                      )}
+                      Unvectorize
                     </button>
                     <button
                       onClick={exitEntrySelectionMode}
@@ -2029,12 +2160,15 @@ function VectorizeSection({
   lorebookId,
   entries,
   excludeFromVectorization,
+  hasUnsavedVectorizationToggle,
 }: {
   lorebookId: string;
   entries: LorebookEntry[];
   excludeFromVectorization: boolean;
+  hasUnsavedVectorizationToggle: boolean;
 }) {
   const queryClient = useQueryClient();
+  const unvectorizeEntries = useBulkUnvectorizeLorebookEntries();
   const { data: rawConnections } = useConnections();
   const connections = (rawConnections ?? []) as Array<{ id: string; name: string; embeddingModel?: string }>;
   const embeddingConnections = connections.filter((c) => c.embeddingModel);
@@ -2043,16 +2177,24 @@ function VectorizeSection({
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const excludedCount = excludeFromVectorization
     ? entries.length
-    : entries.filter((entry) => entry.excludeFromVectorization).length;
-  const vectorizableEntries = excludeFromVectorization
-    ? []
-    : entries.filter((entry) => !entry.excludeFromVectorization);
+    : entries.filter((entry) => readBoolFlag(entry.excludeFromVectorization)).length;
+  const vectorizableEntries = useMemo(
+    () => (excludeFromVectorization ? [] : entries.filter((entry) => !readBoolFlag(entry.excludeFromVectorization))),
+    [entries, excludeFromVectorization],
+  );
   const vectorizableEntryCount = vectorizableEntries.length;
   const vectorizedCount = vectorizableEntries.filter(
     (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
   ).length;
   const missingCount = Math.max(0, vectorizableEntryCount - vectorizedCount);
   const allVectorized = vectorizableEntryCount > 0 && missingCount === 0;
+  const vectorizedEntryIds = useMemo(
+    () =>
+      vectorizableEntries
+        .filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0)
+        .map((entry) => entry.id),
+    [vectorizableEntries],
+  );
 
   // Auto-select first embedding connection
   useEffect(() => {
@@ -2067,13 +2209,10 @@ function VectorizeSection({
     setResult(null);
     try {
       const conn = embeddingConnections.find((c) => c.id === selectedConnectionId);
-      const res = await invokeTauri("lorebook_vectorize", {
-        id: lorebookId,
-        body: {
+      const res = await lorebookCommandApi.vectorize(lorebookId, {
         connectionId: selectedConnectionId,
         model: conn?.embeddingModel ?? "",
         onlyMissing: !allVectorized,
-        },
       });
       const data = res as { vectorized: number; total?: number; skipped?: number };
       await queryClient.invalidateQueries({ queryKey: lorebookKeys.entries(lorebookId) });
@@ -2087,6 +2226,31 @@ function VectorizeSection({
       setResult({ success: false, message: err instanceof Error ? err.message : "Vectorization failed" });
     } finally {
       setVectorizing(false);
+    }
+  };
+
+  const handleUnvectorizeAll = async () => {
+    if (vectorizedEntryIds.length === 0) return;
+    if (
+      !(await showConfirmDialog({
+        title: "Unvectorize Lorebook",
+        message: `Clear stored embeddings for ${vectorizedEntryIds.length} ${
+          vectorizedEntryIds.length === 1 ? "entry" : "entries"
+        }? Keyword and regex matching will keep working.`,
+        confirmLabel: "Unvectorize",
+      }))
+    ) {
+      return;
+    }
+    setResult(null);
+    try {
+      const data = await unvectorizeEntries.mutateAsync({ lorebookId, entryIds: vectorizedEntryIds });
+      setResult({
+        success: true,
+        message: `Cleared embeddings for ${data.cleared} ${data.cleared === 1 ? "entry" : "entries"}`,
+      });
+    } catch (err) {
+      setResult({ success: false, message: err instanceof Error ? err.message : "Unvectorize failed" });
     }
   };
 
@@ -2113,9 +2277,13 @@ function VectorizeSection({
         {excludeFromVectorization ? <span>This lorebook excludes every entry.</span> : null}
         {!excludeFromVectorization && excludedCount > 0 && <span>{excludedCount} excluded.</span>}
       </div>
-      {excludeFromVectorization ? (
+      {hasUnsavedVectorizationToggle ? (
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          Semantic search is disabled by the lorebook-level No Vector toggle.
+          Save this lorebook before vectorizing so the No Vector setting is applied.
+        </p>
+      ) : excludeFromVectorization ? (
+        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+          Semantic vectorization is disabled by this lorebook&apos;s No Vector toggle. Keyword matching still works.
         </p>
       ) : embeddingConnections.length === 0 ? (
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
@@ -2137,15 +2305,39 @@ function VectorizeSection({
             </select>
             <button
               onClick={handleVectorize}
-              disabled={vectorizing || vectorizableEntryCount === 0}
+              disabled={
+                vectorizing ||
+                unvectorizeEntries.isPending ||
+                hasUnsavedVectorizationToggle ||
+                vectorizableEntryCount === 0
+              }
               className="flex items-center gap-1.5 rounded-xl bg-violet-500/15 px-3 py-1.5 text-xs font-medium text-violet-400 ring-1 ring-violet-500/30 transition-all hover:bg-violet-500/25 active:scale-[0.98] disabled:opacity-50"
             >
               {vectorizing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Sparkles size="0.75rem" />}
               {vectorizing
                 ? "Vectorizing..."
-                : allVectorized
-                  ? `Re-vectorize ${vectorizableEntryCount} entries`
-                  : `Vectorize ${missingCount} missing`}
+                : hasUnsavedVectorizationToggle
+                  ? "Save first"
+                  : allVectorized
+                    ? `Re-vectorize ${vectorizableEntryCount} entries`
+                    : `Vectorize ${missingCount} missing`}
+            </button>
+            <button
+              onClick={handleUnvectorizeAll}
+              disabled={
+                vectorizing ||
+                unvectorizeEntries.isPending ||
+                hasUnsavedVectorizationToggle ||
+                vectorizedEntryIds.length === 0
+              }
+              className="flex items-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] active:scale-[0.98] disabled:opacity-50"
+            >
+              {unvectorizeEntries.isPending ? (
+                <Loader2 size="0.75rem" className="animate-spin" />
+              ) : (
+                <Eraser size="0.75rem" />
+              )}
+              Unvectorize all
             </button>
           </div>
           {result && (

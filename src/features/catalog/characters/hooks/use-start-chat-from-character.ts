@@ -1,9 +1,11 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { filterLanguageGenerationConnections } from "../../../../shared/lib/connection-filters";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { chatKeys, useCreateChat } from "../../chats/index";
-import { useApplyChatPreset, useChatPresets } from "../../chat-presets/index";
+import { findUserStarredChatPreset, useApplyChatPreset, useChatPresets } from "../../chat-presets/index";
+import { useConnections } from "../../connections/index";
 
 type ChatMode = "roleplay" | "conversation";
 
@@ -19,21 +21,24 @@ export function useStartChatFromCharacter() {
   const createChat = useCreateChat();
   const queryClient = useQueryClient();
   const { data: chatPresetsData } = useChatPresets();
+  const { data: connections } = useConnections();
   const applyChatPreset = useApplyChatPreset();
 
   const startChatFromCharacter = useCallback(
     ({ characterId, characterName, mode, firstMessage, alternateGreetings }: StartChatFromCharacterOptions) => {
       const label = mode === "conversation" ? "Conversation" : "Roleplay";
       const presetMode = mode === "conversation" ? "conversation" : "roleplay";
-      const starred = (chatPresetsData ?? []).find(
-        (preset) => preset.mode === presetMode && preset.isActive && !preset.isDefault,
-      );
+      const starred = findUserStarredChatPreset(chatPresetsData, presetMode);
+      const connectionRows = filterLanguageGenerationConnections(
+        (connections ?? []) as Array<{ id: string; provider?: string }>,
+      ).filter((connection) => !!connection.id);
 
       createChat.mutate(
         {
           name: characterName ? `${characterName} - ${label}` : `New ${label}`,
           mode,
           characterIds: [characterId],
+          connectionId: connectionRows[0]?.id ?? null,
         },
         {
           onSuccess: async (chat) => {
@@ -58,7 +63,7 @@ export function useStartChatFromCharacter() {
                 if (msg?.id && alternateGreetings?.length) {
                   for (const greeting of alternateGreetings) {
                     if (greeting.trim()) {
-                      await storageApi.addChatMessageSwipe(chat.id, msg.id, greeting);
+                      await storageApi.addChatMessageSwipe(chat.id, msg.id, greeting, { activate: false });
                     }
                   }
                 }
@@ -76,7 +81,7 @@ export function useStartChatFromCharacter() {
         },
       );
     },
-    [applyChatPreset, chatPresetsData, createChat, queryClient],
+    [applyChatPreset, chatPresetsData, connections, createChat, queryClient],
   );
 
   return {

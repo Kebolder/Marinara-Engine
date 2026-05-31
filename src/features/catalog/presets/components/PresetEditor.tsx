@@ -261,9 +261,7 @@ export function PresetEditor() {
       if (section.enabled !== "true" && section.enabled !== true) return false;
       if (section.isMarker !== "true" && section.isMarker !== true) return false;
       const config = section.markerConfig;
-      return (
-        config?.type === "lorebook" || config?.type === "world_info_before" || config?.type === "world_info_after"
-      );
+      return config?.type === "lorebook" || config?.type === "world_info_before" || config?.type === "world_info_after";
     });
   }, [orderedSections]);
   const parentChatHasLorebook = useMemo(() => {
@@ -1070,7 +1068,9 @@ function SectionsTab({
                       <div
                         className="cursor-grab rounded p-0.5 hover:bg-[var(--accent)] active:cursor-grabbing"
                         title="Drag to reorder"
-                        onMouseDown={() => { dragReadyRef.current = idx; }}
+                        onMouseDown={() => {
+                          dragReadyRef.current = idx;
+                        }}
                       >
                         <GripVertical size="0.875rem" className="text-[var(--muted-foreground)]" />
                       </div>
@@ -1507,7 +1507,9 @@ function PresetVariablesEditor({
                     onToggle={() => setExpandedId(expandedId === variable.id ? null : variable.id)}
                     onUpdateVariable={onUpdateVariable}
                     onDeleteVariable={onDeleteVariable}
-                    onGripDown={() => { dragReadyRef.current = idx; }}
+                    onGripDown={() => {
+                      dragReadyRef.current = idx;
+                    }}
                     onMoveUp={() => moveVariableByOffset(idx, -1)}
                     onMoveDown={() => moveVariableByOffset(idx, 1)}
                     canMoveUp={idx > 0}

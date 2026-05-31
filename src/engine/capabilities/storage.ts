@@ -43,6 +43,12 @@ export interface StorageListOptions {
   before?: string;
   fields?: string[];
   fieldSelections?: Record<string, string[]>;
+  search?: string;
+}
+
+export interface AddChatMessageSwipeOptions {
+  extra?: Record<string, unknown>;
+  activate?: boolean;
 }
 
 export interface StorageGateway {
@@ -58,9 +64,20 @@ export interface StorageGateway {
   listChatMessages<T = unknown>(chatId: string, options?: Omit<StorageListOptions, "filters">): Promise<T[]>;
   createChatMessage<T = unknown>(chatId: string, value: Record<string, unknown>): Promise<T>;
   updateChatMessage<T = unknown>(messageId: string, patch: Record<string, unknown>): Promise<T>;
+  updateChatMessageContentIfUnchanged?<T = unknown>(
+    chatId: string,
+    messageId: string,
+    expectedContent: string,
+    content: string,
+  ): Promise<{ updated: boolean; message?: T }>;
   deleteChatMessage(messageId: string): Promise<{ deleted: boolean }>;
   patchChatMessageExtra<T = unknown>(messageId: string, patch: Record<string, unknown>): Promise<T>;
-  addChatMessageSwipe<T = unknown>(chatId: string, messageId: string, content: string): Promise<T>;
+  addChatMessageSwipe<T = unknown>(
+    chatId: string,
+    messageId: string,
+    content: string,
+    options?: AddChatMessageSwipeOptions,
+  ): Promise<T>;
   patchChatMetadata<T = unknown>(chatId: string, patch: Record<string, unknown>): Promise<T>;
   patchChatSummaries<T = unknown>(chatId: string, patch: Record<string, unknown>): Promise<T>;
   listChatMemories<T = unknown>(chatId: string): Promise<T[]>;

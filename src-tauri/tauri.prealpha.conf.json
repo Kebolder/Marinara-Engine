@@ -8,12 +8,20 @@
         "title": "Marinara Engine Pre-Alpha",
         "width": 800,
         "height": 600,
+        "center": true,
         "dragDropEnabled": false,
         "decorations": false,
         "resizable": true,
         "minWidth": 720,
         "minHeight": 520
       }
-    ]
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**", "$APPLOCALDATA/**", "$APPCONFIG/**"]
+      }
+    }
   }
 }

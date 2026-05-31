@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 
 /** Top-level lorebook categories. */
-export type LorebookCategory = "world" | "character" | "npc" | "spellbook" | "uncategorized";
+export type LorebookCategory = "world" | "character" | "npc" | "spellbook" | "game" | "uncategorized";
 
 /** Selective logic operators. */
 export type SelectiveLogic = "and" | "or" | "not";
@@ -54,12 +54,12 @@ export interface Lorebook {
   isGlobal: boolean;
   /** Master on/off switch for this lorebook */
   enabled: boolean;
-  /** When true, semantic vectorization skips every entry in this lorebook. Keyword matching still works. */
+  /** When true, semantic vectorization and semantic matching skip every entry. Keyword matching still works. */
   excludeFromVectorization: boolean;
   /** Tags for organizing/filtering lorebooks */
   tags: string[];
   /** Agent/generation origin tracking */
-  generatedBy: "user" | "agent" | "import" | null;
+  generatedBy: "user" | "agent" | "import" | "lorebook-maker" | "game-session" | null;
   sourceAgentId: string | null;
   createdAt: string;
   updatedAt: string;

@@ -20,7 +20,6 @@ import {
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import type { Message, MessageExtra } from "../../../../engine/contracts/types/chat";
 import { useUIStore } from "../../../../shared/stores/ui.store";
-import { useChatStore } from "../../../../shared/stores/chat.store";
 import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson } from "../../../../shared/lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../../../shared/lib/markdown";
 import { chatKeys } from "../../../catalog/chats/index";
@@ -52,6 +51,8 @@ function nameColorStyle(color?: string): CSSProperties | undefined {
 
 /** Regex to detect a message that is just an image/GIF URL */
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:gif|png|jpe?g|webp)(?:\?[^\s]*)?$/i;
+const MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR =
+  "button, a, textarea, input, select, label, [role='button'], [contenteditable='true'], .mari-message-actions";
 
 function HiddenFromAIConversationButton({
   canCollapse,
@@ -62,8 +63,7 @@ function HiddenFromAIConversationButton({
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const className =
-    "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] font-medium text-amber-500/80";
+  const className = "inline-flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] font-medium text-amber-500/80";
   if (!canCollapse) {
     return (
       <span className={className} title="Hidden from AI">
@@ -282,7 +282,7 @@ interface ConversationMessageProps {
   forceShowActions?: boolean;
   onDelete?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
-  onEdit?: (messageId: string, content: string) => void;
+  onEdit?: (messageId: string, content: string) => void | Promise<void>;
   onSetActiveSwipe?: (messageId: string, index: number) => void;
   onPeekPrompt?: () => void;
   onToggleHiddenFromAI?: (messageId: string, current: boolean) => void;
@@ -327,6 +327,8 @@ export const ConversationMessage = memo(function ConversationMessage({
 }: ConversationMessageProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const [showActions, setShowActions] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
@@ -334,13 +336,14 @@ export const ConversationMessage = memo(function ConversationMessage({
   const [manuallyExpandedHidden, setManuallyExpandedHidden] = useState(false);
   const [imageLightbox, setImageLightbox] = useState<{ url: string; prompt?: string | null } | null>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
-  const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
+  const lastMessageTapAtRef = useRef(0);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const chatFontSize = useUIStore((s) => s.chatFontSize);
   const showMessageNumbers = useUIStore((s) => s.showMessageNumbers);
   const collapseHiddenMessages = useUIStore((s) => s.summaryPopoverSettings.collapseHiddenMessages);
+  const editMessagesOnDoubleClick = useUIStore((s) => s.editMessagesOnDoubleClick);
   const messageTextStyle = useMemo<CSSProperties>(() => ({ fontSize: `${chatFontSize}px` }), [chatFontSize]);
-  const isGuided = guideGenerations && hasInput;
+  const isGuided = guideGenerations;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
   const regenerateGuidedClass = isGuided
     ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:text-[var(--primary)] hover:bg-[var(--primary)]/20"
@@ -575,6 +578,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   }, [renderedContent]);
 
   const startEditing = useCallback(() => {
+    setEditError(null);
+    setEditSaving(false);
     setEditing(true);
     setEditValue(message.content);
     requestAnimationFrame(() => {
@@ -586,6 +591,55 @@ export const ConversationMessage = memo(function ConversationMessage({
       }
     });
   }, [message.content]);
+
+  const startEditingFromMessageGesture = useCallback(
+    (event: React.MouseEvent) => {
+      if (!editMessagesOnDoubleClick || !onEdit || editing) return false;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (onEditClick) onEditClick();
+      else startEditing();
+      return true;
+    },
+    [editMessagesOnDoubleClick, editing, onEdit, onEditClick, startEditing],
+  );
+
+  const handleMessageDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      startEditingFromMessageGesture(event);
+    },
+    [startEditingFromMessageGesture],
+  );
+
+  const handleMessageClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (multiSelectMode) {
+        onToggleSelect?.({
+          messageId: message.id,
+          orderIndex: messageOrderIndex ?? 0,
+          checked: !isSelected,
+          shiftKey: event.shiftKey,
+        });
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return;
+
+      const isCoarsePointer = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+      if (isCoarsePointer) {
+        const now = Date.now();
+        const isDoubleTap = now - lastMessageTapAtRef.current <= 350;
+        lastMessageTapAtRef.current = now;
+        if (isDoubleTap && startEditingFromMessageGesture(event)) return;
+      }
+
+      setShowActions((v) => !v);
+    },
+    [isSelected, message.id, messageOrderIndex, multiSelectMode, onToggleSelect, startEditingFromMessageGesture],
+  );
 
   useEffect(() => {
     if (!onEdit) return;
@@ -602,13 +656,22 @@ export const ConversationMessage = memo(function ConversationMessage({
   const editValueRef = useRef(editValue);
   editValueRef.current = editValue;
 
-  const handleSaveEdit = useCallback(() => {
+  const handleSaveEdit = useCallback(async () => {
+    if (editSaving) return;
     const val = editValueRef.current.trim();
-    if (val !== message.content) {
-      onEdit?.(message.id, val);
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      if (val !== message.content) {
+        await onEdit?.(message.id, val);
+      }
+      setEditing(false);
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Could not save edit.");
+    } finally {
+      setEditSaving(false);
     }
-    setEditing(false);
-  }, [message.content, message.id, onEdit]);
+  }, [editSaving, message.content, message.id, onEdit]);
 
   // System messages — minimal display
   if (isSystem) {
@@ -618,18 +681,8 @@ export const ConversationMessage = memo(function ConversationMessage({
           "group flex justify-center py-1",
           multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/10",
         )}
-        onClick={(e) => {
-          if (multiSelectMode) {
-            onToggleSelect?.({
-              messageId: message.id,
-              orderIndex: messageOrderIndex ?? 0,
-              checked: !isSelected,
-              shiftKey: e.shiftKey,
-            });
-          } else {
-            setShowActions((v) => !v);
-          }
-        }}
+        onClick={handleMessageClick}
+        onDoubleClick={handleMessageDoubleClick}
       >
         <div className="relative">
           {!multiSelectMode && onDelete && (
@@ -681,18 +734,8 @@ export const ConversationMessage = memo(function ConversationMessage({
           isStreaming && "bg-[var(--secondary)]/20",
           multiSelectMode && isSelected && "bg-[var(--destructive)]/10",
         )}
-        onClick={(e) => {
-          if (multiSelectMode) {
-            onToggleSelect?.({
-              messageId: message.id,
-              orderIndex: messageOrderIndex ?? 0,
-              checked: !isSelected,
-              shiftKey: e.shiftKey,
-            });
-          } else {
-            setShowActions((v) => !v);
-          }
-        }}
+        onClick={handleMessageClick}
+        onDoubleClick={handleMessageDoubleClick}
       >
         {/* Multi-select checkbox */}
         {multiSelectMode && (
@@ -832,45 +875,49 @@ export const ConversationMessage = memo(function ConversationMessage({
         )}
 
         {/* Image attachments (selfies, illustrations) */}
-        {!isHiddenCollapsed && extra.attachments && extra.attachments.length > 0 && !IMAGE_URL_RE.test(renderedContent.trim()) && (
-          <div className="ml-14 mt-1.5 flex flex-col items-start gap-2">
-            {extra.attachments.map((att: any, i: number) =>
-              att.type === "image" || att.type?.startsWith("image/") ? (
-                <div key={i} className="group/att relative inline-block">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setImageLightbox({ url: att.url || att.data, prompt: att.prompt });
-                    }}
-                    className="block cursor-zoom-in rounded-lg text-left"
-                    title="Open image"
-                  >
-                    <img
-                      src={att.url || att.data}
-                      alt={att.filename || att.name || "image"}
-                      className="max-h-80 max-w-full rounded-lg"
-                      loading="lazy"
-                    />
-                  </button>
-                  <button
-                    onClick={() => handleRemoveAttachment(i)}
-                    title="Remove from message"
-                    className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
-                  >
-                    <X size="0.875rem" />
-                  </button>
-                </div>
-              ) : null,
-            )}
-          </div>
-        )}
+        {!isHiddenCollapsed &&
+          extra.attachments &&
+          extra.attachments.length > 0 &&
+          !IMAGE_URL_RE.test(renderedContent.trim()) && (
+            <div className="ml-14 mt-1.5 flex flex-col items-start gap-2">
+              {extra.attachments.map((att: any, i: number) =>
+                att.type === "image" || att.type?.startsWith("image/") ? (
+                  <div key={i} className="group/att relative inline-block">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setImageLightbox({ url: att.url || att.data, prompt: att.prompt });
+                      }}
+                      className="block cursor-zoom-in rounded-lg text-left"
+                      title="Open image"
+                    >
+                      <img
+                        src={att.url || att.data}
+                        alt={att.filename || att.name || "image"}
+                        className="max-h-80 max-w-full rounded-lg"
+                        loading="lazy"
+                      />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveAttachment(i)}
+                      title="Remove from message"
+                      className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
+                    >
+                      <X size="0.875rem" />
+                    </button>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
 
         {!hideActions && hasSwipes && (
           <SwipeJumpControl
             activeSwipeIndex={message.activeSwipeIndex}
             swipeCount={swipeCount}
             onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+            onCreateNextSwipe={onRegenerate ? () => onRegenerate(message.id) : undefined}
             className="ml-14 mt-2 px-1 text-[0.6875rem] text-[var(--muted-foreground)]"
             buttonClassName="rounded p-0.5 transition-colors hover:bg-[var(--accent)] disabled:opacity-30"
           />
@@ -983,18 +1030,8 @@ export const ConversationMessage = memo(function ConversationMessage({
       )}
       data-message-id={message.id}
       data-message-role={message.role}
-      onClick={(e) => {
-        if (multiSelectMode) {
-          onToggleSelect?.({
-            messageId: message.id,
-            orderIndex: messageOrderIndex ?? 0,
-            checked: !isSelected,
-            shiftKey: e.shiftKey,
-          });
-        } else {
-          setShowActions((v) => !v);
-        }
-      }}
+      onClick={handleMessageClick}
+      onDoubleClick={handleMessageDoubleClick}
     >
       {/* Multi-select checkbox */}
       {multiSelectMode && (
@@ -1076,20 +1113,29 @@ export const ConversationMessage = memo(function ConversationMessage({
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
                   e.preventDefault();
-                  setEditing(false);
+                  if (!editSaving) setEditing(false);
                 }
               }}
+              disabled={editSaving}
             />
+            {editError && <div className="text-[0.6875rem] text-red-300/90">{editError}</div>}
             <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
               <button
-                onClick={() => setEditing(false)}
+                onClick={() => {
+                  if (!editSaving) setEditing(false);
+                }}
+                disabled={editSaving}
                 className="text-foreground/70 hover:underline hover:text-foreground"
               >
                 cancel
               </button>
               <span>·</span>
-              <button onClick={handleSaveEdit} className="text-foreground/70 hover:underline hover:text-foreground">
-                save
+              <button
+                onClick={() => void handleSaveEdit()}
+                disabled={editSaving}
+                className="text-foreground/70 hover:underline hover:text-foreground"
+              >
+                {editSaving ? "saving" : "save"}
               </button>
             </div>
           </div>
@@ -1136,45 +1182,49 @@ export const ConversationMessage = memo(function ConversationMessage({
         )}
 
         {/* Image attachments (selfies, illustrations) — skip when content is already an image URL */}
-        {!isHiddenCollapsed && extra.attachments && extra.attachments.length > 0 && !IMAGE_URL_RE.test(renderedContent.trim()) && (
-          <div className="mt-1.5 flex flex-col items-center gap-2">
-            {extra.attachments.map((att: any, i: number) =>
-              att.type === "image" || att.type?.startsWith("image/") ? (
-                <div key={i} className="group/att relative inline-block">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setImageLightbox({ url: att.url || att.data, prompt: att.prompt });
-                    }}
-                    className="block cursor-zoom-in rounded-lg text-left"
-                    title="Open image"
-                  >
-                    <img
-                      src={att.url || att.data}
-                      alt={att.filename || att.name || "image"}
-                      className="max-h-80 max-w-full rounded-lg"
-                      loading="lazy"
-                    />
-                  </button>
-                  <button
-                    onClick={() => handleRemoveAttachment(i)}
-                    title="Remove from message"
-                    className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
-                  >
-                    <X size="0.875rem" />
-                  </button>
-                </div>
-              ) : null,
-            )}
-          </div>
-        )}
+        {!isHiddenCollapsed &&
+          extra.attachments &&
+          extra.attachments.length > 0 &&
+          !IMAGE_URL_RE.test(renderedContent.trim()) && (
+            <div className="mt-1.5 flex flex-col items-center gap-2">
+              {extra.attachments.map((att: any, i: number) =>
+                att.type === "image" || att.type?.startsWith("image/") ? (
+                  <div key={i} className="group/att relative inline-block">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setImageLightbox({ url: att.url || att.data, prompt: att.prompt });
+                      }}
+                      className="block cursor-zoom-in rounded-lg text-left"
+                      title="Open image"
+                    >
+                      <img
+                        src={att.url || att.data}
+                        alt={att.filename || att.name || "image"}
+                        className="max-h-80 max-w-full rounded-lg"
+                        loading="lazy"
+                      />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveAttachment(i)}
+                      title="Remove from message"
+                      className="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white/80 transition-opacity hover:bg-black/80 hover:text-white sm:opacity-0 sm:group-hover/att:opacity-100"
+                    >
+                      <X size="0.875rem" />
+                    </button>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
 
         {!hideActions && hasSwipes && (
           <SwipeJumpControl
             activeSwipeIndex={message.activeSwipeIndex}
             swipeCount={swipeCount}
             onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+            onCreateNextSwipe={onRegenerate ? () => onRegenerate(message.id) : undefined}
             className="mt-1.5 text-[0.6875rem] text-[var(--muted-foreground)]"
             buttonClassName="rounded p-0.5 transition-colors hover:bg-[var(--accent)] disabled:opacity-30"
           />
@@ -1266,9 +1316,9 @@ export const ConversationMessage = memo(function ConversationMessage({
                 </pre>
               </div>
             </div>
-            </div>,
-            document.body,
-          )}
+          </div>,
+          document.body,
+        )}
       {generationReplay && (
         <GenerationReplayDetailsModal
           open={showGenerationReplay}

@@ -44,11 +44,7 @@ import {
 } from "lucide-react";
 import { useDeleteAgent } from "../hooks/use-agents";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../lorebooks/index";
-import {
-  useKnowledgeSources,
-  useUploadKnowledgeSource,
-  useDeleteKnowledgeSource,
-} from "../../knowledge/index";
+import { useKnowledgeSources, useUploadKnowledgeSource, useDeleteKnowledgeSource } from "../../knowledge/index";
 import { cn } from "../../../../shared/lib/utils";
 import {
   getAgentRunIntervalMeta,
@@ -65,7 +61,19 @@ import {
   normalizeCustomAgentActivationScanDepth,
 } from "../../../../engine/contracts/constants/agent-activation";
 import { getDefaultAgentPrompt } from "../../../../engine/contracts/constants/agent-prompts";
-import { BUILT_IN_AGENTS, BUILT_IN_TOOLS, DEFAULT_AGENT_CONTEXT_SIZE, DEFAULT_AGENT_TOOLS, DEFAULT_AGENT_MAX_TOKENS, MAX_AGENT_MAX_TOKENS, MIN_AGENT_MAX_TOKENS, getDefaultBuiltInAgentSettings, type AgentPhase, type AgentResultType, type ToolDefinition } from "../../../../engine/contracts/types/agent";
+import {
+  BUILT_IN_AGENTS,
+  BUILT_IN_TOOLS,
+  DEFAULT_AGENT_CONTEXT_SIZE,
+  DEFAULT_AGENT_TOOLS,
+  DEFAULT_AGENT_MAX_TOKENS,
+  MAX_AGENT_MAX_TOKENS,
+  MIN_AGENT_MAX_TOKENS,
+  getDefaultBuiltInAgentSettings,
+  type AgentPhase,
+  type AgentResultType,
+  type ToolDefinition,
+} from "../../../../engine/contracts/types/agent";
 
 function createCustomAgentType(name: string): string {
   const slug =
@@ -263,7 +271,9 @@ export function AgentEditor() {
       setLocalSourceFileIds(settings.sourceFileIds ?? []);
       setLocalAutoGenerateAvatars(settings.autoGenerateAvatars ?? false);
       setLocalAutoGenerateBackgrounds(settings.autoGenerateBackgrounds ?? false);
-      setLocalUseAvatarReferences(settings.useAvatarReferences ?? false);
+      setLocalUseAvatarReferences(
+        (settings.useAvatarReferences as boolean | undefined) ?? defaultSettings.useAvatarReferences === true,
+      );
       setLocalImagePositivePrompt((settings.imagePositivePrompt as string) ?? "");
       setLocalImageNegativePrompt((settings.imageNegativePrompt as string) ?? "");
       setLocalResultType(normalizeCustomResultType(settings.resultType));
@@ -288,7 +298,7 @@ export function AgentEditor() {
       setLocalSourceFileIds([]);
       setLocalAutoGenerateAvatars(false);
       setLocalAutoGenerateBackgrounds(false);
-      setLocalUseAvatarReferences(false);
+      setLocalUseAvatarReferences(defaultSettings.useAvatarReferences === true);
       setLocalImagePositivePrompt("");
       setLocalImageNegativePrompt("");
       setLocalResultType("context_injection");
@@ -447,8 +457,8 @@ export function AgentEditor() {
 
   const openAgentDetail = useUIStore((s) => s.openAgentDetail);
 
-  const handleSave = useCallback(async () => {
-    if (!agentDetailId) return;
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    if (!agentDetailId) return false;
     setSaveError(null);
     const isEditingCustomAgent = isCustomAgent || isNewCustomAgent;
     const savedPhase = isEditingCustomAgent && localResultType === "text_rewrite" ? "post_processing" : localPhase;
@@ -507,7 +517,7 @@ export function AgentEditor() {
         ...(localImageConnectionId ? { imageConnectionId: localImageConnectionId } : {}),
         ...(localAutoGenerateAvatars ? { autoGenerateAvatars: true } : {}),
         ...(localAutoGenerateBackgrounds ? { autoGenerateBackgrounds: true } : {}),
-        ...(localUseAvatarReferences ? { useAvatarReferences: true } : {}),
+        ...(isIllustratorAgent ? { useAvatarReferences: localUseAvatarReferences } : {}),
         ...(localImagePositivePrompt.trim() ? { imagePositivePrompt: localImagePositivePrompt.trim() } : {}),
         ...(localImageNegativePrompt.trim() ? { imageNegativePrompt: localImageNegativePrompt.trim() } : {}),
       },
@@ -532,8 +542,10 @@ export function AgentEditor() {
       setDirty(false);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
+      return true;
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save agent config");
+      return false;
     }
   }, [
     agentDetailId,
@@ -566,6 +578,7 @@ export function AgentEditor() {
     isCustomAgent,
     isNewCustomAgent,
     isKnowledgeRetrievalAgent,
+    isIllustratorAgent,
     updateAgent,
     createAgent,
     openAgentDetail,
@@ -636,7 +649,7 @@ export function AgentEditor() {
             setLocalName(e.target.value);
             markDirty();
           }}
-          className="flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-[var(--muted-foreground)] max-md:text-base"
+          className="min-w-0 flex-1 bg-transparent text-lg font-semibold outline-none placeholder:text-[var(--muted-foreground)] max-md:text-base"
           placeholder="Agent name…"
         />
         <div className="flex items-center gap-1.5 max-md:w-full max-md:justify-end max-md:border-t max-md:border-[var(--border)]/30 max-md:pt-2">
@@ -688,8 +701,8 @@ export function AgentEditor() {
             </button>
             <button
               onClick={async () => {
-                await handleSave();
-                closeAgentDetail();
+                const saved = await handleSave();
+                if (saved) closeAgentDetail();
               }}
               className="rounded-lg bg-amber-500/20 px-3 py-1 hover:bg-amber-500/30"
             >
@@ -905,7 +918,8 @@ export function AgentEditor() {
               ))}
             </select>
             <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-              When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active connection.
+              When empty, uses the agent default connection if one is set, otherwise falls back to the chat's active
+              connection.
             </p>
           </FieldGroup>
 
@@ -970,8 +984,8 @@ export function AgentEditor() {
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 Saved on the Illustrator agent. Positive tags are appended after the generated prompt; negative tags are
-                sent directly to the image generator and combine with any connection-level defaults. NovelAI tag syntax is
-                supported.
+                sent directly to the image generator and combine with any connection-level defaults. NovelAI tag syntax
+                is supported.
               </p>
               <label className="mt-3 flex items-center gap-2 cursor-pointer">
                 <input
@@ -983,11 +997,12 @@ export function AgentEditor() {
                   }}
                   className="rounded border-[var(--border)] bg-[var(--secondary)] text-[var(--primary)] focus:ring-[var(--ring)]"
                 />
-                <span className="text-sm">Send character &amp; persona avatars as reference images</span>
+                <span className="text-sm">Send character &amp; persona references</span>
               </label>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                Sends all character avatars in the scene plus your persona avatar to the image generator for visual
-                reference. Works best with providers that support reference images (NovelAI, Stability, A1111, ComfyUI).
+                Sends full-body sprites when available, otherwise character avatars and your persona avatar, to the
+                image generator for visual reference. Works best with providers that support reference images (NovelAI,
+                Stability, A1111, ComfyUI).
               </p>
             </FieldGroup>
           )}

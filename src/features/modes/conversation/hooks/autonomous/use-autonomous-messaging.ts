@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { checkConversationAutonomous, checkConversationCharacterExchange, clearGenerationInProgress, getConversationBusyDelay, markGenerationInProgress, recordAssistantActivity as recordAssistantActivityState, recordAutonomousClientPresence, recordUserActivity as recordUserActivityState } from "../../../../../engine/modes/chat/autonomous/autonomous.service";
+import {
+  checkConversationAutonomous,
+  checkConversationCharacterExchange,
+  clearGenerationInProgress,
+  getConversationBusyDelay,
+  markGenerationInProgress,
+  recordAssistantActivity as recordAssistantActivityState,
+  recordAutonomousClientPresence,
+  recordUserActivity as recordUserActivityState,
+} from "../../../../../engine/modes/chat/autonomous/autonomous.service";
 import { generateConversationSchedules } from "../../../../../engine/modes/chat/schedules/schedule.service";
 import { llmApi } from "../../../../../shared/api/llm-api";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../../shared/stores/ui.store";
-import { characterKeys } from "../../../../catalog/characters/index";
+import { invalidateCharacterCollectionQueries } from "../../../../catalog/characters/index";
 import { chatKeys } from "../../../../catalog/chats/index";
 import { useGenerate } from "../../../../runtime/generation/index";
 
@@ -50,73 +59,78 @@ export function useAutonomousMessaging(
           scheduleGenerationPreferences: useUIStore.getState().scheduleGenerationPreferences,
         },
       );
-      await qc.invalidateQueries({ queryKey: characterKeys.list() });
+      invalidateCharacterCollectionQueries(qc);
       await qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
     },
     [chatId, qc],
   );
 
   const recordUserActivity = useCallback(() => {
-      if (!chatId) return;
-      recordUserActivityState(chatId, {
-        preserveGenerationInProgress: useChatStore.getState().abortControllers.has(chatId),
-      });
-    },
-    [chatId],
-  );
-
-  async function triggerAutonomousGeneration(characterId: string, poll: () => Promise<void>) {
     if (!chatId) return;
-    generatingRef.current = true;
-    const startedAt = markGenerationInProgress(chatId);
-    let produced = false;
-    let shouldSchedulePoll = true;
-    try {
-      produced = await generate({
-        chatId,
-        connectionId: null,
-      });
-      if (produced) {
-        recordAssistantActivityState(chatId, characterId);
-        await qc.invalidateQueries({ queryKey: chatKeys.list() });
-        await qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
-        onAutonomousMessageRef.current?.(characterId);
-      }
-    } catch {
-      // Autonomous generation is opportunistic; keep polling after failures.
-    } finally {
-      clearGenerationInProgress(chatId, startedAt);
-      generatingRef.current = false;
-    }
+    recordUserActivityState(chatId, {
+      preserveGenerationInProgress: useChatStore.getState().abortControllers.has(chatId),
+    });
+  }, [chatId]);
 
-    if (produced && exchangesEnabled) {
+  const triggerAutonomousGeneration = useCallback(
+    async (characterId: string, poll: () => Promise<void>) => {
+      if (!chatId) return;
+      generatingRef.current = true;
+      const startedAt = markGenerationInProgress(chatId);
+      let produced = false;
+      let shouldSchedulePoll = true;
       try {
-        const exchange = await checkConversationCharacterExchange(storageApi, {
+        produced = await generate({
           chatId,
-          lastSpeakerCharId: characterId,
+          connectionId: null,
+          forCharacterId: characterId,
         });
-        const nextCharacterId = exchange.characterIds[0];
-        if (exchange.shouldTrigger && nextCharacterId) {
-          shouldSchedulePoll = false;
-          clearTimeout(busyTimerRef.current);
-          busyTimerRef.current = setTimeout(() => {
-            if (!useChatStore.getState().abortControllers.has(chatId)) {
-              void triggerAutonomousGeneration(nextCharacterId, poll);
-            } else {
-              schedulePoll(poll);
-            }
-          }, 2_000 + Math.random() * 3_000);
+        if (produced) {
+          recordAssistantActivityState(chatId, characterId);
+          await qc.invalidateQueries({ queryKey: chatKeys.list() });
+          await qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
+          onAutonomousMessageRef.current?.(characterId);
         }
       } catch {
-        // Exchange checks are best-effort.
+        // Autonomous generation is opportunistic; keep polling after failures.
+      } finally {
+        clearGenerationInProgress(chatId, startedAt);
+        generatingRef.current = false;
       }
-    }
 
-    if (!produced) {
-      recordAssistantActivityState(chatId);
-    }
-    if (shouldSchedulePoll) schedulePoll(poll);
-  }
+      if (produced && exchangesEnabled) {
+        try {
+          const exchange = await checkConversationCharacterExchange(storageApi, {
+            chatId,
+            lastSpeakerCharId: characterId,
+          });
+          const nextCharacterId = exchange.characterIds[0];
+          if (exchange.shouldTrigger && nextCharacterId) {
+            shouldSchedulePoll = false;
+            clearTimeout(busyTimerRef.current);
+            busyTimerRef.current = setTimeout(
+              () => {
+                if (!useChatStore.getState().abortControllers.has(chatId)) {
+                  void triggerAutonomousGeneration(nextCharacterId, poll);
+                } else {
+                  schedulePoll(poll);
+                }
+              },
+              2_000 + Math.random() * 3_000,
+            );
+          }
+        } catch {
+          // Exchange checks are best-effort.
+        }
+      }
+
+      if (!produced) {
+        recordAssistantActivityState(chatId);
+      }
+      if (shouldSchedulePoll) schedulePoll(poll);
+    },
+    [chatId, exchangesEnabled, generate, qc, schedulePoll],
+  );
 
   useEffect(() => {
     if (!chatId || !autonomousEnabled) return;
@@ -136,7 +150,7 @@ export function useAutonomousMessaging(
 
       try {
         const result = await checkConversationAutonomous(storageApi, { chatId, userStatus });
-        await qc.invalidateQueries({ queryKey: characterKeys.list() });
+        invalidateCharacterCollectionQueries(qc);
         const characterId = result.characterIds[0];
         if (!result.shouldTrigger || !characterId) {
           schedulePoll(poll);
@@ -167,7 +181,7 @@ export function useAutonomousMessaging(
       clearTimeout(pollTimerRef.current);
       clearTimeout(busyTimerRef.current);
     };
-  }, [autonomousEnabled, chatId, exchangesEnabled, generate, qc, schedulePoll]);
+  }, [autonomousEnabled, chatId, exchangesEnabled, qc, schedulePoll, triggerAutonomousGeneration]);
 
   return {
     recordUserActivity,

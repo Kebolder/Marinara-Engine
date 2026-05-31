@@ -1,4 +1,10 @@
-import type { ActivationCondition, LorebookEntry, LorebookFilterMode, LorebookMatchingSource, LorebookSchedule } from "../../contracts/types/lorebook";
+import type {
+  ActivationCondition,
+  LorebookEntry,
+  LorebookFilterMode,
+  LorebookMatchingSource,
+  LorebookSchedule,
+} from "../../contracts/types/lorebook";
 import { testPrimaryKeys, testSecondaryKeys } from "../../shared/regex/lorebook-keyword-matching";
 import { vmRegexExecutor } from "./regex-timeout.js";
 
@@ -68,7 +74,7 @@ export interface GameStateForScanning {
 /**
  * Evaluate activation conditions against game state.
  */
-export function evaluateConditions(conditions: ActivationCondition[], gameState: GameStateForScanning | null): boolean {
+function evaluateConditions(conditions: ActivationCondition[], gameState: GameStateForScanning | null): boolean {
   if (conditions.length === 0) return true;
   if (!gameState) return false;
 
@@ -484,8 +490,9 @@ export function scanForActivatedEntries(
     const { matched, matchedKeys } = testPrimaryKeys(entry.keys, entryScanText, matchOptions);
     if (!matched) continue;
 
-    // Test secondary keys (selective mode)
-    if (entry.selective && entry.secondaryKeys.length > 0) {
+    // Test secondary keys. Older imports can carry secondary keys without the
+    // selective flag, so the configured logic follows the keys themselves.
+    if (entry.secondaryKeys.length > 0) {
       if (!testSecondaryKeys(entry.secondaryKeys, entryScanText, entry.selectiveLogic, matchOptions)) {
         continue;
       }

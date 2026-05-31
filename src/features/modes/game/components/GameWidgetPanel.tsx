@@ -157,14 +157,10 @@ function buildUpdatedWidgetConfig(
       nextConfig.max = parseNumberDraft(draft.max, typeof widget.config.max === "number" ? widget.config.max : 100, {
         min: 1,
       });
-      nextConfig.value = parseNumberDraft(
-        draft.value,
-        getNumericWidgetValue(widget),
-        {
-          min: 0,
-          max: nextConfig.max,
-        },
-      );
+      nextConfig.value = parseNumberDraft(draft.value, getNumericWidgetValue(widget), {
+        min: 0,
+        max: nextConfig.max,
+      });
       if (options?.syncStartingValue) {
         nextConfig.startingValue = nextConfig.value;
       }
@@ -389,10 +385,11 @@ function WidgetCard({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const accent = widget.accent ?? "#a78bfa";
-  const { locked, toggleLocked, x, y, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
+  const { locked, toggleLocked, x, y, panelRef, handleDragEnd } = useDraggablePanel(chatId, `widget:${widget.id}`);
 
   return (
     <motion.div
+      ref={panelRef}
       drag={!locked}
       dragMomentum={false}
       dragElastic={0}

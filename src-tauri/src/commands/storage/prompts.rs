@@ -18,31 +18,39 @@ pub(crate) async fn vectorize_lorebook(
         .get("onlyMissing")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    let entries =
+    let mut entries =
         match list_collection(state, "lorebook-entries", Some(("lorebookId", lorebook_id)))? {
             Value::Array(rows) => rows,
             _ => Vec::new(),
         };
-    let lorebook = get_required(state, "lorebooks", lorebook_id)?;
-    let total = entries.len();
-    if lorebook_excludes_vectorization(Some(&lorebook)) {
+    for entry in &mut entries {
+        normalize_legacy_text_bool_fields(entry, &["excludeFromVectorization"]);
+    }
+    let mut lorebook = get_required(state, "lorebooks", lorebook_id)?;
+    normalize_legacy_text_bool_fields(&mut lorebook, &["excludeFromVectorization"]);
+    let lorebook_excluded = lorebook_excludes_vectorization(Some(&lorebook));
+    let total = if lorebook_excluded {
+        0
+    } else {
+        entries
+            .iter()
+            .filter(|entry| !is_excluded_from_vectorization(entry))
+            .count()
+    };
+    if lorebook_excluded {
         return Ok(json!({
             "success": true,
             "lorebookId": lorebook_id,
             "model": model,
             "total": total,
             "vectorized": 0,
-            "skipped": total
+            "skipped": entries.len()
         }));
     }
     let mut vectorized = 0usize;
     let mut skipped = 0usize;
     for entry in entries {
-        if entry
-            .get("excludeFromVectorization")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        if is_excluded_from_vectorization(&entry) {
             skipped += 1;
             continue;
         }
@@ -98,10 +106,14 @@ pub(crate) fn resolve_embedding_connection_for_id(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        return Ok((
-            embedding_connection_id.to_string(),
-            get_required(state, "connections", embedding_connection_id)?,
-        ));
+        let embedding_connection = get_required(state, "connections", embedding_connection_id)?;
+        if is_openai_chatgpt_connection(&embedding_connection) {
+            return Err(openai_chatgpt_embedding_error());
+        }
+        return Ok((embedding_connection_id.to_string(), embedding_connection));
+    }
+    if is_openai_chatgpt_connection(&connection) {
+        return Err(openai_chatgpt_embedding_error());
     }
     Ok((connection_id.to_string(), connection))
 }
@@ -152,10 +164,18 @@ pub(crate) fn embedding_model(connection: &Value, explicit: Option<&str>) -> App
 }
 
 fn has_embedding_model(connection: &Value) -> bool {
+    !is_openai_chatgpt_connection(connection)
+        && connection
+            .get("embeddingModel")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn is_openai_chatgpt_connection(connection: &Value) -> bool {
     connection
-        .get("embeddingModel")
+        .get("provider")
         .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
+        .is_some_and(|provider| provider == "openai_chatgpt")
 }
 
 pub(crate) fn value_string_array(value: Option<&Value>) -> Vec<String> {
@@ -216,16 +236,29 @@ fn lorebook_entry_embedding_text(entry: &Value) -> String {
     .join("\n")
 }
 
+fn is_excluded_from_vectorization(row: &Value) -> bool {
+    row.get("excludeFromVectorization")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 pub(crate) async fn embed_text(connection: &Value, model: &str, text: &str) -> AppResult<Vec<f64>> {
     let provider = connection
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or("openai");
     match provider {
+        "openai_chatgpt" => Err(openai_chatgpt_embedding_error()),
         "google" | "google_vertex" => embed_google(connection, model, text).await,
         "ollama" => embed_ollama(connection, model, text).await,
         _ => embed_openai_compatible(connection, model, text).await,
     }
+}
+
+fn openai_chatgpt_embedding_error() -> AppError {
+    AppError::invalid_input(
+        "OpenAI (ChatGPT) does not support embeddings through Codex auth. Configure a separate embedding connection.",
+    )
 }
 
 async fn embed_openai_compatible(
@@ -384,6 +417,61 @@ mod tests {
         AppState::from_data_dir(path, Vec::new()).expect("test app state should initialize")
     }
 
+    fn create_connection(state: &AppState) -> String {
+        let connection = state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "name": "Embeddings",
+                    "provider": "openai",
+                    "embeddingModel": "text-embedding-3-small"
+                }),
+            )
+            .expect("connection should be created");
+        connection
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("connection id should be assigned")
+            .to_string()
+    }
+
+    fn create_lorebook(state: &AppState, exclude: Value) -> String {
+        let lorebook = state
+            .storage
+            .create(
+                "lorebooks",
+                json!({
+                    "name": "Vector Test",
+                    "excludeFromVectorization": exclude
+                }),
+            )
+            .expect("lorebook should be created");
+        lorebook
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("lorebook id should be assigned")
+            .to_string()
+    }
+
+    fn create_entry(state: &AppState, lorebook_id: &str, exclude: Value, embedding: Value) {
+        state
+            .storage
+            .create(
+                "lorebook-entries",
+                json!({
+                    "lorebookId": lorebook_id,
+                    "name": "Entry",
+                    "keys": ["key"],
+                    "content": "entry content",
+                    "enabled": true,
+                    "excludeFromVectorization": exclude,
+                    "embedding": embedding
+                }),
+            )
+            .expect("entry should be created");
+    }
+
     #[test]
     fn embedding_base_url_prefers_embedding_specific_url() {
         let connection = json!({
@@ -477,7 +565,7 @@ mod tests {
         .expect("excluded lorebook should return a successful no-op");
 
         assert_eq!(result["success"], json!(true));
-        assert_eq!(result["total"], json!(2));
+        assert_eq!(result["total"], json!(0));
         assert_eq!(result["vectorized"], json!(0));
         assert_eq!(result["skipped"], json!(2));
         let entry = state
@@ -615,6 +703,123 @@ mod tests {
     }
 
     #[test]
+    fn resolve_embedding_connection_rejects_openai_chatgpt_without_dedicated_connection() {
+        let state = test_state("chatgpt-embedding-rejected");
+        state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "id": "chatgpt-connection",
+                    "name": "ChatGPT",
+                    "provider": "openai_chatgpt",
+                    "model": "gpt-5",
+                    "embeddingModel": "text-embedding-3-small"
+                }),
+            )
+            .expect("chatgpt connection should insert");
+
+        let error = resolve_embedding_connection_for_id(&state, "chatgpt-connection")
+            .expect_err("chatgpt connection should not be used for embeddings");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("does not support embeddings"));
+    }
+
+    #[test]
+    fn resolve_embedding_connection_rejects_openai_chatgpt_as_dedicated_connection() {
+        let state = test_state("chatgpt-dedicated-embedding-rejected");
+        state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "id": "chat-connection",
+                    "name": "Chat",
+                    "provider": "openai",
+                    "model": "gpt-4o",
+                    "embeddingConnectionId": "chatgpt-connection"
+                }),
+            )
+            .expect("chat connection should insert");
+        state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "id": "chatgpt-connection",
+                    "name": "ChatGPT",
+                    "provider": "openai_chatgpt",
+                    "model": "gpt-5",
+                    "embeddingModel": "text-embedding-3-small"
+                }),
+            )
+            .expect("chatgpt connection should insert");
+
+        let error = resolve_embedding_connection_for_id(&state, "chat-connection")
+            .expect_err("chatgpt dedicated connection should not be used for embeddings");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("does not support embeddings"));
+    }
+
+    #[tokio::test]
+    async fn embed_text_rejects_openai_chatgpt_before_provider_call() {
+        let connection = json!({
+            "provider": "openai_chatgpt",
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "stale-key"
+        });
+
+        let error = embed_text(&connection, "text-embedding-3-small", "hello")
+            .await
+            .expect_err("chatgpt embedding should be rejected");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("does not support embeddings"));
+    }
+
+    #[test]
+    fn resolve_embedding_connection_allows_openai_chatgpt_with_dedicated_embedding_connection() {
+        let state = test_state("chatgpt-dedicated-embedding-allowed");
+        state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "id": "chatgpt-connection",
+                    "name": "ChatGPT",
+                    "provider": "openai_chatgpt",
+                    "model": "gpt-5",
+                    "embeddingConnectionId": "embedding-connection"
+                }),
+            )
+            .expect("chatgpt connection should insert");
+        state
+            .storage
+            .create(
+                "connections",
+                json!({
+                    "id": "embedding-connection",
+                    "name": "Embeddings",
+                    "provider": "custom",
+                    "model": "chat-model",
+                    "embeddingModel": "text-embedding-3-small"
+                }),
+            )
+            .expect("embedding connection should insert");
+
+        let (id, connection) =
+            resolve_embedding_connection_for_id(&state, "chatgpt-connection").unwrap();
+
+        assert_eq!(id, "embedding-connection");
+        assert_eq!(
+            embedding_model(&connection, None).unwrap(),
+            "text-embedding-3-small"
+        );
+    }
+
+    #[test]
     fn resolve_default_embedding_connection_prefers_default_embedding_model() {
         let state = test_state("default-embedding-connection");
         state
@@ -651,5 +856,47 @@ mod tests {
             embedding_model(&connection, None).unwrap(),
             "local-embedding"
         );
+    }
+
+    #[tokio::test]
+    async fn vectorize_lorebook_no_vector_reports_all_entries_skipped() {
+        let state = test_state("no-vector");
+        let connection_id = create_connection(&state);
+        let lorebook_id = create_lorebook(&state, json!("true"));
+        create_entry(&state, &lorebook_id, json!(false), Value::Null);
+        create_entry(&state, &lorebook_id, json!(false), Value::Null);
+
+        let result = vectorize_lorebook(
+            &state,
+            &lorebook_id,
+            json!({ "connectionId": connection_id, "model": "text-embedding-3-small" }),
+        )
+        .await
+        .expect("no-vector lorebook should short-circuit before provider calls");
+
+        assert_eq!(result["total"], json!(0));
+        assert_eq!(result["vectorized"], json!(0));
+        assert_eq!(result["skipped"], json!(2));
+    }
+
+    #[tokio::test]
+    async fn vectorize_lorebook_total_counts_only_vectorizable_entries() {
+        let state = test_state("entry-exclusions");
+        let connection_id = create_connection(&state);
+        let lorebook_id = create_lorebook(&state, json!(false));
+        create_entry(&state, &lorebook_id, json!("true"), Value::Null);
+        create_entry(&state, &lorebook_id, json!("false"), json!([0.1, 0.2]));
+
+        let result = vectorize_lorebook(
+            &state,
+            &lorebook_id,
+            json!({ "connectionId": connection_id, "model": "text-embedding-3-small", "onlyMissing": true }),
+        )
+        .await
+        .expect("existing embeddings should avoid provider calls");
+
+        assert_eq!(result["total"], json!(1));
+        assert_eq!(result["vectorized"], json!(0));
+        assert_eq!(result["skipped"], json!(2));
     }
 }

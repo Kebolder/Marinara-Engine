@@ -45,6 +45,52 @@ describe("invokeTauri remote runtime routing", () => {
     expect(tauriInvoke).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["haptic_status", undefined],
+    ["haptic_connect", { body: { url: "ws://127.0.0.1:12345" } }],
+    ["haptic_disconnect", undefined],
+    ["haptic_start_scan", undefined],
+    ["haptic_stop_scan", undefined],
+    ["haptic_command", { command: { deviceIndex: "all", action: "stop" } }],
+    ["haptic_stop_all", undefined],
+  ])("keeps local-only %s on embedded Tauri when remote runtime is configured", async (command, args) => {
+    useUIStore.setState({ remoteRuntimeUrl: "https://remote.example/runtime" });
+    tauriInvoke.mockResolvedValueOnce({ connected: false, serverUrl: null, scanning: false, devices: [] });
+
+    await expect(invokeTauri(command, args)).resolves.toEqual({
+      connected: false,
+      serverUrl: null,
+      scanning: false,
+      devices: [],
+    });
+
+    expect(tauriInvoke).toHaveBeenCalledWith(command, args);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["load_url_binary", { url: "https://example.com/image.png", fallbackMime: "image/png" }],
+    ["tts_config", undefined],
+    ["tts_update_config", { config: { enabled: true } }],
+    ["tts_voices", undefined],
+    ["tts_speak", { input: { text: "hello" } }],
+    ["translate_text_command", { input: { text: "bonjour", provider: "google", targetLanguage: "en" } }],
+  ])("routes remote-capable shared command %s to the configured remote runtime", async (command, args) => {
+    useUIStore.setState({ remoteRuntimeUrl: "https://remote.example/runtime" });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    await expect(invokeTauri(command, args)).resolves.toEqual({ ok: true });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://remote.example/runtime/api/invoke",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ command, args: args ?? null }),
+      }),
+    );
+    expect(tauriInvoke).not.toHaveBeenCalled();
+  });
+
   it("preserves Retry-After metadata from remote runtime 429 responses", async () => {
     useUIStore.setState({ remoteRuntimeUrl: "https://remote.example/runtime" });
     fetchMock.mockResolvedValueOnce(

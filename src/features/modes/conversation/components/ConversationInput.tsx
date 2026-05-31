@@ -27,8 +27,15 @@ import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { useGenerate } from "../../../runtime/generation/index";
 import { useApplyRegex } from "../../../catalog/agents/regex-application";
-import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../../catalog/chats/index";
-import { characterKeys, useActivePersona, usePersona, useUpdatePersona } from "../../../catalog/characters/index";
+import {
+  useCreateMessage,
+  useDeleteMessage,
+  useUpdateMessageExtra,
+  useChat,
+  chatKeys,
+} from "../../../catalog/chats/index";
+import { characterKeys } from "../../../catalog/characters/index";
+import { personaKeys, useActivePersona, usePersona, useUpdatePersona } from "../../../catalog/personas/index";
 import {
   matchSlashCommand,
   getSlashCompletions,
@@ -39,13 +46,25 @@ import { createInputMacroResolverForChat, isPromptPreviewMacro } from "../../../
 import { parseChatMetadata } from "../../../../shared/lib/chat-display";
 import { formatTextQuotes } from "../../../../shared/lib/dialogue-quotes";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../../../shared/lib/utils";
-import { loadUrlBlob } from "../../../../shared/lib/url-blob";
+import { blobToDataUrl, loadUrlBlob } from "../../../../shared/lib/url-blob";
+import { prepareImageAttachment } from "../../../../shared/lib/chat-attachment-images";
 import { translateDraftText } from "../../../../shared/lib/draft-translation";
-import { QuickConnectionSwitcher, QuickPersonaSwitcher, QuickSwitcherMobile } from "../../shared/chat-ui";
+import {
+  CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_CLASS,
+  CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
+  CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_READY_CLASS,
+  QuickConnectionSwitcher,
+  QuickPersonaSwitcher,
+  QuickReplyMenu,
+  QuickSwitcherMobile,
+  SlashCommandFeedback,
+  type QuickReplyAction,
+} from "../../shared/chat-ui";
 import { EmojiPicker } from "../../../../shared/components/ui/EmojiPicker";
 import { GifPicker } from "../../../../shared/components/ui/GifPicker";
 import { SpeechToTextButton } from "../../../../shared/components/ui/SpeechToTextButton";
-import { QuickReplyMenu, SlashCommandFeedback, type QuickReplyAction } from "../../shared/chat-ui";
 import type { Message } from "../../../../engine/contracts/types/chat";
 import { buildGuidedGenerationInstructionMessage } from "../../../../engine/shared/text/generation-guide";
 
@@ -134,58 +153,6 @@ function parseSavedStatusOptions(value: PersonaStatusRow["savedStatusOptions"]):
     byKey.set(normalized.toLowerCase(), normalized);
   }
   return [...byKey.values()].slice(0, SAVED_STATUS_LIMIT);
-}
-
-function readFileAsDataUrl(file: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
-/** Convert a GIF (or any image) blob to PNG via canvas, returning a new Blob + data URL */
-async function convertToPng(blob: Blob): Promise<{ blob: Blob; dataUrl: string }> {
-  const bitmap = await createImageBitmap(blob);
-
-  let pngBlob: Blob;
-
-  // Prefer OffscreenCanvas when available, fall back to regular <canvas> for broader support (e.g., Safari/iOS).
-  if (typeof OffscreenCanvas !== "undefined") {
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Failed to get 2D context from OffscreenCanvas");
-    }
-    ctx.drawImage(bitmap, 0, 0);
-    pngBlob = await canvas.convertToBlob({ type: "image/png" });
-  } else {
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      throw new Error("Failed to get 2D context from HTMLCanvasElement");
-    }
-    ctx.drawImage(bitmap, 0, 0);
-    pngBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((blobResult) => {
-        if (blobResult) {
-          resolve(blobResult);
-        } else {
-          reject(new Error("Failed to convert canvas to PNG blob"));
-        }
-      }, "image/png");
-    });
-  }
-
-  const dataUrl = await new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.readAsDataURL(pngBlob);
-  });
-  return { blob: pngBlob, dataUrl };
 }
 
 interface ConversationInputProps {
@@ -448,17 +415,16 @@ export function ConversationInput({
 
       for (const file of acceptedFiles) {
         const displayName = file.name || "pasted-file";
-        // Convert GIFs to PNG (Gemini and some providers don't support image/gif)
-        if (file.type === "image/gif") {
+        if (file.type.startsWith("image/")) {
           try {
-            const { dataUrl } = await convertToPng(file);
+            const prepared = await prepareImageAttachment(file, displayName);
             appendAttachmentForChat(originChatId, {
-              type: "image/png",
-              data: dataUrl,
-              name: displayName.replace(/\.gif$/i, ".png"),
+              type: prepared.type,
+              data: prepared.data,
+              name: prepared.name,
             });
           } catch {
-            toast.error(`Failed to convert ${displayName}`);
+            toast.error(`Failed to prepare ${displayName}`);
           } finally {
             adjustPendingAttachmentReads(originChatId, -1);
           }
@@ -466,7 +432,7 @@ export function ConversationInput({
         }
 
         try {
-          const data = await readFileAsDataUrl(file);
+          const data = await blobToDataUrl(file, "Failed to read file");
           appendAttachmentForChat(originChatId, { type: inferAttachmentType(file), data, name: displayName });
         } catch {
           toast.error(`Failed to read ${displayName}`);
@@ -596,7 +562,7 @@ export function ConversationInput({
     if (isStreaming) {
       const activeChatData = useChatStore.getState().activeChat;
       const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
-      const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+      const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(personaKeys.list);
       const resolveInputMacros = createInputMacroResolverForChat(activeChatData, cachedCharacters, cachedPersonas, raw);
       // First pass: resolve macros against raw input, so {{input}} uses the pre-translation text.
       let message = applyToUserInput(raw, { resolveMacros: resolveInputMacros });
@@ -701,7 +667,7 @@ export function ConversationInput({
 
     const activeChat = useChatStore.getState().activeChat;
     const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
-    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(personaKeys.list);
     const resolveInputMacros = createInputMacroResolverForChat(activeChat, cachedCharacters, cachedPersonas, raw);
     // First pass: resolve macros against raw input, so {{input}} uses the pre-translation text.
     let message = applyToUserInput(raw, { resolveMacros: resolveInputMacros });
@@ -749,13 +715,17 @@ export function ConversationInput({
       return;
     }
 
-    await generate({
-      chatId: activeChatId,
-      connectionId: null,
-      userMessage: message,
-      ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
-      ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
-    });
+    try {
+      await generate({
+        chatId: activeChatId,
+        connectionId: null,
+        userMessage: message,
+        ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
+        ...(mentioned.length ? { mentionedCharacterNames: mentioned } : {}),
+      });
+    } catch {
+      // useGenerate owns provider-failure UI feedback; aborts are an expected Stop generating path.
+    }
   }, [
     activeChatId,
     attachments,
@@ -895,7 +865,7 @@ export function ConversationInput({
 
     const activeChatData = useChatStore.getState().activeChat;
     const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
-    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
+    const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(personaKeys.list);
     const resolveInputMacros = createInputMacroResolverForChat(activeChatData, cachedCharacters, cachedPersonas, raw);
     let message = applyToUserInput(raw, { resolveMacros: resolveInputMacros });
 
@@ -1263,8 +1233,8 @@ export function ConversationInput({
       let gifAttachments: Array<{ type: string; data: string }> | undefined;
       try {
         const blob = await loadUrlBlob(gifUrl);
-        const { dataUrl } = await convertToPng(blob);
-        gifAttachments = [{ type: "image/png", data: dataUrl }];
+        const attachment = await prepareImageAttachment(blob, "gif");
+        gifAttachments = [{ type: attachment.type, data: attachment.data }];
       } catch {
         // If fetch fails (CORS etc.), send without attachment — still shows as image in chat
       }
@@ -1499,7 +1469,10 @@ export function ConversationInput({
   const renderAttachButton = () => (
     <button
       onClick={() => fileInputRef.current?.click()}
-      className="rounded-lg p-1.5 text-foreground/40 transition-all hover:bg-foreground/10 hover:text-foreground/70 active:scale-90"
+      className={cn(
+        CHAT_INPUT_ICON_BUTTON_CLASS,
+        attachments.length ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
+      )}
       title="Attach file"
       aria-label="Attach file"
     >
@@ -1647,10 +1620,13 @@ export function ConversationInput({
                   : "Message..."
           }
           rows={1}
+          spellCheck
+          autoCorrect="on"
+          autoCapitalize="sentences"
           onInput={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          className="max-h-[12.5rem] min-w-0 basis-full resize-none bg-transparent py-0 text-[1rem] leading-normal text-[var(--foreground)] outline-none placeholder:text-foreground/30 sm:flex-1 sm:basis-auto"
+          className="max-h-[12.5rem] min-h-[2.5rem] min-w-0 basis-full resize-none bg-transparent py-2 text-[1rem] leading-normal text-[var(--foreground)] outline-none placeholder:text-foreground/30 sm:flex-1 sm:basis-auto"
         />
 
         <div className="flex items-center gap-1.5 sm:hidden">
@@ -1668,10 +1644,8 @@ export function ConversationInput({
                 setEmojiOpen(false);
               }}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                gifOpen
-                  ? "text-foreground bg-foreground/10"
-                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                CHAT_INPUT_ICON_BUTTON_CLASS,
+                gifOpen ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
               )}
               title="GIF"
             >
@@ -1694,10 +1668,8 @@ export function ConversationInput({
                 setGifOpen(false);
               }}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                emojiOpen
-                  ? "text-foreground bg-foreground/10"
-                  : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                CHAT_INPUT_ICON_BUTTON_CLASS,
+                emojiOpen ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
               )}
               title="Emoji"
             >
@@ -1717,12 +1689,12 @@ export function ConversationInput({
               ref={charPickerBtnRef}
               onClick={() => setCharPickerOpen((v) => !v)}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                CHAT_INPUT_ICON_BUTTON_CLASS,
                 guideGenerations && hasInput
-                  ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:bg-[var(--primary)]/20"
+                  ? `${CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS} ring-1 ring-foreground/20`
                   : charPickerOpen
-                    ? "text-foreground bg-foreground/10"
-                    : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+                    ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS
+                    : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
               )}
               title={
                 guideGenerations && hasInput ? "Trigger character response (guided)" : "Trigger character response"
@@ -1738,10 +1710,10 @@ export function ConversationInput({
               onClick={() => void handleTranslateDraft()}
               disabled={!activeChatId || !hasInput || isTranslatingDraft}
               className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                CHAT_INPUT_ICON_BUTTON_CLASS,
                 hasInput && !isTranslatingDraft
-                  ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
-                  : "text-foreground/25",
+                  ? CHAT_INPUT_ICON_BUTTON_IDLE_CLASS
+                  : CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
               )}
               title="Translate draft"
             >
@@ -1753,7 +1725,7 @@ export function ConversationInput({
             <SpeechToTextButton
               disabled={!activeChatId}
               onTranscript={handleSpeechTranscript}
-              className="rounded-full"
+              className={CHAT_INPUT_ICON_BUTTON_CLASS}
               iconSize={16}
             />
           )}
@@ -1764,12 +1736,12 @@ export function ConversationInput({
             onClick={() => setStatusMenuOpen((v) => !v)}
             disabled={!activePersona}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+              CHAT_INPUT_ICON_BUTTON_CLASS,
               statusMenuOpen
-                ? "text-foreground bg-foreground/10"
+                ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS
                 : activePersona
-                  ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
-                  : "text-foreground/25",
+                  ? CHAT_INPUT_ICON_BUTTON_IDLE_CLASS
+                  : CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
             )}
             title={activePersona ? "Saved persona statuses" : "Choose a persona to save statuses"}
           >
@@ -1788,12 +1760,12 @@ export function ConversationInput({
             disabled={!isActuallyGenerating && (isReadingAttachments || !activeChatId || !canSubmit)}
             aria-label={sendButtonTitle}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200",
+              CHAT_INPUT_ICON_BUTTON_CLASS,
               isActuallyGenerating
-                ? "text-foreground hover:opacity-80"
+                ? CHAT_INPUT_ICON_BUTTON_READY_CLASS
                 : canSubmit && !isReadingAttachments
-                  ? "text-foreground hover:text-foreground/80 active:scale-90"
-                  : "text-foreground/20",
+                  ? CHAT_INPUT_ICON_BUTTON_READY_CLASS
+                  : CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
             )}
             title={sendButtonTitle}
           >

@@ -21,7 +21,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import type { GameSetupConfig, GameGmMode } from "../../../../engine/contracts/types/game";
-import { getCharacterTitle } from "../../../../shared/lib/character-display";
+import { getCharacterTitle, parseCharacterDisplayData } from "../../../../shared/lib/character-display";
 import { spotifyApi } from "../../../../shared/api/integration-utility-api";
 import { cn, getAvatarCropStyle, parseAvatarCropJson, type AvatarCropValue } from "../../../../shared/lib/utils";
 import { Modal } from "../../../../shared/components/ui/Modal";
@@ -32,7 +32,13 @@ import {
   type EditableGenerationParameters,
 } from "../../../../shared/components/ui/GenerationParametersEditor";
 import { useConnections } from "../../../catalog/connections/index";
-import { usePersonas } from "../../../catalog/characters/index";
+import {
+  characterAvatarUrl,
+  useCharacterSummaries,
+  useCharacterSummariesByIds,
+  type CharacterSummary,
+} from "../../../catalog/characters/index";
+import { usePersonas } from "../../../catalog/personas/index";
 import { useLorebooks } from "../../../catalog/lorebooks/index";
 import { useGameAssetStore } from "../stores/game-asset.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
@@ -47,18 +53,43 @@ interface GameSetupWizardProps {
   ) => void;
   onCancel: () => void;
   isLoading: boolean;
-  characters: Array<{
-    id: string;
-    name: string;
-    comment?: string | null;
-    avatarUrl?: string | null;
-    avatarCrop?: AvatarCropValue | null;
-  }>;
 }
 
 interface PersonaDisplayInfo {
   name: string;
   comment?: string | null;
+}
+
+type SetupCharacterInfo = {
+  id: string;
+  name: string;
+  comment?: string | null;
+  avatarUrl?: string | null;
+  avatarCrop?: AvatarCropValue | null;
+  searchText: string[];
+};
+
+function parseAvatarCropValue(raw: unknown): AvatarCropValue | null {
+  if (typeof raw === "string") {
+    return parseAvatarCropJson(raw);
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return null;
+  }
+  return parseAvatarCropJson(JSON.stringify(raw));
+}
+
+function useDebouncedValue(value: string, delayMs: number): string {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    if (value === "") {
+      setDebounced("");
+      return;
+    }
+    const handle = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(handle);
+  }, [delayMs, value]);
+  return debounced;
 }
 
 function CharacterAvatar({
@@ -90,6 +121,29 @@ function CharacterAvatar({
       />
     </span>
   );
+}
+
+function characterSearchValues(
+  character: CharacterSummary,
+  display: { name: string; comment?: string | null },
+): string[] {
+  const data = character.data && typeof character.data === "object" ? (character.data as Record<string, unknown>) : {};
+  const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
+  return [
+    character.id,
+    display.name,
+    display.comment,
+    data.creator,
+    data.creator_notes,
+    data.character_version,
+    ...tags,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
+function setupCharacterMatchesSearch(character: SetupCharacterInfo, search: string): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return character.searchText.some((value) => value.toLowerCase().includes(query));
 }
 
 function getPersonaTitle(persona: PersonaDisplayInfo): string | null {
@@ -193,11 +247,7 @@ function LearnedOptionChips({
                 : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)]",
             )}
           >
-            <button
-              type="button"
-              onClick={() => onSelect(option)}
-              className="px-2 py-0.5"
-            >
+            <button type="button" onClick={() => onSelect(option)} className="px-2 py-0.5">
               {option}
             </button>
             {onForget && (
@@ -262,13 +312,36 @@ const GAME_LANGUAGE_LOOKUP = new Map(
   }),
 );
 
+const GAME_SETUP_LANGUAGE_STORAGE_KEY = "marinara-game-setup-language";
+
 function normalizeGameLanguage(language: string): string {
   const trimmed = language.trim();
   if (!trimmed) return "";
   return GAME_LANGUAGE_LOOKUP.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
-export function GameSetupWizard({ error, onComplete, onCancel, isLoading, characters }: GameSetupWizardProps) {
+function readRememberedGameLanguage(): string {
+  if (typeof window === "undefined") return "English";
+  try {
+    const stored = window.localStorage.getItem(GAME_SETUP_LANGUAGE_STORAGE_KEY);
+    return stored ? normalizeGameLanguage(stored) || "English" : "English";
+  } catch {
+    return "English";
+  }
+}
+
+function rememberGameLanguage(language: string): void {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeGameLanguage(language);
+  if (!normalized) return;
+  try {
+    window.localStorage.setItem(GAME_SETUP_LANGUAGE_STORAGE_KEY, normalized);
+  } catch {
+    // Best-effort preference only.
+  }
+}
+
+export function GameSetupWizard({ error, onComplete, onCancel, isLoading }: GameSetupWizardProps) {
   const [step, setStep] = useState(0);
   const [gameName, setGameName] = useState("");
   const [genres, setGenres] = useState<string[]>(["Fantasy"]);
@@ -288,6 +361,8 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   );
   const [gmSearch, setGmSearch] = useState("");
   const [partySearch, setPartySearch] = useState("");
+  const debouncedGmSearch = useDebouncedValue(gmSearch, 180);
+  const debouncedPartySearch = useDebouncedValue(partySearch, 180);
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [gmConnectionId, setGmConnectionId] = useState<string | null>(null);
   const [customizeParameters, setCustomizeParameters] = useState(false);
@@ -307,7 +382,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
   const [lbSearch, setLbSearch] = useState("");
   const [enableCustomWidgets, setEnableCustomWidgets] = useState(true);
-  const [language, setLanguage] = useState("English");
+  const [language, setLanguage] = useState(readRememberedGameLanguage);
   const [startMuted, setStartMuted] = useState(false);
   const [expandedLearnedOptions, setExpandedLearnedOptions] = useState<Record<LearnedOptionGroup, boolean>>({
     genres: false,
@@ -323,6 +398,26 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
 
   const { data: connectionsList } = useConnections();
   const { data: personasList } = usePersonas();
+  const selectedCharacterIds = useMemo(
+    () => Array.from(new Set([gmCharacterId, ...partyCharacterIds].filter((id): id is string => !!id))),
+    [gmCharacterId, partyCharacterIds],
+  );
+  const { data: selectedRawCharacters } = useCharacterSummariesByIds(
+    selectedCharacterIds,
+    selectedCharacterIds.length > 0,
+  );
+  const {
+    data: gmRawCharacters,
+    isLoading: isGmCharactersLoading,
+    isFetching: isGmCharactersFetching,
+    isError: isGmCharactersError,
+  } = useCharacterSummaries(step === 1, debouncedGmSearch);
+  const {
+    data: partyRawCharacters,
+    isLoading: isPartyCharactersLoading,
+    isFetching: isPartyCharactersFetching,
+    isError: isPartyCharactersError,
+  } = useCharacterSummaries(step === 1, debouncedPartySearch);
   const { data: lorebooksList } = useLorebooks();
   const spotifyPlaylistsQuery = useQuery({
     queryKey: ["spotify", "playlists", 50],
@@ -372,6 +467,40 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
       }>) ?? [],
     [personasList],
   );
+  const characters = useMemo<SetupCharacterInfo[]>(() => {
+    const byId = new Map<string, CharacterSummary>();
+    for (const character of (selectedRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    for (const character of (gmRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    for (const character of (partyRawCharacters ?? []) as CharacterSummary[]) byId.set(character.id, character);
+    return Array.from(byId.values())
+      .map((character) => {
+        const display = parseCharacterDisplayData({
+          data: character.data,
+          comment: character.comment,
+        });
+        const rawCrop = character.data?.extensions?.avatarCrop;
+        return {
+          id: character.id,
+          name: display.name,
+          comment: display.comment,
+          avatarUrl: characterAvatarUrl(character),
+          avatarCrop: parseAvatarCropValue(rawCrop),
+          searchText: characterSearchValues(character, display),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [gmRawCharacters, partyRawCharacters, selectedRawCharacters]);
+
+  const isCharactersLoading = isGmCharactersLoading || isPartyCharactersLoading;
+  const isCharactersError = isGmCharactersError || isPartyCharactersError;
+  const gmCharacterSearchPending = isGmCharactersFetching || gmSearch.trim() !== debouncedGmSearch.trim();
+  const partyCharacterSearchPending = isPartyCharactersFetching || partySearch.trim() !== debouncedPartySearch.trim();
+  const emptyCharacterMessage = (pending: boolean) =>
+    isCharactersLoading || pending
+      ? "Loading characters..."
+      : isCharactersError
+        ? "Characters could not be loaded."
+        : "No characters found.";
 
   const lorebooks = useMemo(
     () => (lorebooksList as Array<{ id: string; name: string; enabled?: boolean }>) ?? [],
@@ -457,9 +586,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const filteredGmCharacters = useMemo(
     () =>
       characters.filter((c) => {
-        const query = gmSearch.toLowerCase();
-        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
-        return c.name.toLowerCase().includes(query) || title.includes(query);
+        return setupCharacterMatchesSearch(c, gmSearch);
       }),
     [characters, gmSearch],
   );
@@ -468,9 +595,7 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
     () =>
       characters.filter((c) => {
         if (c.id === gmCharacterId) return false;
-        const query = partySearch.toLowerCase();
-        const title = getCharacterTitle(c)?.toLowerCase() ?? "";
-        return c.name.toLowerCase().includes(query) || title.includes(query);
+        return setupCharacterMatchesSearch(c, partySearch);
       }),
     [characters, gmCharacterId, partySearch],
   );
@@ -490,11 +615,16 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
   const canStart = !!gmConnectionId;
   const normalizedLanguage = normalizeGameLanguage(language);
 
+  useEffect(() => {
+    rememberGameLanguage(language);
+  }, [language]);
+
   const handleComplete = () => {
     if (isLoading || !canStart) return;
     if (startMuted) {
       useGameAssetStore.getState().setAudioMuted(true);
     }
+    rememberGameLanguage(normalizedLanguage);
     rememberGameSetupOptions(
       {
         genres: filterCustomLearnedValues(genres, GENRES),
@@ -923,7 +1053,11 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                     ))}
                     {filteredGmCharacters.length === 0 && (
                       <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                        {characters.length === 0 ? "No characters found." : "No matches."}
+                        {gmCharacterSearchPending
+                          ? "Loading characters..."
+                          : characters.length === 0
+                            ? emptyCharacterMessage(false)
+                            : "No matches."}
                       </p>
                     )}
                   </div>
@@ -1010,7 +1144,13 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                   })}
                   {filteredPartyCharacters.length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                      {characters.length === 0 ? "No characters found. Create characters first." : "No matches."}
+                      {partyCharacterSearchPending
+                        ? "Loading characters..."
+                        : characters.length === 0
+                          ? isCharactersLoading || isCharactersError
+                            ? emptyCharacterMessage(false)
+                            : "No characters found. Create characters first."
+                          : "No matches."}
                     </p>
                   )}
                 </div>
@@ -1199,8 +1339,8 @@ export function GameSetupWizard({ error, onComplete, onCancel, isLoading, charac
                 ))}
               </select>
               <p className="mt-1 text-[0.575rem] text-[var(--muted-foreground)]">
-                Handles backgrounds, music, weather, and cinematic effects after each GM turn. If skipped, the GM
-                model handles scene tags inline.
+                Handles backgrounds, music, weather, and cinematic effects after each GM turn. If skipped, the GM model
+                handles scene tags inline.
               </p>
             </div>
 

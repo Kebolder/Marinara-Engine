@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Loader2, MessageCircle, Plug, X } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { BookOpen, Loader2, MessageCircle, Plug, Settings, X } from "lucide-react";
 import { useCreateChat } from "../../../../catalog/chats/index";
-import { useApplyChatPreset, useChatPresets } from "../../../../catalog/chat-presets/index";
+import { findUserStarredChatPreset, useApplyChatPreset, useChatPresets } from "../../../../catalog/chat-presets/index";
 import { useConnections } from "../../../../catalog/connections/index";
 import { filterLanguageGenerationConnections } from "../../../../../shared/lib/connection-filters";
 import { cn } from "../../../../../shared/lib/utils";
@@ -16,17 +16,28 @@ const MODE_META: Record<Mode, { label: string; icon: React.ReactNode }> = {
   game: { label: "Game", icon: <BookOpen size="0.875rem" /> },
 };
 
+function hasEmbeddedTauriIpc(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+  );
+}
+
 interface NewChatConnectionGateProps {
   mode: Mode;
   onClose: () => void;
 }
 
 export function NewChatConnectionGate({ mode, onClose }: NewChatConnectionGateProps) {
+  const dialogTitleId = useId();
+  const dialogDescriptionId = useId();
   const { data: connections, isLoading } = useConnections();
   const createChat = useCreateChat();
   const { data: chatPresetsData } = useChatPresets();
   const applyChatPreset = useApplyChatPreset();
   const openRightPanel = useUIStore((state) => state.openRightPanel);
+  const setSettingsTab = useUIStore((state) => state.setSettingsTab);
+  const remoteRuntimeUrl = useUIStore((state) => state.remoteRuntimeUrl);
   const [connectionId, setConnectionId] = useState<string>("");
 
   const connectionRows = useMemo(
@@ -50,9 +61,7 @@ export function NewChatConnectionGate({ mode, onClose }: NewChatConnectionGatePr
     const label = MODE_META[mode].label;
     const presets = chatPresetsData ?? [];
     const presetMode = mode === "conversation" || mode === "roleplay" ? mode : null;
-    const starred = presetMode
-      ? (presets.find((preset) => preset.mode === presetMode && preset.isActive && !preset.isDefault) ?? null)
-      : null;
+    const starred = findUserStarredChatPreset(presets, presetMode);
     createChat.mutate(
       {
         name: `New ${label}`,
@@ -80,23 +89,38 @@ export function NewChatConnectionGate({ mode, onClose }: NewChatConnectionGatePr
   };
 
   const showEmptyState = !isLoading && connectionRows.length === 0;
+  const needsRemoteRuntimeUrl = showEmptyState && !hasEmbeddedTauriIpc() && remoteRuntimeUrl.trim().length === 0;
 
   const handleOpenConnections = () => {
     openRightPanel("connections");
     onClose();
   };
 
+  const handleOpenRemoteRuntimeSettings = () => {
+    setSettingsTab("advanced");
+    openRightPanel("settings");
+    onClose();
+  };
+
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[3px]" onClick={onClose} />
+      <div aria-hidden="true" className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[3px]" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-3 max-md:pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
-        <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl sm:max-h-[min(90dvh,38rem)]">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={dialogTitleId}
+          aria-describedby={dialogDescriptionId}
+          className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl sm:max-h-[min(90dvh,38rem)]"
+        >
           <div className="flex shrink-0 items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-[var(--primary)]">{MODE_META[mode].icon}</span>
               <div>
-                <h3 className="text-sm font-semibold">Set Up {MODE_META[mode].label}</h3>
-                <p className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                <h3 id={dialogTitleId} className="text-sm font-semibold">
+                  Set Up {MODE_META[mode].label}
+                </h3>
+                <p id={dialogDescriptionId} className="text-[0.6875rem] text-[var(--muted-foreground)]">
                   Choose a connection before we create the chat.
                 </p>
               </div>
@@ -112,7 +136,24 @@ export function NewChatConnectionGate({ mode, onClose }: NewChatConnectionGatePr
           </div>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
-            {showEmptyState ? (
+            {needsRemoteRuntimeUrl ? (
+              <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
+                  <Settings size="0.875rem" className="text-[var(--primary)]" />
+                  Remote Runtime required
+                </div>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Configure the Remote Runtime URL first. Web-shell mode needs it before connections can be created.
+                </p>
+                <button
+                  onClick={handleOpenRemoteRuntimeSettings}
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--primary)]/30 bg-[var(--primary)]/10 px-3 py-2 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/20"
+                >
+                  <Settings size="0.75rem" />
+                  Open Advanced Settings
+                </button>
+              </div>
+            ) : showEmptyState ? (
               <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary)]/8 p-4">
                 <div className="mb-2 flex items-center gap-2 text-sm font-medium text-[var(--foreground)]">
                   <Plug size="0.875rem" className="text-[var(--primary)]" />

@@ -32,8 +32,12 @@ export interface ChatPreset {
   mode: ChatMode;
   /** True for the built-in "Default" preset (cannot be deleted, renamed, or saved into). */
   isDefault: boolean;
+  /** Legacy/default alias mirrored by imported rows and storage migrations. */
+  default?: boolean;
   /** True for the preset currently used as the starting state for new chats of this mode. */
   isActive: boolean;
+  /** Legacy/active alias mirrored by imported rows and storage migrations. */
+  active?: boolean;
   /** Bundled chat settings (JSON). */
   settings: ChatPresetSettings;
   createdAt: string;
@@ -43,6 +47,14 @@ export interface ChatPreset {
 /** Metadata keys that must NOT be saved into a preset (chat-specific). */
 export const CHAT_PRESET_EXCLUDED_METADATA_KEYS: readonly string[] = [
   "summary",
+  "summaryEntries",
+  "summaryPromptTemplates",
+  "activeSummaryPromptTemplateId",
+  "conversationSummary",
+  "daySummaries",
+  "weekSummaries",
+  "lastRoleplaySceneSummary",
+  "chatSummaryFingerprint",
   "tags",
   "spriteCharacterIds",
   "spritePlacements",

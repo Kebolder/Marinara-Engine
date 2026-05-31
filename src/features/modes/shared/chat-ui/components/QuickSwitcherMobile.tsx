@@ -6,12 +6,17 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { ChevronUp, ChevronDown, ChevronRight, Link, CircleUser, FolderOpen, Folder, Check } from "lucide-react";
 import { useConnections, useUpdateConnection } from "../../../../catalog/connections/index";
-import { usePersonas, usePersonaGroups } from "../../../../catalog/characters/index";
+import { usePersonaGroups, usePersonaSummaries } from "../../../../catalog/personas/index";
 import { useUpdateChat, useChat } from "../../../../catalog/chats/index";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { filterLanguageGenerationConnections } from "../../../../../shared/lib/connection-filters";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../../../../shared/lib/utils";
 import { boolish as isRandomPoolEnabled } from "../../../../../engine/generation/runtime-records";
+import {
+  CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_CLASS,
+  CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
+} from "./input-button-styles";
 
 interface Persona {
   id: string;
@@ -36,7 +41,6 @@ interface ParsedGroup {
   members: Persona[];
 }
 
-
 export function QuickSwitcherMobile() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"connections" | "personas">("connections");
@@ -45,7 +49,7 @@ export function QuickSwitcherMobile() {
   const menuRef = useRef<HTMLDivElement>(null);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: connections } = useConnections(open && tab === "connections");
-  const { data: rawPersonas } = usePersonas(open && tab === "personas");
+  const { data: rawPersonas } = usePersonaSummaries(open && tab === "personas");
   const { data: rawPersonaGroups } = usePersonaGroups(open && tab === "personas");
   const { data: chat } = useChat(activeChatId);
   const updateChat = useUpdateChat();
@@ -56,7 +60,12 @@ export function QuickSwitcherMobile() {
   const isRandom = activeConnectionId === "random";
 
   const sortedConnections = filterLanguageGenerationConnections(
-    (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string | boolean | null }>,
+    (connections ?? []) as Array<{
+      id: string;
+      name: string;
+      provider?: string;
+      useForRandom?: string | boolean | null;
+    }>,
   ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   const sortedPersonas = ((rawPersonas ?? []) as Persona[])
@@ -234,8 +243,8 @@ export function QuickSwitcherMobile() {
         onClick={() => setOpen((v) => !v)}
         title="Quick Switcher"
         className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-xl transition-all",
-          open ? "text-foreground bg-foreground/10" : "text-foreground/70 hover:bg-foreground/10 hover:text-foreground",
+          CHAT_INPUT_ICON_BUTTON_CLASS,
+          open ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
         )}
       >
         <ChevronUp size="1rem" className={cn("transition-transform", open && "rotate-180")} />

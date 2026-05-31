@@ -14,7 +14,7 @@ const EXPLICIT_ALIAS_CONNECTOR_PATTERN =
   /(?:^|\s+)(?:a\.?k\.?a\.?|also known as|alias(?:es)?|nickname(?:s)?)(?:\s*(?::|-)\s*|\s+)/gi;
 const LIST_ALIAS_PATTERN = /\s*(?:[|/;]|\r?\n)\s*/;
 const LEADING_TITLE_SEPARATOR_PATTERN = /^(.+?)\s+[-\u2013\u2014]\s+.+$/u;
-const PARENTHETICAL_ALIAS_PATTERN = /[\[(]([^\])]+)[\])]/g;
+const PARENTHETICAL_ALIAS_PATTERN = /[[(]([^\])]+)[\])]/g;
 const LOOKUP_TEXT_MAX_LENGTH = 96;
 const LOOKUP_ALIAS_EDGE_PUNCTUATION = /^[\s"']+|[\s"',.:;]+$/g;
 const WRAPPED_LOOKUP_ALIAS_PATTERN = /^[([{]\s*(.+?)\s*[\])}]$/;
@@ -45,22 +45,14 @@ function addAliasCandidate(
   candidates.push({ text: cleaned, kind });
 }
 
-function addParentheticalAliases(
-  candidates: CharacterLookupAliasCandidate[],
-  seen: Set<string>,
-  value: string,
-) {
+function addParentheticalAliases(candidates: CharacterLookupAliasCandidate[], seen: Set<string>, value: string) {
   PARENTHETICAL_ALIAS_PATTERN.lastIndex = 0;
   for (const match of value.matchAll(PARENTHETICAL_ALIAS_PATTERN)) {
     addAliasCandidate(candidates, seen, "parenthetical", match[1]);
   }
 }
 
-function addAliasPayloadCandidates(
-  candidates: CharacterLookupAliasCandidate[],
-  seen: Set<string>,
-  payload: string,
-) {
+function addAliasPayloadCandidates(candidates: CharacterLookupAliasCandidate[], seen: Set<string>, payload: string) {
   for (const part of payload.split(LIST_ALIAS_PATTERN)) {
     const cleaned = cleanDisplayText(part);
     if (!cleaned) continue;

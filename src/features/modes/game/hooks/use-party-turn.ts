@@ -4,10 +4,12 @@
 // Generates party member reactions to the GM narration.
 // ──────────────────────────────────────────────
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { parsePartyDialogue } from "../lib/party-dialogue-parser";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { gameApi } from "../api/game-api";
+import { chatKeys } from "../../../catalog/chats/index";
+import { lorebookKeys } from "../../../catalog/lorebooks/index";
 import type { PartyDialogueLine } from "../../../../engine/contracts/types/game";
 
 interface PartyTurnInput {
@@ -18,20 +20,28 @@ interface PartyTurnInput {
   debugMode?: boolean;
 }
 
-export interface PartyTurnResult {
+interface PartyTurnResult {
   raw: string;
   lines: PartyDialogueLine[];
+  messageId: string | null;
 }
 
 async function generatePartyTurn(input: PartyTurnInput): Promise<PartyTurnResult> {
   const debugMode = useUIStore.getState().debugMode;
   const res = await gameApi.partyTurn({ ...input, debugMode });
   const lines = parsePartyDialogue(res.raw);
-  return { raw: res.raw, lines };
+  return { raw: res.raw, lines, messageId: res.messageId ?? null };
 }
 
 export function usePartyTurn() {
+  const qc = useQueryClient();
+
   return useMutation({
     mutationFn: generatePartyTurn,
+    onSuccess: (_result, variables) => {
+      qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
+      qc.invalidateQueries({ queryKey: chatKeys.messageCount(variables.chatId) });
+      qc.invalidateQueries({ queryKey: lorebookKeys.active(variables.chatId) });
+    },
   });
 }

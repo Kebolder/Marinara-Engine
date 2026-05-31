@@ -38,9 +38,6 @@ export function ChatNotificationBubbles() {
   };
 
   const notifications = Array.from(chatNotifications.values());
-
-  if (notifications.length === 0) return null;
-
   const totalCount = notifications.reduce((sum, n) => sum + n.count, 0);
 
   return (
@@ -62,7 +59,7 @@ export function ChatNotificationBubbles() {
       {/* ── Mobile: collapsed or expanded ── */}
       <div className="flex flex-col items-end gap-2 md:hidden">
         <AnimatePresence mode="popLayout">
-          {notifications.length === 1 || mobileExpanded ? (
+          {notifications.length === 0 ? null : notifications.length === 1 || mobileExpanded ? (
             /* Show all individual bubbles */
             notifications.map((notif) => (
               <NotificationBubble

@@ -26,14 +26,16 @@ import {
   Pencil,
   Download,
   X,
+  Star,
 } from "lucide-react";
 import {
   useBulkExportChats,
   useChatSummaries,
   useDeleteChat,
   useDeleteChatGroup,
+  useUpdateChatMetadata,
   type BulkChatExportFormat,
-} from "../../features/catalog/chats/index";
+} from "../../features/catalog/chats/sidebar";
 import {
   useChatFolders,
   useCreateFolder,
@@ -41,13 +43,15 @@ import {
   useDeleteFolder,
   useReorderFolders,
   useMoveChat,
-} from "../../features/catalog/chats/index";
-import { useCharacters } from "../../features/catalog/characters/index";
+} from "../../features/catalog/chats/sidebar";
+import { useCharacterSummariesByIds } from "../../features/catalog/characters/index";
 import { useChatStore } from "../../shared/stores/chat.store";
 import { showConfirmDialog } from "../../shared/lib/app-dialogs";
 import { useUIStore, type UserStatus } from "../../shared/stores/ui.store";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../shared/lib/utils";
+import { avatarFileUrlFromPath, resolveAvatarFileUrl } from "../../shared/api/local-file-api";
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { CHAT_MODES } from "../../engine/contracts/constants/chat-modes";
 import type { ChatFolder } from "../../engine/contracts/types/chat";
 import { Modal } from "../../shared/components/ui/Modal";
 import { Reorder, useDragControls } from "framer-motion";
@@ -61,6 +65,10 @@ function getChatTags(chat: { metadata?: { tags?: unknown } | null }): string[] {
   return Array.isArray(chat.metadata?.tags)
     ? chat.metadata.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
     : [];
+}
+
+function isChatPinned(chat: { metadata?: unknown }): boolean {
+  return parseChatMetadata(chat.metadata).pinned === true;
 }
 
 function toSearchText(value: unknown): string {
@@ -88,32 +96,24 @@ const MODE_CONFIG: Record<
 > = {
   conversation: {
     icon: <MessageSquare size="0.875rem" />,
-    label: "Conversation",
+    label: CHAT_MODES.conversation.name,
     shortLabel: "CONVO",
     bg: "linear-gradient(135deg, #4de5dd, #3ab8b1)",
-    description: "A straightforward AI conversation — no roleplay elements.",
+    description: CHAT_MODES.conversation.description,
   },
   roleplay: {
     icon: <BookOpen size="0.875rem" />,
-    label: "Roleplay",
+    label: CHAT_MODES.roleplay.name,
     shortLabel: "RP",
     bg: "linear-gradient(135deg, #eb8951, #d97530)",
-    description: "Immersive roleplay with characters, game state tracking, and world simulation.",
-  },
-  visual_novel: {
-    icon: <Theater size="0.875rem" />,
-    label: "Visual Novel",
-    shortLabel: "VN",
-    bg: "linear-gradient(135deg, #e15c8c, #c94776)",
-    description: "A full game experience with backgrounds, sprites, text boxes, and choices.",
-    comingSoon: true,
+    description: CHAT_MODES.roleplay.description,
   },
   game: {
     icon: <Theater size="0.875rem" />,
-    label: "Game",
+    label: CHAT_MODES.game.name,
     shortLabel: "GM",
     bg: "linear-gradient(135deg, #e15c8c, #c94776)",
-    description: "AI-managed singleplayer RPG with a Game Master, party, dice, maps, and quests.",
+    description: CHAT_MODES.game.description,
   },
 };
 
@@ -127,12 +127,12 @@ export function ChatSidebar({
   const { data: chats, isError: chatsError, isLoading, isFetching, refetch: refetchChats } = useChatSummaries();
   const deleteChat = useDeleteChat();
   const deleteChatGroup = useDeleteChatGroup();
+  const updateChatMetadata = useUpdateChatMetadata();
   const bulkExportChats = useBulkExportChats();
   const activeChatId = useChatStore((s) => s.activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const unreadCounts = useChatStore((s) => s.unreadCounts);
   const hydrateUnread = useChatStore((s) => s.hydrateUnread);
-  const { data: allCharacters } = useCharacters();
   const hasAnyDetailOpen = useUIStore((s) => s.hasAnyDetailOpen);
   const editorDirty = useUIStore((s) => s.editorDirty);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
@@ -147,6 +147,47 @@ export function ChatSidebar({
   const reorderFoldersMut = useReorderFolders();
   const moveChatMut = useMoveChat();
 
+  const sidebarCharacterIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const chat of chats ?? []) {
+      for (const id of normalizeChatCharacterIds((chat as { characterIds?: unknown }).characterIds)) {
+        ids.add(id);
+      }
+      const metadata = parseChatMetadata(chat.metadata);
+      if (Array.isArray(metadata.autonomousUnreadCharacterIds)) {
+        for (const id of metadata.autonomousUnreadCharacterIds) {
+          if (typeof id === "string" && id.trim()) ids.add(id.trim());
+        }
+      }
+    }
+    return Array.from(ids);
+  }, [chats]);
+  const { data: allCharacters } = useCharacterSummariesByIds(sidebarCharacterIds, sidebarCharacterIds.length > 0);
+  const [resolvedCharacterAvatars, setResolvedCharacterAvatars] = useState<Map<string, string | null>>(() => new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const characters = allCharacters ?? [];
+    if (characters.length === 0) {
+      setResolvedCharacterAvatars(new Map());
+      return;
+    }
+    Promise.all(
+      characters.map(async (char) => {
+        const resolved =
+          (await resolveAvatarFileUrl(char.avatarFilename, char.avatarFilePath).catch(() => null)) ??
+          char.avatarPath ??
+          null;
+        return [char.id, resolved] as const;
+      }),
+    ).then((entries) => {
+      if (!cancelled) setResolvedCharacterAvatars(new Map(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [allCharacters]);
+
   // Build character lookup: id → { name, avatarUrl, avatarCrop, conversationStatus }
   const charLookup = useMemo(() => {
     const map = new Map<
@@ -159,22 +200,28 @@ export function ChatSidebar({
       }
     >();
     if (!allCharacters) return map;
-    for (const char of allCharacters as Array<{ id: string; data: unknown; avatarPath: string | null }>) {
+    for (const char of allCharacters) {
       const record = char.data && typeof char.data === "object" ? (char.data as Record<string, unknown>) : {};
       const extensions =
-        record.extensions && typeof record.extensions === "object" ? (record.extensions as Record<string, unknown>) : {};
+        record.extensions && typeof record.extensions === "object"
+          ? (record.extensions as Record<string, unknown>)
+          : {};
       const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Unknown";
       const conversationStatus =
         typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : undefined;
       map.set(char.id, {
         name,
-        avatarUrl: char.avatarPath ?? null,
+        avatarUrl:
+          resolvedCharacterAvatars.get(char.id) ??
+          avatarFileUrlFromPath(char.avatarFilename, char.avatarFilePath) ??
+          char.avatarPath ??
+          null,
         avatarCrop: (extensions.avatarCrop as AvatarCropValue | undefined) ?? null,
         conversationStatus,
       });
     }
     return map;
-  }, [allCharacters]);
+  }, [allCharacters, resolvedCharacterAvatars]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sort, setSort] = useState<ChatSortOption>("newest");
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -334,12 +381,22 @@ export function ChatSidebar({
     return folders.filter((f) => f.mode === activeTab).sort((a, b) => a.sortOrder - b.sortOrder);
   }, [folders, activeTab]);
 
-  const { unfiledChats, folderChatsMap } = useMemo(() => {
-    if (!displayChats.length)
-      return { unfiledChats: displayChats, folderChatsMap: new Map<string, typeof displayChats>() };
+  const { pinnedChats, unfiledChats, folderChatsMap } = useMemo(() => {
+    if (!displayChats.length) {
+      return {
+        pinnedChats: [] as typeof displayChats,
+        unfiledChats: displayChats,
+        folderChatsMap: new Map<string, typeof displayChats>(),
+      };
+    }
+    const pinned: typeof displayChats = [];
     const unfiled: typeof displayChats = [];
     const map = new Map<string, typeof displayChats>();
     for (const entry of displayChats) {
+      if (isChatPinned(entry.chat)) {
+        pinned.push(entry);
+        continue;
+      }
       const fid = entry.chat.folderId;
       if (!fid) {
         unfiled.push(entry);
@@ -348,7 +405,7 @@ export function ChatSidebar({
       if (!map.has(fid)) map.set(fid, []);
       map.get(fid)!.push(entry);
     }
-    return { unfiledChats: unfiled, folderChatsMap: map };
+    return { pinnedChats: pinned, unfiledChats: unfiled, folderChatsMap: map };
   }, [displayChats]);
 
   const [localFolderOrder, setLocalFolderOrder] = useState<string[]>([]);
@@ -461,7 +518,7 @@ export function ChatSidebar({
       }, 200);
       return () => clearTimeout(timer);
     }
-  }, [activeChatId, chats, folders, updateFolderMut]);
+  }, [activeChatId, chats, folders, onActiveTabChange, updateFolderMut]);
 
   const handleNewChatFromTab = useCallback(() => {
     if (window.innerWidth < 768) setSidebarOpen(false);
@@ -547,11 +604,14 @@ export function ChatSidebar({
     exitMultiSelect();
   }, [selectedChatIds, deleteChat, activeChatId, setActiveChatId, exitMultiSelect]);
 
-  const handleBatchExport = useCallback(async (format: BulkChatExportFormat) => {
-    if (selectedChatIds.size === 0) return;
-    await bulkExportChats.mutateAsync({ chatIds: Array.from(selectedChatIds), format });
-    exitMultiSelect();
-  }, [selectedChatIds, bulkExportChats, exitMultiSelect]);
+  const handleBatchExport = useCallback(
+    async (format: BulkChatExportFormat) => {
+      if (selectedChatIds.size === 0) return;
+      await bulkExportChats.mutateAsync({ chatIds: Array.from(selectedChatIds), format });
+      exitMultiSelect();
+    },
+    [selectedChatIds, bulkExportChats, exitMultiSelect],
+  );
 
   const handleBatchMoveToFolder = useCallback(
     (folderId: string | null) => {
@@ -569,6 +629,7 @@ export function ChatSidebar({
     const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
     const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
     const isSelected = selectedChatIds.has(chat.id);
+    const pinned = isChatPinned(chat);
     return (
       <div
         role="button"
@@ -770,6 +831,27 @@ export function ChatSidebar({
           <span className="shrink-0 text-[0.625rem] text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
             {cfg.shortLabel}
           </span>
+        )}
+
+        {/* Pin chat */}
+        {!multiSelectMode && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              updateChatMetadata.mutate({ id: chat.id, pinned: !pinned });
+            }}
+            disabled={updateChatMetadata.isPending}
+            className={cn(
+              "shrink-0 rounded-md p-1 transition-all hover:bg-[var(--accent)] disabled:opacity-50",
+              pinned
+                ? "text-amber-400 opacity-100"
+                : "text-[var(--muted-foreground)] opacity-0 group-hover:opacity-100 max-md:opacity-100",
+            )}
+            title={pinned ? "Unpin chat" : "Pin chat"}
+            aria-label={pinned ? "Unpin chat" : "Pin chat"}
+          >
+            <Star size="0.75rem" className={pinned ? "fill-current" : ""} />
+          </button>
         )}
 
         {/* Move to folder */}
@@ -1067,6 +1149,17 @@ export function ChatSidebar({
         )}
 
         <div className="stagger-children flex flex-col gap-0.5">
+          {/* Pinned chats */}
+          {pinnedChats.length > 0 && (
+            <div className="mb-1 flex flex-col gap-0.5">
+              <div className="flex items-center gap-1 px-2 py-1 text-[0.5625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                <Star size="0.625rem" className="fill-amber-400 text-amber-400" />
+                Pinned
+              </div>
+              {pinnedChats.map(renderChatRow)}
+            </div>
+          )}
+
           {/* Folders (drag-to-reorder) */}
           {localFolderOrder.length > 0 && (
             <Reorder.Group
@@ -1169,9 +1262,9 @@ export function ChatSidebar({
                 <AlertTriangle size="1.125rem" className="text-[var(--destructive)]" />
               </div>
               <p className="text-sm text-[var(--muted-foreground)]">
-                This conversation has{" "}
-                <strong className="text-[var(--foreground)]">{deleteTarget.branchCount} branches</strong>. What would
-                you like to delete?
+                This group contains{" "}
+                <strong className="text-[var(--foreground)]">{deleteTarget.branchCount} chats</strong>. What would you
+                like to delete?
               </p>
             </div>
             <div className="flex flex-col gap-2">
@@ -1184,7 +1277,7 @@ export function ChatSidebar({
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]"
               >
                 <Trash2 size="0.8125rem" />
-                Delete This Branch Only
+                Delete This Chat Only
               </button>
               <button
                 onClick={() => {
@@ -1197,7 +1290,7 @@ export function ChatSidebar({
                 className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--destructive)]/10 px-3 py-2.5 text-xs font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/20 transition-all hover:bg-[var(--destructive)]/20 active:scale-[0.98]"
               >
                 <Trash2 size="0.8125rem" />
-                Delete All {deleteTarget.branchCount} Branches
+                Delete Entire Group
               </button>
             </div>
           </div>
@@ -1319,7 +1412,10 @@ function FolderRow({
         >
           <ChevronRight
             size="0.75rem"
-            className={cn("text-[var(--muted-foreground)] transition-transform shrink-0", !folder.collapsed && "rotate-90")}
+            className={cn(
+              "text-[var(--muted-foreground)] transition-transform shrink-0",
+              !folder.collapsed && "rotate-90",
+            )}
           />
           <div
             className="h-2 w-2 rounded-full flex-shrink-0 cursor-pointer"

@@ -1,3 +1,9 @@
+import { systemClock } from "../core/clock";
+import { createId } from "../core/ids";
+import { readString } from "../shared/value-readers";
+
+export { readString };
+
 export type JsonRecord = Record<string, unknown>;
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -33,10 +39,6 @@ export function stringArray(value: unknown): string[] {
   return parseArray(value).filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
 }
 
-export function readString(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value : fallback;
-}
-
 export function readNumber(value: unknown, fallback = 0): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -59,7 +61,7 @@ export function boolish(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
-export function orderValue(record: JsonRecord): number {
+function orderValue(record: JsonRecord): number {
   return readNumber(record.sortOrder ?? record.order ?? record.injectionOrder, 0);
 }
 
@@ -75,12 +77,9 @@ export function hiddenFromAi(message: JsonRecord): boolean {
 }
 
 export function newId(prefix: string): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${prefix}_${crypto.randomUUID()}`;
-  }
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return createId(prefix);
 }
 
 export function nowIso(): string {
-  return new Date().toISOString();
+  return systemClock.nowIso();
 }

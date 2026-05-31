@@ -22,6 +22,7 @@ import {
   Flag,
   Eye,
   EyeOff,
+  Search,
   ChevronRight,
   ScrollText,
   Brain,
@@ -32,7 +33,7 @@ import {
   Pause,
   Play,
 } from "lucide-react";
-import type { Message } from "../../../../../engine/contracts/types/chat";
+import type { Message, MessageSwipe } from "../../../../../engine/contracts/types/chat";
 import {
   memo,
   useState,
@@ -51,20 +52,12 @@ import { useShallow } from "zustand/react/shallow";
 import { createMessageMacroResolver } from "../../../../../shared/lib/chat-macros";
 import { useApplyRegex } from "../../../../catalog/agents/regex-application";
 import { useUIStore } from "../../../../../shared/stores/ui.store";
-import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useTranslate } from "../../../../../shared/hooks/use-translate";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { ttsService } from "../../../../../shared/lib/tts-service";
 import { useTTSConfig } from "../../../../../shared/hooks/use-tts";
-import {
-  isStreamingTTSActive,
-  stopStreamingTTS,
-  subscribeStreamingTTSActive,
-} from "../hooks/use-streaming-tts";
-import {
-  buildTTSVoiceRequests,
-  clientSidePlaybackRate,
-} from "../../../../../shared/lib/tts-dialogue";
+import { isStreamingTTSActive, stopStreamingTTS, subscribeStreamingTTSActive } from "../hooks/use-streaming-tts";
+import { buildTTSVoiceRequests, clientSidePlaybackRate } from "../../../../../shared/lib/tts-dialogue";
 import {
   DIALOGUE_QUOTE_PATTERN_SOURCE,
   HTML_SAFE_DIALOGUE_QUOTE_PATTERN_SOURCE,
@@ -72,15 +65,132 @@ import {
   type QuoteFormat,
 } from "../../../../../shared/lib/dialogue-quotes";
 import DOMPurify from "dompurify";
-import type { CharacterMap, ExpressionAvatarResolver, MessageSelectionToggle, PersonaInfo } from "../types";
+import type {
+  CharacterMap,
+  ExpressionAvatarResolver,
+  MessageSelectionToggle,
+  PeekPromptOptions,
+  PersonaInfo,
+} from "../types";
 import { GenerationReplayDetailsModal, hasGenerationReplayDetails } from "./GenerationReplayDetailsModal";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
 
 const MESSAGE_ACTION_ICON_SIZE = "1em";
 const MESSAGE_SWIPE_ICON_SIZE = "1.15em";
-const normalizeEditableQuotes = (value: string) =>
-  value.replace(/["\u201c\u201d\u201e\u201f]/g, '"').replace(/['\u2018\u2019\u201a\u201b]/g, "'");
+const MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR =
+  "button, a, textarea, input, select, label, [role='button'], [contenteditable='true'], .mari-message-actions";
+
+export function formatEditableMessageText(value: string, quoteFormat: QuoteFormat): string {
+  return formatTextQuotes(value, quoteFormat);
+}
+
+type GenerationLabelRecord = Record<string, unknown>;
+
+function generationRecord(value: unknown): GenerationLabelRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as GenerationLabelRecord) : null;
+}
+
+function generationString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function generationNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstGenerationString(records: readonly GenerationLabelRecord[], keys: readonly string[]): string | null {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = generationString(record[key]);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function firstGenerationNumber(records: readonly GenerationLabelRecord[], keys: readonly string[]): number | null {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = generationNumber(record[key]);
+      if (value != null) return value;
+    }
+    const usage = generationRecord(record.usage);
+    if (!usage) continue;
+    for (const key of keys) {
+      const value = generationNumber(usage[key]);
+      if (value != null) return value;
+    }
+  }
+  return null;
+}
+
+export function formatGenerationLabelForMessage(
+  message: Message,
+  showModelName: boolean,
+  showTokenUsage: boolean,
+): string | null {
+  if (message.role === "user" || (!showModelName && !showTokenUsage)) return null;
+  const extra = generationRecord(message.extra);
+  const snapshot = generationRecord(extra?.generationPromptSnapshot);
+  const records = [
+    generationRecord(extra?.generationInfo),
+    generationRecord(snapshot?.generationInfo),
+    generationRecord((message as Message & { generationInfo?: unknown }).generationInfo),
+  ].filter((record): record is GenerationLabelRecord => !!record);
+  if (records.length === 0) return null;
+
+  const parts: string[] = [];
+  if (showModelName) {
+    const model = firstGenerationString(records, ["model", "modelName"]);
+    if (model) parts.push(model);
+  }
+  if (showTokenUsage) {
+    const tokensPrompt = firstGenerationNumber(records, [
+      "tokensPrompt",
+      "promptTokens",
+      "prompt_tokens",
+      "inputTokens",
+      "input_tokens",
+    ]);
+    const tokensCompletion = firstGenerationNumber(records, [
+      "tokensCompletion",
+      "completionTokens",
+      "completion_tokens",
+      "outputTokens",
+      "output_tokens",
+    ]);
+    const tokensCachedPrompt = firstGenerationNumber(records, [
+      "tokensCachedPrompt",
+      "cachedPromptTokens",
+      "cached_prompt_tokens",
+      "cacheReadInputTokens",
+      "cache_read_input_tokens",
+    ]);
+    const tokensCacheWritePrompt = firstGenerationNumber(records, [
+      "tokensCacheWritePrompt",
+      "cacheWritePromptTokens",
+      "cache_write_prompt_tokens",
+      "cacheCreationInputTokens",
+      "cache_creation_input_tokens",
+    ]);
+    const durationMs = firstGenerationNumber(records, ["durationMs", "duration_ms"]);
+
+    if (tokensPrompt != null || tokensCompletion != null) {
+      parts.push(tokensPrompt != null ? `${tokensPrompt}\u2192${tokensCompletion ?? "?"} tok` : `${tokensCompletion} tok`);
+    }
+    if ((tokensCachedPrompt ?? 0) > 0) parts.push(`cache hit ${tokensCachedPrompt!.toLocaleString()}`);
+    if ((tokensCacheWritePrompt ?? 0) > 0) parts.push(`cache write ${tokensCacheWritePrompt!.toLocaleString()}`);
+    if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+  }
+
+  return parts.length > 0 ? parts.join(" \u00b7 ") : null;
+}
 
 function HiddenFromAIBadge({
   roleplay,
@@ -126,15 +236,19 @@ function HiddenFromAIBadge({
 const EditTextarea = memo(function EditTextarea({
   initialContent,
   fontSize,
+  quoteFormat,
   onSave,
   onCancel,
 }: {
   initialContent: string;
   fontSize: string | number | undefined;
-  onSave: (content: string) => void;
+  quoteFormat: QuoteFormat;
+  onSave: (content: string) => void | Promise<void>;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const autoResize = useCallback(() => {
     const el = ref.current;
@@ -155,15 +269,24 @@ const EditTextarea = memo(function EditTextarea({
     }
   }, [autoResize]);
 
-  const handleSave = useCallback(() => {
-    if (ref.current) onSave(normalizeEditableQuotes(ref.current.value));
-  }, [onSave]);
+  const handleSave = useCallback(async () => {
+    if (!ref.current || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(formatEditableMessageText(ref.current.value, quoteFormat));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save edit.");
+    } finally {
+      setSaving(false);
+    }
+  }, [onSave, quoteFormat, saving]);
 
   const handleInput = useCallback(
     (event: FormEvent<HTMLTextAreaElement>) => {
       const el = event.currentTarget;
       const raw = el.value;
-      const normalized = normalizeEditableQuotes(raw);
+      const normalized = formatEditableMessageText(raw, quoteFormat);
       if (normalized !== raw) {
         const start = el.selectionStart;
         const end = el.selectionEnd;
@@ -173,28 +296,31 @@ const EditTextarea = memo(function EditTextarea({
       }
       autoResize();
     },
-    [autoResize],
+    [autoResize, quoteFormat],
   );
 
   return (
     <div className="flex flex-col gap-2">
       <textarea
         ref={ref}
-        defaultValue={normalizeEditableQuotes(initialContent)}
+        defaultValue={formatEditableMessageText(initialContent, quoteFormat)}
         rows={1}
         onInput={handleInput}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSave();
-          if (e.key === "Escape") onCancel();
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void handleSave();
+          if (e.key === "Escape" && !saving) onCancel();
         }}
+        disabled={saving}
         className="w-full resize-none overflow-y-hidden rounded-lg bg-black/30 px-3 py-2 text-white outline-none ring-1 ring-white/20 focus:ring-blue-400/50"
         style={{ fontSize, lineHeight: 1.5 }}
       />
+      {error && <div className="text-[0.6875rem] text-red-300/90">{error}</div>}
       <div className="flex items-center gap-1.5 justify-end">
         <button
           type="button"
           onClick={onCancel}
           aria-label="Cancel edit"
+          disabled={saving}
           className="rounded-md p-1 text-white/40 hover:bg-white/10 hover:text-white/70"
           title="Cancel (Esc)"
         >
@@ -202,12 +328,13 @@ const EditTextarea = memo(function EditTextarea({
         </button>
         <button
           type="button"
-          onClick={handleSave}
+          onClick={() => void handleSave()}
           aria-label="Save edit"
+          disabled={saving}
           className="rounded-md p-1 text-emerald-400/70 hover:bg-emerald-400/10 hover:text-emerald-400"
           title="Save (Cmd+Enter)"
         >
-          <Check size="0.8125rem" />
+          {saving ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Check size="0.8125rem" />}
         </button>
       </div>
     </div>
@@ -216,15 +343,15 @@ const EditTextarea = memo(function EditTextarea({
 
 /** Props for a single rendered chat message, including optional scene fork actions. */
 interface ChatMessageProps {
-  message: Message & { swipes?: Array<{ id: string; content: string }> };
+  message: Message & { swipes?: Array<{ id?: string; content: string; extra?: MessageSwipe["extra"] }> };
   isStreaming?: boolean;
   onDelete?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
-  onEdit?: (messageId: string, content: string) => void;
+  onEdit?: (messageId: string, content: string) => void | Promise<void>;
   onSetActiveSwipe?: (messageId: string, index: number) => void;
   onToggleConversationStart?: (messageId: string, current: boolean) => void;
   onToggleHiddenFromAI?: (messageId: string, current: boolean) => void;
-  onPeekPrompt?: () => void;
+  onPeekPrompt?: (options?: PeekPromptOptions) => void;
   onBranch?: (messageId: string) => void;
   onCloneSceneFromHere?: (messageId: string) => void;
   isCloneSceneFromHereDisabled?: boolean;
@@ -285,7 +412,9 @@ function renderWithSpeakerTags(
     }
     const speakerName = match[1]?.trim() ?? "";
     const dialogue = match[2]!;
-    const speakerColor = speakerName ? (speakerColorMap?.get(speakerName) ?? defaultDialogueColor) : defaultDialogueColor;
+    const speakerColor = speakerName
+      ? (speakerColorMap?.get(speakerName) ?? defaultDialogueColor)
+      : defaultDialogueColor;
     // Render the dialogue content (without the tags) using the speaker's color
     nodes.push(<span key={`s${key++}`}>{renderLine(dialogue, speakerColor)}</span>);
     lastIndex = match.index + match[0].length;
@@ -490,6 +619,96 @@ const CHAT_HTML_ALLOWED_ATTR = [
 
 const CHAT_STYLE_BLOCK_RE = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
 const CSS_SELECTOR_RE = /(^|[{}])\s*([^@{}][^{]*)\{/g;
+const STYLE_ATTR_RE = /\sstyle=(["'])([\s\S]*?)\1/gi;
+
+const CHAT_CSS_LAYOUT_ESCAPE_PROPERTIES = new Set([
+  "all",
+  "animation",
+  "animation-delay",
+  "animation-direction",
+  "animation-duration",
+  "animation-fill-mode",
+  "animation-iteration-count",
+  "animation-name",
+  "animation-play-state",
+  "animation-timing-function",
+  "backdrop-filter",
+  "bottom",
+  "clip-path",
+  "contain",
+  "content",
+  "filter",
+  "inset",
+  "inset-block",
+  "inset-block-end",
+  "inset-block-start",
+  "inset-inline",
+  "inset-inline-end",
+  "inset-inline-start",
+  "left",
+  "perspective",
+  "position",
+  "right",
+  "rotate",
+  "scale",
+  "top",
+  "transform",
+  "transform-origin",
+  "translate",
+  "z-index",
+]);
+
+const CHAT_CSS_SIZE_PROPERTIES = new Set(["height", "max-height", "max-width", "min-height", "min-width", "width"]);
+const CHAT_CSS_VIEWPORT_UNIT_RE =
+  /(?:^|[-\s(:])(?:\d+(?:\.\d+)?|calc\()[^;)]*(?:dvh|dvw|lvh|lvw|svh|svw|vh|vmax|vmin|vw)\b/i;
+const CHAT_CSS_RUNAWAY_PX_RE = /(?:^|[-\s(:])\d{5,}px\b/i;
+
+function normalizeCssProperty(property: string): string {
+  return property
+    .trim()
+    .toLowerCase()
+    .replace(/^-\w+-/, "");
+}
+
+function isRunawaySizeValue(value: string): boolean {
+  return CHAT_CSS_VIEWPORT_UNIT_RE.test(value) || CHAT_CSS_RUNAWAY_PX_RE.test(value);
+}
+
+export function sanitizeChatStyleDeclarations(style: string): string {
+  return style
+    .split(";")
+    .map((declaration) => {
+      const separatorIndex = declaration.indexOf(":");
+      if (separatorIndex <= 0) return "";
+      const property = declaration.slice(0, separatorIndex).trim();
+      const normalizedProperty = normalizeCssProperty(property);
+      if (!normalizedProperty || CHAT_CSS_LAYOUT_ESCAPE_PROPERTIES.has(normalizedProperty)) return "";
+      const value = declaration
+        .slice(separatorIndex + 1)
+        .replace(/!important/gi, "")
+        .trim();
+      if (!value) return "";
+      if (CHAT_CSS_SIZE_PROPERTIES.has(normalizedProperty) && isRunawaySizeValue(value)) return "";
+      if (/url\s*\(\s*(['"]?)(?!data:image\/|https?:\/\/)[^)]+\)/i.test(value)) return "";
+      return `${property}: ${value}`;
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function sanitizeChatCssDeclarationBlocks(css: string): string {
+  return css.replace(/\{([^{}]*)\}/g, (_match, declarations: string) => {
+    const sanitized = sanitizeChatStyleDeclarations(declarations);
+    return sanitized ? `{${sanitized}}` : "{}";
+  });
+}
+
+function sanitizeInlineStyleAttributes(html: string): string {
+  return html.replace(STYLE_ATTR_RE, (_match, quote: string, style: string) => {
+    const sanitized = sanitizeChatStyleDeclarations(style);
+    return sanitized ? ` style=${quote}${sanitized}${quote}` : "";
+  });
+}
 
 function sanitizeChatHtml(html: string, options: { allowStyle?: boolean } = {}) {
   const allowedAttr = options.allowStyle
@@ -514,19 +733,21 @@ function extractChatStyleBlocks(html: string): { html: string; css: string } {
   return { html: withoutStyles, css: cssBlocks.join("\n") };
 }
 
-function sanitizeChatCss(css: string): string {
-  return css
-    .replace(/<\/?style\b[^>]*>/gi, "")
-    .replace(/@import\s+[^;]+;?/gi, "")
-    .replace(/@namespace\s+[^;]+;?/gi, "")
-    .replace(/expression\s*\([^)]*\)/gi, "")
-    .replace(/javascript\s*:/gi, "")
-    .replace(/vbscript\s*:/gi, "")
-    .replace(/behavior\s*:/gi, "x-behavior:")
-    .replace(/-moz-binding\s*:/gi, "x-moz-binding:")
-    .replace(/url\s*\(\s*(['"]?)(?!data:image\/|https?:\/\/)[^)]+\)/gi, "none")
-    .replace(/<\/style/gi, "<\\/style")
-    .trim();
+export function sanitizeChatCss(css: string): string {
+  return sanitizeChatCssDeclarationBlocks(
+    css
+      .replace(/<\/?style\b[^>]*>/gi, "")
+      .replace(/@import\s+[^;]+;?/gi, "")
+      .replace(/@namespace\s+[^;]+;?/gi, "")
+      .replace(/expression\s*\([^)]*\)/gi, "")
+      .replace(/javascript\s*:/gi, "")
+      .replace(/vbscript\s*:/gi, "")
+      .replace(/behavior\s*:/gi, "x-behavior:")
+      .replace(/-moz-binding\s*:/gi, "x-moz-binding:")
+      .replace(/url\s*\(\s*(['"]?)(?!data:image\/|https?:\/\/)[^)]+\)/gi, "none")
+      .replace(/!important/gi, "")
+      .replace(/<\/style/gi, "<\\/style"),
+  ).trim();
 }
 
 function scopeChatCss(css: string, scopeSelector: string): string {
@@ -660,11 +881,17 @@ function renderContent(
 
   // Apply markdown-style bold/italic in HTML path
   const withMarkdown = applyInlineMarkdownHTML(withHr);
-  const finalHtml = sanitizeChatHtml(withMarkdown, { allowStyle: true });
+  const finalHtml = sanitizeInlineStyleAttributes(sanitizeChatHtml(withMarkdown, { allowStyle: true }));
   const scopedCss = scopeChatCss(rawStyleBlocks, `.${htmlScopeClass}`);
   const html = scopedCss ? `<style>${scopedCss}</style>${finalHtml}` : finalHtml;
 
-  return <div className={cn("overflow-hidden", htmlScopeClass)} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <div
+      className={cn("max-w-full overflow-hidden", htmlScopeClass)}
+      style={{ contain: "layout paint" }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 /** Build style object for name color (supports gradients). */
@@ -716,7 +943,7 @@ export const ChatMessage = memo(function ChatMessage({
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isNarrator = message.role === "narrator";
-  const isRoleplay = chatMode === "roleplay" || chatMode === "visual_novel";
+  const isRoleplay = chatMode === "roleplay";
   const {
     chatFontSize,
     chatFontColor,
@@ -732,6 +959,8 @@ export const ChatMessage = memo(function ChatMessage({
     boldDialogue,
     theme,
     collapseHiddenMessages,
+    editMessagesOnDoubleClick,
+    quoteFormat,
   } = useUIStore(
     useShallow((s) => ({
       chatFontSize: s.chatFontSize,
@@ -748,10 +977,11 @@ export const ChatMessage = memo(function ChatMessage({
       boldDialogue: s.boldDialogue ?? true,
       theme: s.theme,
       collapseHiddenMessages: s.summaryPopoverSettings.collapseHiddenMessages,
+      editMessagesOnDoubleClick: s.editMessagesOnDoubleClick,
+      quoteFormat: s.quoteFormat,
     })),
   );
-  const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
-  const isGuided = guideGenerations && hasInput;
+  const isGuided = guideGenerations;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
   const regenerateGuidedClass = isGuided
     ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:text-[var(--primary)]"
@@ -806,6 +1036,7 @@ export const ChatMessage = memo(function ChatMessage({
   const [avatarLightbox, setAvatarLightbox] = useState<string | null>(null);
   const [avatarLightboxPrompt, setAvatarLightboxPrompt] = useState<string | null>(null);
   const scrollRestoreRef = useRef<{ el: HTMLElement; top: number } | null>(null);
+  const lastMessageTapAtRef = useRef(0);
   const msgRef = useRef<HTMLDivElement>(null);
   const openImageLightbox = useCallback((url: string, prompt?: unknown) => {
     setAvatarLightbox(url);
@@ -900,38 +1131,24 @@ export const ChatMessage = memo(function ChatMessage({
     return () => document.removeEventListener("touchstart", handleTouch);
   }, [showActions]);
 
-  const handleMobileTap = useCallback(
-    (e: React.MouseEvent) => {
-      // In multi-select mode, clicking toggles selection on any device
-      if (multiSelectMode) {
-        onToggleSelect?.({
-          messageId: message.id,
-          orderIndex: messageOrderIndex ?? 0,
-          checked: !isSelected,
-          shiftKey: e.shiftKey,
-        });
-        return;
-      }
-      // Only toggle on touch devices
-      if (!matchMedia("(pointer: coarse)").matches) return;
-      // Don't toggle when tapping buttons, links, or the edit textarea
-      const target = e.target as HTMLElement;
-      if (target.closest("button, a, textarea")) return;
-      setShowActions((v) => !v);
-    },
-    [isSelected, message.id, messageOrderIndex, multiSelectMode, onToggleSelect],
-  );
-
   // Parse message extra for conversation start flag
   const extra = useMemo<Record<string, any>>(() => {
-    return message.extra && typeof message.extra === "object" && !Array.isArray(message.extra)
-      ? message.extra
-      : {};
+    return message.extra && typeof message.extra === "object" && !Array.isArray(message.extra) ? message.extra : {};
   }, [message.extra]);
   const isConversationStart = !!extra.isConversationStart;
   const isHiddenFromAI = extra.hiddenFromAI === true || extra.hiddenFromAi === true;
   const thinking = extra.thinking as string | undefined;
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
+  const promptSnapshotsBySwipe =
+    extra.generationPromptSnapshotsBySwipe &&
+    typeof extra.generationPromptSnapshotsBySwipe === "object" &&
+    !Array.isArray(extra.generationPromptSnapshotsBySwipe)
+      ? (extra.generationPromptSnapshotsBySwipe as Record<string, Message["extra"]["generationPromptSnapshot"]>)
+      : {};
+  const activePromptSnapshot =
+    promptSnapshotsBySwipe[String(message.activeSwipeIndex ?? 0)] ??
+    (extra.generationPromptSnapshot as Message["extra"]["generationPromptSnapshot"] | undefined) ??
+    null;
   const isHiddenExpanded =
     isHiddenFromAI && (!collapseHiddenMessages || manuallyExpandedHidden || editing || !!isStreaming);
   const isHiddenCollapsed = isHiddenFromAI && collapseHiddenMessages && !isHiddenExpanded;
@@ -985,30 +1202,10 @@ export const ChatMessage = memo(function ChatMessage({
     [extra.attachments, message.chatId, message.id, qc],
   );
 
-  // Model name display
-  const _modelName = !isUser && showModelName ? (extra.generationInfo?.model ?? null) : null;
-  void _modelName;
-  const genInfo = !isUser && (showModelName || showTokenUsage) ? extra.generationInfo : null;
-  const genLabel = useMemo(() => {
-    if (!genInfo) return null;
-    const parts: string[] = [];
-    if (showModelName && genInfo.model) parts.push(genInfo.model);
-    if (showTokenUsage) {
-      if (genInfo.tokensPrompt != null || genInfo.tokensCompletion != null) {
-        const p = genInfo.tokensPrompt != null ? genInfo.tokensPrompt : null;
-        const c = genInfo.tokensCompletion ?? "?";
-        parts.push(p != null ? `${p}→${c} tok` : `${c} tok`);
-      }
-      if ((genInfo.tokensCachedPrompt ?? 0) > 0) {
-        parts.push(`cache hit ${genInfo.tokensCachedPrompt!.toLocaleString()}`);
-      }
-      if ((genInfo.tokensCacheWritePrompt ?? 0) > 0) {
-        parts.push(`cache write ${genInfo.tokensCacheWritePrompt!.toLocaleString()}`);
-      }
-      if (genInfo.durationMs != null) parts.push(`${(genInfo.durationMs / 1000).toFixed(1)}s`);
-    }
-    return parts.length > 0 ? parts.join(" · ") : null;
-  }, [genInfo, showModelName, showTokenUsage]);
+  const genLabel = useMemo(
+    () => formatGenerationLabelForMessage(message, showModelName, showTokenUsage),
+    [message, showModelName, showTokenUsage],
+  );
   // useLayoutEffect runs after DOM mutation but before browser paint — prevents visible scroll jump
   useLayoutEffect(() => {
     // Restore scroll position saved before the state change
@@ -1024,6 +1221,54 @@ export const ChatMessage = memo(function ChatMessage({
     setEditing(true);
   }, []);
 
+  const startEditingFromMessageGesture = useCallback(
+    (event: React.MouseEvent) => {
+      if (!editMessagesOnDoubleClick || !onEdit || editing) return false;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      startEditing();
+      return true;
+    },
+    [editMessagesOnDoubleClick, editing, onEdit, startEditing],
+  );
+
+  const handleMessageDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      startEditingFromMessageGesture(event);
+    },
+    [startEditingFromMessageGesture],
+  );
+
+  const handleMobileTap = useCallback(
+    (e: React.MouseEvent) => {
+      // In multi-select mode, clicking toggles selection on any device.
+      if (multiSelectMode) {
+        onToggleSelect?.({
+          messageId: message.id,
+          orderIndex: messageOrderIndex ?? 0,
+          checked: !isSelected,
+          shiftKey: e.shiftKey,
+        });
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(MESSAGE_EDIT_GESTURE_IGNORE_SELECTOR)) return;
+
+      // Only toggle/interpret taps on touch devices. Desktop double-click is handled separately.
+      if (typeof window === "undefined" || !window.matchMedia("(pointer: coarse)").matches) return;
+
+      const now = Date.now();
+      const isDoubleTap = now - lastMessageTapAtRef.current <= 350;
+      lastMessageTapAtRef.current = now;
+      if (isDoubleTap && startEditingFromMessageGesture(e)) return;
+
+      setShowActions((v) => !v);
+    },
+    [isSelected, message.id, messageOrderIndex, multiSelectMode, onToggleSelect, startEditingFromMessageGesture],
+  );
+
   useEffect(() => {
     if (!onEdit) return;
     const handler = (event: Event) => {
@@ -1035,9 +1280,10 @@ export const ChatMessage = memo(function ChatMessage({
   }, [message.id, onEdit, startEditing]);
 
   const handleSaveEdit = useCallback(
-    (content: string) => {
-      if (content.trim() !== message.content) {
-        onEdit?.(message.id, content.trim());
+    async (content: string) => {
+      const nextContent = content.trim();
+      if (nextContent !== message.content) {
+        await onEdit?.(message.id, nextContent);
       }
       setEditing(false);
     },
@@ -1272,7 +1518,6 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
-  const quoteFormat = useUIStore((s) => s.quoteFormat);
   const isHtmlContent = HTML_TAG_RE.test(text);
   const htmlScopeClass = useMemo(() => {
     const suffix = message.id.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -1375,6 +1620,7 @@ export const ChatMessage = memo(function ChatMessage({
     <EditTextarea
       initialContent={message.content}
       fontSize={chatFontSize}
+      quoteFormat={quoteFormat}
       onSave={handleSaveEdit}
       onCancel={handleCancelEdit}
     />
@@ -1420,6 +1666,7 @@ export const ChatMessage = memo(function ChatMessage({
           multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/5 ring-2 ring-[var(--destructive)]/50",
         )}
         onClick={handleMobileTap}
+        onDoubleClick={handleMessageDoubleClick}
       >
         <div className="relative">
           {!multiSelectMode && onDelete && (
@@ -1461,6 +1708,7 @@ export const ChatMessage = memo(function ChatMessage({
             multiSelectMode && isSelected && "rounded-lg bg-[var(--destructive)]/5 ring-2 ring-[var(--destructive)]/50",
           )}
           onClick={handleMobileTap}
+          onDoubleClick={handleMessageDoubleClick}
         >
           <div className="flex gap-3">
             {multiSelectMode && (
@@ -1501,6 +1749,14 @@ export const ChatMessage = memo(function ChatMessage({
                 <span className="h-px flex-1 bg-amber-400/20" />
                 {hiddenFromAIHeader}
                 Narrator
+                {genLabel && (
+                  <span
+                    className="max-w-[15.625rem] truncate text-[0.5625rem] font-medium normal-case tracking-normal text-amber-100/50"
+                    title={genLabel}
+                  >
+                    {genLabel}
+                  </span>
+                )}
                 <span className="h-px flex-1 bg-amber-400/20" />
               </div>
               {!isHiddenCollapsed && (
@@ -1529,6 +1785,7 @@ export const ChatMessage = memo(function ChatMessage({
           data-message-id={message.id}
           data-message-role={message.role}
           onClick={handleMobileTap}
+          onDoubleClick={handleMessageDoubleClick}
           style={roleplayAvatarScaleStyle}
         >
           {/* Multi-select checkbox */}
@@ -1653,7 +1910,7 @@ export const ChatMessage = memo(function ChatMessage({
                 </span>
                 <span className="text-[0.625rem] text-white/30">{formatTime(message.createdAt)}</span>
                 {genLabel && (
-                  <span className="text-[0.5625rem] text-white/25 italic truncate max-w-[15.625rem]" title={genLabel}>
+                  <span className="max-w-[15.625rem] truncate text-[0.5625rem] italic text-white/45" title={genLabel}>
                     {genLabel}
                   </span>
                 )}
@@ -1783,9 +2040,9 @@ export const ChatMessage = memo(function ChatMessage({
                   </div>
                   {roleplayBubbleContent && <div className="min-w-0 flex-1 px-3 py-3">{roleplayBubbleContent}</div>}
                 </div>
-              ) : (
-                roleplayBubbleContent ? <div className="px-4 py-3">{roleplayBubbleContent}</div> : null
-              )}
+              ) : roleplayBubbleContent ? (
+                <div className="px-4 py-3">{roleplayBubbleContent}</div>
+              ) : null}
             </div>
 
             {/* Image attachments (illustrations, selfies) */}
@@ -1830,6 +2087,7 @@ export const ChatMessage = memo(function ChatMessage({
                 activeSwipeIndex={message.activeSwipeIndex}
                 swipeCount={swipeCount}
                 onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+                onCreateNextSwipe={onRegenerate ? () => onRegenerate(message.id) : undefined}
                 className="px-1 text-[0.75rem] text-white/40"
                 buttonClassName="rounded-md p-[0.25em] transition-colors hover:bg-white/10 disabled:opacity-30"
                 iconSize={MESSAGE_SWIPE_ICON_SIZE}
@@ -1857,21 +2115,27 @@ export const ChatMessage = memo(function ChatMessage({
                 className={translatedText ? "text-blue-400/80 hover:text-blue-300" : undefined}
                 dark
               />
-              <ActionBtn icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />} onClick={startEditing} title="Edit" dark />
-              <ActionBtn
-                icon={<RefreshCw size={MESSAGE_ACTION_ICON_SIZE} />}
-                onClick={() => onRegenerate?.(message.id)}
-                title={regenerateButtonTitle}
-                className={regenerateGuidedClass}
-                dark
-              />
-              <ActionBtn
-                icon={<Flag size={MESSAGE_ACTION_ICON_SIZE} />}
-                onClick={() => onToggleConversationStart?.(message.id, isConversationStart)}
-                title={isConversationStart ? "Remove conversation start" : "Mark as new start"}
-                className={isConversationStart ? "text-amber-400/80 hover:text-amber-300" : undefined}
-                dark
-              />
+              {onEdit && (
+                <ActionBtn icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />} onClick={startEditing} title="Edit" dark />
+              )}
+              {onRegenerate && (
+                <ActionBtn
+                  icon={<RefreshCw size={MESSAGE_ACTION_ICON_SIZE} />}
+                  onClick={() => onRegenerate(message.id)}
+                  title={regenerateButtonTitle}
+                  className={regenerateGuidedClass}
+                  dark
+                />
+              )}
+              {onToggleConversationStart && (
+                <ActionBtn
+                  icon={<Flag size={MESSAGE_ACTION_ICON_SIZE} />}
+                  onClick={() => onToggleConversationStart(message.id, isConversationStart)}
+                  title={isConversationStart ? "Remove conversation start" : "Mark as new start"}
+                  className={isConversationStart ? "text-amber-400/80 hover:text-amber-300" : undefined}
+                  dark
+                />
+              )}
               {onToggleHiddenFromAI && (
                 <ActionBtn
                   icon={
@@ -1889,8 +2153,14 @@ export const ChatMessage = memo(function ChatMessage({
               )}
               {isLastAssistantMessage && !isUser && (
                 <ActionBtn
-                  icon={<Eye size={MESSAGE_ACTION_ICON_SIZE} />}
-                  onClick={() => onPeekPrompt?.()}
+                  icon={<Search size={MESSAGE_ACTION_ICON_SIZE} />}
+                  onClick={() =>
+                    onPeekPrompt?.({
+                      forCharacterId: message.characterId ?? null,
+                      messageId: message.id,
+                      promptSnapshot: activePromptSnapshot,
+                    })
+                  }
                   title="Peek prompt"
                   dark
                 />
@@ -1928,13 +2198,15 @@ export const ChatMessage = memo(function ChatMessage({
                   dark
                 />
               )}
-              <ActionBtn
-                icon={<Trash2 size={MESSAGE_ACTION_ICON_SIZE} />}
-                onClick={() => onDelete?.(message.id)}
-                title="Delete"
-                className="hover:text-red-400"
-                dark
-              />
+              {onDelete && (
+                <ActionBtn
+                  icon={<Trash2 size={MESSAGE_ACTION_ICON_SIZE} />}
+                  onClick={() => onDelete(message.id)}
+                  title="Delete"
+                  className="hover:text-red-400"
+                  dark
+                />
+              )}
               {ttsEnabled && (
                 <>
                   {isSpeakingThis && !isLoadingThis && (
@@ -1976,12 +2248,12 @@ export const ChatMessage = memo(function ChatMessage({
                       streamingTTSActive
                         ? "Stop streaming narration"
                         : !hasTTSContent
-                        ? "No dialogue to speak"
-                        : isLoadingThis
-                          ? "Loading…"
-                          : isSpeakingThis
-                            ? "Stop speaking"
-                            : "Speak"
+                          ? "No dialogue to speak"
+                          : isLoadingThis
+                            ? "Loading…"
+                            : isSpeakingThis
+                              ? "Stop speaking"
+                              : "Speak"
                     }
                     className={isSpeakingThis || streamingTTSActive ? "text-sky-400 hover:text-sky-300" : undefined}
                     disabled={!streamingTTSActive && (!hasTTSContent || (ttsBusy && !isSpeakingThis))}
@@ -2054,6 +2326,7 @@ export const ChatMessage = memo(function ChatMessage({
       data-message-id={message.id}
       data-message-role={message.role}
       onClick={handleMobileTap}
+      onDoubleClick={handleMessageDoubleClick}
     >
       <div
         className={cn("flex min-w-0 max-w-[72%] gap-2", isUser && "flex-row-reverse", editing && "w-[85%] max-w-[85%]")}
@@ -2173,6 +2446,7 @@ export const ChatMessage = memo(function ChatMessage({
               <EditTextarea
                 initialContent={message.content}
                 fontSize={chatFontSize}
+                quoteFormat={quoteFormat}
                 onSave={handleSaveEdit}
                 onCancel={handleCancelEdit}
               />
@@ -2269,6 +2543,7 @@ export const ChatMessage = memo(function ChatMessage({
               activeSwipeIndex={message.activeSwipeIndex}
               swipeCount={swipeCount}
               onSetActiveSwipe={(index) => onSetActiveSwipe?.(message.id, index)}
+              onCreateNextSwipe={onRegenerate ? () => onRegenerate(message.id) : undefined}
               className="px-2 text-[0.75rem] text-[var(--muted-foreground)]"
               buttonClassName="rounded p-[0.25em] transition-colors hover:bg-[var(--accent)] disabled:opacity-30"
               iconSize={MESSAGE_SWIPE_ICON_SIZE}
@@ -2294,23 +2569,35 @@ export const ChatMessage = memo(function ChatMessage({
               title={translatedText ? "Hide translation" : "Translate"}
               className={translatedText ? "text-blue-500" : undefined}
             />
-            <ActionBtn icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />} onClick={startEditing} title="Edit" />
-            <ActionBtn
-              icon={<RefreshCw size={MESSAGE_ACTION_ICON_SIZE} />}
-              onClick={() => onRegenerate?.(message.id)}
-              title={regenerateButtonTitle}
-              className={regenerateGuidedClass}
-            />
-            <ActionBtn
-              icon={<Flag size={MESSAGE_ACTION_ICON_SIZE} />}
-              onClick={() => onToggleConversationStart?.(message.id, isConversationStart)}
-              title={isConversationStart ? "Remove conversation start" : "Mark as new start"}
-              className={isConversationStart ? "text-amber-500" : undefined}
-            />
+            {onEdit && (
+              <ActionBtn icon={<Pencil size={MESSAGE_ACTION_ICON_SIZE} />} onClick={startEditing} title="Edit" />
+            )}
+            {onRegenerate && (
+              <ActionBtn
+                icon={<RefreshCw size={MESSAGE_ACTION_ICON_SIZE} />}
+                onClick={() => onRegenerate(message.id)}
+                title={regenerateButtonTitle}
+                className={regenerateGuidedClass}
+              />
+            )}
+            {onToggleConversationStart && (
+              <ActionBtn
+                icon={<Flag size={MESSAGE_ACTION_ICON_SIZE} />}
+                onClick={() => onToggleConversationStart(message.id, isConversationStart)}
+                title={isConversationStart ? "Remove conversation start" : "Mark as new start"}
+                className={isConversationStart ? "text-amber-500" : undefined}
+              />
+            )}
             {isLastAssistantMessage && !isUser && (
               <ActionBtn
-                icon={<Eye size={MESSAGE_ACTION_ICON_SIZE} />}
-                onClick={() => onPeekPrompt?.()}
+                icon={<Search size={MESSAGE_ACTION_ICON_SIZE} />}
+                onClick={() =>
+                  onPeekPrompt?.({
+                    forCharacterId: message.characterId ?? null,
+                    messageId: message.id,
+                    promptSnapshot: activePromptSnapshot,
+                  })
+                }
                 title="Peek prompt"
               />
             )}
@@ -2343,12 +2630,14 @@ export const ChatMessage = memo(function ChatMessage({
                 disabled={isCloneSceneFromHereDisabled}
               />
             )}
-            <ActionBtn
-              icon={<Trash2 size={MESSAGE_ACTION_ICON_SIZE} />}
-              onClick={() => onDelete?.(message.id)}
-              title="Delete"
-              className="hover:text-[var(--destructive)]"
-            />
+            {onDelete && (
+              <ActionBtn
+                icon={<Trash2 size={MESSAGE_ACTION_ICON_SIZE} />}
+                onClick={() => onDelete(message.id)}
+                title="Delete"
+                className="hover:text-[var(--destructive)]"
+              />
+            )}
             {ttsEnabled && (
               <>
                 {isSpeakingThis && !isLoadingThis && (
@@ -2388,12 +2677,12 @@ export const ChatMessage = memo(function ChatMessage({
                     streamingTTSActive
                       ? "Stop streaming narration"
                       : !hasTTSContent
-                      ? "No dialogue to speak"
-                      : isLoadingThis
-                        ? "Loading…"
-                        : isSpeakingThis
-                          ? "Stop speaking"
-                          : "Speak"
+                        ? "No dialogue to speak"
+                        : isLoadingThis
+                          ? "Loading…"
+                          : isSpeakingThis
+                            ? "Stop speaking"
+                            : "Speak"
                   }
                   className={isSpeakingThis || streamingTTSActive ? "text-sky-500" : undefined}
                   disabled={!streamingTTSActive && (!hasTTSContent || (ttsBusy && !isSpeakingThis))}

@@ -21,14 +21,10 @@ describe("game segment edit command stripping", () => {
   });
 
   it("does not leak unknown nested tag fragments when applying segment edits", () => {
-    const content = [
-      'The room shifts. [debug: {"items":["torch"]}]',
-      "",
-      "[Guide]: \"Keep moving.\"",
-    ].join("\n");
+    const content = ['The room shifts. [debug: {"items":["torch"]}]', "", '[Guide]: "Keep moving."'].join("\n");
 
     expect(applySegmentEdits(content, { 0: { content: "The room steadies." } })).toBe(
-      ['The room steadies.', '[Guide]: "Keep moving."'].join("\n\n"),
+      ["The room steadies.", '[Guide]: "Keep moving."'].join("\n\n"),
     );
   });
 });

@@ -6,13 +6,13 @@ export const PROMPT_OVERRIDE_COLLECTION = "prompt-overrides";
 const VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const VARIABLE_PATTERN = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
 
-export type PromptOverrideVariable = {
+type PromptOverrideVariable = {
   name: string;
   description: string;
   example?: string;
 };
 
-export type PromptOverrideKeyDef<TContext extends Record<string, string | number | undefined>> = {
+type PromptOverrideKeyDef<TContext extends Record<string, string | number | undefined>> = {
   key: string;
   description: string;
   variables: readonly PromptOverrideVariable[];
@@ -50,7 +50,7 @@ export type PromptOverrideDefault = {
   exampleContext: Record<string, string | number | undefined>;
 };
 
-export type ConversationSelfiePromptContext = Record<string, string | number | undefined> & {
+type ConversationSelfiePromptContext = Record<string, string | number | undefined> & {
   appearance: string;
   charName: string;
   selfieTagsBlock: string;
@@ -75,7 +75,7 @@ const CONVERSATION_SELFIE_PROMPT_TEMPLATE = [
   "Output ONLY the prompt text, nothing else.",
 ].join("\n");
 
-export const CONVERSATION_SELFIE_PROMPT_OVERRIDE: PromptOverrideKeyDef<ConversationSelfiePromptContext> = {
+const CONVERSATION_SELFIE_PROMPT_OVERRIDE: PromptOverrideKeyDef<ConversationSelfiePromptContext> = {
   key: "conversation.selfie",
   description: "Meta-prompt that asks the chat LLM to write a selfie image prompt for the active character.",
   variables: [
@@ -165,13 +165,16 @@ export function normalizePromptOverrideRow(row: unknown, fallbackKey?: string): 
   };
 }
 
-export async function loadRegisteredPrompt<TContext extends Record<string, string | number | undefined>>(
+async function loadRegisteredPrompt<TContext extends Record<string, string | number | undefined>>(
   storage: StorageGateway,
   definition: PromptOverrideKeyDef<TContext>,
   context: TContext,
 ): Promise<string> {
   try {
-    const row = normalizePromptOverrideRow(await storage.get(PROMPT_OVERRIDE_COLLECTION, definition.key), definition.key);
+    const row = normalizePromptOverrideRow(
+      await storage.get(PROMPT_OVERRIDE_COLLECTION, definition.key),
+      definition.key,
+    );
     if (row?.enabled) {
       const declared = definition.variables.map((variable) => variable.name);
       const validation = validatePromptOverrideTemplate(row.template, declared);
@@ -189,7 +192,7 @@ export async function loadRegisteredPrompt<TContext extends Record<string, strin
   return definition.defaultBuilder(context);
 }
 
-export function buildConversationSelfiePromptContext(input: {
+function buildConversationSelfiePromptContext(input: {
   appearance: string;
   charName: string;
   selfieTagsBlock?: string;

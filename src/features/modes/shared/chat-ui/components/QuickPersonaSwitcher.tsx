@@ -4,10 +4,15 @@
 // ──────────────────────────────────────────────
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { ChevronDown, ChevronRight, FolderOpen, Folder } from "lucide-react";
-import { usePersona, usePersonas, usePersonaGroups } from "../../../../catalog/characters/index";
+import { usePersona, usePersonaGroups, usePersonaSummaries } from "../../../../catalog/personas/index";
 import { useUpdateChat, useChat } from "../../../../catalog/chats/index";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../../../../shared/lib/utils";
+import {
+  CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_CLASS,
+  CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
+} from "./input-button-styles";
 
 interface Persona {
   id: string;
@@ -42,7 +47,7 @@ export function QuickPersonaSwitcher({ className }: { className?: string }) {
   const { data: chat } = useChat(activeChatId);
   const activePersonaId = (chat as unknown as Record<string, unknown>)?.personaId as string | null;
   const { data: activePersonaRecord } = usePersona(activePersonaId, !!activePersonaId);
-  const { data: rawPersonas } = usePersonas(open);
+  const { data: rawPersonas } = usePersonaSummaries(open);
   const { data: rawPersonaGroups } = usePersonaGroups(open);
   const updateChat = useUpdateChat();
 
@@ -50,7 +55,8 @@ export function QuickPersonaSwitcher({ className }: { className?: string }) {
     .slice()
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
-  const activePersona = personas.find((p) => p.id === activePersonaId) ?? (activePersonaRecord as Persona | null) ?? null;
+  const activePersona =
+    personas.find((p) => p.id === activePersonaId) ?? (activePersonaRecord as Persona | null) ?? null;
 
   // Build a map for quick lookups
   const personaMap = useMemo(() => {
@@ -204,8 +210,11 @@ export function QuickPersonaSwitcher({ className }: { className?: string }) {
             : "Quick Persona Switcher"
         }
         className={cn(
-          "relative flex h-8 w-8 items-center justify-center rounded-full overflow-hidden transition-all border-2",
-          open ? "border-foreground/40" : "border-transparent hover:border-foreground/30 hover:opacity-90",
+          CHAT_INPUT_ICON_BUTTON_CLASS,
+          "relative overflow-hidden border-2 p-0",
+          open
+            ? `${CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS} border-foreground/40`
+            : `${CHAT_INPUT_ICON_BUTTON_IDLE_CLASS} border-transparent hover:border-foreground/30`,
           className,
         )}
       >

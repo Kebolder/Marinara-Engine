@@ -5,7 +5,10 @@ import type { StorageGateway } from "../capabilities/storage";
 import { startGeneration, type GenerationEngineDeps } from "./start-generation";
 import {
   buildMainToolDefinitions,
+  executeBuiltInTool,
+  customToolExecutor,
   executeMainToolCall,
+  searchLorebookTool,
   normalizeToolCall,
   type CustomToolRecord,
 } from "./tools-runtime";
@@ -44,8 +47,9 @@ function makeStubDeps(
     defaultParameters: {},
   };
   const customTools = options.customTools ?? [];
-  const initialMessages =
-    options.initialMessages ?? [{ id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" }];
+  const initialMessages = options.initialMessages ?? [
+    { id: "assistant-1", chatId: "chat-1", role: "assistant", content: "What now?" },
+  ];
 
   const messagesById = new Map(initialMessages.map((message) => [String(message.id), message]));
   const allMessages = [...initialMessages];
@@ -83,9 +87,7 @@ function makeStubDeps(
     }
     return { id, ...patch };
   });
-  const customToolsExecute = vi.fn(
-    options.customToolExecuteImpl ?? (async () => ({ ok: true })),
-  );
+  const customToolsExecute = vi.fn(options.customToolExecuteImpl ?? (async () => ({ ok: true })));
 
   const storage: StorageGateway = {
     get: vi.fn(async (entity: string, id: string) => {
@@ -155,9 +157,7 @@ function makeStubDeps(
 
 type CollectedEvent = { type: string; data: unknown };
 
-async function collectEvents(
-  gen: AsyncGenerator<{ type: string; data?: unknown }>,
-): Promise<CollectedEvent[]> {
+async function collectEvents(gen: AsyncGenerator<{ type: string; data?: unknown }>): Promise<CollectedEvent[]> {
   const events: CollectedEvent[] = [];
   for await (const event of gen) {
     events.push({ type: event.type, data: event.data });
@@ -220,10 +220,7 @@ describe("row 1 — Spotify tool excluded from main path", () => {
 describe("row 2 — infinite tool loop terminates at MAX_MAIN_TOOL_ITERATIONS = 8", () => {
   it("stops after 8 stream calls and emits the iteration-cap phase event", async () => {
     // 10 turns of repeated roll_dice — should cap at 8.
-    const turn: LlmChunk[] = [
-      { type: "token", text: "rolling..." },
-      toolCallChunk("roll_dice", { notation: "1d6" }),
-    ];
+    const turn: LlmChunk[] = [{ type: "token", text: "rolling..." }, toolCallChunk("roll_dice", { notation: "1d6" })];
     const turns: LlmChunk[][] = Array.from({ length: 10 }, () => turn);
     const { deps, streamedRequests } = makeStubDeps({
       chatMetadata: { enableTools: true, activeToolIds: ["roll_dice"] },
@@ -241,8 +238,7 @@ describe("row 2 — infinite tool loop terminates at MAX_MAIN_TOOL_ITERATIONS = 
     expect(streamedRequests).toHaveLength(8);
     const phaseEvents = events.filter((event) => event.type === "phase");
     const capPhase = phaseEvents.find(
-      (event) =>
-        typeof event.data === "string" && event.data.includes("Tool-call iteration limit (8)"),
+      (event) => typeof event.data === "string" && event.data.includes("Tool-call iteration limit (8)"),
     );
     expect(capPhase).toBeTruthy();
   });
@@ -399,6 +395,184 @@ describe("row 6 — agent-only tool names filtered from main toolDefs", () => {
   });
 });
 
+describe("append_chat_summary source message hiding", () => {
+  it("records and hides recent visible source messages when automated summary hiding is enabled", async () => {
+    const { deps, storage, update } = makeStubDeps({
+      chatMetadata: {},
+      initialMessages: [],
+      script: { turns: [] },
+    });
+    const patchChatMessageExtra = storage.patchChatMessageExtra as ReturnType<typeof vi.fn>;
+
+    const result = await executeBuiltInTool(
+      deps,
+      {
+        chat: { id: "chat-1", metadata: {} },
+        storedMessages: [
+          { id: "visible-1", role: "user", content: "First." },
+          { id: "hidden-1", role: "assistant", content: "Hidden.", extra: { hiddenFromAI: true } },
+          { id: "visible-2", role: "assistant", content: "Second." },
+        ],
+        activatedLorebookEntries: [],
+        characters: [],
+        persona: null,
+        chatSummary: null,
+        hideAutomatedSummarySourceMessages: true,
+      },
+      { id: "agent-a", name: "Summary Agent" },
+      normalizeToolCall({
+        function: {
+          name: "append_chat_summary",
+          arguments: JSON.stringify({ text: "The visible exchange was summarized." }),
+        },
+      })!,
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        hiddenMessageIds: ["visible-1", "visible-2"],
+        entry: expect.objectContaining({
+          messageCount: 2,
+          messageIds: ["visible-1", "visible-2"],
+        }),
+      }),
+    );
+    expect(patchChatMessageExtra).toHaveBeenCalledTimes(2);
+    expect(patchChatMessageExtra).toHaveBeenNthCalledWith(1, "visible-1", {
+      hiddenFromAI: true,
+      hiddenFromAi: true,
+    });
+    expect(patchChatMessageExtra).toHaveBeenNthCalledWith(2, "visible-2", {
+      hiddenFromAI: true,
+      hiddenFromAi: true,
+    });
+    expect(update).toHaveBeenCalledWith(
+      "chats",
+      "chat-1",
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          summaryEntries: [
+            expect.objectContaining({
+              origin: "automated",
+              sourceMode: "agent",
+              messageIds: ["visible-1", "visible-2"],
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("records source messages without hiding them when automated summary hiding is disabled", async () => {
+    const { deps, storage } = makeStubDeps({
+      chatMetadata: {},
+      initialMessages: [],
+      script: { turns: [] },
+    });
+    const patchChatMessageExtra = storage.patchChatMessageExtra as ReturnType<typeof vi.fn>;
+
+    const result = await executeBuiltInTool(
+      deps,
+      {
+        chat: { id: "chat-1", metadata: {} },
+        storedMessages: [{ id: "visible-1", role: "user", content: "First." }],
+        activatedLorebookEntries: [],
+        characters: [],
+        persona: null,
+        chatSummary: null,
+        hideAutomatedSummarySourceMessages: false,
+      },
+      { id: "agent-a", name: "Summary Agent" },
+      normalizeToolCall({
+        function: {
+          name: "append_chat_summary",
+          arguments: JSON.stringify({ text: "The visible exchange was summarized." }),
+        },
+      })!,
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        hiddenMessageIds: [],
+        entry: expect.objectContaining({ messageIds: ["visible-1"] }),
+      }),
+    );
+    expect(patchChatMessageExtra).not.toHaveBeenCalled();
+  });
+
+  it("keeps successful hidden ids and persists metadata after partial hide failures settle", async () => {
+    const { deps, storage, update } = makeStubDeps({
+      chatMetadata: {},
+      initialMessages: [],
+      script: { turns: [] },
+    });
+    const patchChatMessageExtra = storage.patchChatMessageExtra as ReturnType<typeof vi.fn>;
+    patchChatMessageExtra.mockImplementation(async (id: string, patch: Record<string, unknown>) => {
+      if (id === "visible-2") throw new Error("patch failed");
+      return { id, ...patch };
+    });
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      const result = await executeBuiltInTool(
+        deps,
+        {
+          chat: { id: "chat-1", metadata: {} },
+          storedMessages: [
+            { id: "visible-1", role: "user", content: "First." },
+            { id: "visible-2", role: "assistant", content: "Second." },
+          ],
+          activatedLorebookEntries: [],
+          characters: [],
+          persona: null,
+          chatSummary: null,
+          hideAutomatedSummarySourceMessages: true,
+        },
+        { id: "agent-a", name: "Summary Agent" },
+        normalizeToolCall({
+          function: {
+            name: "append_chat_summary",
+            arguments: JSON.stringify({ text: "The visible exchange was summarized." }),
+          },
+        })!,
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          hiddenMessageIds: ["visible-1"],
+        }),
+      );
+      expect(patchChatMessageExtra).toHaveBeenCalledTimes(2);
+      expect(consoleWarn).toHaveBeenCalledWith(
+        "[tools-runtime] Failed to hide automated summary source message",
+        expect.objectContaining({ messageId: "visible-2" }),
+      );
+      expect(update).toHaveBeenCalledWith(
+        "chats",
+        "chat-1",
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            summaryEntries: [
+              expect.objectContaining({
+                messageCount: 2,
+                messageIds: ["visible-1", "visible-2"],
+              }),
+            ],
+          }),
+        }),
+      );
+      const updateOrder = update.mock.invocationCallOrder[0] ?? 0;
+      const patchOrders = patchChatMessageExtra.mock.invocationCallOrder;
+      expect(Math.max(...patchOrders)).toBeLessThan(updateOrder);
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+});
+
 // ──────────────────────────────────────────────
 // Row 7 — activeToolIds: [] + enableTools: true exposes all built-ins minus agent-only minus spotify, plus customs
 // ──────────────────────────────────────────────
@@ -445,12 +619,7 @@ describe("row 7 — empty activeToolIds with enableTools: true exposes the expec
     expect(names).toContain("trigger_event");
     expect(names).toContain("search_lorebook");
     // Agent-only must be absent:
-    for (const agentOnly of [
-      "read_chat_summary",
-      "append_chat_summary",
-      "read_chat_variable",
-      "write_chat_variable",
-    ]) {
+    for (const agentOnly of ["read_chat_summary", "append_chat_summary", "read_chat_variable", "write_chat_variable"]) {
       expect(names.has(agentOnly)).toBe(false);
     }
     // Spotify must be absent on the main path:
@@ -586,9 +755,7 @@ describe("row 8 — mid-loop abort propagates cleanly", () => {
     const toolCalls = events.filter((event) => event.type === "tool_call");
     const toolResults = events.filter((event) => event.type === "tool_result");
     expect(toolCalls.length).toBe(toolResults.length);
-    const callIds = new Set(
-      toolCalls.map((event) => (event.data as { id: string }).id),
-    );
+    const callIds = new Set(toolCalls.map((event) => (event.data as { id: string }).id));
     for (const result of toolResults) {
       expect(callIds.has((result.data as { toolCallId: string }).toolCallId)).toBe(true);
     }
@@ -607,10 +774,7 @@ describe("row 8 — mid-loop abort propagates cleanly", () => {
 describe("row 9 — Branch B (directMessages) tool loop matches Branch A behavior", () => {
   it("directMessages path runs the same multi-turn tool loop and caps at 8 iterations", async () => {
     // 10 turns of repeated roll_dice with directMessages — should also cap at 8.
-    const turn: LlmChunk[] = [
-      { type: "token", text: "x" },
-      toolCallChunk("roll_dice", { notation: "1d6" }),
-    ];
+    const turn: LlmChunk[] = [{ type: "token", text: "x" }, toolCallChunk("roll_dice", { notation: "1d6" })];
     const turns: LlmChunk[][] = Array.from({ length: 10 }, () => turn);
     const { deps, streamedRequests } = makeStubDeps({
       chatMetadata: { enableTools: true, activeToolIds: ["roll_dice"] },
@@ -706,6 +870,8 @@ describe("row 10 — custom-tool name collision with built-in: built-in wins, no
       input: {
         chat: { id: "chat-1", metadata: {} },
         activatedLorebookEntries: [],
+        characters: [],
+        persona: null,
         chatSummary: null,
       },
       customTools,
@@ -750,6 +916,8 @@ describe("row 10 — custom-tool name collision with built-in: built-in wins, no
       input: {
         chat: { id: "chat-1", metadata: {} },
         activatedLorebookEntries: [],
+        characters: [],
+        persona: null,
         chatSummary: null,
       },
       customTools: new Map(),
@@ -827,6 +995,28 @@ describe("row 10 — custom-tool name collision with built-in: built-in wins, no
     expect(names).toContain("legacy_calc");
   });
 
+  it("executes script custom tools locally without requiring the custom-tools integration capability", async () => {
+    const execute = vi.fn();
+    const result = await customToolExecutor(
+      { customTools: { execute } } as Partial<IntegrationGateway> as IntegrationGateway,
+      toolCallChunk("legacy_calc", { a: 2, b: 3 }).data as Parameters<typeof customToolExecutor>[1],
+      {
+        id: "ct-legacy",
+        name: "legacy_calc",
+        description: "old script tool",
+        parametersSchema: { type: "object", properties: {} },
+        executionType: "script",
+        webhookUrl: null,
+        staticResult: null,
+        scriptBody: "return arguments.a + arguments.b;",
+        enabled: true,
+      },
+    );
+
+    expect(result).toBe("5");
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("usage is aggregated across multi-turn tool-call loops, not overwritten by the last turn", async () => {
     // Two-turn loop: turn 1 emits usage A + a tool call, turn 2 emits usage B
     // and resolves. Saved usage must reflect both turns' token counts.
@@ -849,11 +1039,98 @@ describe("row 10 — custom-tool name collision with built-in: built-in wins, no
 
     await collectEvents(startGeneration(deps, { chatId: "chat-1", message: "go" }));
 
-    const assistantCall = createChatMessage.mock.calls.find(([, body]) => (body as Record<string, unknown>).role === "assistant");
+    const assistantCall = createChatMessage.mock.calls.find(
+      ([, body]) => (body as Record<string, unknown>).role === "assistant",
+    );
     expect(assistantCall).toBeDefined();
     const generationInfo = (assistantCall![1] as { generationInfo: { usage: Record<string, number> } }).generationInfo;
     expect(generationInfo.usage.promptTokens).toBe(250);
     expect(generationInfo.usage.completionTokens).toBe(50);
     expect(generationInfo.usage.totalTokens).toBe(300);
+  });
+});
+
+describe("search_lorebook active context", () => {
+  it("does not return disabled, disabled-folder, or unrelated stored lorebook entries", async () => {
+    const storage = {
+      list: vi.fn(async (entity: string, options?: { filters?: Record<string, unknown> }) => {
+        if (entity === "lorebooks") {
+          return [
+            { id: "active-book", name: "Active book", enabled: true, isGlobal: true },
+            { id: "disabled-book", name: "Disabled book", enabled: false, isGlobal: true },
+            { id: "other-character-book", name: "Other character", enabled: true, characterId: "other-character" },
+          ];
+        }
+        if (entity === "lorebook-folders") {
+          if (options?.filters?.lorebookId === "active-book") {
+            return [{ id: "disabled-folder", lorebookId: "active-book", enabled: false }];
+          }
+          return [];
+        }
+        return [];
+      }),
+      listLorebookEntries: vi.fn(async (lorebookId: string) => {
+        if (lorebookId === "active-book") {
+          return [
+            {
+              id: "allowed-entry",
+              lorebookId,
+              name: "Allowed",
+              content: "moonstone archive visible",
+              enabled: true,
+              keys: [],
+            },
+            {
+              id: "disabled-folder-entry",
+              lorebookId,
+              name: "Disabled folder",
+              content: "moonstone archive hidden by folder",
+              enabled: true,
+              folderId: "disabled-folder",
+              keys: [],
+            },
+          ];
+        }
+        if (lorebookId === "disabled-book") {
+          return [
+            {
+              id: "disabled-book-entry",
+              lorebookId,
+              name: "Disabled book",
+              content: "moonstone archive hidden by book",
+              enabled: true,
+              keys: [],
+            },
+          ];
+        }
+        if (lorebookId === "other-character-book") {
+          return [
+            {
+              id: "other-character-entry",
+              lorebookId,
+              name: "Other character",
+              content: "moonstone archive hidden by character scope",
+              enabled: true,
+              keys: [],
+            },
+          ];
+        }
+        return [];
+      }),
+    } as unknown as StorageGateway;
+
+    const result = await searchLorebookTool(
+      storage,
+      {
+        chat: { id: "chat-1", mode: "conversation", metadata: {} },
+        activatedLorebookEntries: [],
+        characters: [{ id: "character-1", name: "Hero", description: "", tags: [] }],
+        persona: null,
+        chatSummary: null,
+      },
+      { query: "moonstone archive" },
+    );
+
+    expect(result.entries.map((entry) => entry.id)).toEqual(["allowed-entry"]);
   });
 });

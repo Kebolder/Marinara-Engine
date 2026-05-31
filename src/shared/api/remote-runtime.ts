@@ -39,7 +39,6 @@ const REMOTE_COMMANDS = new Set([
   "game_assets_create_folder",
   "game_assets_delete_folder",
   "game_assets_delete_file",
-  "game_assets_file_path",
   "game_assets_read_text",
   "game_assets_write_text",
   "game_assets_rename",
@@ -51,8 +50,6 @@ const REMOTE_COMMANDS = new Set([
   "game_assets_file_info",
   "game_assets_folder_description",
   "game_assets_upload",
-  "background_file_path",
-  "lorebook_image_file_path",
   "gif_search",
   "tts_config",
   "tts_update_config",
@@ -108,6 +105,7 @@ const REMOTE_COMMANDS = new Set([
   "storage_delete",
   "storage_duplicate",
   "chat_message_add_swipe",
+  "chat_message_update_content_if_unchanged",
   "chat_message_set_active_swipe",
   "chat_message_delete_swipe",
   "chat_autonomous_unread_mark",
@@ -126,6 +124,7 @@ const REMOTE_COMMANDS = new Set([
   "chat_notes_clear",
   "chat_group_delete",
   "chat_messages_bulk_delete",
+  "chat_message_count",
   "chat_branch",
   "chat_message_swipes",
   "chat_connect",
@@ -156,6 +155,7 @@ const REMOTE_COMMANDS = new Set([
   "connection_test",
   "connection_test_message",
   "connection_test_image",
+  "connection_diagnose_claude_subscription",
   "connection_models",
   "connection_save_default_parameters",
   "persona_activate",
@@ -178,6 +178,19 @@ export type RuntimeTarget = {
   baseUrl: string;
   authorization?: string;
 };
+
+type RemoteRuntimeHealthPayload = {
+  ok?: boolean;
+  runtime?: string;
+  writable?: boolean;
+};
+
+export type RemoteRuntimeHealthCheck =
+  | { status: "ok"; message: string; health: RemoteRuntimeHealthPayload }
+  | { status: "unconfigured"; message: string }
+  | { status: "invalid"; message: string }
+  | { status: "unreachable"; message: string; health?: RemoteRuntimeHealthPayload }
+  | { status: "not-writable"; message: string; health: RemoteRuntimeHealthPayload };
 
 function encodeBasicAuth(username: string, password: string): string {
   return `Basic ${btoa(`${decodeURIComponent(username)}:${decodeURIComponent(password)}`)}`;
@@ -214,12 +227,103 @@ export function isRemoteCommand(command: string): boolean {
   return REMOTE_COMMANDS.has(command);
 }
 
-function remoteHeaders(target: RuntimeTarget, extra?: HeadersInit): HeadersInit {
+export function remoteHeaders(target: RuntimeTarget, extra?: HeadersInit): HeadersInit {
   return {
     ...(target.authorization ? { Authorization: target.authorization } : {}),
     ...extra,
     "X-Marinara-CSRF": "1",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+export async function checkRemoteRuntimeHealth(
+  rawUrl: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<RemoteRuntimeHealthCheck> {
+  if (!rawUrl.trim()) {
+    return { status: "unconfigured", message: "Embedded Tauri runtime in use." };
+  }
+
+  let target: RuntimeTarget | null;
+  try {
+    target = normalizeRemoteRuntimeUrl(rawUrl);
+  } catch {
+    return { status: "invalid", message: "Remote Runtime URL is invalid." };
+  }
+
+  if (!target) {
+    return { status: "unconfigured", message: "Embedded Tauri runtime in use." };
+  }
+
+  try {
+    const response = await fetch(`${target.baseUrl}/health`, {
+      method: "GET",
+      headers: remoteHeaders(target, { accept: "application/json" }),
+      signal: options.signal,
+    });
+
+    if (!response.ok) {
+      return { status: "unreachable", message: `Remote runtime returned ${response.status}.` };
+    }
+
+    const body = (await response.json().catch(() => null)) as RemoteRuntimeHealthPayload | null;
+    if (!body || typeof body !== "object" || body.ok !== true || body.runtime !== "marinara-server") {
+      return { status: "unreachable", message: "Remote runtime did not return a Marinara health response." };
+    }
+
+    if (body.writable !== true) {
+      return {
+        status: "not-writable",
+        message: "Remote runtime is reachable, but its data storage is not writable.",
+        health: body,
+      };
+    }
+
+    const invokeReady = await fetch(`${target.baseUrl}/api/invoke`, {
+      method: "POST",
+      headers: remoteHeaders(target, { "content-type": "application/json" }),
+      body: JSON.stringify({
+        command: "storage_list",
+        args: {
+          entity: "chats",
+          options: { fields: ["id"], limit: 1 },
+        },
+      }),
+      signal: options.signal,
+    });
+
+    if (!invokeReady.ok) {
+      return {
+        status: "unreachable",
+        message: `Remote runtime health is reachable, but API invoke returned ${invokeReady.status}.`,
+        health: body,
+      };
+    }
+
+    return {
+      status: "ok",
+      message: "Remote runtime is online and storage is writable.",
+      health: body,
+    };
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    return { status: "unreachable", message: "Remote runtime is unreachable." };
+  }
 }
 
 async function readRemoteError(response: Response): Promise<ApiError> {
@@ -236,6 +340,24 @@ async function readRemoteError(response: Response): Promise<ApiError> {
       retryAfterMs === null ? undefined : { retryAfterMs },
     );
   }
+}
+
+function remoteStreamError(event: LlmChunk): ApiError {
+  const record = event as LlmChunk & { code?: unknown; message?: unknown };
+  const data = event.data;
+  const dataRecord = isRecord(data) ? data : {};
+  const message =
+    readString(record.message) ||
+    readString(event.text) ||
+    readString(data) ||
+    readString(dataRecord.message) ||
+    "LLM stream failed";
+  const status = readNumber(dataRecord.status) ?? readNumber(dataRecord.statusCode) ?? 0;
+  const code = readString(record.code) || readString(dataRecord.code);
+  return new ApiError(message, status, {
+    ...(code ? { code } : {}),
+    event,
+  });
 }
 
 export async function invokeRemote<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -293,7 +415,7 @@ export async function* streamRemoteLlm(
       buffer = parsed.rest;
       for (const data of parsed.events) {
         const event = JSON.parse(data) as LlmChunk;
-        if (event.type === "error") throw new Error(String(event.text ?? event.data ?? "LLM stream failed"));
+        if (event.type === "error") throw remoteStreamError(event);
         yield event;
       }
     }

@@ -1,6 +1,6 @@
 use crate::storage_commands::shared::required_string;
 use marinara_core::{AppError, AppResult};
-use marinara_security::is_allowed_outbound_url;
+use marinara_security::{is_allowed_outbound_url, redact_sensitive_text};
 use serde_json::{json, Map, Value};
 use std::time::Duration;
 
@@ -41,7 +41,12 @@ pub(crate) async fn discord_webhook_send(body: Value) -> AppResult<Value> {
         .json(&Value::Object(payload))
         .send()
         .await
-        .map_err(|error| AppError::new("discord_webhook_request_error", error.to_string()))?;
+        .map_err(|error| {
+            AppError::new(
+                "discord_webhook_request_error",
+                redact_sensitive_text(&error.to_string()),
+            )
+        })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -49,7 +54,7 @@ pub(crate) async fn discord_webhook_send(body: Value) -> AppResult<Value> {
         return Err(AppError::with_details(
             "discord_webhook_failed",
             format!("Discord webhook returned HTTP {status}"),
-            json!({ "body": body.chars().take(500).collect::<String>() }),
+            json!({ "body": redact_sensitive_text(&body).chars().take(500).collect::<String>() }),
         ));
     }
 
@@ -68,7 +73,10 @@ fn truncate_for_discord(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
         return value.to_string();
     }
-    let prefix = value.chars().take(limit.saturating_sub(3)).collect::<String>();
+    let prefix = value
+        .chars()
+        .take(limit.saturating_sub(3))
+        .collect::<String>();
     format!("{prefix}...")
 }
 
@@ -93,9 +101,9 @@ fn is_valid_discord_webhook_url(raw: &str) -> bool {
     !id.is_empty()
         && id.chars().all(|character| character.is_ascii_digit())
         && !token.is_empty()
-        && token
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+        && token.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
 }
 
 #[cfg(test)]
@@ -110,9 +118,15 @@ mod tests {
         assert!(is_valid_discord_webhook_url(
             "https://discordapp.com/api/webhooks/123456789/token_AB-12"
         ));
-        assert!(!is_valid_discord_webhook_url("http://discord.com/api/webhooks/123/token"));
-        assert!(!is_valid_discord_webhook_url("https://example.com/api/webhooks/123/token"));
-        assert!(!is_valid_discord_webhook_url("https://discord.com/api/webhooks/notnumeric/token"));
+        assert!(!is_valid_discord_webhook_url(
+            "http://discord.com/api/webhooks/123/token"
+        ));
+        assert!(!is_valid_discord_webhook_url(
+            "https://example.com/api/webhooks/123/token"
+        ));
+        assert!(!is_valid_discord_webhook_url(
+            "https://discord.com/api/webhooks/notnumeric/token"
+        ));
     }
 
     #[test]

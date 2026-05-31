@@ -3,19 +3,73 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { chatPresetKeys } from "../query-keys";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
+import { chatPresetSettingsSchema } from "../../../../engine/contracts/schemas/chat-preset.schema";
+import { boolish } from "../../../../engine/generation/runtime-records";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import { chatKeys } from "../../chats/query-keys";
 import type { Chat, ChatMode } from "../../../../engine/contracts/types/chat";
-import type { ChatPreset, ChatPresetSettings } from "../../../../engine/contracts/types/chat-preset";
+import {
+  CHAT_PRESET_EXCLUDED_METADATA_KEYS,
+  type ChatPreset,
+  type ChatPresetSettings,
+} from "../../../../engine/contracts/types/chat-preset";
 
 export { chatPresetKeys } from "../query-keys";
 
+const EXCLUDED_METADATA_KEYS = new Set<string>(CHAT_PRESET_EXCLUDED_METADATA_KEYS);
+
+type RawChatPreset = ChatPreset & {
+  default?: unknown;
+  active?: unknown;
+};
+
+export function normalizeChatPresetFlags<T extends RawChatPreset>(preset: T): T & ChatPreset {
+  return {
+    ...preset,
+    isDefault: boolish(preset.isDefault ?? preset.default, false),
+    isActive: boolish(preset.isActive ?? preset.active, false),
+  };
+}
+
+export async function listChatPresets(mode?: ChatMode | null): Promise<ChatPreset[]> {
+  const presets = (await storageApi.list<RawChatPreset>("chat-presets")).map(normalizeChatPresetFlags);
+  return mode ? presets.filter((preset) => preset.mode === mode) : presets;
+}
+
+export function findUserStarredChatPreset(
+  presets: readonly RawChatPreset[] | null | undefined,
+  mode: ChatMode | null,
+): ChatPreset | null {
+  if (!mode) return null;
+  return (
+    presets
+      ?.map(normalizeChatPresetFlags)
+      .find((preset) => preset.mode === mode && preset.isActive && !preset.isDefault) ?? null
+  );
+}
+
+export function sanitizeChatPresetSettings(settings: ChatPresetSettings | null | undefined): ChatPresetSettings {
+  const clean: ChatPresetSettings = {};
+  if (!settings) return clean;
+
+  if ("connectionId" in settings) clean.connectionId = settings.connectionId ?? null;
+  if ("promptPresetId" in settings) clean.promptPresetId = settings.promptPresetId ?? null;
+
+  if (settings.metadata && typeof settings.metadata === "object" && !Array.isArray(settings.metadata)) {
+    const metadata = Object.fromEntries(
+      Object.entries(settings.metadata).filter(([key]) => !EXCLUDED_METADATA_KEYS.has(key)),
+    );
+    if (Object.keys(metadata).length > 0) clean.metadata = metadata;
+  }
+
+  return chatPresetSettingsSchema.parse(clean);
+}
 
 async function setOnlyActivePreset(id: string): Promise<ChatPreset> {
-  const selected = await storageApi.get<ChatPreset>("chat-presets", id);
+  const selected = await storageApi.get<RawChatPreset>("chat-presets", id);
   if (!selected) throw new Error(`Chat preset ${id} was not found`);
-  const presets = await storageApi.list<ChatPreset>("chat-presets");
+  const presets = (await storageApi.list<RawChatPreset>("chat-presets")).map(normalizeChatPresetFlags);
   await Promise.all(
     presets
       .filter((preset) => preset.mode === selected.mode)
@@ -26,47 +80,15 @@ async function setOnlyActivePreset(id: string): Promise<ChatPreset> {
         }),
       ),
   );
-  return { ...selected, isActive: true, active: true } as ChatPreset;
+  return { ...normalizeChatPresetFlags(selected), isActive: true, active: true } as ChatPreset;
 }
 
 export function useChatPresets(mode?: ChatMode | null) {
   return useQuery({
     queryKey: chatPresetKeys.list(mode ?? null),
-    queryFn: async () => {
-      const presets = await storageApi.list<ChatPreset>("chat-presets");
-      return mode ? presets.filter((preset) => preset.mode === mode) : presets;
-    },
+    queryFn: () => listChatPresets(mode),
     staleTime: 60_000,
-  });
-}
-
-export function useActiveChatPreset(mode: ChatMode | null) {
-  return useQuery({
-    queryKey: mode ? chatPresetKeys.active(mode) : chatPresetKeys.all,
-    queryFn: async () => {
-      const presets = await storageApi.list<ChatPreset>("chat-presets");
-      return (
-        presets.find(
-          (preset) =>
-            preset.mode === mode &&
-            ((preset as ChatPreset & { isActive?: boolean; active?: boolean }).isActive ||
-              (preset as ChatPreset & { isActive?: boolean; active?: boolean }).active),
-        ) ??
-        presets.find((preset) => preset.mode === mode) ??
-        null
-      );
-    },
-    enabled: !!mode,
-    staleTime: 60_000,
-  });
-}
-
-export function useCreateChatPreset() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { name: string; mode: ChatMode; settings?: ChatPresetSettings }) =>
-      storageApi.create<ChatPreset>("chat-presets", data as Record<string, unknown>),
-    onSuccess: () => qc.invalidateQueries({ queryKey: chatPresetKeys.all }),
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -74,7 +96,10 @@ export function useUpdateChatPreset() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string; name?: string; settings?: ChatPresetSettings }) =>
-      storageApi.update<ChatPreset>("chat-presets", id, data as Record<string, unknown>),
+      storageApi.update<ChatPreset>("chat-presets", id, {
+        ...data,
+        ...(data.settings ? { settings: sanitizeChatPresetSettings(data.settings) } : {}),
+      } as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatPresetKeys.all }),
   });
 }
@@ -83,7 +108,9 @@ export function useSaveChatPresetSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, settings }: { id: string; settings: ChatPresetSettings }) =>
-      storageApi.update<ChatPreset>("chat-presets", id, { settings: settings as unknown as Record<string, unknown> }),
+      storageApi.update<ChatPreset>("chat-presets", id, {
+        settings: sanitizeChatPresetSettings(settings) as unknown as Record<string, unknown>,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatPresetKeys.all }),
   });
 }
@@ -92,7 +119,7 @@ export function useDuplicateChatPreset() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, name }: { id: string; name?: string }) => {
-      const duplicated = await invokeTauri<ChatPreset>("storage_duplicate", { entity: "chat-presets", id });
+      const duplicated = await storageCommandsApi.duplicate<ChatPreset>("chat-presets", id);
       return name?.trim()
         ? storageApi.update<ChatPreset>("chat-presets", duplicated.id, { name: name.trim() })
         : duplicated;
@@ -120,7 +147,8 @@ export function useDeleteChatPreset() {
 export function useImportChatPreset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (envelope: unknown) => storageApi.create<ChatPreset>("chat-presets", envelope as Record<string, unknown>),
+    mutationFn: (envelope: unknown) =>
+      storageApi.create<ChatPreset>("chat-presets", envelope as Record<string, unknown>),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatPresetKeys.all }),
   });
 }
@@ -129,8 +157,33 @@ export function useImportChatPreset() {
 export function useApplyChatPreset() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ presetId, chatId }: { presetId: string; chatId: string }) =>
-      storageApi.update<Chat>("chats", chatId, { chatPresetId: presetId }),
+    mutationFn: async ({ presetId, chatId }: { presetId: string; chatId: string }) => {
+      const [preset, chat] = await Promise.all([
+        storageApi.get<ChatPreset>("chat-presets", presetId),
+        storageApi.get<Chat>("chats", chatId),
+      ]);
+      if (!preset) throw new Error(`Chat preset ${presetId} was not found`);
+      if (!chat) throw new Error(`Chat ${chatId} was not found`);
+
+      const settings = sanitizeChatPresetSettings(preset.settings);
+      const currentMetadata =
+        chat.metadata && typeof chat.metadata === "object" && !Array.isArray(chat.metadata) ? chat.metadata : {};
+      const patch: Record<string, unknown> = {
+        chatPresetId: presetId,
+        metadata: {
+          ...currentMetadata,
+          ...(settings.metadata ?? {}),
+          appliedChatPresetId: presetId,
+        },
+      };
+      if ("connectionId" in settings) patch.connectionId = settings.connectionId ?? null;
+      if (chat.mode === "conversation") {
+        patch.promptPresetId = null;
+      } else if ("promptPresetId" in settings) {
+        patch.promptPresetId = settings.promptPresetId ?? null;
+      }
+      return storageApi.update<Chat>("chats", chatId, patch);
+    },
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
       qc.invalidateQueries({ queryKey: chatKeys.list() });

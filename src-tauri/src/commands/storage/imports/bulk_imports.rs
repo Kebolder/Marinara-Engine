@@ -43,6 +43,17 @@ fn selected_import_total(options: &Value) -> usize {
     .sum()
 }
 
+fn imported_jsonl_message_role(row: &Value) -> &'static str {
+    match row.get("role").and_then(Value::as_str).map(str::trim) {
+        Some("user") => "user",
+        Some("assistant") => "assistant",
+        Some("system") => "system",
+        Some("narrator") => "narrator",
+        _ if row.get("is_user").and_then(Value::as_bool).unwrap_or(false) => "user",
+        _ => "assistant",
+    }
+}
+
 fn empty_import_counts() -> Value {
     json!({
         "characters": 0,
@@ -505,26 +516,68 @@ fn import_st_chat_text(
     inherited: Option<Value>,
 ) -> AppResult<Value> {
     let mut character_name = String::new();
+    let mut character_ids = Vec::new();
     let mut parsed_rows = Vec::new();
-    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        let parsed = match parse_json_text(line) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parsed = parse_json_text(line).map_err(|error| {
+            AppError::invalid_input(format!("Invalid chat JSONL at line {}: {error}", index + 1))
+        })?;
         if character_name.is_empty() {
             if let Some(name) = parsed.get("character_name").and_then(Value::as_str) {
                 character_name = name.to_string();
             }
         }
+        if let Some(character_id) = parsed
+            .get("characterId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if !character_ids.iter().any(|id| id == character_id) {
+                character_ids.push(character_id.to_string());
+            }
+        }
         parsed_rows.push(parsed);
+    }
+    let has_importable_message = parsed_rows.iter().any(|row| {
+        if row
+            .get("is_system")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        row.get("mes")
+            .or_else(|| row.get("content"))
+            .and_then(Value::as_str)
+            .is_some_and(|content| !content.trim().is_empty())
+    });
+    if !has_importable_message {
+        return Err(AppError::invalid_input(
+            "Chat import JSONL must contain at least one message",
+        ));
     }
     let mut chat = ensure_object(inherited.unwrap_or_else(|| json!({})))?;
     chat.remove("id");
     chat.insert("name".to_string(), Value::String(chat_name));
     chat.entry("mode".to_string())
         .or_insert(Value::String("conversation".to_string()));
-    chat.entry("characterIds".to_string())
-        .or_insert_with(|| json!([]));
+    if character_ids.is_empty() {
+        chat.entry("characterIds".to_string())
+            .or_insert_with(|| json!([]));
+    } else {
+        let mut merged_character_ids = shared::string_array_from_value(chat.get("characterIds"));
+        for character_id in character_ids {
+            if !merged_character_ids.iter().any(|id| id == &character_id) {
+                merged_character_ids.push(character_id);
+            }
+        }
+        chat.insert("characterIds".to_string(), json!(merged_character_ids));
+    }
     chat.entry("metadata".to_string())
         .or_insert_with(|| json!({}));
     if !character_name.is_empty() {
@@ -555,18 +608,21 @@ fn import_st_chat_text(
             if content.trim().is_empty() {
                 continue;
             }
-            let role = if row.get("is_user").and_then(Value::as_bool).unwrap_or(false) {
-                "user"
-            } else {
-                "assistant"
-            };
+            let role = imported_jsonl_message_role(&row);
+            let character_id = row
+                .get("characterId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| Value::String(value.to_string()))
+                .unwrap_or(Value::Null);
             let message = state.storage.create(
                 "messages",
                 json!({
                     "chatId": chat_id,
                     "role": role,
                     "content": content,
-                    "characterId": Value::Null,
+                    "characterId": character_id,
                     "extra": {},
                     "activeSwipeIndex": 0,
                     "swipes": [{ "content": content }]
@@ -1014,7 +1070,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock should be after epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!(
+        home_dir().join(".marinara-test-temp").join(format!(
             "marinara-st-bulk-import-{label}-{}-{nonce}",
             std::process::id()
         ))
@@ -1137,6 +1193,192 @@ mod tests {
         assert!(
             state.storage.list("chats").unwrap().is_empty(),
             "failed chat import must remove the created chat"
+        );
+
+        let _ = fs::remove_dir_all(app_root);
+    }
+
+    #[test]
+    fn import_st_chat_text_preserves_marinara_jsonl_character_ids() {
+        let app_root = temp_path("chat-character-ids");
+        let state = AppState::from_data_dir(&app_root, Vec::new())
+            .expect("test app state should initialize");
+
+        let result = import_st_chat_text(
+            &state,
+            r#"{"role":"assistant","characterId":"char-a","content":"hello"}"#,
+            "Imported Chat".to_string(),
+            None,
+        )
+        .expect("chat import should succeed");
+
+        let chat_id = result
+            .get("chatId")
+            .and_then(Value::as_str)
+            .expect("import result should include chat id");
+        let chat = state
+            .storage
+            .get("chats", chat_id)
+            .expect("chat should be readable")
+            .expect("chat should exist");
+        assert_eq!(
+            shared::string_array_from_value(chat.get("characterIds")),
+            vec!["char-a".to_string()],
+            "chat should link character ids from Marinara JSONL rows"
+        );
+
+        let messages = state
+            .storage
+            .list("messages")
+            .expect("messages should list");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].get("characterId").and_then(Value::as_str),
+            Some("char-a"),
+            "message should retain its row-level character id"
+        );
+
+        let _ = fs::remove_dir_all(app_root);
+    }
+
+    #[test]
+    fn import_st_chat_text_preserves_marinara_jsonl_roles() {
+        let app_root = temp_path("chat-message-roles");
+        let state = AppState::from_data_dir(&app_root, Vec::new())
+            .expect("test app state should initialize");
+
+        import_st_chat_text(
+            &state,
+            concat!(
+                r#"{"role":"user","content":"hello"}"#,
+                "\n",
+                r#"{"role":"assistant","content":"hi"}"#,
+                "\n",
+                r#"{"role":"system","content":"note"}"#,
+                "\n",
+                r#"{"role":"narrator","content":"scene"}"#,
+            ),
+            "Imported Chat".to_string(),
+            None,
+        )
+        .expect("chat import should succeed");
+
+        let roles = state
+            .storage
+            .list("messages")
+            .expect("messages should list")
+            .into_iter()
+            .map(|message| {
+                message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .expect("message should include a role")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            roles,
+            vec![
+                "user".to_string(),
+                "assistant".to_string(),
+                "system".to_string(),
+                "narrator".to_string()
+            ],
+            "Marinara JSONL roles should round-trip without ST is_user flags"
+        );
+
+        let _ = fs::remove_dir_all(app_root);
+    }
+
+    #[test]
+    fn import_st_chat_text_falls_back_for_unknown_marinara_jsonl_roles() {
+        let app_root = temp_path("chat-unknown-message-role");
+        let state = AppState::from_data_dir(&app_root, Vec::new())
+            .expect("test app state should initialize");
+
+        import_st_chat_text(
+            &state,
+            r#"{"role":"tool","content":"internal"}"#,
+            "Imported Chat".to_string(),
+            None,
+        )
+        .expect("chat import should succeed");
+
+        let messages = state
+            .storage
+            .list("messages")
+            .expect("messages should list");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].get("role").and_then(Value::as_str),
+            Some("assistant"),
+            "unknown JSONL roles should not be persisted verbatim"
+        );
+
+        let _ = fs::remove_dir_all(app_root);
+    }
+
+    #[test]
+    fn import_st_chat_text_does_not_link_character_name_only_rows() {
+        let app_root = temp_path("chat-character-name-only");
+        let state = AppState::from_data_dir(&app_root, Vec::new())
+            .expect("test app state should initialize");
+
+        let result = import_st_chat_text(
+            &state,
+            r#"{"character_name":"Bot","mes":"hello"}"#,
+            "Imported Chat".to_string(),
+            None,
+        )
+        .expect("chat import should succeed");
+
+        let chat_id = result
+            .get("chatId")
+            .and_then(Value::as_str)
+            .expect("import result should include chat id");
+        let chat = state
+            .storage
+            .get("chats", chat_id)
+            .expect("chat should be readable")
+            .expect("chat should exist");
+        assert!(
+            shared::string_array_from_value(chat.get("characterIds")).is_empty(),
+            "ST character_name alone is not a stable local character link"
+        );
+
+        let messages = state
+            .storage
+            .list("messages")
+            .expect("messages should list");
+        assert_eq!(messages.len(), 1);
+        assert!(
+            messages[0].get("characterId").is_none_or(Value::is_null),
+            "ST character_name alone should keep transcript messages unlinked"
+        );
+
+        let _ = fs::remove_dir_all(app_root);
+    }
+
+    #[test]
+    fn import_st_chat_text_rejects_empty_or_invalid_jsonl_without_creating_chat() {
+        let app_root = temp_path("chat-empty-invalid");
+        let state = AppState::from_data_dir(&app_root, Vec::new())
+            .expect("test app state should initialize");
+
+        let empty_error = import_st_chat_text(&state, " \n\n", "Empty".to_string(), None)
+            .expect_err("empty JSONL should be rejected");
+        assert_eq!(empty_error.code, "invalid_input");
+        assert!(
+            state.storage.list("chats").unwrap().is_empty(),
+            "empty JSONL must not create a chat"
+        );
+
+        let invalid_error = import_st_chat_text(&state, "{not-json}", "Invalid".to_string(), None)
+            .expect_err("invalid JSONL should be rejected");
+        assert_eq!(invalid_error.code, "invalid_input");
+        assert!(
+            state.storage.list("chats").unwrap().is_empty(),
+            "invalid JSONL must not create a chat"
         );
 
         let _ = fs::remove_dir_all(app_root);

@@ -1,4 +1,4 @@
-export type PromptPresetCandidateSource = "impersonate" | "request" | "connection" | "chat";
+type PromptPresetCandidateSource = "impersonate" | "request" | "connection" | "chat";
 
 export interface PromptPresetCandidate {
   id: string;
@@ -32,8 +32,8 @@ function pushUnique(
   seen.add(id);
 }
 
-export function supportsConnectionPromptPresetOverride(chatMode: unknown): boolean {
-  return chatMode === "roleplay" || chatMode === "visual_novel";
+function supportsConnectionPromptPresetOverride(chatMode: unknown): boolean {
+  return chatMode === "roleplay";
 }
 
 export function buildGenerationPromptPresetCandidates(args: {
@@ -52,12 +52,11 @@ export function buildGenerationPromptPresetCandidates(args: {
   if (args.impersonate) {
     pushUnique(candidates, seen, asNonEmptyString(args.impersonatePromptPresetId), "impersonate");
   }
+  pushUnique(candidates, seen, asNonEmptyString(args.chatPromptPresetId), "chat");
   pushUnique(candidates, seen, asNonEmptyString(args.requestPromptPresetId), "request");
 
   if (supportsConnectionPromptPresetOverride(args.chatMode)) {
     pushUnique(candidates, seen, asNonEmptyString(args.connectionPromptPresetId), "connection");
   }
-
-  pushUnique(candidates, seen, asNonEmptyString(args.chatPromptPresetId), "chat");
   return candidates;
 }

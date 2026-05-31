@@ -51,11 +51,25 @@ export async function executeKnowledgeRetrieval(
   model: string,
   sourceMaterial: string,
 ): Promise<AgentResult> {
+  const trimmedSourceMaterial = sourceMaterial.trim();
+  if (!trimmedSourceMaterial) {
+    return {
+      agentId: config.id,
+      agentType: config.type,
+      type: "context_injection",
+      data: { text: "" },
+      tokensUsed: 0,
+      durationMs: 0,
+      success: true,
+      error: null,
+    };
+  }
+
   // Reserve tokens for system prompt (~600) and context block (~1500).
   // Rough budget for source material: whatever's left
   const contextBudget = (config.settings.sourceContextBudget as number) ?? 6000;
 
-  const materialTokens = estimateTokens(sourceMaterial);
+  const materialTokens = estimateTokens(trimmedSourceMaterial);
 
   // ── Single-pass: material fits in one call ──
   if (materialTokens <= contextBudget) {
@@ -63,14 +77,14 @@ export async function executeKnowledgeRetrieval(
       ...baseContext,
       memory: {
         ...baseContext.memory,
-        _sourceMaterial: sourceMaterial,
+        _sourceMaterial: trimmedSourceMaterial,
       },
     };
     return executeAgent(config, context, provider, model);
   }
 
   // ── Multi-pass: split into chunks ──
-  const chunks = chunkText(sourceMaterial, contextBudget);
+  const chunks = chunkText(trimmedSourceMaterial, contextBudget);
   const extractions: string[] = [];
   let totalTokens = 0;
   let totalDuration = 0;

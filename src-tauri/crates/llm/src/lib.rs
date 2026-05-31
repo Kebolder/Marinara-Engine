@@ -1,9 +1,10 @@
 use futures_util::StreamExt;
 use marinara_core::{AppError, AppResult};
-use marinara_security::is_allowed_outbound_url;
+use marinara_security::{is_allowed_outbound_url, redact_sensitive_json, redact_sensitive_text};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     env, fs,
     io::Write,
     path::PathBuf,
@@ -102,12 +103,13 @@ pub async fn stream_events(
     emit(json!({ "type": "start" }))?;
     if should_use_openai_responses(&request) || request.connection.provider == "openai_chatgpt" {
         stream_openai_responses(request, &mut emit).await?;
-    } else if request.connection.provider != "anthropic"
-        && request.connection.provider != "google"
-        && request.connection.provider != "google_vertex"
-        && request.connection.provider != "claude_subscription"
-        && request.tools.is_empty()
+    } else if request.connection.provider == "google"
+        || request.connection.provider == "google_vertex"
     {
+        stream_google(request, &mut emit).await?;
+    } else if request.connection.provider == "anthropic" {
+        stream_anthropic(request, &mut emit).await?;
+    } else if request.connection.provider != "claude_subscription" {
         stream_openai_compatible(request, &mut emit).await?;
     } else {
         let result = complete_rich(request).await?;
@@ -203,14 +205,20 @@ pub fn unavailable_payload(message: impl Into<String>) -> Value {
 }
 
 fn base_url(provider: &str, configured: &str) -> String {
+    if provider == "openai_chatgpt" {
+        return OPENAI_CHATGPT_CODEX_BASE_URL.to_string();
+    }
     let configured = configured.trim().trim_end_matches('/');
     if !configured.is_empty() {
         return configured.to_string();
     }
     match provider {
-        "openai_chatgpt" => OPENAI_CHATGPT_CODEX_BASE_URL.to_string(),
         "anthropic" => "https://api.anthropic.com".to_string(),
-        "google" | "google_vertex" => "https://generativelanguage.googleapis.com".to_string(),
+        "google" => "https://generativelanguage.googleapis.com".to_string(),
+        "google_vertex" => {
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+                .to_string()
+        }
         "mistral" => "https://api.mistral.ai/v1".to_string(),
         "cohere" => "https://api.cohere.ai/compatibility/v1".to_string(),
         "openrouter" => "https://openrouter.ai/api/v1".to_string(),
@@ -242,6 +250,26 @@ fn param_string(parameters: &Value, keys: &[&str]) -> Option<String> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
+    })
+}
+
+fn param_boolish(parameters: &Value, keys: &[&str], fallback: bool) -> Option<bool> {
+    keys.iter().find_map(|key| {
+        let value = parameters.get(*key)?;
+        match value {
+            Value::Bool(value) => Some(*value),
+            Value::Number(value) => value.as_i64().map(|value| value != 0),
+            Value::String(value) => {
+                let normalized = value.trim().to_ascii_lowercase();
+                match normalized.as_str() {
+                    "" => Some(fallback),
+                    "false" | "0" | "no" | "off" => Some(false),
+                    "true" | "1" | "yes" | "on" => Some(true),
+                    _ => Some(fallback),
+                }
+            }
+            _ => Some(fallback),
+        }
     })
 }
 
@@ -303,9 +331,14 @@ fn ensure_url_allowed(url: &str) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::invalid_input(format!(
-            "Outbound URL is not allowed: {url}"
+            "Outbound URL is not allowed: {}",
+            redact_sensitive_text(url)
         )))
     }
+}
+
+fn provider_transport_error_message(error: impl std::fmt::Display) -> String {
+    redact_sensitive_text(&error.to_string())
 }
 
 fn should_use_openai_responses(request: &LlmRequest) -> bool {
@@ -328,7 +361,7 @@ fn reasoning_effort(parameters: &Value) -> Option<String> {
     let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
     match effort.as_str() {
         "low" | "medium" | "high" => Some(effort),
-        "maximum" => Some("high".to_string()),
+        "maximum" | "xhigh" => Some("high".to_string()),
         _ => None,
     }
 }
@@ -351,6 +384,64 @@ fn is_openrouter_claude_reasoning_model(request: &LlmRequest) -> bool {
         || model.contains("claude-opus-4")
         || model.contains("claude-sonnet-4")
         || model.contains("claude-haiku-4")
+}
+
+fn claude_version_parts(model: &str, family: &str) -> Option<(u32, u32)> {
+    let normalized = model.to_ascii_lowercase();
+    let marker = format!("claude-{family}-");
+    let start = normalized.find(&marker)? + marker.len();
+    let tail = &normalized[start..];
+    let parts = tail
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u32>().ok())
+        .take(2)
+        .collect::<Vec<_>>();
+    let major = *parts.first()?;
+    let minor = parts
+        .get(1)
+        .copied()
+        .filter(|value| *value <= 99)
+        .unwrap_or(0);
+    Some((major, minor))
+}
+
+fn claude_version_at_least(model: &str, family: &str, major: u32, minor: u32) -> bool {
+    let Some((model_major, model_minor)) = claude_version_parts(model, family) else {
+        return false;
+    };
+    model_major > major || (model_major == major && model_minor >= minor)
+}
+
+fn is_claude_opus_adaptive_only_model(model: &str) -> bool {
+    claude_version_at_least(model, "opus", 4, 7)
+}
+
+fn supports_anthropic_adaptive_thinking(model: &str) -> bool {
+    claude_version_at_least(model, "opus", 4, 6) || claude_version_at_least(model, "sonnet", 4, 6)
+}
+
+fn should_send_openai_sampling_parameters(request: &LlmRequest) -> bool {
+    !is_claude_opus_adaptive_only_model(&request.connection.model)
+}
+
+fn should_send_temperature(request: &LlmRequest) -> bool {
+    should_send_openai_sampling_parameters(request)
+}
+
+fn is_sampling_parameter_key(key: &str) -> bool {
+    matches!(
+        key,
+        "temperature"
+            | "top_p"
+            | "topP"
+            | "top_k"
+            | "topK"
+            | "frequency_penalty"
+            | "frequencyPenalty"
+            | "presence_penalty"
+            | "presencePenalty"
+    )
 }
 
 fn is_gemini_3_model(model: &str) -> bool {
@@ -379,7 +470,8 @@ fn google_thinking_level(parameters: &Value) -> Option<&'static str> {
 
 fn google_thinking_config(model: &str, parameters: &Value) -> Option<Value> {
     if is_gemini_3_model(model) {
-        return google_thinking_level(parameters).map(|level| json!({ "thinkingLevel": level }));
+        return google_thinking_level(parameters)
+            .map(|level| json!({ "thinkingLevel": level, "includeThoughts": true }));
     }
 
     if is_gemini_25_model(model) {
@@ -396,6 +488,42 @@ fn google_thinking_config(model: &str, parameters: &Value) -> Option<Value> {
     None
 }
 
+fn anthropic_thinking_effort(model: &str, parameters: &Value) -> Option<&'static str> {
+    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
+    match effort.as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" if is_claude_opus_adaptive_only_model(model) => Some("xhigh"),
+        "xhigh" => Some("high"),
+        "maximum" | "max" => Some("max"),
+        _ => None,
+    }
+}
+
+fn anthropic_thinking_budget_tokens(effort: &str) -> u64 {
+    match effort {
+        "low" => 1024,
+        "medium" => 8192,
+        _ => 24576,
+    }
+}
+
+fn should_use_anthropic_adaptive_thinking(
+    model: &str,
+    parameters: &Value,
+    effort: Option<&str>,
+) -> bool {
+    if !supports_anthropic_adaptive_thinking(model) {
+        return false;
+    }
+    if effort.is_some() {
+        return true;
+    }
+    param_boolish(parameters, &["showThoughts", "show_thoughts"], false)
+        .unwrap_or_else(|| is_claude_opus_adaptive_only_model(model))
+}
+
 fn should_send_top_k(request: &LlmRequest) -> bool {
     !matches!(
         request.connection.provider.as_str(),
@@ -409,18 +537,38 @@ fn provider_error_text(details: &Value) -> Option<String> {
         details.get("message").and_then(Value::as_str),
         details.pointer("/error").and_then(Value::as_str),
     ]
-    .into_iter()
-    .flatten()
-    .map(str::trim)
-    .find(|message| !message.is_empty())
-    .map(|message| message.chars().take(500).collect())
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|message| !message.is_empty())
+        .map(|message| redact_sensitive_text(message).chars().take(500).collect())
 }
 
 fn provider_http_error(status: reqwest::StatusCode, details: Value) -> AppError {
+    let details = redact_sensitive_json(details);
     let message = provider_error_text(&details)
         .map(|detail| format!("Provider returned HTTP {status}: {detail}"))
         .unwrap_or_else(|| format!("Provider returned HTTP {status}"));
     AppError::with_details("llm_provider_error", message, details)
+}
+
+fn sanitize_provider_error_text(text: &str) -> String {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("<html") || lower.contains("<!doctype") {
+        return "Provider returned HTML instead of JSON".to_string();
+    }
+    redact_sensitive_text(trimmed).chars().take(500).collect()
+}
+
+fn provider_error_details_from_text(text: &str) -> Value {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return json!({});
+    }
+    serde_json::from_str::<Value>(trimmed)
+        .map(redact_sensitive_json)
+        .unwrap_or_else(|_| json!({ "message": sanitize_provider_error_text(trimmed) }))
 }
 
 fn assistant_prefill(parameters: &Value) -> Option<String> {
@@ -470,16 +618,16 @@ fn string_value(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn openai_chatgpt_auth_missing_message(error: &std::io::Error) -> String {
+    format!(
+        "No Codex ChatGPT login found in the local Codex auth.json credential file ({error}). Run `codex login` on this host."
+    )
+}
+
 async fn load_openai_chatgpt_auth() -> AppResult<ChatGptAuth> {
     let path = codex_auth_file_path();
     let raw = fs::read_to_string(&path).map_err(|error| {
-        AppError::new(
-            "openai_chatgpt_auth_missing",
-            format!(
-                "No Codex ChatGPT login found at {} ({error}). Run `codex login` on this host.",
-                path.display()
-            ),
-        )
+        AppError::new("openai_chatgpt_auth_missing", openai_chatgpt_auth_missing_message(&error))
     })?;
     let mut auth_json: Value = serde_json::from_str(&raw)
         .map_err(|error| AppError::new("openai_chatgpt_auth_error", error.to_string()))?;
@@ -647,8 +795,10 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
         );
         body["tool_choice"] = json!("auto");
     }
-    if let Some(temp) = temperature(&request.parameters) {
-        body["temperature"] = json!(temp);
+    if should_send_temperature(&request) {
+        if let Some(temp) = temperature(&request.parameters) {
+            body["temperature"] = json!(temp);
+        }
     }
     apply_openai_parameters(&mut body, &request);
     log_prompt_connection_request("openai.chat.completions", &url, &request, &body);
@@ -665,7 +815,7 @@ async fn complete_openai_compatible_rich(request: LlmRequest) -> AppResult<LlmCo
     let response = req
         .send()
         .await
-        .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))?;
     parse_json_response_rich(response).await
 }
 
@@ -686,8 +836,20 @@ async fn stream_openai_compatible(
         "stream": true,
         "max_tokens": request_max_tokens(&request, 1024),
     });
-    if let Some(temp) = temperature(&request.parameters) {
-        body["temperature"] = json!(temp);
+    if !request.tools.is_empty() {
+        body["tools"] = Value::Array(
+            request
+                .tools
+                .iter()
+                .map(|tool| json!({ "type": "function", "function": tool }))
+                .collect(),
+        );
+        body["tool_choice"] = json!("auto");
+    }
+    if should_send_temperature(&request) {
+        if let Some(temp) = temperature(&request.parameters) {
+            body["temperature"] = json!(temp);
+        }
     }
     apply_openai_parameters(&mut body, &request);
     log_prompt_connection_request("openai.chat.completions.stream", &url, &request, &body);
@@ -704,7 +866,7 @@ async fn stream_openai_compatible(
     let response = req
         .send()
         .await
-        .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))?;
     let status = response.status();
     if !status.is_success() {
         let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
@@ -713,19 +875,42 @@ async fn stream_openai_compatible(
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
+    let mut tool_calls = OpenAiToolCallAccumulator::default();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| AppError::new("llm_stream_error", error.to_string()))?;
+        let chunk = chunk.map_err(|error| {
+            AppError::new("llm_stream_error", provider_transport_error_message(error))
+        })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(index) = buffer.find("\n\n") {
-            let block = buffer[..index].to_string();
-            buffer = buffer[index + 2..].to_string();
-            process_openai_sse_block(&block, emit)?;
+        while let Some(block) = take_sse_block(&mut buffer) {
+            process_openai_sse_block(&block, emit, &mut tool_calls)?;
         }
     }
     if !buffer.trim().is_empty() {
-        process_openai_sse_block(&buffer, emit)?;
+        process_openai_sse_block(&buffer, emit, &mut tool_calls)?;
+    }
+    for tool_call in tool_calls.into_tool_calls() {
+        emit(json!({ "type": "tool_call", "data": tool_call }))?;
     }
     Ok(())
+}
+
+fn take_sse_block(buffer: &mut String) -> Option<String> {
+    let lf_boundary = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf_boundary = buffer.find("\r\n\r\n").map(|index| (index, 4));
+    let (index, delimiter_len) = match (lf_boundary, crlf_boundary) {
+        (Some(left), Some(right)) => {
+            if left.0 <= right.0 {
+                left
+            } else {
+                right
+            }
+        }
+        (Some(boundary), None) | (None, Some(boundary)) => boundary,
+        (None, None) => return None,
+    };
+    let block = buffer[..index].to_string();
+    buffer.drain(..index + delimiter_len);
+    Some(block)
 }
 
 fn responses_input(messages: &[LlmMessage]) -> Value {
@@ -800,6 +985,11 @@ fn build_openai_responses_body(request: &LlmRequest, stream: bool) -> Value {
     {
         if let Some(entries) = extra.as_object() {
             for (key, value) in entries {
+                if !should_send_openai_sampling_parameters(request)
+                    && is_sampling_parameter_key(key)
+                {
+                    continue;
+                }
                 if body.get(key).is_none() {
                     body[key] = value.clone();
                 }
@@ -825,17 +1015,13 @@ async fn openai_responses_request(
     };
     req.send()
         .await
-        .map_err(|error| AppError::new("llm_network_error", error.to_string()))
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))
 }
 
 async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     let body = build_openai_responses_body(&request, false);
     let response = openai_responses_request(&request, &body).await?;
-    let status = response.status();
-    let json: Value = response
-        .json()
-        .await
-        .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    let (status, json) = read_json_response(response).await?;
     if !status.is_success() {
         return Err(provider_http_error(status, json));
     }
@@ -861,7 +1047,7 @@ async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCom
         return Err(AppError::with_details(
             "llm_response_error",
             "Responses API result did not contain assistant text or tool calls",
-            json,
+            redact_sensitive_json(json),
         ));
     }
     Ok(LlmCompletion {
@@ -898,17 +1084,17 @@ async fn stream_openai_responses(
     let response = openai_responses_request(&request, &body).await?;
     let status = response.status();
     if !status.is_success() {
-        let error_body = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+        let error_body = read_error_response_details(response).await?;
         return Err(provider_http_error(status, error_body));
     }
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| AppError::new("llm_stream_error", error.to_string()))?;
+        let chunk = chunk.map_err(|error| {
+            AppError::new("llm_stream_error", provider_transport_error_message(error))
+        })?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(index) = buffer.find("\n\n") {
-            let block = buffer[..index].to_string();
-            buffer = buffer[index + 2..].to_string();
+        while let Some(block) = take_sse_block(&mut buffer) {
             process_openai_responses_sse_block(&block, emit)?;
         }
     }
@@ -976,7 +1162,7 @@ fn process_openai_responses_sse_block(
             return Err(AppError::with_details(
                 "llm_provider_error",
                 format!("Responses API stream event {event_type}"),
-                value,
+                redact_sensitive_json(value),
             ));
         }
         _ => {}
@@ -984,9 +1170,83 @@ fn process_openai_responses_sse_block(
     Ok(())
 }
 
+#[derive(Default)]
+struct OpenAiToolCallAccumulator {
+    calls: BTreeMap<u64, OpenAiToolCallParts>,
+}
+
+#[derive(Default)]
+struct OpenAiToolCallParts {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+impl OpenAiToolCallAccumulator {
+    fn ingest_delta(&mut self, delta: &Value) {
+        let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) else {
+            return;
+        };
+        for tool_call in tool_calls {
+            let index = tool_call
+                .get("index")
+                .and_then(Value::as_u64)
+                .unwrap_or(self.calls.len() as u64);
+            let parts = self.calls.entry(index).or_default();
+            if let Some(id) = tool_call
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                parts.id = Some(id.to_string());
+            }
+            let Some(function) = tool_call.get("function").and_then(Value::as_object) else {
+                continue;
+            };
+            if let Some(name) = function
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+            {
+                parts.name.get_or_insert_with(String::new).push_str(name);
+            }
+            if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                parts.arguments.push_str(arguments);
+            }
+        }
+    }
+
+    fn into_tool_calls(self) -> Vec<Value> {
+        self.calls
+            .into_iter()
+            .filter_map(|(index, parts)| {
+                let name = parts.name.unwrap_or_default();
+                if name.trim().is_empty() && parts.arguments.trim().is_empty() {
+                    return None;
+                }
+                let arguments = if parts.arguments.trim().is_empty() {
+                    "{}".to_string()
+                } else {
+                    parts.arguments
+                };
+                Some(json!({
+                    "id": parts.id.unwrap_or_else(|| format!("call-{index}")),
+                    "name": name.clone(),
+                    "arguments": arguments.clone(),
+                    "function": {
+                        "name": name,
+                        "arguments": arguments
+                    }
+                }))
+            })
+            .collect()
+    }
+}
+
 fn process_openai_sse_block(
     block: &str,
     emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+    tool_calls: &mut OpenAiToolCallAccumulator,
 ) -> AppResult<()> {
     let payload = block
         .lines()
@@ -1007,6 +1267,7 @@ fn process_openai_sse_block(
     };
     for choice in choices {
         let delta = choice.get("delta").unwrap_or(choice);
+        tool_calls.ingest_delta(delta);
         for key in ["reasoning_content", "reasoning", "thinking"] {
             if let Some(thinking) = delta.get(key).and_then(Value::as_str) {
                 if !thinking.is_empty() {
@@ -1060,22 +1321,27 @@ fn openai_message(message: &LlmMessage) -> Value {
 
 fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     let parameters = &request.parameters;
-    if let Some(top_p) = param_f64(parameters, &["topP", "top_p"]) {
-        body["top_p"] = json!(top_p);
-    }
-    if should_send_top_k(request) {
-        if let Some(top_k) = param_i64(parameters, &["topK", "top_k"]).filter(|value| *value > 0) {
-            body["top_k"] = json!(top_k);
+    if should_send_openai_sampling_parameters(request) {
+        if let Some(top_p) = param_f64(parameters, &["topP", "top_p"]) {
+            body["top_p"] = json!(top_p);
         }
-    }
-    if let Some(frequency_penalty) =
-        param_f64(parameters, &["frequencyPenalty", "frequency_penalty"])
-    {
-        body["frequency_penalty"] = json!(frequency_penalty);
-    }
-    if let Some(presence_penalty) = param_f64(parameters, &["presencePenalty", "presence_penalty"])
-    {
-        body["presence_penalty"] = json!(presence_penalty);
+        if should_send_top_k(request) {
+            if let Some(top_k) =
+                param_i64(parameters, &["topK", "top_k"]).filter(|value| *value > 0)
+            {
+                body["top_k"] = json!(top_k);
+            }
+        }
+        if let Some(frequency_penalty) =
+            param_f64(parameters, &["frequencyPenalty", "frequency_penalty"])
+        {
+            body["frequency_penalty"] = json!(frequency_penalty);
+        }
+        if let Some(presence_penalty) =
+            param_f64(parameters, &["presencePenalty", "presence_penalty"])
+        {
+            body["presence_penalty"] = json!(presence_penalty);
+        }
     }
     if let Some(seed) = param_i64(parameters, &["seed"]) {
         body["seed"] = json!(seed);
@@ -1116,6 +1382,11 @@ fn apply_openai_parameters(body: &mut Value, request: &LlmRequest) {
     {
         if let Some(entries) = extra.as_object() {
             for (key, value) in entries {
+                if !should_send_openai_sampling_parameters(request)
+                    && is_sampling_parameter_key(key)
+                {
+                    continue;
+                }
                 if body.get(key).is_none() {
                     body[key] = value.clone();
                 }
@@ -1474,7 +1745,7 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
             return Err(AppError::with_details(
                 "claude_subscription_empty",
                 format!("Claude Code returned no content ({diagnostic})."),
-                value,
+                redact_sensitive_json(value),
             ));
         }
     }
@@ -1503,10 +1774,125 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
         return Err(AppError::with_details(
             "claude_subscription_empty",
             format!("Claude Code returned no content ({diagnostic})."),
-            value,
+            redact_sensitive_json(value),
         ));
     }
     Ok(trimmed.to_string())
+}
+
+fn parse_claude_subscription_json_output(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return Some(value);
+    }
+    trimmed
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .next_back()
+}
+
+pub fn diagnose_claude_subscription_model(model: &str, fast_mode: bool) -> AppResult<Value> {
+    let requested_model = model.trim();
+    if requested_model.is_empty() {
+        return Err(AppError::invalid_input(
+            "No model configured. Pick a model first.",
+        ));
+    }
+    let started = std::time::Instant::now();
+    let mut command = Command::new(claude_subscription_command());
+    command
+        .arg("-p")
+        .arg("--model")
+        .arg(requested_model)
+        .arg("--output-format")
+        .arg("json")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .arg("--settings")
+        .arg(json!({ "fastMode": fast_mode }).to_string())
+        .arg("--tools")
+        .arg("")
+        .arg("--disable-slash-commands")
+        .arg("--no-session-persistence")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command.env("ENABLE_CLAUDEAI_MCP_SERVERS", "false");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command.spawn().map_err(|error| {
+        AppError::new(
+            "claude_subscription_unavailable",
+            format!(
+                "Failed to start Claude Code. Install @anthropic-ai/claude-code, run `claude login`, or set CLAUDE_CODE_COMMAND. Underlying error: {error}"
+            ),
+        )
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(b"Reply with exactly: OK")
+            .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| AppError::new("claude_subscription_io_error", error.to_string()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(AppError::with_details(
+            "claude_subscription_failed",
+            if stderr.trim().is_empty() {
+                "Claude Code routing diagnosis failed.".to_string()
+            } else {
+                redact_sensitive_text(stderr.trim())
+            },
+            redact_sensitive_json(json!({
+                "status": output.status.code(),
+                "stdout": stdout.chars().take(1000).collect::<String>(),
+            })),
+        ));
+    }
+    let value = parse_claude_subscription_json_output(&stdout).ok_or_else(|| {
+        AppError::with_details(
+            "claude_subscription_response_error",
+            "Claude Code did not return diagnostic JSON.",
+            redact_sensitive_json(json!({ "stdout": stdout.chars().take(1000).collect::<String>() })),
+        )
+    })?;
+    let model_usage = value
+        .get("modelUsage")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let models_billed = model_usage.keys().cloned().collect::<Vec<_>>();
+    let model_usage_detail = model_usage
+        .iter()
+        .map(|(model, usage)| {
+            json!({
+                "model": model,
+                "inputTokens": usage.get("input_tokens").and_then(Value::as_u64),
+                "outputTokens": usage.get("output_tokens").and_then(Value::as_u64),
+                "role": if model == requested_model { "requested" } else { "auxiliary" },
+            })
+        })
+        .collect::<Vec<_>>();
+    let response = claude_subscription_text_from_json(&value).unwrap_or_default();
+    Ok(json!({
+        "success": true,
+        "requestedModel": requested_model,
+        "modelsBilled": models_billed,
+        "modelUsageDetail": model_usage_detail,
+        "fastModeState": value.get("fast_mode_state").and_then(Value::as_str),
+        "downgraded": !model_usage.is_empty() && !model_usage.contains_key(requested_model),
+        "response": response,
+        "latencyMs": started.elapsed().as_millis(),
+    }))
 }
 
 async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> {
@@ -1587,24 +1973,21 @@ async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> 
             if stderr.trim().is_empty() {
                 "Claude Code request failed.".to_string()
             } else {
-                stderr.trim().to_string()
+                redact_sensitive_text(stderr.trim())
             },
-            json!({
+            redact_sensitive_json(json!({
                 "status": output.status.code(),
                 "stdout": stdout.chars().take(1000).collect::<String>(),
-            }),
+            })),
         ));
     }
     parse_claude_subscription_output(&stdout, &request.connection.model)
 }
 
-async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
-    let base = base_url(&request.connection.provider, &request.connection.base_url);
-    let url = anthropic_endpoint(&base, "messages");
-    ensure_url_allowed(&url)?;
+fn build_anthropic_body(request: &LlmRequest, stream: bool) -> Value {
     let mut system = Vec::new();
     let mut anthropic_messages = Vec::new();
-    let messages = request_messages(&request);
+    let messages = request_messages(request);
     for message in messages {
         if message.role == "system" {
             system.push(message.content);
@@ -1640,43 +2023,211 @@ async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
     let mut body = json!({
         "model": request.connection.model,
         "messages": anthropic_messages,
-        "max_tokens": request_max_tokens(&request, 1024),
+        "max_tokens": request_max_tokens(request, 1024),
     });
+    if stream {
+        body["stream"] = json!(true);
+    }
     if !system.is_empty() {
         body["system"] = json!(system.join("\n\n"));
     }
-    if let Some(temp) = temperature(&request.parameters) {
-        body["temperature"] = json!(temp);
+    let adaptive_only = is_claude_opus_adaptive_only_model(&request.connection.model);
+    let thinking_effort = anthropic_thinking_effort(&request.connection.model, &request.parameters);
+    let adaptive_thinking = should_use_anthropic_adaptive_thinking(
+        &request.connection.model,
+        &request.parameters,
+        thinking_effort,
+    );
+    if !adaptive_only && !adaptive_thinking {
+        if let Some(temp) = temperature(&request.parameters) {
+            body["temperature"] = json!(temp);
+        }
     }
-    if let Some(top_p) = param_f64(&request.parameters, &["topP", "top_p"]) {
-        body["top_p"] = json!(top_p);
+    if !adaptive_only {
+        if let Some(top_k) = param_i64(&request.parameters, &["topK", "top_k"]) {
+            body["top_k"] = json!(top_k);
+        }
     }
-    if let Some(top_k) = param_i64(&request.parameters, &["topK", "top_k"]) {
-        body["top_k"] = json!(top_k);
+    if adaptive_thinking {
+        body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
+        if let Some(effort) = thinking_effort {
+            body["output_config"] = json!({ "effort": effort });
+        }
+    } else if let Some(effort) = thinking_effort {
+        let budget_tokens = anthropic_thinking_budget_tokens(effort);
+        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+        body["max_tokens"] = json!(request_max_tokens(request, 1024) + budget_tokens);
     }
     if let Some(stop) = stop_sequences(&request.parameters) {
         body["stop_sequences"] = json!(stop);
     }
-    log_prompt_connection_request("anthropic.messages", &url, &request, &body);
-    let response = reqwest::Client::new()
+    body
+}
+
+async fn anthropic_request(
+    request: &LlmRequest,
+    body: &Value,
+    kind: &str,
+) -> AppResult<reqwest::Response> {
+    let base = base_url(&request.connection.provider, &request.connection.base_url);
+    let url = anthropic_endpoint(&base, "messages");
+    ensure_url_allowed(&url)?;
+    log_prompt_connection_request(kind, &url, request, body);
+    reqwest::Client::new()
         .post(url)
         .header("x-api-key", request.connection.api_key.trim())
         .header("anthropic-version", "2023-06-01")
-        .json(&body)
+        .json(body)
         .send()
         .await
-        .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))
+}
+
+async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
+    let body = build_anthropic_body(&request, false);
+    let response = anthropic_request(&request, &body, "anthropic.messages").await?;
     parse_json_response(response, |json| {
         json.get("content")
             .and_then(Value::as_array)
             .and_then(|items| {
                 items
                     .iter()
-                    .find_map(|item| item.get("text").and_then(Value::as_str))
+                    .filter_map(|item| item.get("text").and_then(Value::as_str))
+                    .find(|text| !text.trim().is_empty())
             })
             .map(ToOwned::to_owned)
     })
     .await
+}
+
+async fn stream_anthropic(
+    request: LlmRequest,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let body = build_anthropic_body(&request, true);
+    let response = anthropic_request(&request, &body, "anthropic.messages.stream").await?;
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = read_error_response_details(response).await?;
+        return Err(provider_http_error(status, error_body));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            AppError::new("llm_stream_error", provider_transport_error_message(error))
+        })?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(block) = take_sse_block(&mut buffer) {
+            process_anthropic_sse_block(&block, emit)?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        process_anthropic_sse_block(&buffer, emit)?;
+    }
+    Ok(())
+}
+
+fn emit_anthropic_usage(
+    value: &Value,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    if let Some(usage) = value
+        .get("usage")
+        .or_else(|| value.pointer("/message/usage"))
+        .or_else(|| value.pointer("/delta/usage"))
+    {
+        emit(json!({ "type": "usage", "data": usage }))?;
+    }
+    Ok(())
+}
+
+fn process_anthropic_sse_block(
+    block: &str,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let event_name = block
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("event:"))
+        .map(str::trim)
+        .unwrap_or("");
+    let payload = block
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if payload.is_empty() || payload == "[DONE]" {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&payload)
+        .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or(event_name);
+    match event_type {
+        "message_start" | "message_delta" => {
+            emit_anthropic_usage(&value, emit)?;
+        }
+        "content_block_start" => {
+            if let Some(block) = value.get("content_block") {
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(text) = block.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                emit(json!({ "type": "token", "text": text, "data": text }))?;
+                            }
+                        }
+                    }
+                    Some("thinking") => {
+                        if let Some(thinking) = block.get("thinking").and_then(Value::as_str) {
+                            if !thinking.is_empty() {
+                                emit(
+                                    json!({ "type": "thinking", "text": thinking, "data": thinking }),
+                                )?;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "content_block_delta" => {
+            if let Some(delta) = value.get("delta") {
+                match delta.get("type").and_then(Value::as_str) {
+                    Some("text_delta") => {
+                        if let Some(text) = delta.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() {
+                                emit(json!({ "type": "token", "text": text, "data": text }))?;
+                            }
+                        }
+                    }
+                    Some("thinking_delta") => {
+                        if let Some(thinking) = delta.get("thinking").and_then(Value::as_str) {
+                            if !thinking.is_empty() {
+                                emit(
+                                    json!({ "type": "thinking", "text": thinking, "data": thinking }),
+                                )?;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "error" => {
+            let error = value.get("error").cloned().unwrap_or(value);
+            return Err(AppError::with_details(
+                "llm_provider_error",
+                "Anthropic stream error",
+                redact_sensitive_json(error),
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn anthropic_endpoint(base: &str, path: &str) -> String {
@@ -1696,9 +2247,28 @@ fn google_vertex_endpoint(base: &str, model: &str, endpoint: &str) -> String {
     format!("{base}/publishers/google/models/{model}:{endpoint}")
 }
 
-async fn complete_google(request: LlmRequest) -> AppResult<String> {
-    let base = base_url(&request.connection.provider, &request.connection.base_url);
-    let base = if request.connection.provider == "google"
+fn normalize_google_base_url(base: String) -> String {
+    let trimmed = base.trim_end_matches('/').to_string();
+    let Ok(mut url) = reqwest::Url::parse(&trimmed) else {
+        return trimmed;
+    };
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    if matches!(
+        host.as_str(),
+        "linkapi.ai" | "www.linkapi.ai" | "home.linkapi.ai"
+    ) && url.set_host(Some("api.linkapi.ai")).is_ok()
+    {
+        return url.to_string().trim_end_matches('/').to_string();
+    }
+    trimmed
+}
+
+fn google_api_base(request: &LlmRequest) -> String {
+    let base = normalize_google_base_url(base_url(
+        &request.connection.provider,
+        &request.connection.base_url,
+    ));
+    if request.connection.provider == "google"
         && (base.ends_with("/v1beta") || base.ends_with("/v1"))
     {
         base
@@ -1706,21 +2276,34 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
         format!("{base}/v1beta")
     } else {
         base
-    };
+    }
+}
+
+fn google_endpoint(request: &LlmRequest, endpoint: &str, streaming: bool) -> String {
+    let base = google_api_base(request);
     let url = if request.connection.provider == "google_vertex" {
-        google_vertex_endpoint(&base, &request.connection.model, "generateContent")
+        google_vertex_endpoint(&base, &request.connection.model, endpoint)
     } else {
         format!(
-            "{base}/models/{}:generateContent?key={}",
+            "{base}/models/{}:{}?key={}",
             request.connection.model,
+            endpoint,
             request.connection.api_key.trim()
         )
     };
-    ensure_url_allowed(&url)?;
-    let contents: Vec<Value> = request_messages(&request)
+    if streaming {
+        let separator = if url.contains('?') { '&' } else { '?' };
+        format!("{url}{separator}alt=sse")
+    } else {
+        url
+    }
+}
+
+fn google_contents(request: &LlmRequest) -> Vec<Value> {
+    let contents: Vec<Value> = request_messages(request)
         .into_iter()
         .filter(|message| message.role != "system")
-        .map(|message| {
+        .filter_map(|message| {
             let role = if message.role == "assistant" {
                 "model"
             } else {
@@ -1735,43 +2318,77 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
                     parts.push(json!({ "inlineData": { "mimeType": mime_type, "data": data } }));
                 }
             }
-            json!({ "role": role, "parts": parts })
+            (!parts.is_empty()).then(|| json!({ "role": role, "parts": parts }))
         })
         .collect();
+    if contents.is_empty() {
+        vec![json!({ "role": "user", "parts": [{ "text": "Continue." }] })]
+    } else {
+        contents
+    }
+}
+
+fn google_system_instruction(request: &LlmRequest) -> Option<Value> {
+    let system = request_messages(request)
+        .into_iter()
+        .filter(|message| message.role == "system")
+        .map(|message| message.content.trim().to_string())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>();
+    (!system.is_empty()).then(|| json!({ "parts": [{ "text": system.join("\n\n") }] }))
+}
+
+fn google_generation_config(request: &LlmRequest) -> Value {
     let is_gemini_3 = is_gemini_3_model(&request.connection.model);
-    let mut body = json!({
-        "contents": contents,
-        "generationConfig": {
-            "maxOutputTokens": request_max_tokens(&request, 1024),
-        }
+    let mut generation_config = json!({
+        "maxOutputTokens": request_max_tokens(request, 1024),
     });
     if !is_gemini_3 {
-        body["generationConfig"]["temperature"] =
-            json!(temperature(&request.parameters).unwrap_or(0.7));
+        generation_config["temperature"] = json!(temperature(&request.parameters).unwrap_or(0.7));
         if let Some(top_p) = param_f64(&request.parameters, &["topP", "top_p"]) {
-            body["generationConfig"]["topP"] = json!(top_p);
+            generation_config["topP"] = json!(top_p);
         }
         if let Some(top_k) =
             param_i64(&request.parameters, &["topK", "top_k"]).filter(|value| *value > 0)
         {
-            body["generationConfig"]["topK"] = json!(top_k);
+            generation_config["topK"] = json!(top_k);
         }
     }
     if let Some(thinking_config) =
         google_thinking_config(&request.connection.model, &request.parameters)
     {
-        body["generationConfig"]["thinkingConfig"] = thinking_config;
+        generation_config["thinkingConfig"] = thinking_config;
     }
-    if let Some(stop) = stop_sequences(&request.parameters) {
-        body["generationConfig"]["stopSequences"] = json!(stop);
+    if !is_gemini_3 {
+        if let Some(stop) = stop_sequences(&request.parameters) {
+            generation_config["stopSequences"] = json!(stop);
+        }
     }
+    generation_config
+}
+
+fn google_generate_body(request: &LlmRequest) -> Value {
+    let mut body = json!({
+        "contents": google_contents(request),
+        "generationConfig": google_generation_config(request),
+    });
+    if let Some(system_instruction) = google_system_instruction(request) {
+        body["systemInstruction"] = system_instruction;
+    }
+    body
+}
+
+async fn complete_google(request: LlmRequest) -> AppResult<String> {
+    let url = google_endpoint(&request, "generateContent", false);
+    ensure_url_allowed(&url)?;
+    let body = google_generate_body(&request);
     log_prompt_connection_request("google.generateContent", &url, &request, &body);
     let response = reqwest::Client::new()
         .post(url)
         .json(&body)
         .send()
         .await
-        .map_err(|error| AppError::new("llm_network_error", error.to_string()))?;
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))?;
     parse_json_response(response, |json| {
         json.get("candidates")
             .and_then(Value::as_array)
@@ -1780,24 +2397,156 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
             .and_then(|content| content.get("parts"))
             .and_then(Value::as_array)
             .and_then(|parts| {
-                parts
-                    .iter()
-                    .find_map(|part| part.get("text").and_then(Value::as_str))
+                parts.iter().find_map(|part| {
+                    if part
+                        .get("thought")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        None
+                    } else {
+                        part.get("text").and_then(Value::as_str)
+                    }
+                })
             })
             .map(ToOwned::to_owned)
     })
     .await
 }
 
+async fn stream_google(
+    request: LlmRequest,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let url = google_endpoint(&request, "streamGenerateContent", true);
+    ensure_url_allowed(&url)?;
+    let body = google_generate_body(&request);
+    log_prompt_connection_request("google.streamGenerateContent", &url, &request, &body);
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| AppError::new("llm_network_error", provider_transport_error_message(error)))?;
+    let status = response.status();
+    if !status.is_success() {
+        let error_body = read_error_response_details(response).await?;
+        return Err(provider_http_error(status, error_body));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            AppError::new("llm_stream_error", provider_transport_error_message(error))
+        })?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(block) = take_sse_block(&mut buffer) {
+            process_google_sse_block(&block, emit)?;
+        }
+    }
+    if !buffer.trim().is_empty() {
+        process_google_sse_block(&buffer, emit)?;
+    }
+    Ok(())
+}
+
+fn process_google_sse_block(
+    block: &str,
+    emit: &mut (impl FnMut(Value) -> AppResult<()> + Send),
+) -> AppResult<()> {
+    let payload = block
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("data:"))
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if payload.is_empty() || payload == "[DONE]" {
+        return Ok(());
+    }
+    let value: Value = serde_json::from_str(&payload)
+        .map_err(|error| AppError::new("llm_stream_parse_error", error.to_string()))?;
+    if let Some(error) = value.get("error") {
+        return Err(AppError::with_details(
+            "llm_provider_error",
+            "Gemini API stream error",
+            redact_sensitive_json(error.clone()),
+        ));
+    }
+    if let Some(usage) = value.get("usageMetadata") {
+        emit(json!({ "type": "usage", "data": usage }))?;
+    }
+    let Some(candidates) = value.get("candidates").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for candidate in candidates {
+        let Some(parts) = candidate
+            .get("content")
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for part in parts {
+            let Some(text) = part
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+            else {
+                continue;
+            };
+            if part
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                emit(json!({ "type": "thinking", "text": text, "data": text }))?;
+            } else {
+                emit(json!({ "type": "token", "text": text, "data": text }))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn read_error_response_details(response: reqwest::Response) -> AppResult<Value> {
+    let text = response
+        .text()
+        .await
+        .map_err(|error| {
+            AppError::new("llm_response_error", provider_transport_error_message(error))
+        })?;
+    Ok(provider_error_details_from_text(&text))
+}
+
+async fn read_json_response(
+    response: reqwest::Response,
+) -> AppResult<(reqwest::StatusCode, Value)> {
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| {
+            AppError::new("llm_response_error", provider_transport_error_message(error))
+        })?;
+    if !status.is_success() {
+        return Ok((status, provider_error_details_from_text(&text)));
+    }
+    let json = serde_json::from_str::<Value>(&text).map_err(|error| {
+        AppError::with_details(
+            "llm_response_error",
+            format!("Provider response was not valid JSON: {error}"),
+            json!({ "body": sanitize_provider_error_text(&text) }),
+        )
+    })?;
+    Ok((status, json))
+}
+
 async fn parse_json_response<F>(response: reqwest::Response, extract: F) -> AppResult<String>
 where
     F: Fn(&Value) -> Option<String>,
 {
-    let status = response.status();
-    let json: Value = response
-        .json()
-        .await
-        .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    let (status, json) = read_json_response(response).await?;
     if !status.is_success() {
         return Err(provider_http_error(status, json));
     }
@@ -1805,7 +2554,7 @@ where
         AppError::with_details(
             "llm_response_error",
             "Provider response did not contain assistant text",
-            json,
+            redact_sensitive_json(json),
         )
     })
 }
@@ -1858,11 +2607,7 @@ fn response_reasoning_text(choice: &Value, message: &Value) -> String {
 }
 
 async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmCompletion> {
-    let status = response.status();
-    let json: Value = response
-        .json()
-        .await
-        .map_err(|error| AppError::new("llm_response_error", error.to_string()))?;
+    let (status, json) = read_json_response(response).await?;
     if !status.is_success() {
         return Err(provider_http_error(status, json));
     }
@@ -1874,7 +2619,7 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
             AppError::with_details(
                 "llm_response_error",
                 "Provider response did not contain a completion choice",
-                json.clone(),
+                redact_sensitive_json(json.clone()),
             )
         })?;
     let message = choice.get("message").unwrap_or(choice);
@@ -1907,13 +2652,13 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
             return Err(AppError::with_details(
                 "llm_response_error",
                 "Provider returned reasoning but no final assistant text. Increase Max Output Tokens or lower Reasoning Effort in this connection's generation controls.",
-                json,
+                redact_sensitive_json(json),
             ));
         }
         return Err(AppError::with_details(
             "llm_response_error",
             "Provider response did not contain assistant text or tool calls",
-            json,
+            redact_sensitive_json(json),
         ));
     }
     Ok(LlmCompletion {
@@ -1965,6 +2710,25 @@ mod tests {
         }
     }
 
+    fn request_for(provider: &str, model: &str, parameters: Value) -> LlmRequest {
+        LlmRequest {
+            connection: LlmConnection {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                api_key: String::new(),
+                base_url: String::new(),
+                openrouter_provider: None,
+                enable_caching: false,
+                caching_at_depth: None,
+                max_tokens_override: None,
+                claude_fast_mode: false,
+            },
+            messages: Vec::new(),
+            parameters,
+            tools: Vec::new(),
+        }
+    }
+
     #[test]
     fn prompt_connection_diagnostics_follow_legacy_preset_and_explicit_flag() {
         assert!(is_prompt_connection_log_preset_value(Some(
@@ -2001,6 +2765,443 @@ mod tests {
         assert_eq!(
             redacted_endpoint("https://api.openai.com/v1/chat/completions"),
             "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn openai_chat_stream_accumulates_tool_call_deltas() {
+        let mut emitted = Vec::new();
+        let mut tool_calls = OpenAiToolCallAccumulator::default();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        process_openai_sse_block(
+            r#"data: {"choices":[{"delta":{"content":"Rolling...","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"roll_dice","arguments":"{\"notation\""}}]}}]}"#,
+            &mut emit,
+            &mut tool_calls,
+        )
+        .expect("first chunk should parse");
+        process_openai_sse_block(
+            r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"1d20\"}"}}]}}]}"#,
+            &mut emit,
+            &mut tool_calls,
+        )
+        .expect("second chunk should parse");
+
+        let calls = tool_calls.into_tool_calls();
+        assert_eq!(emitted[0]["type"], "token");
+        assert_eq!(emitted[0]["text"], "Rolling...");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["id"], "call_1");
+        assert_eq!(calls[0]["function"]["name"], "roll_dice");
+        assert_eq!(calls[0]["function"]["arguments"], r#"{"notation":"1d20"}"#);
+    }
+
+    #[test]
+    fn openai_chatgpt_base_url_ignores_configured_endpoint() {
+        assert_eq!(
+            base_url("openai_chatgpt", "https://api.example.com/v1"),
+            OPENAI_CHATGPT_CODEX_BASE_URL
+        );
+    }
+
+    #[test]
+    fn openai_chatgpt_missing_auth_message_hides_local_path() {
+        let error = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let message = openai_chatgpt_auth_missing_message(&error);
+
+        assert!(message.contains("local Codex auth.json credential file"));
+        assert!(!message.contains(":\\"));
+        assert!(!message.contains("/Users/"));
+        assert!(!message.contains("/home/"));
+    }
+
+    #[test]
+    fn ensure_url_allowed_redacts_query_secret() {
+        let error = ensure_url_allowed("ftp://example.test/models?key=sk-test-secret")
+            .expect_err("disallowed URL should fail");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("[REDACTED]"));
+        assert!(!error.message.contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn google_vertex_default_base_uses_aiplatform_endpoint() {
+        assert_eq!(
+            base_url("google_vertex", ""),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/YOUR_PROJECT_ID/locations/us-central1"
+        );
+        assert_eq!(
+            google_vertex_endpoint(
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models",
+                "gemini-2.5-pro",
+                "generateContent",
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn google_linkapi_console_hosts_normalize_to_api_host() {
+        assert_eq!(
+            normalize_google_base_url("https://home.linkapi.ai".to_string()),
+            "https://api.linkapi.ai"
+        );
+        assert_eq!(
+            normalize_google_base_url("https://www.linkapi.ai/v1beta".to_string()),
+            "https://api.linkapi.ai/v1beta"
+        );
+    }
+
+    #[test]
+    fn google_stream_endpoint_uses_sse_stream_generate_content() {
+        let request = request_for("google", "gemini-3.5-flash", json!({}));
+
+        assert_eq!(
+            google_endpoint(&request, "streamGenerateContent", true),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?key=&alt=sse"
+        );
+    }
+
+    #[test]
+    fn google_linkapi_stream_endpoint_uses_api_host_and_sse() {
+        let mut request = request_for("google", "gemini-3.5-flash", json!({}));
+        request.connection.base_url = "https://home.linkapi.ai".to_string();
+
+        assert_eq!(
+            google_endpoint(&request, "streamGenerateContent", true),
+            "https://api.linkapi.ai/v1beta/models/gemini-3.5-flash:streamGenerateContent?key=&alt=sse"
+        );
+    }
+
+    #[test]
+    fn provider_http_error_preserves_text_error_body() {
+        let details = provider_error_details_from_text("error code: 1033");
+        let error = provider_http_error(
+            reqwest::StatusCode::from_u16(530).expect("530 should be a valid status"),
+            details,
+        );
+
+        assert_eq!(error.code, "llm_provider_error");
+        assert!(error.message.contains("error code: 1033"));
+    }
+
+    #[test]
+    fn provider_http_error_redacts_sensitive_error_body() {
+        let details = provider_error_details_from_text(
+            r#"{"error":{"message":"Invalid API key sk-test-secret"},"api_key":"sk-test-secret","usage":{"input_tokens":12}}"#,
+        );
+        let error = provider_http_error(reqwest::StatusCode::UNAUTHORIZED, details);
+
+        assert_eq!(error.code, "llm_provider_error");
+        assert!(error.message.contains("[REDACTED]"));
+        assert!(!error.message.contains("sk-test-secret"));
+        let details = error.details.expect("provider details should be attached");
+        assert_eq!(details["api_key"], "[REDACTED]");
+        assert_eq!(details["usage"]["input_tokens"], 12);
+        assert!(!details.to_string().contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn google_top_k_zero_is_not_sent() {
+        let mut request = request_for("google", "gemini-2.5-flash", json!({ "topK": 0 }));
+        assert!(should_send_top_k(&request));
+        assert!(param_i64(&request.parameters, &["topK", "top_k"])
+            .filter(|value| *value > 0)
+            .is_none());
+        request.parameters = json!({ "topK": 40 });
+        assert_eq!(
+            param_i64(&request.parameters, &["topK", "top_k"]).filter(|value| *value > 0),
+            Some(40)
+        );
+    }
+
+    #[test]
+    fn gemini_3_thinking_config_sends_thinking_only_shape() {
+        let config =
+            google_thinking_config("gemini-3-pro", &json!({ "reasoningEffort": "medium" }))
+                .expect("Gemini 3 reasoning effort should create thinking config");
+        assert_eq!(config["thinkingLevel"], json!("medium"));
+        assert_eq!(config["includeThoughts"], json!(true));
+    }
+
+    #[test]
+    fn gemini_35_flash_uses_gemini_3_rules() {
+        assert!(is_gemini_3_model("gemini-3.5-flash"));
+        assert!(is_gemini_3_model("google/gemini-3.5-flash"));
+    }
+
+    #[test]
+    fn google_gemini_3_generation_config_keeps_max_tokens_and_strips_sampling() {
+        let request = request_for(
+            "google",
+            "gemini-3.5-flash",
+            json!({
+                "maxTokens": 4096,
+                "reasoningEffort": "high",
+                "temperature": 0.8,
+                "topP": 0.9,
+                "topK": 40,
+                "stop": ["</END>"]
+            }),
+        );
+        let body = google_generate_body(&request);
+        let config = &body["generationConfig"];
+
+        assert_eq!(config["maxOutputTokens"], json!(4096));
+        assert_eq!(config["thinkingConfig"]["thinkingLevel"], json!("high"));
+        assert_eq!(config["thinkingConfig"]["includeThoughts"], json!(true));
+        assert!(config.get("temperature").is_none());
+        assert!(config.get("topP").is_none());
+        assert!(config.get("topK").is_none());
+        assert!(config.get("stopSequences").is_none());
+    }
+
+    #[test]
+    fn google_stream_sse_emits_thinking_tokens_and_usage() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        process_google_sse_block(
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"pondering","thought":true},{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}"#,
+            &mut emit,
+        )
+        .expect("Gemini stream block should parse");
+
+        assert_eq!(emitted[0]["type"], json!("usage"));
+        assert_eq!(
+            emitted[1],
+            json!({ "type": "thinking", "text": "pondering", "data": "pondering" })
+        );
+        assert_eq!(
+            emitted[2],
+            json!({ "type": "token", "text": "hello", "data": "hello" })
+        );
+    }
+
+    #[test]
+    fn sse_block_splitter_handles_lf_and_crlf_boundaries() {
+        let mut buffer = "data: {\"a\":1}\r\n\r\ndata: {\"b\":2}\n\npartial".to_string();
+
+        assert_eq!(
+            take_sse_block(&mut buffer),
+            Some("data: {\"a\":1}".to_string())
+        );
+        assert_eq!(
+            take_sse_block(&mut buffer),
+            Some("data: {\"b\":2}".to_string())
+        );
+        assert_eq!(take_sse_block(&mut buffer), None);
+        assert_eq!(buffer, "partial");
+    }
+
+    #[test]
+    fn openrouter_claude_opus_adaptive_model_strips_sampling_parameters() {
+        let request = request_for(
+            "openrouter",
+            "anthropic/claude-opus-4-7",
+            json!({
+                "temperature": 0.8,
+                "topP": 0.9,
+                "topK": 40,
+                "frequencyPenalty": 0.2,
+                "presencePenalty": 0.3,
+                "customParameters": { "top_p": 0.5, "temperature": 0.4 }
+            }),
+        );
+        let mut body = json!({});
+        apply_openai_parameters(&mut body, &request);
+
+        assert!(!should_send_temperature(&request));
+        assert!(body.get("top_p").is_none());
+        assert!(body.get("top_k").is_none());
+        assert!(body.get("frequency_penalty").is_none());
+        assert!(body.get("presence_penalty").is_none());
+        assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
+    fn anthropic_adaptive_thinking_model_detection_matches_main_branch_rules() {
+        assert!(supports_anthropic_adaptive_thinking("claude-opus-4-8"));
+        assert!(supports_anthropic_adaptive_thinking("claude-opus-4-7"));
+        assert!(supports_anthropic_adaptive_thinking("claude-opus-4-6"));
+        assert!(supports_anthropic_adaptive_thinking("claude-opus-5-6"));
+        assert!(supports_anthropic_adaptive_thinking("claude-sonnet-4-6"));
+        assert!(!supports_anthropic_adaptive_thinking("claude-sonnet-4-5"));
+        assert!(!supports_anthropic_adaptive_thinking(
+            "claude-opus-4-20250514"
+        ));
+    }
+
+    #[test]
+    fn anthropic_opus_48_body_uses_adaptive_maximum_and_strips_sampling() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "maxTokens": 64000,
+                "reasoningEffort": "maximum",
+                "temperature": 0.8,
+                "topP": 0.9,
+                "topK": 40,
+                "showThoughts": true
+            }),
+        );
+        let body = build_anthropic_body(&request, false);
+
+        assert_eq!(body["model"], json!("claude-opus-4-8"));
+        assert_eq!(body["max_tokens"], json!(64000));
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert_eq!(body["output_config"]["effort"], json!("max"));
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+        assert!(body.get("top_k").is_none());
+    }
+
+    #[test]
+    fn anthropic_opus_48_body_requests_adaptive_thinking_without_effort() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "maxTokens": 16000
+            }),
+        );
+        let body = build_anthropic_body(&request, false);
+
+        assert_eq!(body["max_tokens"], json!(16000));
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert!(body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn anthropic_opus_48_stream_body_sets_stream_true() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "reasoningEffort": "xhigh",
+                "showThoughts": false
+            }),
+        );
+        let body = build_anthropic_body(&request, true);
+
+        assert_eq!(body["stream"], json!(true));
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+        assert_eq!(body["output_config"]["effort"], json!("xhigh"));
+    }
+
+    #[test]
+    fn anthropic_opus_48_stream_body_requests_summarized_thinking_by_default() {
+        let request = request_for(
+            "anthropic",
+            "claude-opus-4-8",
+            json!({
+                "reasoningEffort": "high"
+            }),
+        );
+        let body = build_anthropic_body(&request, true);
+
+        assert_eq!(
+            body["thinking"],
+            json!({ "type": "adaptive", "display": "summarized" })
+        );
+    }
+
+    #[test]
+    fn anthropic_stream_sse_emits_usage_thinking_and_text_tokens() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        process_anthropic_sse_block(
+            r#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}"#,
+            &mut emit,
+        )
+        .expect("message_start should parse");
+        process_anthropic_sse_block(
+            r#"event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"pondering"}}"#,
+            &mut emit,
+        )
+        .expect("thinking delta should parse");
+        process_anthropic_sse_block(
+            r#"event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hello"}}"#,
+            &mut emit,
+        )
+        .expect("text delta should parse");
+
+        assert_eq!(emitted[0]["type"], json!("usage"));
+        assert_eq!(
+            emitted[1],
+            json!({ "type": "thinking", "text": "pondering", "data": "pondering" })
+        );
+        assert_eq!(
+            emitted[2],
+            json!({ "type": "token", "text": "hello", "data": "hello" })
+        );
+    }
+
+    #[test]
+    fn anthropic_stream_sse_emits_summarized_thinking_shape() {
+        let mut emitted = Vec::new();
+        let mut emit = |value: Value| {
+            emitted.push(value);
+            Ok(())
+        };
+
+        process_anthropic_sse_block(
+            r#"event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}"#,
+            &mut emit,
+        )
+        .expect("empty thinking block start should parse");
+        process_anthropic_sse_block(
+            r#"event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"summary chunk"}}"#,
+            &mut emit,
+        )
+        .expect("summarized thinking delta should parse");
+        process_anthropic_sse_block(
+            r#"event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"opaque"}}"#,
+            &mut emit,
+        )
+        .expect("signature delta should parse");
+        process_anthropic_sse_block(
+            r#"event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}"#,
+            &mut emit,
+        )
+        .expect("text delta should parse");
+
+        assert_eq!(emitted.len(), 2);
+        assert_eq!(
+            emitted[0],
+            json!({ "type": "thinking", "text": "summary chunk", "data": "summary chunk" })
+        );
+        assert_eq!(
+            emitted[1],
+            json!({ "type": "token", "text": "answer", "data": "answer" })
         );
     }
 

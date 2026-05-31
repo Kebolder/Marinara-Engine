@@ -10,18 +10,21 @@ import type { Chat } from "../../../../../engine/contracts/types/chat";
 import type { AvatarCropValue } from "../../../../../shared/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { startGeneration } from "../../../../../engine/generation/start-generation";
-import { checkConversationAutonomous, getConversationBusyDelay, recordAssistantActivity } from "../../../../../engine/modes/chat/autonomous/autonomous.service";
+import {
+  checkConversationAutonomous,
+  getConversationBusyDelay,
+  recordAssistantActivity,
+} from "../../../../../engine/modes/chat/autonomous/autonomous.service";
+import { chatCommandApi } from "../../../../../shared/api/chat-command-api";
 import { llmApi } from "../../../../../shared/api/llm-api";
 import { storageApi } from "../../../../../shared/api/storage-api";
 import { integrationGateway } from "../../../../../shared/api/integration-gateway";
-import { invokeTauri } from "../../../../../shared/api/tauri-client";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useUIStore } from "../../../../../shared/stores/ui.store";
 import { showConversationLocalNotification } from "../../../../../shared/lib/local-notifications";
 import { playNotificationPing } from "../../../../../shared/lib/notification-sound";
 import { chatKeys } from "../../../../catalog/chats/index";
-import { characterKeys } from "../../../../catalog/characters/index";
+import { invalidateCharacterCollectionQueries } from "../../../../catalog/characters/index";
 
 interface RawChat {
   id: string;
@@ -128,11 +131,18 @@ export function useBackgroundAutonomousPolling() {
                 }
 
                 // Drain the TS generation engine; tokens aren't displayed for background chats.
-                for await (const _event of startGeneration({ storage: storageApi, llm: llmApi, integrations: integrationGateway }, {
-                  chatId: chat.id,
-                  connectionId: null,
-                  streaming: useUIStore.getState().enableStreaming,
-                })) {
+                const { startGeneration } = await import("../../../../../engine/generation/start-generation");
+                for await (const _event of startGeneration(
+                  { storage: storageApi, llm: llmApi, integrations: integrationGateway },
+                  {
+                    chatId: chat.id,
+                    connectionId: null,
+                    forCharacterId: characterId,
+                    streaming: useUIStore.getState().enableStreaming,
+                    hideAutomatedSummarySourceMessages:
+                      useUIStore.getState().summaryPopoverSettings.hideSummarizedMessages,
+                  },
+                )) {
                   if ((_event as { type: string }).type === "token") receivedTokens = true;
                 }
 
@@ -145,11 +155,9 @@ export function useBackgroundAutonomousPolling() {
                 // the background refetch completes — making it look like the
                 // message isn't there even though it was saved.
                 qc.resetQueries({ queryKey: chatKeys.messages(chat.id) });
-                qc.invalidateQueries({ queryKey: characterKeys.list() });
-                void invokeTauri<Chat>("chat_autonomous_unread_mark", {
-                  chatId: chat.id,
-                  body: { characterId },
-                })
+                invalidateCharacterCollectionQueries(qc);
+                void chatCommandApi
+                  .markAutonomousUnread<Chat>(chat.id, { characterId })
                   .then((updatedChat) => {
                     qc.setQueryData(chatKeys.detail(chat.id), updatedChat);
                     qc.invalidateQueries({ queryKey: chatKeys.list() });

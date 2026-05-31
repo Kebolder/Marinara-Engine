@@ -1,10 +1,10 @@
 use super::shared::ParsedPath;
 use super::*;
 
-#[path = "integrations/haptic.rs"]
-mod haptic;
 #[path = "integrations/discord.rs"]
 mod discord;
+#[path = "integrations/haptic.rs"]
+mod haptic;
 #[path = "integrations/spotify.rs"]
 mod spotify;
 #[path = "integrations/spotify_callback.rs"]

@@ -2,8 +2,12 @@
 // Hooks: Custom Tools (React Query)
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  createCustomToolSchema,
+  updateCustomToolSchema,
+} from "../../../../engine/contracts/schemas/custom-tool.schema";
+import { customToolApi } from "../../../../shared/api/custom-tool-api";
 import { storageApi } from "../../../../shared/api/storage-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
 
 export interface CustomToolRow {
   id: string;
@@ -30,13 +34,13 @@ export function isCustomToolSelectable(tool: CustomToolRow, _capabilities?: Cust
   if (!enabled) return false;
   if (tool.executionType === "static") return !!tool.staticResult?.trim();
   if (tool.executionType === "webhook") return !!tool.webhookUrl?.trim();
-  if (tool.executionType === "script") return _capabilities?.scriptExecutionEnabled === true && !!tool.scriptBody?.trim();
+  if (tool.executionType === "script")
+    return _capabilities?.scriptExecutionEnabled === true && !!tool.scriptBody?.trim();
   return false;
 }
 
 const toolKeys = {
   all: ["custom-tools"] as const,
-  detail: (id: string) => ["custom-tools", id] as const,
   capabilities: ["custom-tools", "capabilities"] as const,
 };
 
@@ -47,25 +51,18 @@ export function useCustomTools() {
   });
 }
 
-export function useCustomTool(id: string | null) {
-  return useQuery({
-    queryKey: toolKeys.detail(id ?? ""),
-    queryFn: () => storageApi.get<CustomToolRow>("custom-tools", id!),
-    enabled: !!id,
-  });
-}
-
 export function useCustomToolCapabilities() {
   return useQuery({
     queryKey: toolKeys.capabilities,
-    queryFn: () => invokeTauri<CustomToolCapabilities>("custom_tool_capabilities"),
+    queryFn: () => customToolApi.capabilities<CustomToolCapabilities>(),
   });
 }
 
 export function useCreateCustomTool() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Record<string, unknown>) => storageApi.create("custom-tools", data),
+    mutationFn: (data: Record<string, unknown>) =>
+      storageApi.create("custom-tools", createCustomToolSchema.parse(data)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: toolKeys.all });
     },
@@ -76,7 +73,7 @@ export function useUpdateCustomTool() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
-      storageApi.update("custom-tools", id, data),
+      storageApi.update("custom-tools", id, updateCustomToolSchema.parse(data)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: toolKeys.all });
     },

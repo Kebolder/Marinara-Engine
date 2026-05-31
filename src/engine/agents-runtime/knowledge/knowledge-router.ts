@@ -1,6 +1,7 @@
 import type { AgentContext, AgentResult } from "../../contracts/types/agent";
 import type { LorebookEntry } from "../../contracts/types/lorebook";
 import type { BaseLLMProvider } from "../../generation-core/llm/base-provider.js";
+import { createAgentRuntimeDebug } from "../debug.js";
 import { executeAgent, type AgentExecConfig } from "../executor/agent-executor.js";
 import { stripAvatarPathsReplacer } from "../strip-avatar-paths.js";
 import {
@@ -39,7 +40,7 @@ const MAX_ROUTER_CANDIDATES = 400;
 const DEFAULT_SEMANTIC_TOP_K = 40;
 
 /** Single catalog row the LLM sees for routing. */
-export interface CatalogItem {
+interface CatalogItem {
   id: string;
   name: string;
   keys: string[];
@@ -78,7 +79,7 @@ function firstNTokens(text: string, n: number): string {
  *   - Otherwise fall back to the first ~60 tokens of content.
  *   - If both are empty, the entry still appears with name + keys only.
  */
-export function buildCatalog(entries: LorebookEntry[]): CatalogItem[] {
+function buildCatalog(entries: LorebookEntry[]): CatalogItem[] {
   return entries.map((entry) => {
     const description = entry.description?.trim() ?? "";
     const summary = description.length > 0 ? description : firstNTokens(entry.content, FALLBACK_TOKEN_BUDGET);
@@ -92,7 +93,7 @@ export function buildCatalog(entries: LorebookEntry[]): CatalogItem[] {
 }
 
 /** Render the catalog as the text the LLM sees inside <entry_catalog> tags. */
-export function formatCatalogForPrompt(items: CatalogItem[]): string {
+function formatCatalogForPrompt(items: CatalogItem[]): string {
   return items
     .map((item) => {
       const keyAttr = item.keys.length > 0 ? ` keys="${escapeXmlAttr(item.keys.join(", "))}"` : "";
@@ -120,7 +121,7 @@ function escapeXmlText(value: string): string {
  * Parse the LLM response into a list of entry IDs.
  * Tolerates markdown code fences and extra prose around the JSON.
  */
-export function parseRouterResponse(text: string): string[] {
+function parseRouterResponse(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
@@ -154,7 +155,7 @@ function normalizePositiveInteger(value: unknown, fallback: number): number {
   return Math.max(1, Math.trunc(numeric));
 }
 
-export function buildKnowledgeRouterQuery(context: AgentContext): string {
+function buildKnowledgeRouterQuery(context: AgentContext): string {
   const parts = context.recentMessages
     .slice(-10)
     .map((message) => message.content.trim())
@@ -164,7 +165,7 @@ export function buildKnowledgeRouterQuery(context: AgentContext): string {
   return parts.join("\n\n");
 }
 
-export function buildKeywordActivatedRouterEntries(
+function buildKeywordActivatedRouterEntries(
   entries: LorebookEntry[],
   messages: ScanMessage[],
   options: KnowledgeRouterCandidateOptions["scanOptions"] = {},
@@ -174,7 +175,7 @@ export function buildKeywordActivatedRouterEntries(
   );
 }
 
-export function mergeKnowledgeRouterCandidates(
+function mergeKnowledgeRouterCandidates(
   semanticMatches: SemanticLorebookMatch[],
   activatedEntries: LorebookEntry[],
 ): LorebookEntry[] {
@@ -193,7 +194,7 @@ export function mergeKnowledgeRouterCandidates(
   return candidates;
 }
 
-export async function prepareKnowledgeRouterCandidates(
+async function prepareKnowledgeRouterCandidates(
   entries: LorebookEntry[],
   context: AgentContext,
   options: KnowledgeRouterCandidateOptions = {},
@@ -261,17 +262,7 @@ export async function executeKnowledgeRouter(
   options: KnowledgeRouterCandidateOptions = {},
 ): Promise<AgentResult> {
   const startTime = Date.now();
-  const logger = {
-    debug: (...args: unknown[]) => {
-      if (baseContext.debugMode === true) console.debug(...args);
-    },
-    warn: (...args: unknown[]) => {
-      if (baseContext.debugMode === true) console.warn(...args);
-    },
-    error: (...args: unknown[]) => {
-      if (baseContext.debugMode === true) console.error(...args);
-    },
-  };
+  const logger = createAgentRuntimeDebug(baseContext);
 
   // Empty input → no work, no LLM call.
   if (entries.length === 0) {
@@ -304,6 +295,12 @@ export async function executeKnowledgeRouter(
       candidates.length,
       routerEntries.length,
     );
+    logger.emit({
+      level: "warn",
+      phase: config.phase,
+      message: "knowledge-router-truncated",
+      args: [candidates.length, routerEntries.length],
+    });
   }
 
   const catalog = buildCatalog(candidates);
@@ -324,6 +321,12 @@ export async function executeKnowledgeRouter(
     // can serialize a stack-aware payload via its err-first signature.
     const err = new Error(result.error ?? "unknown error");
     logger.error(err, "[knowledge-router] agent execution failed");
+    logger.emit({
+      level: "error",
+      phase: config.phase,
+      message: "knowledge-router-error",
+      args: [result.error ?? "unknown error"],
+    });
     return result;
   }
 
@@ -345,6 +348,12 @@ export async function executeKnowledgeRouter(
 
   if (selectedEntries.length === 0) {
     logger.debug("[knowledge-router] no entries selected from %d candidates", candidates.length);
+    logger.emit({
+      level: "debug",
+      phase: config.phase,
+      message: "knowledge-router-empty",
+      args: [candidates.length],
+    });
     return {
       ...result,
       type: "context_injection",
@@ -362,6 +371,12 @@ export async function executeKnowledgeRouter(
     dedupedIds.length,
     dedupedIds.length - selectedEntries.length,
   );
+  logger.emit({
+    level: "debug",
+    phase: config.phase,
+    message: "knowledge-router-selected",
+    args: [selectedEntries.length, candidates.length, selectedIds.length, dedupedIds.length],
+  });
 
   return {
     ...result,

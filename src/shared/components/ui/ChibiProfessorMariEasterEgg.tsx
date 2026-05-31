@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { X } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore } from "../../stores/ui.store";
 
@@ -27,8 +28,16 @@ function rememberChibiProfessorMari() {
 function showChibiProfessorMariToast() {
   rememberChibiProfessorMari();
   toast.custom(
-    () => (
-      <div className="flex max-w-[360px] gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 text-[var(--foreground)] shadow-lg">
+    (toastId) => (
+      <div className="relative flex max-w-[360px] gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3 pr-9 text-[var(--foreground)] shadow-lg">
+        <button
+          type="button"
+          aria-label="Dismiss Chibi Professor Mari"
+          className="absolute right-2 top-2 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          onClick={() => toast.dismiss(toastId)}
+        >
+          <X size={14} />
+        </button>
         <img
           src={CHIBI_PROFESSOR_MARI_IMAGE}
           alt="Chibi Professor Mari"

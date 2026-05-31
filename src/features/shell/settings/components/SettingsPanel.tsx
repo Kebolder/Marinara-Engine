@@ -3,7 +3,10 @@
 // ──────────────────────────────────────────────
 import {
   APP_LANGUAGE_OPTIONS,
+  IMAGE_DIMENSION_MAX,
+  IMAGE_DIMENSION_MIN,
   TRACKER_DATA_PANEL_SECTIONS,
+  TRACKER_PANEL_SIZE_PROFILES,
   getTrackerPanelWidthForProfile,
   useUIStore,
   type GameDialogueDisplayMode,
@@ -16,9 +19,12 @@ import {
   type VisualTheme,
 } from "../../../../shared/stores/ui.store";
 import { cn } from "../../../../shared/lib/utils";
+import { TEMPERATURE_UNITS } from "../../../../shared/lib/temperature-units";
+import { QUOTE_FORMATS } from "../../../../shared/lib/dialogue-quotes";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { gameAssetsApi } from "../../../../shared/api/assets-api";
+import { openExternalUrl } from "../../../../shared/api/external-link-api";
 import { importApi } from "../../../../shared/api/import-api";
 import { backupApi, profileApi, type ManagedBackup } from "../../../../shared/api/profile-api";
 import { updatesApi, type UpdateCheckResponse } from "../../../../shared/api/updates-api";
@@ -28,11 +34,14 @@ import { triggerDownload } from "../../../../shared/api/download-payload";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../../../shared/lib/backgrounds";
 import {
   backgroundFileUrlFromPath,
+  resolveBackgroundFileUrl,
   resolveManagedLocalAssetUrl,
   userBackgroundUrl,
 } from "../../../../shared/api/local-file-api";
+import { checkRemoteRuntimeHealth, type RemoteRuntimeHealthCheck } from "../../../../shared/api/remote-runtime";
 import React, { useRef, useState, useCallback, useEffect } from "react";
 import { toast } from "sonner";
+import { AUDIO_MIME_MAP, IMAGE_MIME_MAP } from "../../../../engine/contracts/constants/game-assets";
 import type { Theme } from "../../../../engine/contracts/types/theme";
 import {
   findDuplicateTheme,
@@ -88,7 +97,6 @@ import { TrackerPanelIcon } from "../../../../shared/components/ui/TrackerPanelI
 import { TrackerSizeTierIcon } from "../../../../shared/components/ui/TrackerSizeTierIcon";
 import { ImageUploadDropzone } from "../../../../shared/components/ui/ImageUploadDropzone";
 import { ConversationSoundSetting, ToggleSetting } from "./settings/SettingControls";
-import { TrackerCardColorSettings } from "./settings/TrackerCardColorSettings";
 import { PromptOverridesEditor } from "./settings/PromptOverridesEditor";
 import { DraftNumberInput } from "../../../../shared/components/ui/DraftNumberInput";
 import { inspectCharacterFilesForEmbeddedLorebooks } from "../../../../shared/lib/character-import";
@@ -102,6 +110,13 @@ type CustomFontFace = {
   style?: string;
   unicodeRange?: string;
 };
+
+type RemoteRuntimeHealthView =
+  | RemoteRuntimeHealthCheck
+  | {
+      status: "idle" | "checking";
+      message: string;
+    };
 
 const TABS = [
   { id: "general", label: "General" },
@@ -186,16 +201,47 @@ const GAME_DIALOGUE_DISPLAY_OPTIONS: Array<{ id: GameDialogueDisplayMode; label:
   },
 ];
 
-const QUOTE_FORMAT_OPTIONS: Array<{ id: QuoteFormat; label: string; sample: string }> = [
-  { id: "straight", label: "Straight", sample: '"Hello", it\'s me.' },
-  { id: "typographic", label: "Typographic", sample: "\u201cHello,\u201d it\u2019s me." },
-];
+const QUOTE_FORMAT_OPTION_COPY = {
+  straight: { label: "Straight", sample: '"Hello", it\'s me.' },
+  typographic: { label: "Typographic", sample: "\u201cHello,\u201d it\u2019s me." },
+} satisfies Record<QuoteFormat, { label: string; sample: string }>;
 
-const TRACKER_PANEL_SIZE_PROFILE_OPTIONS: Array<{ id: TrackerPanelSizeProfile; label: string; desc: string }> = [
-  { id: "compact", label: "Compact", desc: `${getTrackerPanelWidthForProfile("compact")} px` },
-  { id: "standard", label: "Standard", desc: `${getTrackerPanelWidthForProfile("standard")} px` },
-  { id: "expanded", label: "Expanded", desc: `${getTrackerPanelWidthForProfile("expanded")} px` },
-];
+const QUOTE_FORMAT_OPTIONS: Array<{ id: QuoteFormat; label: string; sample: string }> = QUOTE_FORMATS.map((id) => ({
+  id,
+  ...QUOTE_FORMAT_OPTION_COPY[id],
+}));
+
+const TRACKER_PANEL_SIZE_PROFILE_COPY: Record<TrackerPanelSizeProfile, { label: string; desc: string }> = {
+  compact: { label: "Compact", desc: `${getTrackerPanelWidthForProfile("compact")} px` },
+  standard: { label: "Standard", desc: `${getTrackerPanelWidthForProfile("standard")} px` },
+  expanded: { label: "Expanded", desc: `${getTrackerPanelWidthForProfile("expanded")} px` },
+};
+
+const TRACKER_PANEL_SIZE_PROFILE_OPTIONS = TRACKER_PANEL_SIZE_PROFILES.map((id) => ({
+  id,
+  ...TRACKER_PANEL_SIZE_PROFILE_COPY[id],
+}));
+
+const TRACKER_TEMPERATURE_UNIT_OPTIONS: Array<{
+  id: TrackerTemperatureUnit;
+  label: string;
+  name: string;
+}> = TEMPERATURE_UNITS.map((id) => ({
+  id,
+  label: id === "celsius" ? "°C" : "°F",
+  name: id === "celsius" ? "Celsius" : "Fahrenheit",
+}));
+
+function getTrackerTemperatureUnitOption(unit: TrackerTemperatureUnit) {
+  return TRACKER_TEMPERATURE_UNIT_OPTIONS.find((option) => option.id === unit) ?? TRACKER_TEMPERATURE_UNIT_OPTIONS[0]!;
+}
+
+function getNextTrackerTemperatureUnit(unit: TrackerTemperatureUnit): TrackerTemperatureUnit {
+  const currentIndex = TRACKER_TEMPERATURE_UNIT_OPTIONS.findIndex((option) => option.id === unit);
+  return (
+    TRACKER_TEMPERATURE_UNIT_OPTIONS[(currentIndex + 1) % TRACKER_TEMPERATURE_UNIT_OPTIONS.length]?.id ?? "celsius"
+  );
+}
 
 const TRACKER_THOUGHT_BUBBLE_DISPLAY_OPTIONS: Array<{
   id: TrackerThoughtBubbleDisplay;
@@ -229,44 +275,55 @@ const TRACKER_PANEL_CARD_OPTIONS: Record<TrackerDataPanelSection, { label: strin
   },
 };
 
+const GAME_AUDIO_ASSET_EXTENSIONS = Object.keys(AUDIO_MIME_MAP);
+const GAME_AUDIO_ASSET_MIME_TYPES = Array.from(new Set(Object.values(AUDIO_MIME_MAP)));
+const GAME_AUDIO_ASSET_ACCEPT = [...GAME_AUDIO_ASSET_MIME_TYPES, ...GAME_AUDIO_ASSET_EXTENSIONS].join(",");
+const GAME_RASTER_IMAGE_ASSET_EXTENSIONS = Object.keys(IMAGE_MIME_MAP).filter((extension) => extension !== ".svg");
+const GAME_SPRITE_IMAGE_ASSET_EXTENSIONS = Object.keys(IMAGE_MIME_MAP);
+const GAME_RASTER_IMAGE_ASSET_ACCEPT = [
+  ...new Set(GAME_RASTER_IMAGE_ASSET_EXTENSIONS.map((extension) => IMAGE_MIME_MAP[extension])),
+  ...GAME_RASTER_IMAGE_ASSET_EXTENSIONS,
+].join(",");
+const GAME_SPRITE_IMAGE_ASSET_ACCEPT = [
+  ...new Set(GAME_SPRITE_IMAGE_ASSET_EXTENSIONS.map((extension) => IMAGE_MIME_MAP[extension])),
+  ...GAME_SPRITE_IMAGE_ASSET_EXTENSIONS,
+].join(",");
+
 const GAME_ASSET_CATEGORIES = [
   {
     id: "music",
     label: "Music",
     defaultFolder: "exploration/fantasy/calm",
-    accept: "audio/*,.mp3,.ogg,.wav,.flac,.m4a,.aac,.webm",
+    accept: GAME_AUDIO_ASSET_ACCEPT,
   },
   {
     id: "ambient",
     label: "Ambient",
     defaultFolder: "nature",
-    accept: "audio/*,.mp3,.ogg,.wav,.flac,.m4a,.aac,.webm",
+    accept: GAME_AUDIO_ASSET_ACCEPT,
   },
   {
     id: "sfx",
     label: "Sound Effects",
     defaultFolder: "exploration",
-    accept: "audio/*,.mp3,.ogg,.wav,.flac,.m4a,.aac,.webm",
+    accept: GAME_AUDIO_ASSET_ACCEPT,
   },
   {
     id: "sprites",
     label: "Sprites",
     defaultFolder: "generic-fantasy",
-    accept: "image/*,.svg",
+    accept: GAME_SPRITE_IMAGE_ASSET_ACCEPT,
   },
   {
     id: "backgrounds",
     label: "Backgrounds",
     defaultFolder: "custom",
-    accept: "image/*",
+    accept: GAME_RASTER_IMAGE_ASSET_ACCEPT,
   },
 ] as const;
 
 type GameAssetCategoryId = (typeof GAME_ASSET_CATEGORIES)[number]["id"];
 const GAME_ASSET_CATEGORY_BY_ID = new Map(GAME_ASSET_CATEGORIES.map((category) => [category.id, category]));
-
-// Module-level set survives component remounts (e.g. mobile AnimatePresence unmount/remount)
-const mountedSettingsTabs = new Set<string>();
 
 function ImageDimensionRow({
   label,
@@ -288,21 +345,23 @@ function ImageDimensionRow({
           {label}
           <HelpTooltip text={help} />
         </div>
-        <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">Pixels, clamped from 64 to 4096.</div>
+        <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+          Pixels, clamped from {IMAGE_DIMENSION_MIN} to {IMAGE_DIMENSION_MAX}.
+        </div>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1.5 sm:w-40">
         <DraftNumberInput
           value={width}
-          min={64}
-          max={4096}
+          min={IMAGE_DIMENSION_MIN}
+          max={IMAGE_DIMENSION_MAX}
           onCommit={(nextWidth) => onCommit(nextWidth, height)}
           className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
         />
         <span className="text-[0.625rem] text-[var(--muted-foreground)]">x</span>
         <DraftNumberInput
           value={height}
-          min={64}
-          max={4096}
+          min={IMAGE_DIMENSION_MIN}
+          max={IMAGE_DIMENSION_MAX}
           onCommit={(nextHeight) => onCommit(width, nextHeight)}
           className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
         />
@@ -442,6 +501,10 @@ function TrackerPanelAppearanceDrawer({
 }) {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const drawerId = React.useId();
+  const currentTemperatureUnitOption = getTrackerTemperatureUnitOption(trackerTemperatureUnit);
+  const nextTemperatureUnit = getNextTrackerTemperatureUnit(trackerTemperatureUnit);
+  const nextTemperatureUnitOption = getTrackerTemperatureUnitOption(nextTemperatureUnit);
+  const isAlternateTemperatureUnit = trackerTemperatureUnit === TRACKER_TEMPERATURE_UNIT_OPTIONS[1]?.id;
 
   const toggleTrackerPanel = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -514,137 +577,123 @@ function TrackerPanelAppearanceDrawer({
           !drawerOpen && "hidden",
         )}
       >
-          <ToggleSetting
-            label="Replace tracker HUD icons"
-            checked={trackerPanelHideHudWidgets}
-            onChange={setTrackerPanelHideHudWidgets}
-            help="Hides the old world/player tracker icon strip so the Tracker panel can dock to the edge. The Agents button stays visible."
-          />
-          <ToggleSetting
-            label="Use expression sprites for tracker portraits"
-            checked={trackerPanelUseExpressionSprites}
-            onChange={setTrackerPanelUseExpressionSprites}
-            help="When on, tracker portraits can switch to Expression Engine sprites if that agent is enabled for the chat and the character has matching sprite images."
-          />
-          <div className="mt-2 grid gap-1.5">
-            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-              Desktop size
-              <HelpTooltip text="Choose the designed desktop width for the Tracker panel. Compact favors quick scanning, Standard balances density, and Expanded gives character cards more room." />
-            </span>
-            <div className="grid grid-cols-3 gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-0.5">
-              {TRACKER_PANEL_SIZE_PROFILE_OPTIONS.map((opt) => {
-                const selected = trackerPanelSizeProfile === opt.id;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setTrackerPanelSizeProfile(opt.id)}
-                    aria-pressed={selected}
-                    title={`${opt.label}: ${getTrackerPanelWidthForProfile(opt.id)}px. ${opt.desc}`}
-                    className={cn(
-                      "flex min-h-8 min-w-0 items-center justify-center rounded-md px-1.5 text-[0.6875rem] transition-all disabled:cursor-not-allowed",
-                      selected
-                        ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-1 ring-[var(--primary)]/45"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    <span className="inline-flex items-center gap-1 font-semibold">
-                      <span className={cn("inline-flex", selected && "text-[var(--primary)]")}>
-                        <TrackerSizeTierIcon sizeProfile={opt.id} />
-                      </span>
-                      {opt.label}
+        <ToggleSetting
+          label="Replace tracker HUD icons"
+          checked={trackerPanelHideHudWidgets}
+          onChange={setTrackerPanelHideHudWidgets}
+          help="Hides the old world/player tracker icon strip so the Tracker panel can dock to the edge. The Agents button stays visible."
+        />
+        <ToggleSetting
+          label="Use expression sprites for tracker portraits"
+          checked={trackerPanelUseExpressionSprites}
+          onChange={setTrackerPanelUseExpressionSprites}
+          help="When on, tracker portraits can switch to Expression Engine sprites if that agent is enabled for the chat and the character has matching sprite images."
+        />
+        <div className="mt-2 grid gap-1.5">
+          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
+            Desktop size
+            <HelpTooltip text="Choose the designed desktop width for the Tracker panel. Compact favors quick scanning, Standard balances density, and Expanded gives character cards more room." />
+          </span>
+          <div className="grid grid-cols-3 gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-0.5">
+            {TRACKER_PANEL_SIZE_PROFILE_OPTIONS.map((opt) => {
+              const selected = trackerPanelSizeProfile === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setTrackerPanelSizeProfile(opt.id)}
+                  aria-pressed={selected}
+                  title={`${opt.label}: ${getTrackerPanelWidthForProfile(opt.id)}px. ${opt.desc}`}
+                  className={cn(
+                    "flex min-h-8 min-w-0 items-center justify-center rounded-md px-1.5 text-[0.6875rem] transition-all disabled:cursor-not-allowed",
+                    selected
+                      ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-1 ring-[var(--primary)]/45"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                  )}
+                >
+                  <span className="inline-flex items-center gap-1 font-semibold">
+                    <span className={cn("inline-flex", selected && "text-[var(--primary)]")}>
+                      <TrackerSizeTierIcon sizeProfile={opt.id} />
                     </span>
-                  </button>
-                );
-              })}
-            </div>
+                    {opt.label}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="mt-2 grid gap-1.5">
-            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-              Thought display mode
-              <HelpTooltip text="Choose whether featured character thoughts open inside the tracker card or float beside the portrait. This no longer changes automatically when the panel width changes." />
-            </span>
-            <div className="grid grid-cols-2 gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-0.5">
-              {TRACKER_THOUGHT_BUBBLE_DISPLAY_OPTIONS.map((opt) => {
-                const selected = trackerPanelThoughtBubbleDisplay === opt.id;
-                const Icon = opt.id === "inline" ? Dock : MessageCircle;
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setTrackerPanelThoughtBubbleDisplay(opt.id)}
-                    aria-pressed={selected}
-                    title={opt.desc}
-                    className={cn(
-                      "flex min-h-8 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-[0.6875rem] transition-all disabled:cursor-not-allowed",
-                      selected
-                        ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-1 ring-[var(--primary)]/45"
-                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                    )}
-                  >
-                    <span className="inline-flex items-center gap-1.5 font-semibold">
-                      <Icon size="0.75rem" className={selected ? "text-[var(--primary)]" : ""} />
-                      {opt.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+        </div>
+        <div className="mt-2 grid gap-1.5">
+          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
+            Thought display mode
+            <HelpTooltip text="Choose whether featured character thoughts open inside the tracker card or float beside the portrait. This no longer changes automatically when the panel width changes." />
+          </span>
+          <div className="grid grid-cols-2 gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-0.5">
+            {TRACKER_THOUGHT_BUBBLE_DISPLAY_OPTIONS.map((opt) => {
+              const selected = trackerPanelThoughtBubbleDisplay === opt.id;
+              const Icon = opt.id === "inline" ? Dock : MessageCircle;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setTrackerPanelThoughtBubbleDisplay(opt.id)}
+                  aria-pressed={selected}
+                  title={opt.desc}
+                  className={cn(
+                    "flex min-h-8 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-[0.6875rem] transition-all disabled:cursor-not-allowed",
+                    selected
+                      ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-1 ring-[var(--primary)]/45"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                  )}
+                >
+                  <span className="inline-flex items-center gap-1.5 font-semibold">
+                    <Icon size="0.75rem" className={selected ? "text-[var(--primary)]" : ""} />
+                    {opt.label}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <ToggleSetting
-            label="Always show Docked thoughts"
-            checked={trackerPanelDockedThoughtsAlwaysVisible}
-            onChange={setTrackerPanelDockedThoughtsAlwaysVisible}
-            help="When Thought display mode is Docked, every featured character's thought stays visible inside the tracker card instead of waiting for the per-card thought button."
-          />
-          <div className="mt-2 flex min-h-8 items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
-              Temperature unit
-              <HelpTooltip text="Changes Tracker Panel and Roleplay HUD temperature displays without rewriting the saved world-state temperature." />
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={trackerTemperatureUnit === "fahrenheit"}
-              aria-label={`Tracker temperature unit: ${
-                trackerTemperatureUnit === "celsius" ? "Celsius" : "Fahrenheit"
-              }`}
-              title={
-                trackerTemperatureUnit === "celsius"
-                  ? "Showing tracker temperatures as °C. Click for °F."
-                  : "Showing tracker temperatures as °F. Click for °C."
-              }
-              onClick={() => setTrackerTemperatureUnit(trackerTemperatureUnit === "celsius" ? "fahrenheit" : "celsius")}
-              className="relative grid h-7 w-[4.75rem] shrink-0 grid-cols-2 items-center rounded-full border border-[var(--border)] bg-[var(--secondary)]/55 p-0.5 text-[0.625rem] font-semibold transition-colors hover:bg-[var(--accent)]/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
-            >
+        </div>
+        <ToggleSetting
+          label="Always show Docked thoughts"
+          checked={trackerPanelDockedThoughtsAlwaysVisible}
+          onChange={setTrackerPanelDockedThoughtsAlwaysVisible}
+          help="When Thought display mode is Docked, every featured character's thought stays visible inside the tracker card instead of waiting for the per-card thought button."
+        />
+        <div className="mt-2 flex min-h-8 items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
+            Temperature unit
+            <HelpTooltip text="Changes Tracker Panel and Roleplay HUD temperature displays without rewriting the saved world-state temperature." />
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isAlternateTemperatureUnit}
+            aria-label={`Tracker temperature unit: ${currentTemperatureUnitOption.name}`}
+            title={`Showing tracker temperatures as ${currentTemperatureUnitOption.label}. Click for ${nextTemperatureUnitOption.label}.`}
+            onClick={() => setTrackerTemperatureUnit(nextTemperatureUnit)}
+            className="relative grid h-7 w-[4.75rem] shrink-0 grid-cols-2 items-center rounded-full border border-[var(--border)] bg-[var(--secondary)]/55 p-0.5 text-[0.625rem] font-semibold transition-colors hover:bg-[var(--accent)]/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
+          >
+            <span
+              className={cn(
+                "absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-full bg-[var(--primary)]/16 ring-1 ring-[var(--primary)]/45 transition-transform",
+                isAlternateTemperatureUnit && "translate-x-full",
+              )}
+            />
+            {TRACKER_TEMPERATURE_UNIT_OPTIONS.map((option) => (
               <span
-                className={cn(
-                  "absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-full bg-[var(--primary)]/16 ring-1 ring-[var(--primary)]/45 transition-transform",
-                  trackerTemperatureUnit === "fahrenheit" && "translate-x-full",
-                )}
-              />
-              <span
+                key={option.id}
                 className={cn(
                   "relative z-10 text-center transition-colors",
-                  trackerTemperatureUnit === "celsius" ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
+                  trackerTemperatureUnit === option.id ? "text-[var(--foreground)]" : "text-[var(--muted-foreground)]",
                 )}
               >
-                °C
+                {option.label}
               </span>
-              <span
-                className={cn(
-                  "relative z-10 text-center transition-colors",
-                  trackerTemperatureUnit === "fahrenheit"
-                    ? "text-[var(--foreground)]"
-                    : "text-[var(--muted-foreground)]",
-                )}
-              >
-                °F
-              </span>
-            </button>
-          </div>
-          <TrackerPanelCardOrderSetting />
-          <TrackerCardColorSettings />
+            ))}
+          </button>
+        </div>
+        <TrackerPanelCardOrderSetting />
       </fieldset>
     </section>
   );
@@ -653,12 +702,13 @@ function TrackerPanelAppearanceDrawer({
 export function SettingsPanel() {
   const settingsTab = useUIStore((s) => s.settingsTab);
   const setSettingsTab = useUIStore((s) => s.setSettingsTab);
-  mountedSettingsTabs.add(settingsTab);
+  const activeTab = TABS.find((tab) => tab.id === settingsTab) ?? TABS[0];
+  const ActiveSettings = SETTINGS_COMPONENTS[activeTab.id];
 
   return (
     <div className="flex h-full flex-col">
       {/* Tab bar */}
-      <div className="flex flex-shrink-0 flex-wrap border-b border-[var(--sidebar-border)]">
+      <div className="flex flex-shrink-0 flex-wrap border-b border-[var(--border)] bg-[var(--card)]/40">
         {TABS.map((tab) => (
           <button
             key={tab.id}
@@ -678,21 +728,8 @@ export function SettingsPanel() {
         ))}
       </div>
 
-      <div className="relative min-h-0 flex-1">
-        {TABS.map((tab) => {
-          if (!mountedSettingsTabs.has(tab.id)) return null;
-          const Comp = SETTINGS_COMPONENTS[tab.id];
-          const active = settingsTab === tab.id;
-          return (
-            <div
-              key={tab.id}
-              className="absolute inset-0 overflow-y-auto p-3"
-              style={active ? undefined : { clipPath: "inset(100%)", pointerEvents: "none" }}
-            >
-              <Comp />
-            </div>
-          );
-        })}
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <ActiveSettings />
       </div>
     </div>
   );
@@ -714,6 +751,10 @@ function GeneralSettings() {
   const setGameAutoPlayDelay = useUIStore((s) => s.setGameAutoPlayDelay);
   const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
   const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
+  const imagePromptIncludeAppearances = useUIStore((s) => s.imagePromptIncludeAppearances);
+  const setImagePromptIncludeAppearances = useUIStore((s) => s.setImagePromptIncludeAppearances);
+  const imagePromptFormat = useUIStore((s) => s.imagePromptFormat);
+  const setImagePromptFormat = useUIStore((s) => s.setImagePromptFormat);
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
   const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
   const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
@@ -751,6 +792,8 @@ function GeneralSettings() {
   const setIntuitiveSwipeRerollLatest = useUIStore((s) => s.setIntuitiveSwipeRerollLatest);
   const editLastMessageOnArrowUp = useUIStore((s) => s.editLastMessageOnArrowUp);
   const setEditLastMessageOnArrowUp = useUIStore((s) => s.setEditLastMessageOnArrowUp);
+  const editMessagesOnDoubleClick = useUIStore((s) => s.editMessagesOnDoubleClick);
+  const setEditMessagesOnDoubleClick = useUIStore((s) => s.setEditMessagesOnDoubleClick);
   const rescanGameAssets = useGameAssetStore((s) => s.rescanAssets);
   const assetFileRef = useRef<HTMLInputElement>(null);
   const [assetCategory, setAssetCategory] = useState<GameAssetCategoryId>("backgrounds");
@@ -1092,6 +1135,13 @@ function GeneralSettings() {
         help="In Conversation and Roleplay modes, press Up Arrow while the chat input is empty to open the most recent message in the chat for editing — whether it's yours or the AI's."
       />
 
+      <ToggleSetting
+        label="Double-click edits messages"
+        checked={editMessagesOnDoubleClick}
+        onChange={setEditMessagesOnDoubleClick}
+        help="When on, double-clicking or double-tapping a chat message opens the message editor. Edit buttons and keyboard shortcuts still work when this is off."
+      />
+
       <div className="rounded-xl bg-[var(--secondary)]/50 p-4 ring-1 ring-[var(--border)]">
         <div className="mb-3 flex flex-col gap-1">
           <div className="text-xs font-semibold text-[var(--foreground)]">Image Generation</div>
@@ -1105,8 +1155,25 @@ function GeneralSettings() {
             label="Expose image prompts before sending"
             checked={reviewImagePromptsBeforeSend}
             onChange={setReviewImagePromptsBeforeSend}
-            help="Shows generated image prompts for review before sending Game assets, character or persona avatars, and sprite generations to the image provider."
+            help="Shows generated image prompts for review before sending Game assets, character or persona avatars, sprites, chat selfies, and Roleplay Illustrator images to the image provider."
           />
+          <ToggleSetting
+            label="Include card appearances"
+            checked={imagePromptIncludeAppearances}
+            onChange={setImagePromptIncludeAppearances}
+            help="Allows character and persona appearance text to be included when Marinara asks for image prompts."
+          />
+          <label className="flex flex-col gap-1.5 rounded-xl bg-[var(--background)]/50 p-3 ring-1 ring-[var(--border)]">
+            <span className="text-xs font-medium text-[var(--foreground)]">Prompt wording</span>
+            <select
+              value={imagePromptFormat}
+              onChange={(event) => setImagePromptFormat(event.target.value === "tags" ? "tags" : "descriptive")}
+              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
+            >
+              <option value="descriptive">Proper descriptions</option>
+              <option value="tags">Tags</option>
+            </select>
+          </label>
 
           <ImageDimensionRow
             label="Backgrounds"
@@ -1224,10 +1291,9 @@ function GeneralSettings() {
         </div>
 
         <p className="mt-2.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          On desktop, folder buttons open the local app asset folders. Use upload to copy files into Marinara's
-          managed data directory. Audio supports MP3, OGG, WAV, FLAC, M4A, AAC, and WebM;
-          images support PNG, JPG, GIF, WebP, AVIF, and SVG for sprites. Music folders use state/genre/intensity, such
-          as exploration/fantasy/calm.
+          On desktop, folder buttons open the local app asset folders. Use upload to copy files into Marinara's managed
+          data directory. Audio supports MP3, OGG, WAV, FLAC, M4A, AAC, WebM, and Opus; images support PNG, JPG, GIF,
+          WebP, AVIF, and SVG for sprites. Music folders use state/genre/intensity, such as exploration/fantasy/calm.
         </p>
       </div>
     </div>
@@ -1290,9 +1356,7 @@ function AppearanceSettings() {
   const trackerPanelThoughtBubbleDisplay = useUIStore((s) => s.trackerPanelThoughtBubbleDisplay);
   const setTrackerPanelThoughtBubbleDisplay = useUIStore((s) => s.setTrackerPanelThoughtBubbleDisplay);
   const trackerPanelDockedThoughtsAlwaysVisible = useUIStore((s) => s.trackerPanelDockedThoughtsAlwaysVisible);
-  const setTrackerPanelDockedThoughtsAlwaysVisible = useUIStore(
-    (s) => s.setTrackerPanelDockedThoughtsAlwaysVisible,
-  );
+  const setTrackerPanelDockedThoughtsAlwaysVisible = useUIStore((s) => s.setTrackerPanelDockedThoughtsAlwaysVisible);
   const trackerTemperatureUnit = useUIStore((s) => s.trackerTemperatureUnit);
   const setTrackerTemperatureUnit = useUIStore((s) => s.setTrackerTemperatureUnit);
 
@@ -2084,11 +2148,20 @@ function BackgroundThumbnail({ item }: { item: BackgroundLibraryItem }) {
   const [src, setSrc] = useState(() => (filename ? backgroundFileUrlFromPath(filename, item.absolutePath) : ""));
 
   useEffect(() => {
+    let cancelled = false;
     if (filename) {
       setSrc(backgroundFileUrlFromPath(filename, item.absolutePath));
-      return;
+      resolveBackgroundFileUrl(filename)
+        .then((url) => {
+          if (!cancelled) setSrc(url || backgroundFileUrlFromPath(filename, item.absolutePath));
+        })
+        .catch(() => {
+          if (!cancelled) setSrc(backgroundFileUrlFromPath(filename, item.absolutePath));
+        });
+      return () => {
+        cancelled = true;
+      };
     }
-    let cancelled = false;
     resolveManagedLocalAssetUrl(item.url)
       .then((url) => {
         if (!cancelled) setSrc(url ?? "");
@@ -2117,7 +2190,9 @@ function BackgroundPicker({ selected, onSelect }: { selected: string | null; onS
     queryKey: ["backgrounds"],
     queryFn: async () => {
       const rows =
-        await backgroundsApi.list<Array<BackgroundLibraryItem & { name?: string; type?: string; isDirectory?: boolean }>>();
+        await backgroundsApi.list<
+          Array<BackgroundLibraryItem & { name?: string; type?: string; isDirectory?: boolean }>
+        >();
       return rows
         .filter((row) => row.type !== "folder" && row.isDirectory !== true)
         .map((row) => {
@@ -2149,8 +2224,7 @@ function BackgroundPicker({ selected, onSelect }: { selected: string | null; onS
   });
 
   const updateTags = useMutation({
-    mutationFn: ({ filename, tags }: { filename: string; tags: string[] }) =>
-      backgroundsApi.updateTags(filename, tags),
+    mutationFn: ({ filename, tags }: { filename: string; tags: string[] }) => backgroundsApi.updateTags(filename, tags),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["backgrounds"] });
       qc.invalidateQueries({ queryKey: ["background-tags"] });
@@ -2996,8 +3070,7 @@ function ImportSettings() {
   return (
     <div className="flex flex-col gap-3">
       <div className="text-xs text-[var(--muted-foreground)]">
-        Import data from Marinara exports, SillyTavern, or other tools. Full profile imports also restore custom
-        themes.
+        Import data from Marinara exports, SillyTavern, or other tools. Full profile imports also restore custom themes.
       </div>
 
       <ProfileImportSection />
@@ -3182,7 +3255,77 @@ function AdvancedSettings() {
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
   const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
+  const remoteRuntimeSectionRef = useRef<HTMLDivElement>(null);
+  const remoteRuntimeHealthAbortRef = useRef<AbortController | null>(null);
+  const remoteRuntimeHealthCheckIdRef = useRef(0);
+  const [remoteRuntimeHealth, setRemoteRuntimeHealth] = useState<RemoteRuntimeHealthView>(() =>
+    remoteRuntimeUrl.trim()
+      ? { status: "idle", message: "Status checks when this section is visible." }
+      : { status: "unconfigured", message: "Embedded Tauri runtime in use." },
+  );
   const queryClient = useQueryClient();
+
+  const runRemoteRuntimeHealthCheck = useCallback(() => {
+    const url = remoteRuntimeUrl.trim();
+    remoteRuntimeHealthAbortRef.current?.abort();
+
+    if (!url) {
+      setRemoteRuntimeHealth({ status: "unconfigured", message: "Embedded Tauri runtime in use." });
+      return;
+    }
+
+    const checkId = remoteRuntimeHealthCheckIdRef.current + 1;
+    remoteRuntimeHealthCheckIdRef.current = checkId;
+    const controller = new AbortController();
+    remoteRuntimeHealthAbortRef.current = controller;
+    setRemoteRuntimeHealth({ status: "checking", message: "Checking remote runtime..." });
+
+    void checkRemoteRuntimeHealth(url, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted || remoteRuntimeHealthCheckIdRef.current !== checkId) return;
+        setRemoteRuntimeHealth(result);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || remoteRuntimeHealthCheckIdRef.current !== checkId) return;
+        setRemoteRuntimeHealth({
+          status: "unreachable",
+          message: error instanceof Error ? error.message : "Remote runtime health check failed.",
+        });
+      });
+  }, [remoteRuntimeUrl]);
+
+  useEffect(
+    () => () => {
+      remoteRuntimeHealthAbortRef.current?.abort();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!remoteRuntimeUrl.trim()) {
+      remoteRuntimeHealthAbortRef.current?.abort();
+      setRemoteRuntimeHealth({ status: "unconfigured", message: "Embedded Tauri runtime in use." });
+      return;
+    }
+
+    const element = remoteRuntimeSectionRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      runRemoteRuntimeHealthCheck();
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          runRemoteRuntimeHealthCheck();
+        }
+      },
+      { threshold: 0.25 },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [remoteRuntimeUrl, runRemoteRuntimeHealthCheck]);
 
   const backupsQuery = useQuery<ManagedBackup[]>({
     queryKey: ["backups"],
@@ -3281,8 +3424,14 @@ function AdvancedSettings() {
     setOpeningUpdate(true);
     try {
       const result = await updatesApi.apply(updateInfo);
-      window.open(result.releaseUrl, "_blank", "noopener,noreferrer");
-      toast.info(result.message);
+      try {
+        await openExternalUrl(result.releaseUrl);
+        toast.info(result.message);
+      } catch (openErr) {
+        toast.error(openErr instanceof Error ? openErr.message : "Failed to open update", {
+          description: result.message,
+        });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to open update");
     } finally {
@@ -3303,6 +3452,15 @@ function AdvancedSettings() {
 
   const isClearing = clearAllData.isPending || expungeData.isPending;
   const isAllScopesSelected = selectedScopes.length === EXPUNGE_SCOPE_OPTIONS.length;
+  const remoteRuntimeHealthDotClass = cn(
+    "h-2 w-2 shrink-0 rounded-full",
+    remoteRuntimeHealth.status === "ok" && "bg-emerald-400",
+    remoteRuntimeHealth.status === "checking" && "animate-pulse bg-sky-400",
+    remoteRuntimeHealth.status === "not-writable" && "bg-amber-400",
+    (remoteRuntimeHealth.status === "invalid" || remoteRuntimeHealth.status === "unreachable") && "bg-rose-400",
+    (remoteRuntimeHealth.status === "idle" || remoteRuntimeHealth.status === "unconfigured") &&
+      "bg-[var(--muted-foreground)]/45",
+  );
 
   const toggleScope = (scope: ExpungeScope) => {
     setSelectedScopes((current) =>
@@ -3435,7 +3593,10 @@ function AdvancedSettings() {
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--secondary)]/35 p-2.5 ring-1 ring-[var(--border)]">
+        <div
+          ref={remoteRuntimeSectionRef}
+          className="flex flex-col gap-1.5 rounded-lg bg-[var(--secondary)]/35 p-2.5 ring-1 ring-[var(--border)]"
+        >
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium">Remote Runtime URL</span>
             <HelpTooltip text="Blank uses the embedded Tauri backend. Set this to a Marinara Rust server URL to route supported storage and generation calls through the remote runtime." />
@@ -3447,6 +3608,10 @@ function AdvancedSettings() {
             placeholder="http://127.0.0.1:8787"
             className="rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
           />
+          <div className="flex min-h-7 items-center gap-2 rounded-lg bg-[var(--background)]/55 px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]/70">
+            <span className={remoteRuntimeHealthDotClass} aria-hidden="true" />
+            <span>{remoteRuntimeHealth.message}</span>
+          </div>
           <div className="text-[0.625rem] text-[var(--muted-foreground)]">
             Supports reverse-proxy Basic Auth with https://user:password@example.com.
           </div>
@@ -3642,7 +3807,7 @@ function AdvancedSettings() {
         label="Debug mode"
         checked={debugMode}
         onChange={setDebugMode}
-        help="Shows the in-app agent debug panel with prompt, response, tool, and result details for troubleshooting."
+        help="Shows the in-app agent debug panel and emits agent runtime diagnostics to the console for troubleshooting."
       />
 
       {/* Backup */}
@@ -3763,8 +3928,8 @@ function AdvancedSettings() {
           Danger Zone
         </div>
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-          Permanently clear selected categories of local data. Marinara resets live caches immediately after a successful
-          expunge so stale data does not linger on screen.
+          Permanently clear selected categories of local data. Marinara resets live caches immediately after a
+          successful expunge so stale data does not linger on screen.
         </p>
         <div className="grid gap-2">
           {EXPUNGE_SCOPE_OPTIONS.map((scope) => {

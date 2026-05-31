@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { z } from "zod";
 
-export const regexPlacementSchema = z.enum(["ai_output", "user_input"]);
+const regexPlacementSchema = z.enum(["ai_output", "user_input"]);
 
 export const createRegexScriptSchema = z.object({
   name: z.string().min(1).max(200),
@@ -19,7 +19,9 @@ export const createRegexScriptSchema = z.object({
   maxDepth: z.number().int().nullable().default(null),
 });
 
-export const updateRegexScriptSchema = createRegexScriptSchema.partial();
+export const updateRegexScriptSchema = createRegexScriptSchema.partial().extend({
+  sortOrder: z.number().int().optional(),
+});
 export const reorderRegexScriptsSchema = z.object({
   scriptIds: z.array(z.string().min(1)),
 });

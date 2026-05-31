@@ -30,6 +30,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { ApiError } from "../../../../shared/api/api-errors";
+import { openExternalUrl } from "../../../../shared/api/external-link-api";
 import { spotifyApi } from "../../../../shared/api/integration-utility-api";
 import {
   SPOTIFY_SCENE_TRACK_CHANGE_EVENT,
@@ -258,6 +259,24 @@ function getMobileExpandedPanelStyle(position: { x: number; y: number }): CSSPro
   };
 }
 
+function useSpotifyMiniPlayerVisible(mobile: boolean) {
+  const queryText = mobile ? "(max-width: 767px)" : "(min-width: 768px)";
+  const [visible, setVisible] = useState(() =>
+    typeof window === "undefined" ? !mobile : window.matchMedia(queryText).matches,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const query = window.matchMedia(queryText);
+    const update = () => setVisible(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [queryText]);
+
+  return visible;
+}
+
 function isSpotifyVolumeUnsupportedError(error: unknown): boolean {
   if (error instanceof ApiError) {
     const payload = error.payload;
@@ -277,6 +296,8 @@ function isSpotifyRestrictionError(error: unknown): boolean {
 export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   const qc = useQueryClient();
   const enabled = useUIStore((s) => s.spotifyPlayerEnabled);
+  const visible = useSpotifyMiniPlayerVisible(mobile);
+  const queryEnabled = enabled && visible;
   const openRightPanel = useUIStore((s) => s.openRightPanel);
   const openAgentDetail = useUIStore((s) => s.openAgentDetail);
   const collapsed = useUIStore((s) => s.spotifyMobileWidgetCollapsed);
@@ -303,7 +324,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   const playerQuery = useQuery({
     queryKey: spotifyKeys.player,
     queryFn: () => spotifyApi.player<SpotifyPlaybackState>(),
-    enabled,
+    enabled: queryEnabled,
     staleTime: 2_000,
     refetchInterval: 5_000,
     retry: false,
@@ -312,7 +333,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   const devicesQuery = useQuery({
     queryKey: spotifyKeys.devices,
     queryFn: () => spotifyApi.devices<SpotifyDevicesState>(),
-    enabled: enabled && mobile,
+    enabled: queryEnabled && mobile,
     staleTime: 2_000,
     refetchInterval: 5_000,
     retry: false,
@@ -366,7 +387,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   }, [controlDevice, deviceVolume, volumeDeviceKey]);
 
   useEffect(() => {
-    if (!enabled || mobile) return;
+    if (!queryEnabled || mobile) return;
     let disposed = false;
     let sdkPlayer: SpotifyWebPlaybackPlayer | null = null;
 
@@ -422,7 +443,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
         sdkPlayer.disconnect();
       }
     };
-  }, [enabled, mobile, qc]);
+  }, [queryEnabled, mobile, qc]);
 
   const invalidate = useCallback(() => {
     void qc.invalidateQueries({ queryKey: spotifyKeys.player });
@@ -550,7 +571,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
   }, [dismissDjMariToast]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!queryEnabled) return;
     const handleSceneTrackChange = (event: Event) => {
       const detail = (event as CustomEvent<SpotifySceneTrackChangeDetail>).detail;
       if (!detail?.uri) return;
@@ -561,7 +582,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
 
     window.addEventListener(SPOTIFY_SCENE_TRACK_CHANGE_EVENT, handleSceneTrackChange);
     return () => window.removeEventListener(SPOTIFY_SCENE_TRACK_CHANGE_EVENT, handleSceneTrackChange);
-  }, [enabled]);
+  }, [queryEnabled]);
 
   const createDjMariPlaylist = useMutation({
     mutationFn: () =>
@@ -578,7 +599,11 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
         action: result.playlistUrl
           ? {
               label: "Open playlist",
-              onClick: () => window.open(result.playlistUrl!, "_blank", "noopener,noreferrer"),
+              onClick: () => {
+                void openExternalUrl(result.playlistUrl!).catch((error) => {
+                  toast.error(error instanceof Error ? error.message : "Failed to open playlist");
+                });
+              },
             }
           : undefined,
       });
@@ -941,7 +966,7 @@ export function SpotifyMiniPlayer({ mobile = false }: { mobile?: boolean }) {
     ],
   );
 
-  if (!enabled) return null;
+  if (!enabled || !visible) return null;
 
   if (mobile) {
     return (

@@ -1,4 +1,9 @@
-import type { DirectionCommand, DirectionEffect, SkillCheckResult, WidgetUpdate } from "../../../../engine/contracts/types/game";
+import type {
+  DirectionCommand,
+  DirectionEffect,
+  SkillCheckResult,
+  WidgetUpdate,
+} from "../../../../engine/contracts/types/game";
 
 export interface CombatEncounterTag {
   enemies: Array<{
@@ -15,7 +20,7 @@ export interface CombatEncounterTag {
   allies?: string[] | null;
 }
 
-export interface SkillCheckTag {
+interface SkillCheckTag {
   skill: string;
   dc: number;
   advantage?: boolean;
@@ -675,9 +680,7 @@ export function parseSegmentInventoryUpdates(content: string): SegmentInventoryU
     }
 
     const isStandaloneSegment =
-      readablePlaceholderRe.test(line) ||
-      partyLineRegex.test(line) ||
-      compactDialogueRegex.test(line);
+      readablePlaceholderRe.test(line) || partyLineRegex.test(line) || compactDialogueRegex.test(line);
 
     if (isStandaloneSegment) {
       if (fallbackActive) {
@@ -916,7 +919,7 @@ export function parseGmTags(content: string): ParsedGmTags {
 
   // Also strip other existing tags that the UI handles separately.
   // [map_update: ...] is persisted in message history, but canonical map
-  // changes are applied on the backend.
+  // changes are applied by the scene-processing path.
   text = stripMapUpdateTag(text);
   // [dialogue: npc="..."]
   text = text.replace(/\[dialogue:\s*npc="[^"]*"\]/gi, "");

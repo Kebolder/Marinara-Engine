@@ -4,14 +4,14 @@ import type {
   TrackerCardPortraitStageBackground,
 } from "../../engine/contracts/types/persona";
 
-export const DEFAULT_TRACKER_CARD_COLOR_MODE: TrackerCardColorMode = "chat";
-export const DEFAULT_TRACKER_CARD_PORTRAIT_STAGE_BACKGROUND: TrackerCardPortraitStageBackground = "ambient";
-export const DEFAULT_TRACKER_CARD_PORTRAIT_FOCUS_X = 50;
-export const DEFAULT_TRACKER_CARD_PORTRAIT_FOCUS_Y = 36;
-export const MAX_TRACKER_CARD_PORTRAIT_FOCUS_Y = 140;
-export const DEFAULT_TRACKER_CARD_PORTRAIT_ZOOM = 1;
-export const MIN_TRACKER_CARD_PORTRAIT_ZOOM = 0.75;
-export const MAX_TRACKER_CARD_PORTRAIT_ZOOM = 2.35;
+const DEFAULT_TRACKER_CARD_COLOR_MODE: TrackerCardColorMode = "chat";
+const DEFAULT_TRACKER_CARD_PORTRAIT_STAGE_BACKGROUND: TrackerCardPortraitStageBackground = "ambient";
+const DEFAULT_TRACKER_CARD_PORTRAIT_FOCUS_X = 50;
+const DEFAULT_TRACKER_CARD_PORTRAIT_FOCUS_Y = 36;
+const MAX_TRACKER_CARD_PORTRAIT_FOCUS_Y = 140;
+const DEFAULT_TRACKER_CARD_PORTRAIT_ZOOM = 1;
+const MIN_TRACKER_CARD_PORTRAIT_ZOOM = 0.75;
+const MAX_TRACKER_CARD_PORTRAIT_ZOOM = 2.35;
 export const TRACKER_CARD_COLOR_PREVIEW_BASE_FIELD = "__trackerCardColorPreviewBase";
 const DEFAULT_TRACKER_CARD_SURFACE = "var(--card)";
 const TRACKER_CARD_FIXED_TINT_INTENSITY = 100;
@@ -36,7 +36,7 @@ export interface TrackerCardPaintEnabled {
   surfaceEnabled: boolean;
 }
 
-export interface TrackerCardPortraitStageVars {
+interface TrackerCardPortraitStageVars {
   base: string;
   veil: string;
   light: string;
@@ -51,7 +51,7 @@ export interface TrackerCardPortraitStageVars {
   bottomRuleOpacity: string;
 }
 
-export interface TrackerCardPortraitStagePalette {
+interface TrackerCardPortraitStagePalette {
   background: TrackerCardPortraitStageBackground;
   displaySolid: string;
   accent: string;
@@ -311,7 +311,7 @@ export interface TrackerCardSkinFinish {
   tintOpacity: string;
 }
 
-export const TRACKER_CARD_FINISH_DEFAULTS: Record<TrackerCardColorMode, TrackerCardFinish> = {
+const TRACKER_CARD_FINISH_DEFAULTS: Record<TrackerCardColorMode, TrackerCardFinish> = {
   default: {
     tintIntensity: TRACKER_CARD_FIXED_TINT_INTENSITY,
     materialBrightness: DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS,
@@ -332,13 +332,13 @@ export const TRACKER_CARD_FINISH_DEFAULTS: Record<TrackerCardColorMode, TrackerC
   },
 };
 
-export const TRACKER_CARD_PAINT_OPACITY_DEFAULTS: TrackerCardPaintOpacity = {
+const TRACKER_CARD_PAINT_OPACITY_DEFAULTS: TrackerCardPaintOpacity = {
   nameColorOpacity: 100,
   dialogueColorOpacity: 100,
   boxColorOpacity: 100,
 };
 
-export const TRACKER_CARD_PAINT_ENABLED_DEFAULTS: TrackerCardPaintEnabled = {
+const TRACKER_CARD_PAINT_ENABLED_DEFAULTS: TrackerCardPaintEnabled = {
   displayEnabled: true,
   accentEnabled: true,
   surfaceEnabled: true,
@@ -369,10 +369,8 @@ const TRACKER_CARD_NAMEPLATE_BASE_BOTTOM =
   "var(--tracker-card-nameplate-base-bottom, color-mix(in srgb, var(--background) 82%, var(--card) 18%))";
 const TRACKER_CARD_NAMEPLATE_TEXT_BASE =
   "var(--tracker-card-nameplate-text-base, color-mix(in srgb, var(--card-foreground) 92%, var(--primary) 8%))";
-const TRACKER_CARD_MATERIAL_BRIGHT_TARGET =
-  "var(--tracker-card-material-bright-target, oklch(0.975 0.012 315))";
-const TRACKER_CARD_MATERIAL_DARK_TARGET =
-  "var(--tracker-card-material-dark-target, oklch(0.055 0.014 300))";
+const TRACKER_CARD_MATERIAL_BRIGHT_TARGET = "var(--tracker-card-material-bright-target, oklch(0.975 0.012 315))";
+const TRACKER_CARD_MATERIAL_DARK_TARGET = "var(--tracker-card-material-dark-target, oklch(0.055 0.014 300))";
 const TRACKER_CARD_READABLE_LIGHT_INK = "var(--tracker-card-readable-light-ink, oklch(0.94 0.012 315))";
 const TRACKER_CARD_READABLE_DARK_INK = "var(--tracker-card-readable-dark-ink, oklch(0.18 0.024 300))";
 const TRACKER_CARD_MUTED_LIGHT_INK = "var(--tracker-card-muted-light-ink, oklch(0.76 0.018 315))";
@@ -382,7 +380,7 @@ export function normalizeTrackerCardColorMode(value: unknown): TrackerCardColorM
   return value === "default" || value === "chat" || value === "custom" ? value : DEFAULT_TRACKER_CARD_COLOR_MODE;
 }
 
-export function normalizeTrackerCardPortraitStageBackground(value: unknown): TrackerCardPortraitStageBackground {
+function normalizeTrackerCardPortraitStageBackground(value: unknown): TrackerCardPortraitStageBackground {
   return value === "ambient" || value === "spotlight" || value === "soft" || value === "plain"
     ? value
     : DEFAULT_TRACKER_CARD_PORTRAIT_STAGE_BACKGROUND;
@@ -447,7 +445,9 @@ export function cleanTrackerCardColorConfig(config: TrackerCardColorConfig | nul
   // Legacy Tint controlled how much Surface paint entered material; preserve that as Surface strength.
   const boxColorOpacity =
     materialBrightness === undefined && legacyTintIntensity !== undefined
-      ? Math.round(((rawBoxColorOpacity ?? TRACKER_CARD_PAINT_OPACITY_DEFAULTS.boxColorOpacity) * legacyTintIntensity) / 100)
+      ? Math.round(
+          ((rawBoxColorOpacity ?? TRACKER_CARD_PAINT_OPACITY_DEFAULTS.boxColorOpacity) * legacyTintIntensity) / 100,
+        )
       : rawBoxColorOpacity;
   const glowIntensity = getClampedFinishValue(config?.glowIntensity);
   const contrastIntensity = getClampedFinishValue(config?.contrastIntensity);
@@ -644,7 +644,7 @@ function applyOpacityToLinearGradientStop(stop: string, paintOpacity: number) {
   return [`color-mix(in srgb, ${color} ${paintOpacity}%, transparent)`, ...positions].join(" ");
 }
 
-export function applyTrackerCardPaintOpacity(value: string, opacity: number) {
+function applyTrackerCardPaintOpacity(value: string, opacity: number) {
   const paintOpacity = Math.max(0, Math.min(100, Math.round(opacity)));
   if (paintOpacity >= 100) return value;
 
@@ -672,8 +672,7 @@ function getMaterialBrightnessAdjustment(brightness: number) {
   if (clampedBrightness === DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) return null;
 
   const distanceFromNeutral =
-    Math.abs(clampedBrightness - DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) /
-    DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS;
+    Math.abs(clampedBrightness - DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) / DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS;
 
   if (clampedBrightness > DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) {
     return {
@@ -795,8 +794,7 @@ function getStrengthAdjustedColor(color: string, opacity: number, neutral: strin
 
 function getMaterialPolarityMix(materialBrightness: number, contrastIntensity: number) {
   const brightnessDistance =
-    Math.abs(materialBrightness - DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) /
-    DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS;
+    Math.abs(materialBrightness - DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS) / DEFAULT_TRACKER_CARD_MATERIAL_BRIGHTNESS;
   const contrastBoost = 58 + opacityWeight(contrastIntensity) * 38;
   return Math.round(Math.min(1, brightnessDistance) * contrastBoost);
 }
@@ -1147,7 +1145,7 @@ export function getTrackerCardStyleVars({
   };
 }
 
-export function getTrackerCardPortraitStageVars({
+function getTrackerCardPortraitStageVars({
   background,
   displaySolid,
   accent,

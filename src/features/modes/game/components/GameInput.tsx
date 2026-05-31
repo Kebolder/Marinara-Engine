@@ -9,7 +9,15 @@ import { SpeechToTextButton } from "../../../../shared/components/ui/SpeechToTex
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { translateDraftText } from "../../../../shared/lib/draft-translation";
+import { MAX_FILE_SIZES } from "../../../../engine/contracts/constants/defaults";
 import type { DiceRollResult } from "../../../../engine/contracts/types/game";
+import {
+  CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_CLASS,
+  CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
+  CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
+  CHAT_INPUT_ICON_BUTTON_READY_CLASS,
+} from "../../shared/chat-ui";
 
 interface Attachment {
   type: string;
@@ -250,7 +258,8 @@ export function GameInput({
     const files = e.target.files;
     if (!files?.length) return;
     for (const file of Array.from(files)) {
-      if (file.size > 20 * 1024 * 1024) continue;
+      // Skip oversized files before reading them into a data URL.
+      if (file.size > MAX_FILE_SIZES.IMAGE_UPLOAD) continue;
       const reader = new FileReader();
       reader.onload = () => {
         setAttachments((prev) => [...prev, { type: file.type, data: reader.result as string, name: file.name }]);
@@ -472,12 +481,10 @@ export function GameInput({
             ref={addressButtonRef}
             onClick={() => setAddressMenuOpen((open) => !open)}
             className={cn(
-              "shrink-0 rounded-lg p-1.5 transition-all active:scale-90",
-              addressMode === "party"
-                ? "text-sky-400 hover:bg-foreground/10"
-                : addressMode === "gm"
-                  ? "text-amber-300 hover:bg-foreground/10"
-                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+              CHAT_INPUT_ICON_BUTTON_CLASS,
+              addressMenuOpen || addressMode !== "scene"
+                ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS
+                : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
             )}
             title={
               addressMode === "party"
@@ -504,10 +511,8 @@ export function GameInput({
         <button
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            "shrink-0 rounded-lg p-1.5 transition-all active:scale-90",
-            attachments.length
-              ? "text-blue-400 hover:bg-foreground/10"
-              : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+            CHAT_INPUT_ICON_BUTTON_CLASS,
+            attachments.length ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
           )}
           title="Attach files"
         >
@@ -538,8 +543,11 @@ export function GameInput({
           }
           disabled={disabled}
           rows={1}
+          spellCheck
+          autoCorrect="on"
+          autoCapitalize="sentences"
           className="min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm leading-normal text-[var(--foreground)] outline-none placeholder:text-foreground/30 disabled:opacity-50"
-          style={{ minHeight: 36, maxHeight: 120 }}
+          style={{ minHeight: 40, maxHeight: 120 }}
         />
 
         {queuedDice && (
@@ -574,10 +582,8 @@ export function GameInput({
           type="button"
           onClick={() => setShowDice(!showDice)}
           className={cn(
-            "shrink-0 rounded-lg p-1.5 transition-all active:scale-90",
-            showDice
-              ? "text-[var(--foreground)]/80 hover:bg-foreground/10"
-              : "text-[var(--foreground)]/50 hover:bg-foreground/10 hover:text-[var(--foreground)]/70",
+            CHAT_INPUT_ICON_BUTTON_CLASS,
+            showDice ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
             riskyInterrupt &&
               !queuedDice &&
               "animate-pulse text-red-300 ring-1 ring-red-400/60 shadow-[0_0_12px_-2px_rgba(248,113,113,0.85)] hover:text-red-200",
@@ -593,10 +599,8 @@ export function GameInput({
             ref={emojiButtonRef}
             onClick={() => setEmojiOpen((v) => !v)}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-              emojiOpen
-                ? "text-foreground bg-foreground/10"
-                : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+              CHAT_INPUT_ICON_BUTTON_CLASS,
+              emojiOpen ? CHAT_INPUT_ICON_BUTTON_ACTIVE_CLASS : CHAT_INPUT_ICON_BUTTON_IDLE_CLASS,
             )}
             title="Emoji"
           >
@@ -617,10 +621,10 @@ export function GameInput({
             onClick={() => void handleTranslateDraft()}
             disabled={disabled || !text.trim() || isTranslatingDraft}
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-90",
+              CHAT_INPUT_ICON_BUTTON_CLASS,
               !disabled && text.trim() && !isTranslatingDraft
-                ? "text-[var(--foreground)]/50 hover:bg-foreground/10 hover:text-[var(--foreground)]/70"
-                : "text-[var(--muted-foreground)]/40",
+                ? CHAT_INPUT_ICON_BUTTON_IDLE_CLASS
+                : CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
             )}
             title="Translate draft"
           >
@@ -629,7 +633,12 @@ export function GameInput({
         )}
 
         {speechToTextEnabled && (
-          <SpeechToTextButton disabled={disabled} onTranscript={handleSpeechTranscript} iconSize={18} />
+          <SpeechToTextButton
+            disabled={disabled}
+            onTranscript={handleSpeechTranscript}
+            className={CHAT_INPUT_ICON_BUTTON_CLASS}
+            iconSize={18}
+          />
         )}
 
         <button
@@ -641,12 +650,12 @@ export function GameInput({
             (!text.trim() && attachments.length === 0 && !(pendingMoveLabel && addressMode === "scene") && !queuedDice)
           }
           className={cn(
-            "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-90",
+            CHAT_INPUT_ICON_BUTTON_CLASS,
             (text.trim() || attachments.length > 0 || (pendingMoveLabel && addressMode === "scene") || queuedDice) &&
               !disabled &&
               !rollingQueuedDice
-              ? "text-[var(--foreground)]/50 hover:bg-foreground/10 hover:text-[var(--foreground)]/70 dark:text-white/70 dark:hover:bg-white/10 dark:hover:text-white"
-              : "text-[var(--muted-foreground)]/40 dark:text-white/30",
+              ? CHAT_INPUT_ICON_BUTTON_READY_CLASS
+              : CHAT_INPUT_ICON_BUTTON_DISABLED_CLASS,
           )}
           aria-label="Send game turn"
         >

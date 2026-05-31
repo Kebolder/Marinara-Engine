@@ -13,25 +13,26 @@ import {
   useUploadAvatar,
   useDeleteCharacter,
   useDuplicateCharacter,
-  useCreatePersona,
-  useUploadPersonaAvatar,
-  useCharacterSprites,
   useCharacterGalleryImages,
   useUploadCharacterGalleryImage,
   useDeleteCharacterGalleryImage,
-  useUploadSprite,
-  useUploadSprites,
-  useDeleteSprite,
-  useCleanupSavedSprites,
-  useRestoreSpriteCleanupPoint,
-  useSpriteCapabilities,
   useCharacterVersions,
   useRestoreCharacterVersion,
   useDeleteCharacterVersion,
-  spriteKeys,
   type CharacterGalleryImage,
-  type SpriteInfo,
 } from "../hooks/use-characters";
+import {
+  spriteKeys,
+  type SpriteInfo,
+  useCleanupSavedSprites,
+  useDeleteSprite,
+  useRestoreSpriteCleanupPoint,
+  useSpriteCapabilities,
+  useSprites,
+  useUploadSprite,
+  useUploadSprites,
+} from "../../sprites/index";
+import { useCreatePersona, useUploadPersonaAvatar } from "../../personas/index";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { lorebookKeys, useLorebook } from "../../lorebooks/index";
 import { useStartChatFromCharacter } from "../hooks/use-start-chat-from-character";
@@ -82,7 +83,7 @@ import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop } from "../..
 import { extractColorsFromImage } from "../../../../shared/lib/avatar-color-extraction";
 import { HelpTooltip } from "../../../../shared/components/ui/HelpTooltip";
 import { exportApi } from "../../../../shared/api/export-api";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
+import { characterApi } from "../../../../shared/api/character-api";
 import { ColorPicker } from "../../../../shared/components/ui/ColorPicker";
 import { TrackerCardColorControls } from "../../../../shared/components/ui/TrackerCardColorControls";
 import { ExpandedTextarea } from "../../../../shared/components/ui/ExpandedTextarea";
@@ -91,7 +92,11 @@ import { SpriteFrameEditor } from "../../../../shared/components/ui/SpriteFrameE
 import { SpriteWandCleanupEditor } from "../../../../shared/components/ui/sprite-wand-cleanup/SpriteWandCleanupEditor";
 import { ExportFormatDialog, type ExportFormatChoice } from "../../../../shared/components/ui/ExportFormatDialog";
 import type { CharacterCardVersion, CharacterData, RPGStatsConfig } from "../../../../engine/contracts/types/character";
-import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../../../shared/lib/tracker-card-colors";
+import { characterDataSchema, characterExtensionsSchema } from "../../../../engine/contracts/schemas/character.schema";
+import {
+  parseTrackerCardColorConfig,
+  serializeTrackerCardColorConfig,
+} from "../../../../shared/lib/tracker-card-colors";
 import { downloadBlob, loadUrlBlob, urlToDataUrl } from "../../../../shared/lib/url-blob";
 
 // ── Tabs ──
@@ -165,9 +170,9 @@ export function CharacterEditor() {
   const imageConnections = useMemo(
     () =>
       Array.isArray(connectionsList)
-        ? (connectionsList as Array<{ id: string; name: string; model?: string | null; provider?: string | null }>).filter(
-            (connection) => connection.provider === "image_generation",
-          )
+        ? (
+            connectionsList as Array<{ id: string; name: string; model?: string | null; provider?: string | null }>
+          ).filter((connection) => connection.provider === "image_generation")
         : [],
     [connectionsList],
   );
@@ -225,16 +230,41 @@ export function CharacterEditor() {
 
     loadedCharacterIdRef.current = char.id;
 
-    setFormData(char.data ?? null);
+    // Normalize raw storage data through the engine schema before the editor
+    // reads it. The schema applies the same defaults used on write (notably
+    // extensions.default({})), so corrupt or partial cards can't crash the
+    // many bare formData.extensions.* reads downstream. On parse failure (e.g.
+    // a card missing the required name), fall back to the raw data but still
+    // guarantee extensions exists.
+    if (char.data) {
+      const parsed = characterDataSchema.safeParse(char.data);
+      if (parsed.success) {
+        setFormData(parsed.data as CharacterData);
+      } else {
+        // Card failed top-level validation (e.g. missing name). Still normalize
+        // extensions through its own schema so nested defaults (talkativeness,
+        // fav, ...) exist and the editor's bare reads don't render NaN/undefined.
+        const ext = characterExtensionsSchema.safeParse(char.data.extensions ?? {});
+        setFormData({
+          ...char.data,
+          extensions: (ext.success ? ext.data : {}) as CharacterData["extensions"],
+        });
+      }
+    } else {
+      setFormData(null);
+    }
     setCharacterComment(char.comment ?? "");
     setAvatarPreview(char.avatarPath);
     setDirtyState(false);
   }, [rawCharacter, setDirtyState]);
 
-  const updateField = useCallback(<K extends keyof CharacterData>(key: K, value: CharacterData[K]) => {
-    setFormData((prev) => (prev ? { ...prev, [key]: value } : prev));
-    markDirty();
-  }, [markDirty]);
+  const updateField = useCallback(
+    <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => {
+      setFormData((prev) => (prev ? { ...prev, [key]: value } : prev));
+      markDirty();
+    },
+    [markDirty],
+  );
 
   const setExtensionValue = useCallback((key: string, value: unknown) => {
     setFormData((prev) => {
@@ -611,7 +641,12 @@ export function CharacterEditor() {
         {formData.extensions.fav ? <Star size="1rem" fill="currentColor" /> : <StarOff size="1rem" />}
       </button>
 
-      <button type="button" onClick={() => setExportDialogOpen(true)} className={headerActionButtonClass} title="Export character">
+      <button
+        type="button"
+        onClick={() => setExportDialogOpen(true)}
+        className={headerActionButtonClass}
+        title="Export character"
+      >
         <svg width="1rem" height="1rem" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path
             d="M10 13V3m0 0l-4 4m4-4l4 4"
@@ -698,7 +733,7 @@ export function CharacterEditor() {
       />
 
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-3 max-md:gap-2 max-md:px-3">
+      <div className="flex min-h-12 flex-shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--card)] px-4 py-0 max-md:gap-2 max-md:px-3">
         <div className="flex min-w-0 flex-1 items-center gap-3 max-md:min-w-full">
           <button
             type="button"
@@ -1964,7 +1999,11 @@ function CharacterGalleryTab({ characterId, characterName }: { characterId: stri
               key={image.id}
               className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
             >
-              <button type="button" className="block aspect-square w-full bg-[var(--secondary)]" onClick={() => setLightbox(image)}>
+              <button
+                type="button"
+                className="block aspect-square w-full bg-[var(--secondary)]"
+                onClick={() => setLightbox(image)}
+              >
                 <img
                   src={image.url}
                   alt={image.prompt || characterName || "Character image"}
@@ -2087,7 +2126,7 @@ function SpritesTab({
 }) {
   type SpriteCategory = "expressions" | "full-body";
 
-  const { data: sprites, isLoading } = useCharacterSprites(characterId);
+  const { data: sprites, isLoading } = useSprites(characterId);
   const { data: spriteCapabilities } = useSpriteCapabilities();
   const uploadSprite = useUploadSprite();
   const uploadSprites = useUploadSprites();
@@ -2132,8 +2171,7 @@ function SpritesTab({
   const backgroundCleanupUnavailable = spriteCapabilities?.backgroundRemovalAvailable === false;
   const backgroundCleanupReason = spriteCapabilities?.reason ?? "Background cleanup is unavailable on this platform.";
   const cleanupEngineUnavailable = spriteCapabilities?.cleanupEngine?.installed === false;
-  const cleanupEngineReason =
-    spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
+  const cleanupEngineReason = spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
 
   const normalizeExpressionForCategory = (raw: string, forCategory: SpriteCategory = category) => {
     const cleaned = raw
@@ -2150,6 +2188,10 @@ function SpritesTab({
   const displayExpression = useCallback(
     (stored: string) => (category === "full-body" ? stored.replace(/^full_/, "") : stored),
     [category],
+  );
+  const getSpriteErrorMessage = useCallback(
+    (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback),
+    [],
   );
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2169,9 +2211,15 @@ function SpritesTab({
         });
         setNewExpression("");
         pendingExpressionRef.current = "";
+      } catch (error) {
+        toast.error(getSpriteErrorMessage(error, "Failed to upload sprite."));
       } finally {
         setUploading(false);
       }
+    };
+    reader.onerror = () => {
+      toast.error("Failed to read sprite image.");
+      setUploading(false);
     };
     reader.readAsDataURL(file);
     // Reset input so same file can be re-selected
@@ -2252,19 +2300,35 @@ function SpritesTab({
     try {
       await deleteSprite.mutateAsync({ characterId, expression: deleteSpriteRequest.expression });
       setDeleteSpriteRequest(null);
+    } catch (error) {
+      toast.error(getSpriteErrorMessage(error, "Failed to delete sprite."));
     } finally {
       setDeletingSprites(null);
     }
-  }, [characterId, deleteSprite, deleteSpriteRequest]);
+  }, [characterId, deleteSprite, deleteSpriteRequest, getSpriteErrorMessage]);
 
   const handleDeleteVisibleSprites = useCallback(async () => {
     if (visibleSprites.length === 0) return;
     setDeletingSprites("all");
+    let deletedCount = 0;
+    let failedCount = 0;
     try {
       for (const sprite of visibleSprites) {
-        await deleteSprite.mutateAsync({ characterId, expression: sprite.expression });
+        try {
+          await deleteSprite.mutateAsync({ characterId, expression: sprite.expression });
+          deletedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
       }
-      setDeleteSpriteRequest(null);
+      if (failedCount > 0) {
+        toast.warning(
+          `Deleted ${deletedCount} sprite${deletedCount === 1 ? "" : "s"}; ${failedCount} failed to delete.`,
+        );
+      } else {
+        toast.success(`Deleted ${deletedCount} sprite${deletedCount === 1 ? "" : "s"}.`);
+      }
+      if (deletedCount > 0 || failedCount === 0) setDeleteSpriteRequest(null);
     } finally {
       setDeletingSprites(null);
     }
@@ -2333,9 +2397,7 @@ function SpritesTab({
 
       if (result.processed > 0) {
         setLastCleanupRestorePointId(result.restorePointId ?? null);
-        toast.success(
-          `Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"} .`,
-        );
+        toast.success(`Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"} .`);
       }
       if (result.failed.length > 0) {
         toast.warning(`${result.failed.length} sprite${result.failed.length === 1 ? "" : "s"} could not be cleaned.`);
@@ -2356,7 +2418,9 @@ function SpritesTab({
         restorePointId: lastCleanupRestorePointId,
       });
       if (result.restored > 0) {
-        toast.success(`Restored ${result.restored} sprite${result.restored === 1 ? "" : "s"} from the cleanup restore point.`);
+        toast.success(
+          `Restored ${result.restored} sprite${result.restored === 1 ? "" : "s"} from the cleanup restore point.`,
+        );
       }
       if (result.failed.length > 0) {
         toast.warning(`${result.failed.length} sprite${result.failed.length === 1 ? "" : "s"} could not be restored.`);
@@ -2383,11 +2447,13 @@ function SpritesTab({
         });
         toast.success(`Framed ${displayExpression(framingSprite.expression)} sprite.`);
         setFramingSprite(null);
+      } catch (error) {
+        toast.error(getSpriteErrorMessage(error, "Failed to save framed sprite."));
       } finally {
         setSavingFrame(false);
       }
     },
-    [characterId, displayExpression, framingSprite, uploadSprite],
+    [characterId, displayExpression, framingSprite, getSpriteErrorMessage, uploadSprite],
   );
 
   const handleApplyWandCleanup = useCallback(
@@ -2403,11 +2469,13 @@ function SpritesTab({
         });
         toast.success(`Cleaned ${displayExpression(wandCleanupSprite.expression)} sprite.`);
         setWandCleanupSprite(null);
+      } catch (error) {
+        toast.error(getSpriteErrorMessage(error, "Failed to save cleaned sprite."));
       } finally {
         setSavingWandCleanup(false);
       }
     },
-    [characterId, displayExpression, uploadSprite, wandCleanupSprite],
+    [characterId, displayExpression, getSpriteErrorMessage, uploadSprite, wandCleanupSprite],
   );
 
   return (
@@ -3195,12 +3263,7 @@ function LorebookTab({ characterId, formData }: { characterId: string | null; fo
     if (!characterId) return;
     setImporting(true);
     try {
-      const result = await invokeTauri<{
-        success: boolean;
-        lorebookId: string;
-        entriesImported: number;
-        reimported?: boolean;
-      }>("character_embedded_lorebook_import", { id: characterId });
+      const result = await characterApi.importEmbeddedLorebook(characterId);
       qc.invalidateQueries({ queryKey: lorebookKeys.all });
       if (result.lorebookId) {
         qc.invalidateQueries({ queryKey: ["characters", "detail", characterId] });

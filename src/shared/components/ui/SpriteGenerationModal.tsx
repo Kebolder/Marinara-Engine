@@ -7,8 +7,9 @@ import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { X, Loader2, Check, ImagePlus, Sparkles, ArrowLeft, Crop, RotateCcw } from "lucide-react";
 import { Modal } from "./Modal";
 import { cn } from "../../lib/utils";
+import { cropSpriteDataUrl, type SpriteFrameAdjustments } from "../../lib/sprite-frame-crop";
 import { useUIStore } from "../../stores/ui.store";
-import { spriteApi } from "../../api/image-generation-api";
+import { spriteApi, type SpriteOwnerType } from "../../api/image-generation-api";
 import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "./ImagePromptReviewModal";
 import type { ImageGenerationConnectionOption } from "../../types/image-generation";
 import type { SpriteCapabilities } from "../../types/sprite-capabilities";
@@ -20,6 +21,7 @@ interface SpriteGenerationModalProps {
   onClose: () => void;
   /** Entity ID — character or persona */
   entityId: string;
+  entityKind?: SpriteOwnerType;
   /** Optional initial mode shown when opening */
   initialSpriteType?: "expressions" | "full-body";
   /** Existing portrait expression names that full-body generation can mirror */
@@ -90,13 +92,6 @@ interface SliceAdjustments {
 }
 
 type NumericSliceAdjustmentKey = Exclude<keyof SliceAdjustments, "colCuts" | "rowCuts">;
-
-interface SpriteFrameAdjustments {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-}
 
 type SpriteFrameAdjustmentKey = keyof SpriteFrameAdjustments;
 
@@ -392,41 +387,6 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(80, Number.isFinite(value) ? value : 0));
 }
 
-function cropSpriteDataUrl(dataUrl: string, frame: SpriteFrameAdjustments): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => {
-      const width = image.naturalWidth;
-      const height = image.naturalHeight;
-      const cropLeft = percentToPixels(width, frame.left);
-      const cropRight = percentToPixels(width, frame.right);
-      const cropTop = percentToPixels(height, frame.top);
-      const cropBottom = percentToPixels(height, frame.bottom);
-      const outputWidth = width - cropLeft - cropRight;
-      const outputHeight = height - cropTop - cropBottom;
-
-      if (outputWidth <= 0 || outputHeight <= 0) {
-        reject(new Error("Frame settings leave no usable sprite area"));
-        return;
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width = outputWidth;
-      canvas.height = outputHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Canvas is unavailable"));
-        return;
-      }
-
-      ctx.drawImage(image, cropLeft, cropTop, outputWidth, outputHeight, 0, 0, outputWidth, outputHeight);
-      resolve(canvas.toDataURL("image/png"));
-    };
-    image.onerror = () => reject(new Error("Sprite image could not be loaded"));
-    image.src = dataUrl;
-  });
-}
-
 function clampBoundaries(boundaries: number[], minSpan: number): number[] {
   const next = [...boundaries];
   for (let i = 1; i < next.length; i++) {
@@ -484,6 +444,7 @@ export function SpriteGenerationModal({
   open,
   onClose,
   entityId,
+  entityKind = "character",
   initialSpriteType = "expressions",
   existingExpressionNames = [],
   defaultAppearance,
@@ -539,8 +500,7 @@ export function SpriteGenerationModal({
   const spriteGenerationUnavailable = spriteCapabilities?.spriteGenerationAvailable === false;
   const spriteGenerationReason = spriteCapabilities?.reason ?? "Sprite generation is unavailable on this platform.";
   const cleanupEngineUnavailable = spriteCapabilities?.cleanupEngine?.installed === false;
-  const cleanupEngineReason =
-    spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
+  const cleanupEngineReason = spriteCapabilities?.cleanupEngine?.reason ?? "Sprite cleanup is not available.";
   const existingPortraitExpressions = useMemo(() => {
     const seen = new Set<string>();
     const names: string[] = [];
@@ -637,7 +597,7 @@ export function SpriteGenerationModal({
     setMatchExistingExpressions(false);
   }, [open, initialSpriteType]);
 
-  // Reset reference image & appearance when the target character changes
+  // Reset reference image & appearance when the target sprite owner changes
   useEffect(() => {
     setAppearance(defaultAppearance ?? "");
     setReferenceImages([]);
@@ -654,7 +614,7 @@ export function SpriteGenerationModal({
     setFramePreviewUrl(null);
     setMatchExistingExpressions(false);
     setError(null);
-  }, [entityId, defaultAvatarUrl, defaultAppearance]);
+  }, [entityId, entityKind, defaultAvatarUrl, defaultAppearance]);
 
   useEffect(() => {
     if (activeFrameIndex !== null && activeFrameIndex >= cells.length) {
@@ -1231,10 +1191,14 @@ export function SpriteGenerationModal({
               ? cleaned
               : `full_${cleaned}`
             : cleaned.replace(/^full_/, "");
-        await spriteApi.upload(entityId, {
-          expression,
-          image: cell.dataUrl,
-        });
+        await spriteApi.upload(
+          entityId,
+          {
+            expression,
+            image: cell.dataUrl,
+          },
+          { ownerType: entityKind },
+        );
       }
       onSpritesGenerated?.();
       onClose();
@@ -1251,7 +1215,7 @@ export function SpriteGenerationModal({
     } finally {
       setSaving(false);
     }
-  }, [cells, entityId, handleCloseCellFrame, onSpritesGenerated, onClose, spriteType]);
+  }, [cells, entityId, entityKind, handleCloseCellFrame, onSpritesGenerated, onClose, spriteType]);
 
   const handleReset = useCallback(() => {
     setStep(0);

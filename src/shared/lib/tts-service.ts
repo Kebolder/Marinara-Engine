@@ -1,13 +1,13 @@
 // ──────────────────────────────────────────────
 // TTS Service — Server-proxied audio playback
 // ──────────────────────────────────────────────
-import { ttsApi } from "../api/integration-utility-api";
+import { ttsApi } from "../api/tts-api";
 
-export type TTSState = "idle" | "loading" | "playing" | "paused" | "error";
+type TTSState = "idle" | "loading" | "playing" | "paused" | "error";
 
 type StateListener = (state: TTSState, activeId: string | null) => void;
 
-export interface TTSSpeakOptions {
+interface TTSSpeakOptions {
   speaker?: string;
   tone?: string;
   voice?: string;
@@ -16,7 +16,7 @@ export interface TTSSpeakOptions {
   playbackRate?: number;
 }
 
-export interface TTSSpeakRequest {
+interface TTSSpeakRequest {
   text: string;
   speaker?: string;
   tone?: string;

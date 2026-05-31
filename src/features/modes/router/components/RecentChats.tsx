@@ -2,10 +2,10 @@
 // Chat: Recent Chats — shows 3 most recently
 // interacted chats on the homepage (compact row)
 // ──────────────────────────────────────────────
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MessageSquare, BookOpen } from "lucide-react";
 import { useRecentChatSummaries, type ChatListItem } from "../../../catalog/chats/index";
-import { useCharactersByIds } from "../../../catalog/characters/index";
+import { characterAvatarUrl, useCharacterSummariesByIds } from "../../../catalog/characters/index";
 import { useChatStore } from "../../../../shared/stores/chat.store";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../../../shared/lib/utils";
 
@@ -20,11 +20,6 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; bg: string; label: str
     bg: "linear-gradient(135deg, #eb8951, #d97530)",
     label: "Roleplay",
   },
-  visual_novel: {
-    icon: <BookOpen size="0.375rem" />,
-    bg: "linear-gradient(135deg, #e15c8c, #c94776)",
-    label: "Game",
-  },
 };
 
 export function RecentChats() {
@@ -37,19 +32,22 @@ export function RecentChats() {
       ),
     [recentChats],
   );
-  const { data: recentCharacters } = useCharactersByIds(recentCharacterIds, recentCharacterIds.length > 0);
+  const { data: recentCharacters } = useCharacterSummariesByIds(recentCharacterIds, recentCharacterIds.length > 0);
 
   const charLookup = useMemo(() => {
-    const map = new Map<
-      string,
-      { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }
-    >();
+    const map = new Map<string, { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }>();
     if (!recentCharacters) return map;
-    for (const char of recentCharacters as Array<{ id: string; data: Record<string, any>; avatarPath: string | null }>) {
+    for (const char of recentCharacters as Array<{
+      id: string;
+      data: Record<string, any>;
+      avatarPath?: string | null;
+      avatarFilePath?: string | null;
+      avatarFilename?: string | null;
+    }>) {
       const parsed = char.data ?? {};
       map.set(char.id, {
         name: parsed.name ?? "Unknown",
-        avatarUrl: char.avatarPath ?? null,
+        avatarUrl: characterAvatarUrl(char),
         avatarCrop: parsed.extensions?.avatarCrop ?? null,
       });
     }
@@ -78,10 +76,7 @@ function RecentChatChip({
   onClick,
 }: {
   chat: ChatListItem;
-  charLookup: Map<
-    string,
-    { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }
-  >;
+  charLookup: Map<string, { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }>;
   onClick: () => void;
 }) {
   const mode = MODE_BADGE[chat.mode] ?? MODE_BADGE.conversation;
@@ -110,19 +105,8 @@ function RecentChatChip({
     >
       {/* Small avatar with mode dot */}
       <div className="relative flex-shrink-0">
-        {firstAvatar?.avatarUrl ? (
-          <span className="relative block h-5 w-5 overflow-hidden rounded-md">
-            <img
-              src={firstAvatar.avatarUrl}
-              alt={firstAvatar.name}
-              className="h-full w-full object-cover"
-              style={getAvatarCropStyle(firstAvatar.avatarCrop)}
-            />
-          </span>
-        ) : firstAvatar ? (
-          <div className="flex h-5 w-5 items-center justify-center rounded-md bg-[var(--secondary)] text-[0.5rem] font-bold text-[var(--muted-foreground)]">
-            {firstAvatar.name[0]}
-          </div>
+        {firstAvatar ? (
+          <RecentChatAvatar avatar={firstAvatar} />
         ) : (
           <div
             className="flex h-5 w-5 items-center justify-center rounded-md text-white"
@@ -145,5 +129,37 @@ function RecentChatChip({
       {/* Chat name only */}
       <span className="truncate text-[0.625rem] font-medium text-[var(--foreground)]">{chat.name}</span>
     </button>
+  );
+}
+
+function RecentChatAvatar({
+  avatar,
+}: {
+  avatar: { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null };
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [avatar.avatarUrl]);
+
+  if (!avatar.avatarUrl || imageFailed) {
+    return (
+      <div className="flex h-5 w-5 items-center justify-center rounded-md bg-[var(--secondary)] text-[0.5rem] font-bold text-[var(--muted-foreground)]">
+        {avatar.name[0]}
+      </div>
+    );
+  }
+
+  return (
+    <span className="relative block h-5 w-5 overflow-hidden rounded-md">
+      <img
+        src={avatar.avatarUrl}
+        alt={avatar.name}
+        className="h-full w-full object-cover"
+        style={getAvatarCropStyle(avatar.avatarCrop)}
+        onError={() => setImageFailed(true)}
+      />
+    </span>
   );
 }

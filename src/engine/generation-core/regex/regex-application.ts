@@ -17,6 +17,7 @@ type RegexScriptLike = {
 export type RegexMessageLike = {
   role: string;
   content: string;
+  contextKind?: string;
 };
 
 type RegexMacroResolver = (value: string) => string;
@@ -65,7 +66,7 @@ function resolveScriptString(value: string, options: ApplyRegexScriptOptions | u
   return options?.resolveMacros ? options.resolveMacros(value) : value;
 }
 
-export function applyRegexScriptsToPromptText(
+function applyRegexScriptsToPromptText(
   text: string,
   scripts: RegexScriptLike[],
   placement: RegexPlacement,
@@ -111,6 +112,7 @@ export function applyRegexScriptsToPromptMessages<T extends RegexMessageLike>(
   const totalMessages = messages.length;
   for (let index = 0; index < totalMessages; index++) {
     const message = messages[index]!;
+    if (message.contextKind === "prompt") continue;
     const placement = message.role === "user" ? "user_input" : "ai_output";
     const depth = totalMessages - 1 - index;
     message.content = applyRegexScriptsToPromptText(message.content, scripts, placement, depth, options);

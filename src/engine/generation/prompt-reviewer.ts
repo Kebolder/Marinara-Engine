@@ -1,5 +1,6 @@
 import type { LlmGateway } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
+import { readString as stringValue } from "../shared/value-readers";
 
 export type PromptReviewInput = {
   presetId: string;
@@ -41,6 +42,18 @@ Review areas:
 Be specific and actionable. Reference exact sections when possible.`;
 
 type JsonRecord = Record<string, unknown>;
+const MALFORMED_REVIEW_JSON_MESSAGE =
+  "Prompt Reviewer returned malformed JSON. Try again or use a model/provider with JSON mode support.";
+
+function normalizePromptReviewJson(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!isRecord(parsed)) return null;
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
 
 export async function* reviewPromptPreset(
   capabilities: { storage: StorageGateway; llm: LlmGateway },
@@ -72,12 +85,18 @@ export async function* reviewPromptPreset(
         { role: "system", content: PROMPT_REVIEWER_SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
-      parameters: { temperature: 0.7, maxTokens: 8192 },
+      // JSON mode reduces malformed output, but the client still validates the result.
+      parameters: { temperature: 0.7, maxTokens: 8192, responseFormat: "json_object" },
     },
     signal,
   );
-  yield { type: "token", data: raw };
-  yield { type: "done", data: raw };
+  const normalized = normalizePromptReviewJson(raw);
+  if (!normalized) {
+    yield { type: "error", data: MALFORMED_REVIEW_JSON_MESSAGE };
+    return;
+  }
+  yield { type: "token", data: normalized };
+  yield { type: "done", data: normalized };
 }
 
 async function assemblePromptReviewView(storage: StorageGateway, presetId: string): Promise<string> {
@@ -95,7 +114,8 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
     .sort((a, b) => {
       const aIndex = orderIndex.get(stringValue(a.id));
       const bIndex = orderIndex.get(stringValue(b.id));
-      if (aIndex != null || bIndex != null) return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
+      if (aIndex != null || bIndex != null)
+        return (aIndex ?? Number.MAX_SAFE_INTEGER) - (bIndex ?? Number.MAX_SAFE_INTEGER);
       return orderValue(a) - orderValue(b);
     });
 
@@ -108,10 +128,13 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
     ? [
         "[Preset Variables]",
         ...choiceBlocks.map((block) => {
-          const label = stringValue(block.label) || stringValue(block.name) || stringValue(block.variableName) || "Variable";
+          const label =
+            stringValue(block.label) || stringValue(block.name) || stringValue(block.variableName) || "Variable";
           const options = Array.isArray(block.options)
             ? block.options
-                .map((option) => (isRecord(option) ? stringValue(option.label) || stringValue(option.value) : stringValue(option)))
+                .map((option) =>
+                  isRecord(option) ? stringValue(option.label) || stringValue(option.value) : stringValue(option),
+                )
                 .filter(Boolean)
                 .join(", ")
             : "";
@@ -125,7 +148,9 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
       const role = (stringValue(section.role) || "system").toUpperCase();
       const content = stringValue(section.content);
       const group = groupById.get(stringValue(section.groupId));
-      const groupLabel = group ? ` | Group: ${stringValue(group.name) || stringValue(group.label) || stringValue(group.id)}` : "";
+      const groupLabel = group
+        ? ` | Group: ${stringValue(group.name) || stringValue(group.label) || stringValue(group.id)}`
+        : "";
       return `[Message ${index + 1} | ${role} | ${name}${groupLabel}]\n${content.trim() ? content : "(empty)"}`;
     })
     .join("\n\n---\n\n");
@@ -135,10 +160,6 @@ async function assemblePromptReviewView(storage: StorageGateway, presetId: strin
 function orderValue(section: JsonRecord): number {
   const value = section.sortOrder ?? section.order ?? section.injectionOrder;
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
 
 function isRecord(value: unknown): value is JsonRecord {

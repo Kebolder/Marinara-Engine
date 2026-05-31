@@ -43,7 +43,7 @@ import {
   stripSurroundingDialogueQuotes,
 } from "../../../../shared/lib/dialogue-quotes";
 import { formatNarration } from "../lib/game-narration-format";
-import type { SpriteInfo } from "../../../catalog/characters/index";
+import type { SpriteInfo } from "../../../catalog/sprites/index";
 import { useTranslate } from "../../../../shared/hooks/use-translate";
 import { useTTSConfig } from "../../../../shared/hooks/use-tts";
 import { useApplyRegex } from "../../../catalog/agents/regex-application";
@@ -54,11 +54,24 @@ import { createMessageMacroResolver, findCharacterByName } from "../../../../sha
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../../../shared/lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../../../shared/lib/tts-audio-cache";
-import { resolveTTSVoiceForSpeaker, splitTTSChunks, ttsConfigMatchesSpeaker } from "../../../../shared/lib/tts-dialogue";
+import {
+  resolveTTSVoiceForSpeaker,
+  splitTTSChunks,
+  ttsConfigMatchesSpeaker,
+} from "../../../../shared/lib/tts-dialogue";
 import type { Message } from "../../../../engine/contracts/types/chat";
 import type { PartyDialogueLine, GameNpc, SkillCheckResult } from "../../../../engine/contracts/types/game";
 import type { TTSConfig } from "../../../../engine/contracts/types/tts";
 import type { CharacterMap, PersonaInfo } from "../../shared/chat-ui/types";
+
+const PARTY_TURN_MESSAGE_RE = /^\[(?:party-turn|party-chat)]\s*/i;
+
+function isPartyTurnMessage(message: { role?: string; content?: string }): boolean {
+  return (
+    (message.role === "assistant" || message.role === "narrator") &&
+    PARTY_TURN_MESSAGE_RE.test((message.content ?? "").trimStart())
+  );
+}
 
 /** Build inline style for a color that may be a plain color or a CSS gradient. */
 function nameColorStyle(color?: string): CSSProperties | undefined {
@@ -1169,10 +1182,12 @@ export function GameNarration({
     // recent turn" — segment edits, voice resolution, log builders, etc.
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i]!;
+      if (partyChatMessageId && msg.id === partyChatMessageId) continue;
+      if (isPartyTurnMessage(msg)) continue;
       if (msg.role === "assistant" || msg.role === "narrator") return msg;
     }
     return null;
-  }, [messages]);
+  }, [messages, partyChatMessageId]);
 
   // Wheel-nav builds a flat chronological list of log entries — one per visible
   // segment (parsed narration segments for assistant turns + a single player-dialogue
@@ -2471,10 +2486,11 @@ export function GameNarration({
   const getSegmentStartVisibleChars = useCallback(
     (index: number) => {
       const segment = segments[index];
-      if (!segment || !gameInstantTextReveal || directionsActive || scenePreparing) return 0;
-      return effectDisplayLength(segment.content);
+      if (!segment || directionsActive || scenePreparing) return 0;
+      if (!isStreaming || gameInstantTextReveal) return effectDisplayLength(segment.content);
+      return 0;
     },
-    [segments, gameInstantTextReveal, directionsActive, scenePreparing],
+    [segments, directionsActive, scenePreparing, isStreaming, gameInstantTextReveal],
   );
 
   useEffect(() => {
@@ -2840,7 +2856,7 @@ export function GameNarration({
     tw.pos = visibleChars;
 
     if (tw.pos >= dispLen) return;
-    if (gameInstantTextReveal || gameTextSpeed >= 100) {
+    if (!isStreaming || gameInstantTextReveal || gameTextSpeed >= 100) {
       // Instant
       tw.pos = dispLen;
       setVisibleChars(dispLen);
@@ -2862,7 +2878,7 @@ export function GameNarration({
     }, TICK_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, gameInstantTextReveal, gameTextSpeed, directionsActive, scenePreparing, logsOpen]); // visibleChars intentionally excluded — managed internally
+  }, [active, isStreaming, gameInstantTextReveal, gameTextSpeed, directionsActive, scenePreparing, logsOpen]); // visibleChars intentionally excluded — managed internally
 
   const assetManifest = useGameAssetStore((s) => s.manifest);
 
@@ -5247,10 +5263,7 @@ function truncateMessageContentAtSegment(rawContent: string, segmentIndexInclusi
       continue;
     }
 
-    const isSpecial =
-      readablePlaceholderRe.test(line) ||
-      partyLineRegex.test(line) ||
-      compactDialogueRegex.test(line);
+    const isSpecial = readablePlaceholderRe.test(line) || partyLineRegex.test(line) || compactDialogueRegex.test(line);
 
     if (isSpecial) {
       if (pendingFallback) {

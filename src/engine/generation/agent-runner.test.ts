@@ -4,27 +4,34 @@ import type { LlmGateway, LlmRequest } from "../capabilities/llm";
 import type { StorageGateway } from "../capabilities/storage";
 import { createGenerationAgentRuntime } from "./agent-runner";
 
-function storage(rows: Record<string, unknown>[], collections: Record<string, Record<string, unknown>[]> = {}): StorageGateway {
+function storage(
+  rows: Record<string, unknown>[],
+  collections: Record<string, Record<string, unknown>[]> = {},
+): StorageGateway {
   return {
-    list: async <T,>(entity: string) => (entity === "agents" ? rows : (collections[entity] ?? [])) as T[],
-    get: async <T,>() => null as T | null,
-    create: async <T,>() => ({}) as T,
-    update: async <T,>() => ({}) as T,
+    list: async <T>(entity: string) => (entity === "agents" ? rows : (collections[entity] ?? [])) as T[],
+    get: async <T>(entity: string, id: string) => {
+      const collection = entity === "agents" ? rows : (collections[entity] ?? []);
+      return (collection.find((row) => row.id === id) ?? null) as T | null;
+    },
+    create: async <T>() => ({}) as T,
+    update: async <T>() => ({}) as T,
     delete: async () => ({ deleted: true }),
     listChatMessages: async () => [],
-    createChatMessage: async <T,>() => ({}) as T,
-    updateChatMessage: async <T,>() => ({}) as T,
+    createChatMessage: async <T>() => ({}) as T,
+    updateChatMessage: async <T>() => ({}) as T,
     deleteChatMessage: async () => ({ deleted: true }),
-    patchChatMessageExtra: async <T,>() => ({}) as T,
-    addChatMessageSwipe: async <T,>() => ({}) as T,
-    patchChatMetadata: async <T,>() => ({}) as T,
-    patchChatSummaries: async <T,>() => ({}) as T,
+    patchChatMessageExtra: async <T>() => ({}) as T,
+    addChatMessageSwipe: async <T>() => ({}) as T,
+    patchChatMetadata: async <T>() => ({}) as T,
+    patchChatSummaries: async <T>() => ({}) as T,
     listChatMemories: async () => [],
-    getWorldState: async <T,>() => null as T | null,
-    saveTrackerSnapshot: async <T,>() => ({}) as T,
-    listLorebookEntries: async () => [],
+    getWorldState: async <T>() => null as T | null,
+    saveTrackerSnapshot: async <T>() => ({}) as T,
+    listLorebookEntries: async <T>(lorebookId: string) =>
+      (collections["lorebook-entries"] ?? []).filter((entry) => entry.lorebookId === lorebookId) as T[],
     createLorebookEntries: async () => [],
-    promptFull: async <T,>() => null as T | null,
+    promptFull: async <T>() => null as T | null,
   };
 }
 
@@ -55,10 +62,37 @@ function countingLlm(calls: unknown[], responseText = "ok"): LlmGateway {
   };
 }
 
+function batchingAwareLlm(calls: LlmRequest[]): LlmGateway {
+  return {
+    async *stream(request) {
+      calls.push(request);
+      const systemPrompt = request.messages[0]?.content ?? "";
+      if (systemPrompt.includes("collection of 2 specialized agents")) {
+        yield {
+          type: "token",
+          text: [
+            '<result agent="prose-guardian">Keep the prose direct.</result>',
+            '<result agent="director">[Director\'s note: Add a ticking clock.]</result>',
+          ].join("\n"),
+        };
+        return;
+      }
+      yield { type: "token", text: "single agent fallback" };
+    },
+    async complete() {
+      return "single agent fallback";
+    },
+    async listModels() {
+      return [];
+    },
+  };
+}
+
 function emptyLlm(calls: unknown[]): LlmGateway {
   return {
     async *stream(request) {
       calls.push(request);
+      yield* [];
     },
     async complete() {
       return "";
@@ -108,8 +142,7 @@ function integrationWithCustomTool(
   const empty = async <T = unknown>() => ({}) as T;
   return {
     customTools: {
-      execute: async <T = unknown>(input: { toolName: string; arguments: unknown }) =>
-        (await execute(input)) as T,
+      execute: async <T = unknown>(input: { toolName: string; arguments: unknown }) => (await execute(input)) as T,
     },
     spotify: {
       player: empty,
@@ -235,6 +268,516 @@ describe("createGenerationAgentRuntime", () => {
       }),
     ]);
     expect(results).toEqual(runtime.preResults);
+  });
+
+  it("loads selected lorebook entries into Knowledge Retrieval source material", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "knowledge-a",
+              type: "knowledge-retrieval",
+              name: "Knowledge Retrieval",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "agent-model",
+              promptTemplate: "Return the relevant source facts.",
+              settings: { sourceLorebookIds: ["lorebook-a"] },
+            },
+          ],
+          {
+            lorebooks: [{ id: "lorebook-a", excludeFromVectorization: false }],
+            "lorebook-entries": [
+              {
+                id: "entry-docks",
+                lorebookId: "lorebook-a",
+                name: "Harbor Secret",
+                content: "The dockmaster hides the blue key under the west pier.",
+                enabled: true,
+              },
+              {
+                id: "entry-disabled",
+                lorebookId: "lorebook-a",
+                name: "Disabled",
+                content: "This should not be offered to the retrieval agent.",
+                enabled: false,
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls, "The blue key is under the west pier."),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["knowledge-a"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ id: "user-1", role: "user", content: "Where would the key be hidden?" }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "knowledge-retrieval",
+        agentName: "Knowledge Retrieval",
+        text: "The blue key is under the west pier.",
+      },
+    ]);
+    expect(calls).toHaveLength(1);
+    const systemPrompt = calls[0]?.messages[0]?.content ?? "";
+    expect(systemPrompt).toContain("<source_material>");
+    expect(systemPrompt).toContain("### Harbor Secret");
+    expect(systemPrompt).toContain("The dockmaster hides the blue key under the west pier.");
+    expect(systemPrompt).not.toContain("This should not be offered to the retrieval agent.");
+  });
+
+  it("routes Knowledge Router over selected lorebook entries and injects chosen content verbatim", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "router-a",
+              type: "knowledge-router",
+              name: "Knowledge Router",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "agent-model",
+              promptTemplate: 'Return JSON like {"entryIds":["id"]}.',
+              settings: { sourceLorebookIds: ["lorebook-a"] },
+            },
+          ],
+          {
+            lorebooks: [{ id: "lorebook-a", excludeFromVectorization: false }],
+            "lorebook-entries": [
+              {
+                id: "entry-clocktower",
+                lorebookId: "lorebook-a",
+                name: "Clocktower",
+                description: "Where the silver bell is hidden.",
+                content: "The silver bell is sealed behind the clocktower face.",
+                enabled: true,
+                keys: ["bell"],
+              },
+              {
+                id: "entry-constant",
+                lorebookId: "lorebook-a",
+                name: "Always Injected",
+                description: "Already handled by normal lore injection.",
+                content: "This constant entry should not be routed.",
+                enabled: true,
+                constant: true,
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls, '{"entryIds":["entry-clocktower","entry-constant","entry-clocktower","missing"]}'),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["router-a"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ id: "user-1", role: "user", content: "What about the bell?" }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "knowledge-router",
+        agentName: "Knowledge Router",
+        text: "### Clocktower\nThe silver bell is sealed behind the clocktower face.",
+      },
+    ]);
+    expect(calls).toHaveLength(1);
+    const systemPrompt = calls[0]?.messages[0]?.content ?? "";
+    expect(systemPrompt).toContain("<entry_catalog>");
+    expect(systemPrompt).toContain('id="entry-clocktower"');
+    expect(systemPrompt).not.toContain("entry-constant");
+  });
+
+  it("merges connection generation parameters into agent LLM calls", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "agent-a",
+            type: "prose-guardian",
+            name: "Prose Guardian",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Add a concise style note.",
+          },
+        ]),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          model: "chat-model",
+          defaultParameters: {
+            topP: 0.42,
+            topK: 12,
+            reasoningEffort: "high",
+            assistantPrefill: "Here is the agent result:",
+          },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]?.parameters).toMatchObject({
+      maxTokens: 4096,
+      topP: 0.42,
+      topK: 12,
+      reasoningEffort: "high",
+      assistantPrefill: "Here is the agent result:",
+    });
+    expect(calls[0]?.parameters).not.toHaveProperty("temperature");
+  });
+
+  it("uses the default agent connection before the chat connection when no agent override is set", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "agent-a",
+              type: "prose-guardian",
+              name: "Prose Guardian",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "",
+              promptTemplate: "Add a concise style note.",
+            },
+          ],
+          {
+            connections: [
+              {
+                id: "agent-default",
+                provider: "anthropic",
+                model: "agent-default-model",
+                defaultForAgents: true,
+                defaultParameters: { topP: 0.61 },
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          provider: "google",
+          model: "chat-model",
+          defaultParameters: { topP: 0.24 },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]).toMatchObject({
+      connectionId: "agent-default",
+      model: "agent-default-model",
+      parameters: expect.objectContaining({ topP: 0.61 }),
+    });
+  });
+
+  it("uses an agent connection override before the default agent connection", async () => {
+    const calls: LlmRequest[] = [];
+    await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "agent-a",
+              type: "prose-guardian",
+              name: "Prose Guardian",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: "agent-specific",
+              model: "",
+              promptTemplate: "Add a concise style note.",
+            },
+          ],
+          {
+            connections: [
+              {
+                id: "agent-default",
+                provider: "anthropic",
+                model: "agent-default-model",
+                defaultForAgents: true,
+                defaultParameters: { topP: 0.61 },
+              },
+              {
+                id: "agent-specific",
+                provider: "openai",
+                model: "agent-specific-model",
+                defaultParameters: { topP: 0.17 },
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a"] } },
+        connection: {
+          id: "chat-connection",
+          provider: "google",
+          model: "chat-model",
+          defaultParameters: { topP: 0.24 },
+        },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(calls[0]).toMatchObject({
+      connectionId: "agent-specific",
+      model: "agent-specific-model",
+      parameters: expect.objectContaining({ topP: 0.17 }),
+    });
+  });
+
+  it("does not run Echo Chamber during assistant message regeneration", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([]),
+        llm: countingLlm(calls, '{"reactions":[]}'),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["echo-chamber"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ id: "assistant-1", role: "assistant", content: "Old swipe." }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+        regenerateMessageId: "assistant-1",
+      },
+    );
+
+    expect(await runtime.runParallel()).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("batches same-connection phase agents into one request even when maxParallelJobs is configured", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "agent-a",
+            type: "prose-guardian",
+            name: "Prose Guardian",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Return a prose note.",
+            settings: { maxParallelJobs: 4 },
+          },
+          {
+            id: "agent-b",
+            type: "director",
+            name: "Director",
+            enabled: true,
+            phase: "pre_generation",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Return a director note.",
+            settings: { maxParallelJobs: 4 },
+          },
+        ]),
+        llm: batchingAwareLlm(calls),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", metadata: { activeAgentIds: ["agent-a", "agent-b"] } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preResults).toHaveLength(2);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.parameters).toMatchObject({ maxTokens: 8192 });
+    expect(calls[0]?.messages[0]?.content).toContain("<agents>");
+    expect(calls[0]?.messages.at(-1)).toMatchObject({
+      role: "user",
+      content: expect.stringContaining("Output all 2 result blocks"),
+    });
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "prose-guardian",
+        agentName: "Prose Guardian",
+        text: "Keep the prose direct.",
+      },
+      {
+        agentType: "director",
+        agentName: "Director",
+        text: "[Director's note: Add a ticking clock.]",
+      },
+    ]);
+  });
+
+  it("groups same-connection post-processing agents into one batch request", async () => {
+    const calls: LlmRequest[] = [];
+    const llm: LlmGateway = {
+      async *stream(request) {
+        calls.push(request);
+        yield {
+          type: "token",
+          text: [
+            '<result agent="world-state">{ "updates": [] }</result>',
+            '<result agent="expression">{ "expressions": [] }</result>',
+            '<result agent="background">{ "chosen": "lab.png" }</result>',
+          ].join("\n"),
+        };
+      },
+      async complete() {
+        return "";
+      },
+      async listModels() {
+        return [];
+      },
+    };
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage([
+          {
+            id: "world",
+            type: "world-state",
+            name: "World State",
+            enabled: true,
+            phase: "post_processing",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Track world state.",
+            settings: { includeParallelResults: false },
+          },
+          {
+            id: "expression",
+            type: "expression",
+            name: "Expression Engine",
+            enabled: true,
+            phase: "post_processing",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Pick expressions.",
+            settings: { includeParallelResults: true },
+          },
+          {
+            id: "background",
+            type: "background",
+            name: "Background",
+            enabled: true,
+            phase: "post_processing",
+            connectionId: null,
+            model: "agent-model",
+            promptTemplate: "Pick a background.",
+            settings: { includePreGenInjections: true },
+          },
+        ]),
+        llm,
+        integrations,
+        visuals: {
+          listSprites: async (characterId) =>
+            characterId === "char-dottore" ? [{ expression: "happy_01" }, { expression: "full_idle" }] : [],
+          listBackgrounds: async () => [{ filename: "lab.png", originalName: "Laboratory", tags: ["fatui", "lab"] }],
+          gameAssetsManifest: async () => ({
+            byCategory: {
+              backgrounds: [
+                {
+                  tag: "backgrounds:fatui:winter_lab",
+                  category: "backgrounds",
+                  subcategory: "fatui",
+                  name: "winter_lab",
+                  path: "backgrounds/fatui/winter_lab.webp",
+                },
+              ],
+            },
+          }),
+        },
+      },
+      {
+        chat: {
+          id: "chat-a",
+          metadata: {
+            activeAgentIds: ["world", "expression", "background"],
+            spriteCharacterIds: ["char-dottore"],
+            spriteDisplayModes: ["expressions", "full-body"],
+          },
+        },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "The lab door opens." }],
+        characters: [{ id: "char-dottore", name: "Dottore", description: "A precise Harbinger.", tags: [] }],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    const results = await runtime.runPost("Dottore gestures to the room.");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.parameters).toMatchObject({ maxTokens: 12288 });
+    const systemPrompt = calls[0]?.messages[0]?.content ?? "";
+    expect(systemPrompt).toContain('<agent_task id="world-state" name="World State">');
+    expect(systemPrompt).toContain('<agent_task id="expression" name="Expression Engine">');
+    expect(systemPrompt).toContain('<agent_task id="background" name="Background">');
+    expect(systemPrompt).toContain("<available_sprites>");
+    expect(systemPrompt).toContain("Dottore (char-dottore):");
+    expect(systemPrompt).toContain("neutral");
+    expect(systemPrompt).toContain("happy_01");
+    expect(systemPrompt).toContain("full_idle");
+    expect(systemPrompt).toContain("<available_backgrounds>");
+    expect(systemPrompt).toContain("- lab.png (Laboratory) [tags: fatui, lab]");
+    expect(systemPrompt).toContain("- gameAsset:backgrounds/fatui/winter_lab.webp");
+    expect(results).toEqual([
+      expect.objectContaining({ agentType: "world-state", success: true }),
+      expect.objectContaining({ agentType: "expression", success: true }),
+      expect.objectContaining({ agentType: "background", success: true }),
+    ]);
   });
 
   it("passes roleplay Spotify DJ source constraints to the Spotify agent", async () => {
@@ -1501,5 +2044,225 @@ describe("createGenerationAgentRuntime", () => {
       success: true,
     });
     expect(calls).toHaveLength(1);
+  });
+
+  it("scopes knowledge retrieval source material to active chat lorebooks", async () => {
+    const calls: LlmRequest[] = [];
+    const baseStorage = storage(
+      [
+        {
+          id: "knowledge-retrieval",
+          type: "knowledge-retrieval",
+          name: "Knowledge Retrieval",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Extract relevant lore.",
+          settings: {},
+        },
+      ],
+      {
+        lorebooks: [
+          { id: "active-lorebook", enabled: true, name: "Active Lore" },
+          { id: "other-lorebook", enabled: true, name: "Other Lore" },
+        ],
+      },
+    );
+    const entriesByLorebook: Record<string, Record<string, unknown>[]> = {
+      "active-lorebook": [
+        {
+          id: "active-entry",
+          lorebookId: "active-lorebook",
+          name: "Correct City",
+          content: "The active city is Hearthglass.",
+          enabled: true,
+        },
+      ],
+      "other-lorebook": [
+        {
+          id: "other-entry",
+          lorebookId: "other-lorebook",
+          name: "Wrong City",
+          content: "The unrelated city is Wrongport.",
+          enabled: true,
+        },
+      ],
+    };
+
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: {
+          ...baseStorage,
+          listLorebookEntries: async <T>(lorebookId: string) => (entriesByLorebook[lorebookId] ?? []) as T[],
+        },
+        llm: countingLlm(calls, "Use Hearthglass as the city."),
+        integrations,
+      },
+      {
+        chat: {
+          id: "chat-a",
+          mode: "roleplay",
+          metadata: { enableAgents: true, activeLorebookIds: ["active-lorebook"] },
+        },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "Where are we?" }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      { agentType: "knowledge-retrieval", agentName: "Knowledge Retrieval", text: "Use Hearthglass as the city." },
+    ]);
+    expect(calls).toHaveLength(1);
+    const promptText = calls[0]!.messages.map((message) => message.content).join("\n");
+    expect(promptText).toContain("The active city is Hearthglass.");
+    expect(promptText).not.toContain("Wrongport");
+  });
+
+  it("excludes generated game lorebook-keeper books from knowledge agent sources when the keeper is disabled", async () => {
+    const calls: LlmRequest[] = [];
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: storage(
+          [
+            {
+              id: "knowledge-retrieval",
+              type: "knowledge-retrieval",
+              name: "Knowledge Retrieval",
+              enabled: true,
+              phase: "pre_generation",
+              connectionId: null,
+              model: "agent-model",
+              promptTemplate: "Extract relevant lore.",
+              settings: { sourceLorebookIds: ["keeper-book"] },
+            },
+          ],
+          {
+            lorebooks: [
+              {
+                id: "keeper-book",
+                enabled: true,
+                isGlobal: true,
+                sourceAgentId: "game-lorebook-keeper",
+              },
+            ],
+            "lorebook-entries": [
+              {
+                id: "keeper-entry",
+                lorebookId: "keeper-book",
+                name: "Keeper Internal Lore",
+                content: "This generated game keeper lore should not leak.",
+                enabled: true,
+              },
+            ],
+          },
+        ),
+        llm: countingLlm(calls, "Leaked keeper lore."),
+        integrations,
+      },
+      {
+        chat: {
+          id: "chat-a",
+          mode: "game",
+          metadata: {
+            activeAgentIds: ["knowledge-retrieval"],
+            gameLorebookKeeperEnabled: false,
+            gameLorebookKeeperLorebookId: "keeper-book",
+          },
+        },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "What does the keeper know?" }],
+        characters: [],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("scopes knowledge router candidates to lorebooks linked to active characters", async () => {
+    const calls: LlmRequest[] = [];
+    const baseStorage = storage(
+      [
+        {
+          id: "knowledge-router",
+          type: "knowledge-router",
+          name: "Knowledge Router",
+          enabled: true,
+          phase: "pre_generation",
+          connectionId: null,
+          model: "agent-model",
+          promptTemplate: "Select relevant entries.",
+          settings: {},
+        },
+      ],
+      {
+        lorebooks: [
+          { id: "character-lorebook", enabled: true, name: "Character Lore", characterIds: ["char-a"] },
+          { id: "unlinked-lorebook", enabled: true, name: "Unlinked Lore" },
+        ],
+      },
+    );
+    const entriesByLorebook: Record<string, Record<string, unknown>[]> = {
+      "character-lorebook": [
+        {
+          id: "char-entry",
+          lorebookId: "character-lorebook",
+          name: "Character Secret",
+          content: "Dottore knows the sealed archive.",
+          description: "Secret archive knowledge.",
+          enabled: true,
+        },
+      ],
+      "unlinked-lorebook": [
+        {
+          id: "unlinked-entry",
+          lorebookId: "unlinked-lorebook",
+          name: "Wrong Secret",
+          content: "Unlinked lore should not leak.",
+          description: "Wrong leak.",
+          enabled: true,
+        },
+      ],
+    };
+
+    const runtime = await createGenerationAgentRuntime(
+      {
+        storage: {
+          ...baseStorage,
+          listLorebookEntries: async <T>(lorebookId: string) => (entriesByLorebook[lorebookId] ?? []) as T[],
+        },
+        llm: countingLlm(calls, JSON.stringify({ entryIds: ["char-entry", "unlinked-entry"] })),
+        integrations,
+      },
+      {
+        chat: { id: "chat-a", mode: "roleplay", metadata: { enableAgents: true } },
+        connection: { id: "chat-connection", model: "chat-model" },
+        storedMessages: [{ role: "user", content: "What does he know?" }],
+        characters: [{ id: "char-a", name: "Dottore", description: "", tags: [] }],
+        persona: null,
+        activatedLorebookEntries: [],
+        chatSummary: null,
+      },
+    );
+
+    expect(runtime.preInjections).toEqual([
+      {
+        agentType: "knowledge-router",
+        agentName: "Knowledge Router",
+        text: "### Character Secret\nDottore knows the sealed archive.",
+      },
+    ]);
+    expect(calls).toHaveLength(1);
+    const promptText = calls[0]!.messages.map((message) => message.content).join("\n");
+    expect(promptText).toContain("Character Secret");
+    expect(promptText).not.toContain("Wrong Secret");
   });
 });

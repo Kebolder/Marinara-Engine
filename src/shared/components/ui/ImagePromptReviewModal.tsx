@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "./Modal";
 import { cn } from "../../lib/utils";
 
-export type ImagePromptReviewKind = "background" | "illustration" | "portrait" | "sprite" | "avatar";
+type ImagePromptReviewKind = "background" | "illustration" | "portrait" | "sprite" | "avatar" | "selfie";
 
 export type ImagePromptReviewItem = {
   id: string;
   kind: ImagePromptReviewKind;
   title: string;
   prompt: string;
+  negativePrompt?: string;
   width: number;
   height: number;
 };
@@ -17,6 +18,7 @@ export type ImagePromptReviewItem = {
 export type ImagePromptOverride = {
   id: string;
   prompt: string;
+  negativePrompt?: string;
 };
 
 type ImagePromptReviewModalProps = {
@@ -25,6 +27,7 @@ type ImagePromptReviewModalProps = {
   isSubmitting?: boolean;
   onCancel: () => void;
   onConfirm: (overrides: ImagePromptOverride[]) => void;
+  onExited?: () => void;
 };
 
 export function ImagePromptReviewModal({
@@ -33,11 +36,14 @@ export function ImagePromptReviewModal({
   isSubmitting = false,
   onCancel,
   onConfirm,
+  onExited,
 }: ImagePromptReviewModalProps) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [negativeDrafts, setNegativeDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setDrafts(Object.fromEntries(items.map((item) => [item.id, item.prompt])));
+    setNegativeDrafts(Object.fromEntries(items.map((item) => [item.id, item.negativePrompt ?? ""])));
   }, [items]);
 
   const hasEmptyPrompt = useMemo(() => items.some((item) => !(drafts[item.id] ?? item.prompt).trim()), [drafts, items]);
@@ -48,6 +54,7 @@ export function ImagePromptReviewModal({
       items.map((item) => ({
         id: item.id,
         prompt: (drafts[item.id] ?? item.prompt).trim(),
+        negativePrompt: (negativeDrafts[item.id] ?? item.negativePrompt ?? "").trim() || undefined,
       })),
     );
   };
@@ -58,6 +65,7 @@ export function ImagePromptReviewModal({
       onClose={isSubmitting ? () => {} : onCancel}
       title={items.length === 1 ? "Review Image Prompt" : "Review Image Prompts"}
       width="max-w-4xl"
+      onExited={onExited}
     >
       <div className="flex max-h-[72vh] flex-col gap-4">
         <div className="text-xs leading-relaxed text-[var(--muted-foreground)]">
@@ -68,6 +76,7 @@ export function ImagePromptReviewModal({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
           {items.map((item) => {
             const value = drafts[item.id] ?? item.prompt;
+            const negativeValue = negativeDrafts[item.id] ?? item.negativePrompt ?? "";
             return (
               <label
                 key={item.id}
@@ -91,6 +100,18 @@ export function ImagePromptReviewModal({
                   spellCheck={false}
                   className="min-h-40 resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/70 focus:border-[var(--primary)]"
                 />
+                {(item.negativePrompt != null || negativeValue.trim()) && (
+                  <textarea
+                    value={negativeValue}
+                    onChange={(event) =>
+                      setNegativeDrafts((current) => ({ ...current, [item.id]: event.target.value }))
+                    }
+                    rows={3}
+                    spellCheck={false}
+                    placeholder="Negative prompt"
+                    className="resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/70 focus:border-[var(--primary)]"
+                  />
+                )}
               </label>
             );
           })}

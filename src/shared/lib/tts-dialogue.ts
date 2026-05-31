@@ -14,13 +14,16 @@ export function clientSidePlaybackRate(cfg: TTSConfig | null | undefined): numbe
   return Number.isFinite(cfg.speed) && cfg.speed > 0 ? cfg.speed : 1;
 }
 
-export interface TTSUtterance {
+interface TTSUtterance {
   text: string;
   speaker?: string;
   tone?: string;
 }
 
-export interface TTSVoiceRequest extends TTSUtterance {
+export interface TTSVoiceRequest {
+  text: string;
+  speaker?: string;
+  tone?: string;
   voice?: string;
 }
 
@@ -34,7 +37,7 @@ export function normalizeTTSCharacterName(value?: string | null): string {
   return (value ?? "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-export function normalizeTTSCharacterBaseName(value?: string | null): string {
+function normalizeTTSCharacterBaseName(value?: string | null): string {
   let normalized = normalizeTTSCharacterName(value);
   let previous = "";
   while (normalized && normalized !== previous) {
@@ -54,7 +57,7 @@ export function ttsConfigMatchesSpeaker(
   return true;
 }
 
-export type TTSNpcVoiceGender = "male" | "female" | "unknown";
+type TTSNpcVoiceGender = "male" | "female" | "unknown";
 
 export interface TTSNpcVoiceHint {
   name: string;
@@ -79,7 +82,7 @@ function stableTTSIndex(seed: string, length: number): number {
   return Math.abs(hash) % length;
 }
 
-export function inferTTSNpcVoiceGender(hint?: TTSNpcVoiceHint | null): TTSNpcVoiceGender {
+function inferTTSNpcVoiceGender(hint?: TTSNpcVoiceHint | null): TTSNpcVoiceGender {
   const explicitText = [hint?.gender, hint?.pronouns].filter(Boolean).join(" ");
   if (/\b(she|her|hers|female|feminine|woman|girl)\b/i.test(explicitText)) return "female";
   if (/\b(he|him|his|male|masculine|man|boy)\b/i.test(explicitText)) return "male";
@@ -149,11 +152,7 @@ export function resolveTTSVoiceForSpeaker(
   npcHint?: TTSNpcVoiceHint | null,
 ): string {
   const fallbackVoice = config.voice ?? "";
-  if (
-    config.narratorVoiceEnabled &&
-    isSyntheticTTSNarrator(speaker) &&
-    (config.voiceMode ?? "single") === "single"
-  ) {
+  if (config.narratorVoiceEnabled && isSyntheticTTSNarrator(speaker) && (config.voiceMode ?? "single") === "single") {
     return config.narratorVoice || fallbackVoice;
   }
 
@@ -186,7 +185,7 @@ export function resolveTTSVoiceForSpeaker(
   return fallbackVoice;
 }
 
-export function cleanTTSInputText(value: string): string {
+function cleanTTSInputText(value: string): string {
   return value
     .replace(/\{(shake|shout|whisper|glow|pulse|wave|flicker|drip|bounce|tremble|glitch|expand):([^}]+)\}/gi, "$2")
     .replace(/\[[a-z_]+:[^\]]*\]/gi, "")
@@ -275,14 +274,7 @@ export function splitTTSChunks(value: string): string[] {
     .flatMap((chunk) => splitCleanTTSInputIntoChunks(chunk));
 }
 
-export function buildTTSMessageText(text: string, config: TTSConfig, fallbackSpeaker?: string | null): string {
-  if (!config.dialogueOnly) return cleanTTSInputText(text);
-  return extractDialogueUtterances(text, config, fallbackSpeaker)
-    .map((utterance) => utterance.text)
-    .join("\n");
-}
-
-export function splitQuotedDialogueAndNarration(text: string, fallbackSpeaker?: string | null): TTSUtterance[] {
+function splitQuotedDialogueAndNarration(text: string, fallbackSpeaker?: string | null): TTSUtterance[] {
   const quoteRe = new RegExp(DIALOGUE_QUOTE_PATTERN_SOURCE, "g");
   const utterances: TTSUtterance[] = [];
   let lastIndex = 0;
@@ -341,9 +333,9 @@ export function buildTTSVoiceRequests(
     const resolvedCharacterId = isSyntheticNarrator
       ? undefined
       : speaker
-      ? (resolveCharacterIdForSpeaker?.(speaker) ??
-        (speakerKey && speakerKey === fallbackSpeakerKey ? fallbackCharacterId : undefined))
-      : fallbackCharacterId;
+        ? (resolveCharacterIdForSpeaker?.(speaker) ??
+          (speakerKey && speakerKey === fallbackSpeakerKey ? fallbackCharacterId : undefined))
+        : fallbackCharacterId;
     const voice = resolveTTSVoiceForSpeaker(config, speaker, resolvedCharacterId);
     if (config.source === "elevenlabs" && !voice) return [];
     const requestSpeaker = isSyntheticNarrator ? "Narrator" : speaker;
@@ -357,7 +349,7 @@ export function buildTTSVoiceRequests(
   });
 }
 
-export function extractDialogueUtterances(
+function extractDialogueUtterances(
   text: string,
   config: Pick<TTSConfig, "dialogueScope" | "dialogueCharacterName">,
   fallbackSpeaker?: string | null,

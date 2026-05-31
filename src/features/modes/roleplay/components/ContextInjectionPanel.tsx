@@ -7,8 +7,8 @@ import { Check, ChevronDown, Minus, Plus, RefreshCw, Save } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BUILT_IN_AGENTS, getDefaultBuiltInAgentSettings } from "../../../../engine/contracts/types/agent";
 import type { Message } from "../../../../engine/contracts/types/chat";
+import { agentApi, type AgentCadenceStatus } from "../../../../shared/api/agent-api";
 import { cn } from "../../../../shared/lib/utils";
-import { invokeTauri } from "../../../../shared/api/tauri-client";
 import { chatKeys, useUpdateMessageExtra } from "../../../catalog/chats";
 import { useGenerate } from "../../../runtime/generation/index";
 import { HelpTooltip } from "../../../../shared/components/ui/HelpTooltip";
@@ -48,16 +48,6 @@ function agentLabel(agentType: string, agentName?: string): string {
 }
 
 type CachedInjection = { agentType: string; agentName?: string; text: string };
-
-type AgentCadenceStatus = {
-  agentType: string;
-  runInterval: number;
-  lastSuccessfulRun: { messageId: string; createdAt: string } | null;
-  assistantMessagesSinceLastRun: number | null;
-  remainingAssistantMessages: number;
-  runsNextAssistantMessage: boolean;
-  lastRunMessageFound: boolean | null;
-};
 
 function normalizeContextInjections(raw: unknown): CachedInjection[] {
   if (!Array.isArray(raw)) return [];
@@ -138,7 +128,7 @@ export function ContextInjectionPanel({
   const directorCadence = useQuery({
     queryKey: directorCadenceQueryKey,
     enabled: !!chatId && showDirectorCadence,
-    queryFn: () => invokeTauri<AgentCadenceStatus>("agent_cadence_status", { agentType: "director", chatId }),
+    queryFn: () => agentApi.cadenceStatus("director", chatId!),
     staleTime: 15_000,
   });
   const directorIntervalMeta = getAgentRunIntervalMeta("director");
