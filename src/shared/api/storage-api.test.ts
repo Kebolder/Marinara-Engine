@@ -65,6 +65,45 @@ describe("storageApi typed JSON read normalization", () => {
     });
   });
 
+  it("merges day/week summary deltas into existing entries instead of replacing them", async () => {
+    invokeMock.mockResolvedValueOnce({
+      id: "chat-1",
+      metadata: {
+        daySummaries: {
+          "28.03.2026": { summary: "old day", keyDetails: [] },
+          "29.03.2026": { summary: "another old day", keyDetails: [] },
+        },
+        weekSummaries: {
+          "23.03.2026": { summary: "old week", keyDetails: [] },
+        },
+        dayRolloverHour: 4,
+      },
+    });
+    invokeMock.mockResolvedValueOnce({ id: "chat-1" });
+
+    await storageApi.patchChatSummaries("chat-1", {
+      daySummaries: { "30.03.2026": { summary: "new day", keyDetails: ["remember this"] } },
+    });
+
+    expect(invokeMock).toHaveBeenLastCalledWith("storage_update", {
+      entity: "chats",
+      id: "chat-1",
+      patch: {
+        metadata: {
+          daySummaries: {
+            "28.03.2026": { summary: "old day", keyDetails: [] },
+            "29.03.2026": { summary: "another old day", keyDetails: [] },
+            "30.03.2026": { summary: "new day", keyDetails: ["remember this"] },
+          },
+          weekSummaries: {
+            "23.03.2026": { summary: "old week", keyDetails: [] },
+          },
+          dayRolloverHour: 4,
+        },
+      },
+    });
+  });
+
   it("routes conditional message-content updates through the storage command", async () => {
     invokeMock.mockResolvedValueOnce({
       updated: true,
