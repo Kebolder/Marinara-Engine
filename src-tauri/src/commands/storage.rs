@@ -56,6 +56,8 @@ pub(crate) mod media_uploads;
 pub(crate) mod personas;
 #[path = "storage/profile.rs"]
 pub(crate) mod profile;
+#[path = "storage/prompt_overrides.rs"]
+pub(crate) mod prompt_overrides;
 #[path = "storage/prompts.rs"]
 pub(crate) mod prompts;
 #[path = "storage/shared.rs"]
