@@ -79,6 +79,8 @@ type QueryClient = ReturnType<typeof useQueryClient>;
 type GenerationStreamFactory = (args: GenerateArgs, signal: AbortSignal) => AsyncGenerator<StreamEvent>;
 type AgentResultEffectOptions = {
   skipTrackerSync?: boolean;
+  cacheBackgroundResults?: boolean;
+  showTrackerBubbles?: boolean;
 };
 const HAPTIC_COMMAND_INTERVAL_MS = 225;
 const TYPEWRITER_MAX_FRAME_MS = 120;
@@ -721,6 +723,25 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
   }
 }
 
+function isTrackerStyleAgentResult(result: AgentResult): boolean {
+  return (
+    result.agentType === "world-state" ||
+    result.agentType === "character-tracker" ||
+    result.agentType === "persona-stats" ||
+    result.agentType === "custom-tracker" ||
+    result.type === "game_state_update" ||
+    result.type === "character_tracker_update" ||
+    result.type === "persona_stats_update" ||
+    result.type === "custom_tracker_update"
+  );
+}
+
+function shouldCacheLiveAgentResult(result: AgentResult, options: AgentResultEffectOptions): boolean {
+  if (options.cacheBackgroundResults !== false) return true;
+  if (useUIStore.getState().debugMode) return true;
+  return result.agentType === "expression" || result.type === "sprite_change";
+}
+
 async function applyBackgroundChoice(chatId: string, chosen: unknown) {
   const metadataValue = readString(chosen).trim();
   const url = chatBackgroundMetadataToUrl(chosen);
@@ -1025,13 +1046,18 @@ async function applyAgentResultEffects(
     readString((rawResult as Record<string, unknown>).name).trim() ||
     result.agentType;
   const agentStore = useAgentStore.getState();
-  agentStore.addResult(result.agentId || result.agentType, result);
+  if (shouldCacheLiveAgentResult(result, options)) {
+    agentStore.addResult(result.agentId || result.agentType, result);
+  }
 
   if (!result.success) {
     agentStore.addFailedAgentFailure(toAgentFailure({ agentType: result.agentType, agentName, error: result.error }));
     return;
   }
-  const bubble = formatAgentBubble(result, agentName);
+  const bubble =
+    options.showTrackerBubbles === false && isTrackerStyleAgentResult(result)
+      ? null
+      : formatAgentBubble(result, agentName);
   if (bubble) agentStore.addThoughtBubble(result.agentType, agentName, bubble);
 
   const data = parseMaybeRecord(result.data);
@@ -1335,7 +1361,11 @@ export async function runGenerationWithUi(
       }
       const rawResult = pendingAgentResultEffects.shift();
       if (rawResult !== undefined) {
-        await applyAgentResultEffects(queryClient, chatId, rawResult, { skipTrackerSync: true });
+        await applyAgentResultEffects(queryClient, chatId, rawResult, {
+          cacheBackgroundResults: false,
+          showTrackerBubbles: false,
+          skipTrackerSync: true,
+        });
       }
       if (pendingAgentResultEffects.length > 0) drainAgentResultEffects();
     });

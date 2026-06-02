@@ -585,7 +585,13 @@ export function useUpdateMessage(chatId: string | null) {
     },
     onSuccess: (updated, { messageId, content }) => {
       if (chatId) {
-        rememberRecentMessageContentEdit(chatId, messageId, updated?.content ?? content, updated?.activeSwipeIndex);
+        const saved = updated ? preserveRecentMessageContentEdit(chatId, sanitizeTimelineMessage(updated)) : null;
+        rememberRecentMessageContentEdit(chatId, messageId, saved?.content ?? content, saved?.activeSwipeIndex);
+        if (saved) {
+          qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) =>
+            replaceCachedMessage(old, messageId, (msg) => ({ ...msg, ...saved })),
+          );
+        }
       }
     },
     onError: (_err, _vars, context) => {
@@ -598,13 +604,8 @@ export function useUpdateMessage(chatId: string | null) {
     },
     onSettled: () => {
       if (chatId) {
-        // Skip invalidation while this chat is actively streaming — a refetch
-        // could pick up the just-saved assistant message while the streaming
-        // overlay is still visible, causing the response to appear doubled.
-        // The generation's finally block will invalidate after streaming ends.
         const { streamingChatId, isStreaming } = useChatStore.getState();
         if (isStreaming && streamingChatId === chatId) return;
-        qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
