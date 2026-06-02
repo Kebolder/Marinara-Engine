@@ -70,6 +70,18 @@ impl FileStorage {
         )
     }
 
+    pub fn list_messages_for_chat_projected(
+        &self,
+        chat_id: &str,
+        fields: &[String],
+        field_selections: &Map<String, Value>,
+    ) -> AppResult<Vec<Value>> {
+        self.read_locked_or_recover(
+            || self.read_messages_for_chat_projected_no_recovery(chat_id, fields, field_selections),
+            || self.read_messages_for_chat_projected(chat_id, fields, field_selections),
+        )
+    }
+
     pub fn list_message_ids_for_chat(&self, chat_id: &str) -> AppResult<Vec<Value>> {
         self.read_locked_or_recover(
             || self.read_message_ids_for_chat_no_recovery(chat_id),
@@ -552,6 +564,11 @@ impl FileStorage {
         if !path.exists() || fs::metadata(&path)?.len() == 0 {
             return Ok(None);
         }
+        match read_pretty_record_by_id_from_file(&path, id) {
+            Ok(Some(row)) => return Ok(Some(row)),
+            Ok(None) => {}
+            Err(_) => {}
+        }
         let file = fs::File::open(path)?;
         let reader = BufReader::new(file);
         let mut deserializer = serde_json::Deserializer::from_reader(reader);
@@ -576,6 +593,64 @@ impl FileStorage {
 
     fn read_messages_for_chat_no_recovery(&self, chat_id: &str) -> AppResult<Vec<Value>> {
         self.read_messages_for_chat_inner(chat_id, false)
+    }
+
+    fn read_messages_for_chat_projected(
+        &self,
+        chat_id: &str,
+        fields: &[String],
+        field_selections: &Map<String, Value>,
+    ) -> AppResult<Vec<Value>> {
+        self.read_messages_for_chat_projected_inner(chat_id, fields, field_selections, true)
+    }
+
+    fn read_messages_for_chat_projected_no_recovery(
+        &self,
+        chat_id: &str,
+        fields: &[String],
+        field_selections: &Map<String, Value>,
+    ) -> AppResult<Vec<Value>> {
+        self.read_messages_for_chat_projected_inner(chat_id, fields, field_selections, false)
+    }
+
+    fn read_messages_for_chat_projected_inner(
+        &self,
+        chat_id: &str,
+        fields: &[String],
+        field_selections: &Map<String, Value>,
+        recover_on_fallback: bool,
+    ) -> AppResult<Vec<Value>> {
+        let path = self.collection_path("messages")?;
+        if fields.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !path.exists() || fs::metadata(&path)?.len() == 0 {
+            return Ok(Vec::new());
+        }
+
+        let field_set: HashSet<String> = fields.iter().cloned().collect();
+        let nested_field_sets = selected_nested_fields(field_selections);
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut deserializer = serde_json::Deserializer::from_reader(reader);
+        match deserializer.deserialize_seq(ProjectedMessageRowsForChatVisitor {
+            chat_id,
+            fields: &field_set,
+            field_selections: &nested_field_sets,
+        }) {
+            Ok(rows) => Ok(rows),
+            Err(_) => {
+                let rows = if recover_on_fallback {
+                    self.read_messages_for_chat(chat_id)?
+                } else {
+                    self.read_messages_for_chat_no_recovery(chat_id)?
+                };
+                Ok(rows
+                    .into_iter()
+                    .map(|row| project_row(row, &field_set, &nested_field_sets))
+                    .collect())
+            }
+        }
     }
 
     fn read_messages_for_chat_inner(
@@ -1547,6 +1622,113 @@ impl<'de, 'a> Visitor<'de> for MessageRowForChatVisitor<'a> {
     }
 }
 
+struct ProjectedMessageRowsForChatVisitor<'a> {
+    chat_id: &'a str,
+    fields: &'a HashSet<String>,
+    field_selections: &'a HashMap<String, HashSet<String>>,
+}
+
+impl<'de, 'a> Visitor<'de> for ProjectedMessageRowsForChatVisitor<'a> {
+    type Value = Vec<Value>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a messages JSON array")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut rows = Vec::new();
+        while let Some(row) = seq.next_element_seed(ProjectedMessageRowForChatSeed {
+            chat_id: self.chat_id,
+            fields: self.fields,
+            field_selections: self.field_selections,
+        })? {
+            if let Some(row) = row {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
+    }
+}
+
+struct ProjectedMessageRowForChatSeed<'a> {
+    chat_id: &'a str,
+    fields: &'a HashSet<String>,
+    field_selections: &'a HashMap<String, HashSet<String>>,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ProjectedMessageRowForChatSeed<'a> {
+    type Value = Option<Value>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(ProjectedMessageRowForChatVisitor {
+            chat_id: self.chat_id,
+            fields: self.fields,
+            field_selections: self.field_selections,
+        })
+    }
+}
+
+struct ProjectedMessageRowForChatVisitor<'a> {
+    chat_id: &'a str,
+    fields: &'a HashSet<String>,
+    field_selections: &'a HashMap<String, HashSet<String>>,
+}
+
+impl<'de, 'a> Visitor<'de> for ProjectedMessageRowForChatVisitor<'a> {
+    type Value = Option<Value>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a message object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut object = Map::new();
+        let mut matches_chat = None;
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "chatId" {
+                let value = map.next_value::<Value>()?;
+                matches_chat = Some(value.as_str() == Some(self.chat_id));
+                if matches_chat == Some(true) && self.fields.contains(&key) {
+                    object.insert(key, value);
+                }
+                continue;
+            }
+
+            if matches_chat == Some(false) {
+                let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                continue;
+            }
+
+            if !self.fields.contains(&key) {
+                let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                continue;
+            }
+
+            let value = if let Some(nested_fields) = self.field_selections.get(&key) {
+                map.next_value_seed(ProjectedNestedSeed {
+                    fields: nested_fields,
+                })?
+            } else {
+                map.next_value::<Value>()?
+            };
+            object.insert(key, value);
+        }
+
+        Ok(matches_chat
+            .unwrap_or(false)
+            .then_some(Value::Object(object)))
+    }
+}
+
 struct MessageIdRowsForChatVisitor<'a> {
     chat_id: &'a str,
 }
@@ -1896,6 +2078,87 @@ fn strip_trailing_json_comma(bytes: &mut Vec<u8>) {
     if bytes.last() == Some(&b',') {
         bytes.pop();
     }
+}
+
+fn read_pretty_record_by_id_from_file(path: &Path, id: &str) -> AppResult<Option<Value>> {
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut record_lines: Vec<String> = Vec::new();
+    let mut in_record = false;
+    let mut saw_array_start = false;
+    let mut saw_record = false;
+    let expected_id_line = format!("\"id\": {}", serde_json::to_string(id)?);
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let line = line.trim_end_matches('\n').to_string();
+        let trimmed = line.trim_start();
+
+        if !in_record {
+            if trimmed.starts_with('[') {
+                saw_array_start = true;
+                continue;
+            }
+            if trimmed.starts_with(']') {
+                break;
+            }
+            if trimmed.trim().is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('{') {
+                in_record = true;
+                saw_record = true;
+                record_lines.clear();
+                record_lines.push(line);
+                continue;
+            }
+            return Ok(None);
+        }
+
+        let is_id_line = trimmed
+            .strip_suffix(',')
+            .unwrap_or(trimmed)
+            .trim_end()
+            == expected_id_line;
+        record_lines.push(line);
+        if is_id_line {
+            loop {
+                let mut next_line = String::new();
+                let bytes = reader.read_line(&mut next_line)?;
+                if bytes == 0 {
+                    return Ok(None);
+                }
+                let next_line = next_line.trim_end_matches('\n').to_string();
+                let is_end = is_pretty_top_level_record_end(&next_line);
+                record_lines.push(next_line);
+                if is_end {
+                    let mut raw = record_lines.join("\n").into_bytes();
+                    strip_trailing_json_comma(&mut raw);
+                    let row: Value = serde_json::from_slice(&raw)?;
+                    if row.get("id").and_then(Value::as_str) == Some(id) {
+                        return Ok(Some(row));
+                    }
+                    in_record = false;
+                    record_lines.clear();
+                    break;
+                }
+            }
+        }
+
+        if is_pretty_top_level_record_end(record_lines.last().map(String::as_str).unwrap_or_default()) {
+            in_record = false;
+            record_lines.clear();
+        }
+    }
+
+    if !saw_array_start || in_record || !saw_record {
+        return Ok(None);
+    }
+    Ok(None)
 }
 
 fn parse_storage_message_cursor(cursor: &str) -> (String, Option<String>) {
@@ -2345,6 +2608,54 @@ mod tests {
     }
 
     #[test]
+    fn list_messages_for_chat_projected_skips_unrequested_fields() {
+        let root = temp_storage_root("list-messages-for-chat-projected");
+        let storage = FileStorage::new(&root).unwrap();
+        storage
+            .replace_all(
+                "messages",
+                vec![
+                    json!({
+                        "id": "skip-me",
+                        "chatId": "chat-b",
+                        "content": "skip",
+                        "extra": { "large": "ignored" },
+                        "swipes": [{ "content": "skip swipe", "extra": { "thinking": "skip thought" } }]
+                    }),
+                    json!({
+                        "id": "target",
+                        "chatId": "chat-a",
+                        "content": "stored content",
+                        "extra": { "large": "ignored", "hiddenFromAI": true },
+                        "swipes": [{ "content": "active swipe", "extra": { "thinking": "visible thought", "large": "ignored" } }]
+                    }),
+                ],
+            )
+            .unwrap();
+        let fields = vec![
+            "id".to_string(),
+            "chatId".to_string(),
+            "content".to_string(),
+            "extra".to_string(),
+        ];
+        let mut selections = Map::new();
+        selections.insert("extra".to_string(), json!(["thinking", "hiddenFromAI"]));
+
+        let rows = storage
+            .list_messages_for_chat_projected("chat-a", &fields, &selections)
+            .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "target");
+        assert_eq!(rows[0]["chatId"], "chat-a");
+        assert_eq!(rows[0]["content"], "stored content");
+        assert_eq!(rows[0]["extra"], json!({ "hiddenFromAI": true }));
+        assert!(rows[0].get("swipes").is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn count_messages_for_chat_counts_matching_rows_without_projection() {
         let root = temp_storage_root("count-messages-for-chat");
         let storage = FileStorage::new(&root).unwrap();
@@ -2363,6 +2674,94 @@ mod tests {
         assert_eq!(storage.count_messages_for_chat("chat-a").unwrap(), 2);
         assert_eq!(storage.count_messages_for_chat("chat-b").unwrap(), 1);
         assert_eq!(storage.count_messages_for_chat("missing").unwrap(), 0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn get_reads_pretty_record_by_id_when_data_precedes_id() {
+        let root = temp_storage_root("get-pretty-record-by-id");
+        let storage = FileStorage::new(&root).unwrap();
+        let collection = root.join("collections").join("characters.json");
+        fs::write(
+            &collection,
+            r#"[
+  {
+    "data": {
+      "description": "large skipped payload",
+      "name": "Skip"
+    },
+    "id": "skip-me"
+  },
+  {
+    "data": {
+      "description": "target payload",
+      "name": "Target"
+    },
+    "id": "target"
+  }
+]"#,
+        )
+        .unwrap();
+
+        let row = storage.get("characters", "target").unwrap().unwrap();
+
+        assert_eq!(row["id"], "target");
+        assert_eq!(row["data"]["name"], "Target");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn get_pretty_record_by_id_ignores_nested_id_matches() {
+        let root = temp_storage_root("get-pretty-record-ignore-nested-id");
+        let storage = FileStorage::new(&root).unwrap();
+        let collection = root.join("collections").join("characters.json");
+        fs::write(
+            &collection,
+            r#"[
+  {
+    "id": "owner",
+    "data": {
+      "book": {
+        "id": "target"
+      },
+      "name": "Wrong"
+    }
+  },
+  {
+    "id": "target",
+    "data": {
+      "name": "Target"
+    }
+  }
+]"#,
+        )
+        .unwrap();
+
+        let row = storage.get("characters", "target").unwrap().unwrap();
+
+        assert_eq!(row["id"], "target");
+        assert_eq!(row["data"]["name"], "Target");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn get_falls_back_for_compact_collection_json() {
+        let root = temp_storage_root("get-compact-record-by-id");
+        let storage = FileStorage::new(&root).unwrap();
+        let collection = root.join("collections").join("characters.json");
+        fs::write(
+            &collection,
+            r#"[{"data":{"name":"Skip"},"id":"skip-me"},{"data":{"name":"Target"},"id":"target"}]"#,
+        )
+        .unwrap();
+
+        let row = storage.get("characters", "target").unwrap().unwrap();
+
+        assert_eq!(row["id"], "target");
+        assert_eq!(row["data"]["name"], "Target");
 
         fs::remove_dir_all(root).unwrap();
     }
