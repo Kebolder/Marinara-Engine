@@ -1,6 +1,7 @@
 use marinara_core::{AppError, AppResult};
 use regex::{Captures, Regex};
 use serde_json::Value;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 use url::Url;
@@ -92,7 +93,80 @@ pub fn is_allowed_outbound_url(raw: &str, allow_local: bool) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
-    !matches!(host, "localhost" | "127.0.0.1" | "::1")
+    !is_local_or_reserved_host(host)
+}
+
+fn is_local_or_reserved_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_matches(['[', ']'])
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "localhost" | "localhost.localdomain" | "ip6-localhost" | "ip6-loopback"
+        )
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".local")
+        || normalized.ends_with(".internal")
+        || normalized.ends_with(".onion")
+    {
+        return true;
+    }
+    normalized
+        .parse::<IpAddr>()
+        .is_ok_and(is_local_or_reserved_ip)
+}
+
+pub fn is_local_or_reserved_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => is_local_or_reserved_ipv4(address),
+        IpAddr::V6(address) => is_local_or_reserved_ipv6(address),
+    }
+}
+
+fn is_local_or_reserved_ipv4(address: Ipv4Addr) -> bool {
+    let [a, b, c, _d] = address.octets();
+    matches!(a, 0 | 10 | 127)
+        || (a == 100 && (64..=127).contains(&b))
+        || (a == 169 && b == 254)
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && ((b == 0 && (c == 0 || c == 2)) || b == 168))
+        || (a == 198 && (b == 18 || b == 19))
+        || (a == 198 && b == 51 && c == 100)
+        || (a == 203 && b == 0 && c == 113)
+        || (224..=255).contains(&a)
+}
+
+fn is_local_or_reserved_ipv6(address: Ipv6Addr) -> bool {
+    if let Some(mapped) = embedded_ipv4(address) {
+        return is_local_or_reserved_ipv4(mapped);
+    }
+    let segments = address.segments();
+    address.is_unspecified()
+        || address.is_loopback()
+        || (segments[0] & 0xfe00) == 0xfc00
+        || (segments[0] & 0xffc0) == 0xfe80
+        || (segments[0] & 0xff00) == 0xff00
+        || (segments[0] == 0x2001 && segments[1] == 0)
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+        || (segments[0] == 0x0064
+            && segments[1] == 0xff9b
+            && segments[2] == 0
+            && segments[3] == 0
+            && segments[4] == 0
+            && segments[5] == 0)
+}
+
+fn embedded_ipv4(address: Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = address.segments();
+    if segments[..5] != [0, 0, 0, 0, 0] || !matches!(segments[5], 0 | 0xffff) {
+        return None;
+    }
+    let [a, b] = segments[6].to_be_bytes();
+    let [c, d] = segments[7].to_be_bytes();
+    Some(Ipv4Addr::new(a, b, c, d))
 }
 
 fn sensitive_pair_regex() -> &'static Regex {
@@ -160,8 +234,7 @@ fn sensitive_phrase_regex() -> &'static Regex {
 fn bearer_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{4,}"#)
-            .expect("bearer regex should compile")
+        Regex::new(r#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{4,}"#).expect("bearer regex should compile")
     })
 }
 
@@ -190,8 +263,10 @@ fn provider_key_regex() -> &'static Regex {
 fn sensitive_url_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)https?://[^\s"'<>)]*(?:payment|billing|checkout|invoice|retriev)[^\s"'<>)]*"#)
-            .expect("sensitive URL regex should compile")
+        Regex::new(
+            r#"(?i)https?://[^\s"'<>)]*(?:payment|billing|checkout|invoice|retriev)[^\s"'<>)]*"#,
+        )
+        .expect("sensitive URL regex should compile")
     })
 }
 
@@ -224,7 +299,9 @@ fn looks_sensitive_fragment(value: &str) -> bool {
     let trimmed = value.trim_matches(|character: char| !character.is_ascii_alphanumeric());
     trimmed.len() >= 4
         && (trimmed.chars().any(|character| character.is_ascii_digit())
-            || trimmed.chars().any(|character| matches!(character, '-' | '_' | '.'))
+            || trimmed
+                .chars()
+                .any(|character| matches!(character, '-' | '_' | '.'))
             || trimmed.len() >= 16)
 }
 
@@ -278,7 +355,9 @@ pub fn redact_sensitive_json(value: Value) -> Value {
                 })
                 .collect(),
         ),
-        Value::Array(values) => Value::Array(values.into_iter().map(redact_sensitive_json).collect()),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(redact_sensitive_json).collect())
+        }
         Value::String(value) => Value::String(redact_sensitive_text(&value)),
         other => other,
     }
@@ -302,8 +381,9 @@ mod tests {
 
     #[test]
     fn redact_sensitive_text_keeps_non_secret_session_and_token_counts() {
-        let redacted =
-            redact_sensitive_text("Invalid session. API key is invalid. usage input_tokens=12 output_tokens=3.");
+        let redacted = redact_sensitive_text(
+            "Invalid session. API key is invalid. usage input_tokens=12 output_tokens=3.",
+        );
 
         assert_eq!(
             redacted,
@@ -348,5 +428,41 @@ mod tests {
         assert_eq!(redacted["api_key"], "[REDACTED]");
         assert_eq!(redacted["usage"]["input_tokens"], 12);
         assert!(!redacted.to_string().contains("sk-test-secret"));
+    }
+
+    #[test]
+    fn outbound_url_policy_blocks_local_and_reserved_targets_when_local_disabled() {
+        for url in [
+            "http://localhost:3000/hook",
+            "http://127.0.0.1:3000/hook",
+            "http://10.1.2.3/hook",
+            "http://172.16.0.5/hook",
+            "http://192.168.1.5/hook",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]:3000/hook",
+            "http://[fc00::1]/hook",
+            "http://[::127.0.0.1]/hook",
+            "http://[::ffff:127.0.0.1]/hook",
+            "http://[::ffff:10.0.0.1]/hook",
+            "http://[2001::1]/hook",
+            "https://hidden-service.onion/hook",
+            "https://hidden-service.onion./hook",
+        ] {
+            assert!(
+                !is_allowed_outbound_url(url, false),
+                "local-disabled policy should reject {url}"
+            );
+            assert!(
+                is_allowed_outbound_url(url, true),
+                "local-enabled policy should accept {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn outbound_url_policy_keeps_public_https_targets_allowed() {
+        assert!(is_allowed_outbound_url("https://example.com/hook", false));
+        assert!(is_allowed_outbound_url("http://example.com/hook", false));
+        assert!(!is_allowed_outbound_url("file:///etc/passwd", true));
     }
 }
