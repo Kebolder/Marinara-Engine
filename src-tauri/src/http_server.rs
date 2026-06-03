@@ -4,7 +4,7 @@ use crate::storage_commands::{
     avatars, fonts, imports, llm, lorebook_images, managed_thumbnails, prompts,
 };
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Path, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -15,12 +15,14 @@ use base64::{engine::general_purpose, Engine as _};
 use marinara_core::AppError;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::env;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path as FsPath, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
@@ -29,6 +31,11 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 const CSRF_HEADER_NAME: &str = "x-marinara-csrf";
 const CSRF_HEADER_VALUE: &str = "1";
 const ADMIN_SECRET_HEADER_NAME: &str = "x-admin-secret";
+const MAX_API_BODY_BYTES: usize = 256 * 1024 * 1024;
+const DEFAULT_API_RATE_LIMIT: u32 = 600;
+const INVOKE_PRE_EXTRACTION_API_RATE_LIMIT: u32 = DEFAULT_API_RATE_LIMIT * 10;
+const DEFAULT_API_RATE_WINDOW: Duration = Duration::from_secs(60);
+const RATE_LIMIT_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_CORS_ORIGINS: [&str; 7] = [
     "http://localhost:1420",
     "http://127.0.0.1:1420",
@@ -81,6 +88,7 @@ fn request_log(message: impl AsRef<str>) {
 #[derive(Clone)]
 pub struct HttpState {
     app: AppState,
+    controls: HttpControls,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,7 +110,7 @@ pub async fn serve(state: AppState, addr: SocketAddr) -> Result<(), std::io::Err
 pub fn router(state: AppState) -> Router {
     let security = SecurityConfig::from_env();
     let cors_security = security.clone();
-    let middleware_security = security.clone();
+    let controls = HttpControls::new(security.clone());
     Router::new()
         .route("/health", get(health))
         .route("/api/invoke", post(invoke))
@@ -129,11 +137,15 @@ pub fn router(state: AppState) -> Router {
                 ])
                 .allow_credentials(true),
         )
+        .layer(DefaultBodyLimit::max(MAX_API_BODY_BYTES))
         .layer(middleware::from_fn_with_state(
-            middleware_security,
-            security_middleware,
+            controls.clone(),
+            api_controls_middleware,
         ))
-        .with_state(HttpState { app: state })
+        .with_state(HttpState {
+            app: state,
+            controls,
+        })
 }
 
 async fn health(State(state): State<HttpState>) -> Json<Value> {
@@ -478,18 +490,42 @@ async fn invoke(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<InvokeRequest>,
-) -> Result<Json<Value>, HttpError> {
+) -> Response {
     let command = request.command.clone();
     let started = Instant::now();
     request_log(format!("invoke {command} started"));
-    require_admin_access_for_command(&command, &headers, addr.ip())?;
+    let rate_limit =
+        state
+            .controls
+            .rate_limiter
+            .check_invoke_command(addr.ip(), &command, Instant::now());
+    if let Some(outcome) = rate_limit.as_ref().filter(|outcome| !outcome.is_allowed()) {
+        let mut response = api_json_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "Too many requests",
+        );
+        apply_rate_limit_headers(response.headers_mut(), outcome);
+        return response;
+    }
+    if let Err(error) = require_admin_access_for_command(&command, &headers, addr.ip()) {
+        let mut response = app_error_response(error);
+        if let Some(outcome) = &rate_limit {
+            apply_rate_limit_headers(response.headers_mut(), outcome);
+        }
+        return response;
+    }
     match dispatch(&state.app, request).await {
         Ok(value) => {
             request_log(format!(
                 "invoke {command} ok in {}ms",
                 started.elapsed().as_millis()
             ));
-            Ok(Json(value))
+            let mut response = Json(value).into_response();
+            if let Some(outcome) = &rate_limit {
+                apply_rate_limit_headers(response.headers_mut(), outcome);
+            }
+            response
         }
         Err(error) => {
             request_log(format!(
@@ -498,7 +534,11 @@ async fn invoke(
                 error.message,
                 started.elapsed().as_millis()
             ));
-            Err(error.into())
+            let mut response = app_error_response(error);
+            if let Some(outcome) = &rate_limit {
+                apply_rate_limit_headers(response.headers_mut(), outcome);
+            }
+            response
         }
     }
 }
@@ -793,6 +833,10 @@ impl From<AppError> for HttpError {
     }
 }
 
+fn app_error_response(error: AppError) -> Response {
+    HttpError(error).into_response()
+}
+
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = match self.0.code.as_str() {
@@ -813,6 +857,21 @@ impl IntoResponse for HttpError {
             "details": self.0.details,
         });
         (status, Json(payload)).into_response()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HttpControls {
+    security: SecurityConfig,
+    rate_limiter: ApiRateLimiter,
+}
+
+impl HttpControls {
+    fn new(security: SecurityConfig) -> Self {
+        Self {
+            security,
+            rate_limiter: ApiRateLimiter::default(),
+        }
     }
 }
 
@@ -851,19 +910,290 @@ struct SecurityRejection {
     www_authenticate: Option<String>,
 }
 
-async fn security_middleware(
-    State(security): State<SecurityConfig>,
+#[derive(Debug, Clone)]
+struct ApiRateLimiter {
+    state: Arc<Mutex<ApiRateLimiterState>>,
+}
+
+#[derive(Debug, Default)]
+struct ApiRateLimiterState {
+    buckets: HashMap<String, ApiRateLimitBucket>,
+    last_sweep_at: Option<Instant>,
+}
+
+#[derive(Debug)]
+struct ApiRateLimitBucket {
+    count: u32,
+    reset_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ApiRateLimitRule {
+    key: &'static str,
+    limit: u32,
+    window: Duration,
+}
+
+#[derive(Debug)]
+struct ApiRateLimitOutcome {
+    limit: u32,
+    remaining: u32,
+    reset_after: Duration,
+    retry_after: Option<Duration>,
+}
+
+impl Default for ApiRateLimiter {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ApiRateLimiterState::default())),
+        }
+    }
+}
+
+async fn api_controls_middleware(
+    State(controls): State<HttpControls>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    match security.evaluate_request(&request) {
+    let path = request.uri().path().to_string();
+    if let Some(response) = reject_oversized_api_body(&request) {
+        return response;
+    }
+
+    let rate_limit = controls
+        .rate_limiter
+        .check(remote_ip(&request), &path, Instant::now());
+    if let Some(outcome) = rate_limit.as_ref().filter(|outcome| !outcome.is_allowed()) {
+        let mut response = api_json_error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "Too many requests",
+        );
+        apply_rate_limit_headers(response.headers_mut(), outcome);
+        apply_security_headers(response.headers_mut());
+        apply_api_no_store_headers(response.headers_mut(), &path);
+        return response;
+    }
+
+    match controls.security.evaluate_request(&request) {
         Ok(()) => {
             let mut response = next.run(request).await;
+            if let Some(outcome) = &rate_limit {
+                apply_rate_limit_headers(response.headers_mut(), outcome);
+            }
             apply_security_headers(response.headers_mut());
+            apply_api_no_store_headers(response.headers_mut(), &path);
             response
         }
-        Err(rejection) => rejection.into_response(&security),
+        Err(rejection) => {
+            let mut response = rejection.into_response(&controls.security);
+            if let Some(outcome) = &rate_limit {
+                apply_rate_limit_headers(response.headers_mut(), outcome);
+            }
+            apply_api_no_store_headers(response.headers_mut(), &path);
+            response
+        }
     }
+}
+
+impl ApiRateLimiter {
+    fn check(&self, ip: IpAddr, path: &str, now: Instant) -> Option<ApiRateLimitOutcome> {
+        if !path.starts_with("/api/") {
+            return None;
+        }
+
+        let rule = rate_limit_rule_for_path(path);
+        Some(self.check_rule(ip, rule, now))
+    }
+
+    fn check_invoke_command(
+        &self,
+        ip: IpAddr,
+        command: &str,
+        now: Instant,
+    ) -> Option<ApiRateLimitOutcome> {
+        Some(self.check_rule(ip, rate_limit_rule_for_invoke_command(command), now))
+    }
+
+    fn check_rule(&self, ip: IpAddr, rule: ApiRateLimitRule, now: Instant) -> ApiRateLimitOutcome {
+        let key = format!("{}:{ip}", rule.key);
+        let mut state = self
+            .state
+            .lock()
+            .expect("API rate limiter state should not be poisoned");
+        sweep_expired_rate_limit_buckets(&mut state, now);
+        let bucket = state
+            .buckets
+            .entry(key)
+            .and_modify(|bucket| {
+                if bucket.reset_at <= now {
+                    bucket.count = 0;
+                    bucket.reset_at = now + rule.window;
+                }
+            })
+            .or_insert_with(|| ApiRateLimitBucket {
+                count: 0,
+                reset_at: now + rule.window,
+            });
+
+        bucket.count = bucket.count.saturating_add(1);
+        let remaining = rule.limit.saturating_sub(bucket.count);
+        let reset_after = bucket
+            .reset_at
+            .checked_duration_since(now)
+            .unwrap_or_default();
+        let retry_after = (bucket.count > rule.limit).then_some(reset_after);
+
+        ApiRateLimitOutcome {
+            limit: rule.limit,
+            remaining,
+            reset_after,
+            retry_after,
+        }
+    }
+}
+
+impl ApiRateLimitOutcome {
+    fn is_allowed(&self) -> bool {
+        self.retry_after.is_none()
+    }
+}
+
+fn sweep_expired_rate_limit_buckets(state: &mut ApiRateLimiterState, now: Instant) {
+    let should_sweep = state
+        .last_sweep_at
+        .and_then(|last| now.checked_duration_since(last))
+        .is_none_or(|elapsed| elapsed >= RATE_LIMIT_SWEEP_INTERVAL);
+    if !should_sweep {
+        return;
+    }
+    state.last_sweep_at = Some(now);
+    state.buckets.retain(|_, bucket| bucket.reset_at > now);
+}
+
+fn rate_limit_rule_for_path(path: &str) -> ApiRateLimitRule {
+    if api_llm_stream_cancel_path(path) {
+        ApiRateLimitRule {
+            key: "llm-stream-cancel",
+            limit: DEFAULT_API_RATE_LIMIT,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if api_route_matches(path, "/api/llm/stream") {
+        ApiRateLimitRule {
+            key: "generate",
+            limit: 60,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if api_route_matches(path, "/api/sidecar") {
+        ApiRateLimitRule {
+            key: "sidecar",
+            limit: 20,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if api_route_matches(path, "/api/import/st-bulk") {
+        ApiRateLimitRule {
+            key: "bulk-import",
+            limit: 20,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if api_route_matches(path, "/api/invoke") {
+        ApiRateLimitRule {
+            key: "invoke-pre-extraction",
+            limit: INVOKE_PRE_EXTRACTION_API_RATE_LIMIT,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else {
+        default_api_rate_limit_rule()
+    }
+}
+
+fn rate_limit_rule_for_invoke_command(command: &str) -> ApiRateLimitRule {
+    if command == "update_apply" {
+        ApiRateLimitRule {
+            key: "command-updates-apply",
+            limit: 5,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if command.starts_with("backup_") {
+        ApiRateLimitRule {
+            key: "command-backup",
+            limit: 30,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if matches!(command, "import_st_bulk_run" | "import_st_bulk_scan") {
+        ApiRateLimitRule {
+            key: "command-bulk-import",
+            limit: 20,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else if command == "haptic_command" {
+        ApiRateLimitRule {
+            key: "command-haptic",
+            limit: 30,
+            window: DEFAULT_API_RATE_WINDOW,
+        }
+    } else {
+        default_api_rate_limit_rule()
+    }
+}
+
+fn default_api_rate_limit_rule() -> ApiRateLimitRule {
+    ApiRateLimitRule {
+        key: "default",
+        limit: DEFAULT_API_RATE_LIMIT,
+        window: DEFAULT_API_RATE_WINDOW,
+    }
+}
+
+fn api_llm_stream_cancel_path(path: &str) -> bool {
+    path.starts_with("/api/llm/stream/") && path.ends_with("/cancel")
+}
+
+fn api_route_matches(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn reject_oversized_api_body(request: &Request<Body>) -> Option<Response> {
+    let path = request.uri().path();
+    if !path.starts_with("/api/") || !is_unsafe_method(request.method()) {
+        return None;
+    }
+
+    let content_length = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())?;
+    if content_length <= MAX_API_BODY_BYTES {
+        return None;
+    }
+
+    let mut response = api_json_error_response(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "request_body_too_large",
+        "Request body is too large",
+    );
+    apply_security_headers(response.headers_mut());
+    apply_api_no_store_headers(response.headers_mut(), path);
+    Some(response)
+}
+
+fn api_json_error_response(
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+) -> Response {
+    (
+        status,
+        Json(json!({
+            "code": code,
+            "message": message,
+        })),
+    )
+        .into_response()
 }
 
 impl SecurityConfig {
@@ -1149,6 +1479,33 @@ fn apply_security_headers(headers: &mut HeaderMap) {
             "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), xr-spatial-tracking=()",
         ),
     );
+}
+
+fn apply_api_no_store_headers(headers: &mut HeaderMap, path: &str) {
+    if path.starts_with("/api/") && !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+}
+
+fn apply_rate_limit_headers(headers: &mut HeaderMap, outcome: &ApiRateLimitOutcome) {
+    if let Ok(value) = HeaderValue::from_str(&outcome.limit.to_string()) {
+        headers.insert(HeaderName::from_static("ratelimit-limit"), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&outcome.remaining.to_string()) {
+        headers.insert(HeaderName::from_static("ratelimit-remaining"), value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&duration_header_seconds(outcome.reset_after)) {
+        headers.insert(HeaderName::from_static("ratelimit-reset"), value);
+    }
+    if let Some(retry_after) = outcome.retry_after {
+        if let Ok(value) = HeaderValue::from_str(&duration_header_seconds(retry_after)) {
+            headers.insert(header::RETRY_AFTER, value);
+        }
+    }
+}
+
+fn duration_header_seconds(duration: Duration) -> String {
+    duration.as_secs().max(1).to_string()
 }
 
 fn remote_ip(request: &Request<Body>) -> IpAddr {
@@ -1479,6 +1836,251 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("public, max-age=86400")
         );
+    }
+
+    #[test]
+    fn api_no_store_headers_apply_only_to_api_responses() {
+        let mut api_headers = HeaderMap::new();
+        apply_api_no_store_headers(&mut api_headers, "/api/invoke");
+        assert_eq!(
+            api_headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+
+        let mut preserved_headers = HeaderMap::new();
+        preserved_headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=86400"),
+        );
+        apply_api_no_store_headers(&mut preserved_headers, "/api/assets/gallery/scene.png");
+        assert_eq!(
+            preserved_headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("public, max-age=86400")
+        );
+
+        let mut asset_headers = HeaderMap::new();
+        apply_api_no_store_headers(&mut asset_headers, "/assets/app.js");
+        assert!(asset_headers.get(header::CACHE_CONTROL).is_none());
+    }
+
+    #[test]
+    fn api_body_size_rejects_oversized_unsafe_api_requests() {
+        let request = request(
+            Method::POST,
+            "/api/invoke",
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            &[("content-length", &(MAX_API_BODY_BYTES + 1).to_string())],
+        );
+
+        let response =
+            reject_oversized_api_body(&request).expect("oversized API body should reject");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+    }
+
+    #[test]
+    fn api_body_size_does_not_reject_non_api_or_safe_requests() {
+        let asset_request = request(
+            Method::POST,
+            "/assets/upload",
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            &[("content-length", &(MAX_API_BODY_BYTES + 1).to_string())],
+        );
+        assert!(reject_oversized_api_body(&asset_request).is_none());
+
+        let get_request = request(
+            Method::GET,
+            "/api/assets/gallery/scene.png",
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            &[("content-length", &(MAX_API_BODY_BYTES + 1).to_string())],
+        );
+        assert!(reject_oversized_api_body(&get_request).is_none());
+    }
+
+    #[test]
+    fn api_rate_limiter_returns_retry_after_when_route_bucket_is_exhausted() {
+        let limiter = ApiRateLimiter::default();
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
+        let now = Instant::now();
+
+        for _ in 0..5 {
+            let outcome = limiter
+                .check_invoke_command(ip, "update_apply", now)
+                .expect("invoke command should be rate limited");
+            assert!(outcome.is_allowed());
+            assert!(outcome.retry_after.is_none());
+        }
+
+        let blocked = limiter
+            .check_invoke_command(ip, "update_apply", now)
+            .expect("invoke command should be rate limited");
+        assert!(!blocked.is_allowed());
+        assert_eq!(blocked.limit, 5);
+        assert_eq!(blocked.remaining, 0);
+        assert!(blocked.retry_after.is_some());
+
+        let mut headers = HeaderMap::new();
+        apply_rate_limit_headers(&mut headers, &blocked);
+        let retry_after = headers
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .expect("retry-after should be present");
+        assert!((1..=60).contains(&retry_after));
+        assert_eq!(
+            headers
+                .get("ratelimit-limit")
+                .and_then(|value| value.to_str().ok()),
+            Some("5")
+        );
+    }
+
+    #[test]
+    fn api_rate_limiter_uses_default_bucket_and_skips_non_api_paths() {
+        let limiter = ApiRateLimiter::default();
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 11));
+        let now = Instant::now();
+
+        let api = limiter
+            .check(ip, "/api/backup", now)
+            .expect("API path should be rate limited");
+        assert_eq!(api.limit, DEFAULT_API_RATE_LIMIT);
+        assert!(api.is_allowed());
+
+        assert!(limiter.check(ip, "/health", now).is_none());
+    }
+
+    #[test]
+    fn api_route_specific_rules_cover_dedicated_remote_paths() {
+        assert_eq!(rate_limit_rule_for_path("/api/llm/stream").limit, 60);
+        assert_eq!(
+            rate_limit_rule_for_path("/api/llm/stream/stream-1/cancel").key,
+            "llm-stream-cancel"
+        );
+        assert_eq!(
+            rate_limit_rule_for_path("/api/llm/stream/stream-1/cancel").limit,
+            DEFAULT_API_RATE_LIMIT
+        );
+        assert_eq!(
+            rate_limit_rule_for_path("/api/import/st-bulk/run").limit,
+            20
+        );
+        assert_eq!(
+            rate_limit_rule_for_path("/api/sidecar/v1/embeddings").limit,
+            20
+        );
+        assert_eq!(
+            rate_limit_rule_for_path("/api/invoke").limit,
+            INVOKE_PRE_EXTRACTION_API_RATE_LIMIT
+        );
+        assert_eq!(rate_limit_rule_for_path("/api/backup").limit, 600);
+    }
+
+    #[test]
+    fn api_invoke_pre_extraction_bucket_does_not_undercut_command_budget() {
+        let path_rule = rate_limit_rule_for_path("/api/invoke");
+        let command_rule = rate_limit_rule_for_invoke_command("storage_list");
+        assert_eq!(path_rule.key, "invoke-pre-extraction");
+        assert!(path_rule.limit > command_rule.limit);
+
+        let limiter = ApiRateLimiter::default();
+        let ip = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 12));
+        let now = Instant::now();
+
+        for _ in 0..DEFAULT_API_RATE_LIMIT {
+            let outcome = limiter
+                .check(ip, "/api/invoke", now)
+                .expect("invoke path should be rate limited before extraction");
+            assert!(outcome.is_allowed());
+        }
+
+        let coarse_after_command_budget = limiter
+            .check(ip, "/api/invoke", now)
+            .expect("invoke path should be rate limited before extraction");
+        assert!(coarse_after_command_budget.is_allowed());
+
+        let command_after_coarse_budget = limiter
+            .check_invoke_command(ip, "storage_list", now)
+            .expect("invoke command should be rate limited after extraction");
+        assert!(command_after_coarse_budget.is_allowed());
+        assert_eq!(command_after_coarse_budget.limit, DEFAULT_API_RATE_LIMIT);
+    }
+
+    #[test]
+    fn api_invoke_command_rules_cover_sensitive_dispatch_commands() {
+        assert_eq!(rate_limit_rule_for_invoke_command("backup_list").limit, 30);
+        assert_eq!(rate_limit_rule_for_invoke_command("update_apply").limit, 5);
+        assert_eq!(
+            rate_limit_rule_for_invoke_command("import_st_bulk_run").limit,
+            20
+        );
+        assert_eq!(
+            rate_limit_rule_for_invoke_command("haptic_command").limit,
+            30
+        );
+        assert_eq!(
+            rate_limit_rule_for_invoke_command("storage_list").limit,
+            DEFAULT_API_RATE_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn api_invoke_enforces_command_specific_rate_limit_at_dispatch_boundary() {
+        let state = HttpState {
+            app: test_state("invoke-command-rate-limit"),
+            controls: HttpControls::new(test_security()),
+        };
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 54321);
+
+        for _ in 0..5 {
+            let response = invoke(
+                State(state.clone()),
+                ConnectInfo(addr),
+                HeaderMap::new(),
+                Json(InvokeRequest {
+                    command: "update_apply".to_string(),
+                    args: Some(json!({ "input": { "confirm": false } })),
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("ratelimit-limit")
+                    .and_then(|value| value.to_str().ok()),
+                Some("5")
+            );
+        }
+
+        let blocked = invoke(
+            State(state),
+            ConnectInfo(addr),
+            HeaderMap::new(),
+            Json(InvokeRequest {
+                command: "update_apply".to_string(),
+                args: Some(json!({ "input": { "confirm": false } })),
+            }),
+        )
+        .await;
+        assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry_after = blocked
+            .headers()
+            .get(header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .expect("retry-after should be present");
+        assert!((1..=60).contains(&retry_after));
     }
 
     #[tokio::test]
