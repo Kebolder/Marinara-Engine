@@ -718,11 +718,38 @@ function formatAgentBubble(result: AgentResult, agentName: string): string | nul
           .join("\n") || null
       );
     }
+    case "echo-chamber": {
+      const reactions = Array.isArray(data.reactions) ? data.reactions : [];
+      const count = reactions.length;
+      return count > 0 ? `${count} echo reaction${count === 1 ? "" : "s"}` : "Echo chamber checked.";
+    }
+    case "background": {
+      const chosen = readString(data.chosen).trim();
+      if (chosen) return `Background: ${chosen}`;
+      const generated = parseMaybeRecord(data.generate);
+      const prompt = readString(generated.prompt).trim();
+      if (prompt) return "Requested generated background.";
+      return "Background checked.";
+    }
     case "html":
       return readString(data.text, "HTML formatting active");
     default:
       return agentName ? null : null;
   }
+}
+
+function formatAgentActivityFallback(result: AgentResult): string {
+  if (result.agentType === "world-state" || result.type === "game_state_update") return "Updated world state.";
+  if (result.agentType === "character-tracker" || result.type === "character_tracker_update")
+    return "Updated character tracker.";
+  if (result.agentType === "persona-stats" || result.type === "persona_stats_update")
+    return "Updated persona stats.";
+  if (result.agentType === "custom-tracker" || result.type === "custom_tracker_update")
+    return "Updated custom tracker.";
+  if (result.type === "background_change" || result.agentType === "background") return "Background checked.";
+  if (result.agentType === "echo-chamber") return "Echo chamber checked.";
+  if (result.type === "sprite_change" || result.agentType === "expression") return "Expression checked.";
+  return "Triggered.";
 }
 
 function isTrackerStyleAgentResult(result: AgentResult): boolean {
@@ -1072,7 +1099,7 @@ async function applyAgentResultEffects(
     options.showTrackerBubbles === false && isTrackerStyleAgentResult(result)
       ? null
       : formatAgentBubble(result, agentName);
-  if (bubble) agentStore.addThoughtBubble(result.agentType, agentName, bubble);
+  agentStore.addThoughtBubble(result.agentType, agentName, bubble ?? formatAgentActivityFallback(result));
 
   const data = parseMaybeRecord(result.data);
   if (result.agentType === "echo-chamber") {
