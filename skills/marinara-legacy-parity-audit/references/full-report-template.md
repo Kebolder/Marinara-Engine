@@ -1,6 +1,6 @@
-# Legacy Parity Audit Report Template
+# Full Legacy Parity Audit Report Template
 
-Use this shape for final reports. Remove sections that do not apply.
+Use this shape for broad target audits. Remove sections that do not apply.
 
 ## Audit Gate
 

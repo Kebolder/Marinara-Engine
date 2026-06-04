@@ -1,6 +1,6 @@
 ---
 name: marinara-legacy-parity-audit
-description: "Compare a Marinara Engine refactor feature, contract, schema, storage format, runtime behavior, performance path, or product surface against legacy Marinara to find regressions, parity gaps, current refactor defects, remote/embedded drift, and places where legacy still works better. Trigger keyword: parityscan. Use when any user asks for legacy parity, feature regression analysis, what remains from legacy, what refactor lost, legacy vs refactor comparison, contract/schema parity, or parity audits for Character, Persona, Lorebook, Chat, Roleplay, Game, providers, agents, tools, sprites, engine contracts, schemas, imports, exports, settings, storage, migrations, or other Marinara product areas."
+description: "Compare Marinara Engine refactor behavior against legacy Marinara to find regressions, parity gaps, current refactor defects, remote/embedded drift, and legacy-better workflows. Trigger keyword: parityscan. Use for full, static-trace, row-only, follow-up, or report-only parity scans across product surfaces, contracts, schemas, storage, migrations, import/export, settings, providers, modes, agents, tools, sprites, runtime behavior, and performance paths."
 ---
 
 # Marinara Legacy Parity Audit
@@ -8,6 +8,30 @@ description: "Compare a Marinara Engine refactor feature, contract, schema, stor
 Use this skill to compare the current Marinara Engine refactor repo with legacy Marinara for one feature, contract, schema, storage format, runtime behavior, or product area. Focus on product-important missing behavior, likely accidental regressions, current refactor defects, and legacy flows that still work better.
 
 Activation keyword: `parityscan`.
+
+## Fast Path
+
+1. Pick the cheapest scan mode that proves the user's claim.
+2. Resolve the refactor and legacy paths.
+3. Load only the references needed for that mode and target.
+4. Search exact leads first in both codebases.
+5. Classify with code, runtime, issue, or artifact evidence; never classify from memory.
+6. Report with either the compact or full template.
+
+Stop when the named target has refactor evidence, legacy evidence or justified absence, classification, next action, and uncertainty. Do not widen into adjacent targets unless one concrete risk crosses that boundary.
+
+## Scan Modes
+
+Default to the narrowest mode:
+
+| User request shape | Mode |
+| --- | --- |
+| Exact tracker row, issue bullet, symbol, command, or file | `row-only` + `static-trace` + `report-only` |
+| "Continue", "follow-up", "same target", or nearby row IDs | `follow-up` + `static-trace` unless runtime proof is requested |
+| Current refactor bug/risk with legacy only as context | `static-trace`; legacy lookup is optional until parity classification depends on it |
+| Broad target, target refresh, issue update, PR support, or unclear/risky scope | `full` |
+
+Load `references/scan-modes.md` when mode choice is unclear, the user sets multiple mode constraints, or the task involves follow-up/report-only boundaries.
 
 ## Path Setup
 
@@ -24,84 +48,40 @@ If no local legacy path is available and network access or cloning/fetching is b
 
 ## Required Context
 
-Before auditing:
+Before auditing, read the refactor repo `AGENTS.md`.
 
-1. Read the refactor repo `AGENTS.md`.
-2. Load repo-local `skills/marinara-agent-workflow/SKILL.md`.
-3. Use `skills/marinara-agent-workflow/references/workflows/investigate.md` unless the user explicitly wants fixes, PR work, issue filing, or another workflow lane.
-4. Load `skills/marinara-architecture-guard/SKILL.md` for imports, ownership, shared API wrappers, storage, Tauri, HTTP dispatch, remote runtime, or cross-boundary concerns.
-5. Load `skills/marinara-mode-separation/SKILL.md` for Chat, Roleplay, Game, prompt assembly, generation routing, scene logic, autonomous flows, or mode UI.
-6. Load `skills/marinara-bugfix-discipline/SKILL.md` if editing code becomes part of the task.
+Load extra workflow only when needed:
+
+| Need | Load |
+| --- | --- |
+| `full` scan, nontrivial scan, issue/PR work, code edits, or unclear/risky symptoms | `skills/marinara-agent-workflow/SKILL.md` plus the matching workflow card |
+| imports, ownership, shared API wrappers, storage, Tauri, HTTP dispatch, remote runtime, or cross-boundary concerns | `skills/marinara-architecture-guard/SKILL.md` |
+| Chat, Roleplay, Game, prompt assembly, generation routing, scene logic, autonomous flows, or mode UI | `skills/marinara-mode-separation/SKILL.md` |
+| code edits or root-cause repair | `skills/marinara-bugfix-discipline/SKILL.md` |
 
 Treat user-provided topic skills, local notes, GitHub issues, and PRs as optional leads. Do not require personal skills or private notes. Confirm every finding with code, runtime, or artifact evidence.
 
-## GitHub Parity Tracking
+## Reference Router
 
-Use GitHub issues as the durable parityscan tracker so the workflow works for all
-contributors, not only one operator's local checkout:
+Load references only when their condition applies:
 
-1. Treat #1904 as the source-of-truth parityscan index for target order,
-   target-level status, status vocabulary, report links, and follow-up state.
-2. Use target detail issues when they exist, such as #2011, #2028, and #2050,
-   instead of local `scratch/parity/targets/<target>.md` records.
-3. If a target detail exists only as a user-provided project draft, read it as a
-   planning lead when available, but do not publish, convert, or update draft
-   issues unless the user explicitly asks.
-4. If no target detail issue exists, post the parityscan report to #1904 and ask
-   before opening or publishing a new target detail issue.
-5. Use issue state to distinguish `scan_status`, `parity_verdict`, and
-   `proof_level`; do not treat a checked #1904 target row or closed follow-up
-   issue as proof that a target is on par.
+| Condition | Reference |
+| --- | --- |
+| mode choice, row-only/follow-up/report-only guardrails, prompt examples | `references/scan-modes.md` |
+| target numbers, status terms, proof levels, detail issues, #1904 tracker updates | `references/tracker-context.md` |
+| exact search strategy, audit path, commands, absence wording, evidence standard | `references/search-and-evidence.md` |
+| CRUD, editors, import/export, runtime, media, storage, performance, UX, architecture, proof coverage | `references/audit-checklists.md` |
+| storage, catalog data, chats/messages, avatars, cold-load, projection, pagination, payload, media latency | `references/storage-hot-paths.md` |
+| final classification labels | `references/classification-guide.md` |
+| row-only, follow-up, static-trace, or report-only output | `references/compact-report.md` |
+| broad target output | `references/full-report-template.md` |
 
-If old local scratch parity files exist, treat them as migration inputs only.
-They may help recover prior surface inventories or proof notes, but GitHub issue
-bodies and comments supersede them. Do not create or update
-`scratch/parity/INDEX.md` or `scratch/parity/targets/*.md` as durable tracker
-state.
+For row-only and follow-up scans, load only the exact references needed by the named row unless evidence crosses a risky boundary.
 
-## Audit Flow
+## Non-Negotiables
 
-1. State the audit gate before deep comparison: target aliases, contract surface, refactor owner, legacy owner, risk level, proof target, issue/PR coverage, and included/excluded downstream consumers.
-2. Search both codebases with `rg` using target terms, schema names, field names, UI labels, commands, routes, storage keys, and serialized formats.
-3. Trace the full path for runtime behavior: refactor UI to engine/shared API/Tauri/Rust, and legacy UI to client/server/shared. Do not stop at a visible button when persistence, prompt assembly, generation, import/export, or asset resolution matters.
-4. For contracts and storage formats, trace producers, consumers, migrations or compatibility repair, import/export, and user-visible workflows.
-5. Check `docs/REFACTOR_PARITY_PIPELINE.md#known-intentional-divergences` before classifying a legacy/refactor difference as a gap.
-6. Search open issues and PRs for the target when GitHub access or `gh` is available. Treat issue bodies, project drafts, and #1904 tracker rows as leads, not proof.
-7. Load `references/audit-checklists.md` when the target touches CRUD, editors, import/export, runtime behavior, media, storage, performance, UX, architecture, or proof coverage.
-8. Load `references/classification-guide.md` before classifying final findings.
-9. Load `references/report-template.md` when drafting the final audit.
-
-Useful starting commands:
-
-```powershell
-rg -n "<target>|<Target>|<schemaName>|<schemaField>|<ui label>|<command>|<storageKey>" src src-tauri public skills
-rg -n "<target>|<Target>|<schemaName>|<schemaField>|<ui label>|<route>|<api>|<storageKey>" <legacy-root>
-gh issue list --repo Pasta-Devs/Marinara-Engine --state open --search "<target terms>" --json number,title,body,labels,url
-gh pr list --repo Pasta-Devs/Marinara-Engine --state open --search "<target terms>" --json number,title,body,labels,url
-```
-
-For storage or hot-path audits, also search:
-
-```powershell
-rg -n "storage_list|storage_get|storage_create|fields|fieldSelections|projection|pagination|before|list_messages|avatarPath|swipes|extra|http_dispatch|remote-runtime" src src-tauri
-```
-
-## Evidence Standard
-
-Every finding needs evidence from both sides when possible:
-
-- Cite refactor files with line references.
-- Cite legacy files with line references.
-- Mention commands or searches used when they materially support absence or presence.
-- Mark absence carefully: "No matching refactor path found in searches X/Y/Z" rather than "does not exist" unless code structure proves it.
-- Distinguish code-level support from app-proven behavior.
-- For issue-backed leads, cite the issue or PR number, then cite confirming code or runtime evidence.
-- For performance findings, include the call shape, expected payload shape, large fields involved, and whether proof is measured, reproduced, or static-only.
-
-When line references are unavailable, include exact file paths and symbols. Do not rely only on old skill references, memory, or naming similarity.
-
-## Output Shape
-
-Use `references/report-template.md` for final reports. Start with the highest-severity confirmed regressions and likely-unintentional gaps. Separate legacy parity findings, legacy-better workflows, current refactor defects/risks, intentional divergences, and refactor-better areas. End with recommended next actions ordered by value and risk.
-
-Do not open issues, edit scratch notes, or modify code unless the user asks for that next step or standing instructions require it for an out-of-scope actionable finding.
+- State the audit gate before deep comparison: target aliases, contract surface, refactor owner, legacy owner, risk level, proof target, issue/PR coverage, and included/excluded downstream consumers.
+- Check `docs/REFACTOR_PARITY_PIPELINE.md#known-intentional-divergences` before classifying a legacy/refactor difference as a gap.
+- Use GitHub issues as the durable tracker; old `scratch/parity/*` files are migration inputs only.
+- In `report-only`, do not post comments, edit issues, file follow-ups, update tracker rows, modify code, or create/update parity tracker state.
+- Do not open issues, update PRs, edit scratch notes, or modify code unless the user asks for that next step or standing instructions require it for an out-of-scope actionable finding.
