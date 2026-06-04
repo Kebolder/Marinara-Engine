@@ -3,7 +3,7 @@
 // Like SillyTavern's "Manage chat files" feature
 // ──────────────────────────────────────────────
 import { useRef, useState } from "react";
-import { X, Trash2, FileText, MessageSquare, Download, Pencil, Upload } from "lucide-react";
+import { X, Trash2, FileText, MessageSquare, Download, Pencil, Upload, Loader2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { showConfirmDialog } from "../../../../../shared/lib/app-dialogs";
@@ -40,11 +40,18 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
   const [isImporting, setIsImporting] = useState(false);
 
   const chatFiles = (groupChats ?? []) as Chat[];
+  const isGroupDeletePending = deleteChatGroup.isPending;
+
+  const handleClose = () => {
+    if (isGroupDeletePending) return;
+    onClose();
+  };
 
   const handleImportChat = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+    if (isGroupDeletePending) return;
 
     setIsImporting(true);
     try {
@@ -78,6 +85,7 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
   };
 
   const handleSwitch = (chatId: string) => {
+    if (isGroupDeletePending) return;
     setActiveChatId(chatId);
     onClose();
   };
@@ -125,13 +133,13 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
   if (!groupId) {
     return (
       <>
-        <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
+        <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={handleClose} />
         <div className="absolute right-0 top-0 z-50 flex h-full w-80 max-md:w-full flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-2xl animate-fade-in-up max-md:pt-[env(safe-area-inset-top)]">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
             <h3 className="text-sm font-bold">Manage Chat Files</h3>
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               aria-label="Close chat files drawer"
               className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
             >
@@ -194,7 +202,7 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
   return (
     <>
       {/* Backdrop */}
-      <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[2px]" onClick={handleClose} />
 
       {/* Drawer */}
       <div className="absolute right-0 top-0 z-50 flex h-full w-80 max-md:w-full flex-col border-l border-[var(--border)] bg-[var(--background)] shadow-2xl animate-fade-in-up max-md:pt-[env(safe-area-inset-top)]">
@@ -203,9 +211,10 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
           <h3 className="text-sm font-bold">Manage Chat Files</h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleClose}
+            disabled={deleteChatGroup.isPending}
             aria-label="Close chat files drawer"
-            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
+            className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)] disabled:cursor-wait disabled:opacity-50"
           >
             <X size="1rem" />
           </button>
@@ -219,16 +228,16 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
           <div className="flex gap-2">
             <button
               onClick={() => exportChat.mutate({ chatId: activeChatId ?? chat.id, format: "jsonl" })}
-              disabled={exportChat.isPending}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:opacity-50"
+              disabled={exportChat.isPending || isGroupDeletePending}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:cursor-wait disabled:opacity-50 disabled:hover:bg-[var(--secondary)]"
             >
               <Download size="0.8125rem" />
               JSONL
             </button>
             <button
               onClick={() => exportChat.mutate({ chatId: activeChatId ?? chat.id, format: "text" })}
-              disabled={exportChat.isPending}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:opacity-50"
+              disabled={exportChat.isPending || isGroupDeletePending}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:cursor-wait disabled:opacity-50 disabled:hover:bg-[var(--secondary)]"
             >
               <FileText size="0.8125rem" />
               Text
@@ -246,9 +255,12 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
           </p>
           <button
             type="button"
-            onClick={() => importInputRef.current?.click()}
-            disabled={isImporting}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:opacity-50"
+            onClick={() => {
+              if (isGroupDeletePending) return;
+              importInputRef.current?.click();
+            }}
+            disabled={isImporting || isGroupDeletePending}
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98] disabled:cursor-wait disabled:opacity-50 disabled:hover:bg-[var(--secondary)]"
           >
             <Upload size="0.8125rem" />
             {isImporting ? "Importing…" : "JSONL"}
@@ -272,9 +284,13 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
                 <div
                   key={cf.id}
                   onClick={() => handleSwitch(cf.id)}
+                  aria-disabled={isGroupDeletePending}
                   className={cn(
-                    "group flex cursor-pointer items-center gap-3 rounded-xl p-2.5 transition-all",
-                    isActive ? "bg-sky-400/10 ring-1 ring-sky-400/30" : "hover:bg-[var(--accent)]",
+                    "group flex items-center gap-3 rounded-xl p-2.5 transition-all",
+                    isGroupDeletePending ? "cursor-wait opacity-70" : "cursor-pointer",
+                    isActive
+                      ? "bg-sky-400/10 ring-1 ring-sky-400/30"
+                      : !isGroupDeletePending && "hover:bg-[var(--accent)]",
                   )}
                 >
                   <div
@@ -303,9 +319,11 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (isGroupDeletePending) return;
                           void handleRename(cf);
                         }}
-                        className="rounded-lg p-1.5 transition-all hover:bg-[var(--accent)]/80 active:scale-[0.95] ring-1 ring-transparent hover:ring-[var(--border)]"
+                        disabled={isGroupDeletePending}
+                        className="rounded-lg p-1.5 ring-1 ring-transparent transition-all hover:bg-[var(--accent)]/80 hover:ring-[var(--border)] active:scale-[0.95] disabled:cursor-wait disabled:opacity-60 disabled:hover:bg-transparent disabled:hover:ring-transparent"
                         title="Rename branch"
                       >
                         <Pencil size="0.75rem" className="text-[var(--muted-foreground)]" />
@@ -313,9 +331,10 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (isGroupDeletePending) return;
                           void handleDelete(cf.id);
                         }}
-                        disabled={deleteChat.isPending}
+                        disabled={deleteChat.isPending || isGroupDeletePending}
                         className="rounded-lg p-1.5 transition-all hover:bg-[var(--destructive)]/15"
                         title="Delete branch"
                       >
@@ -343,15 +362,22 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
               ) {
                 return;
               }
-              deleteChatGroup.mutate(groupId);
-              setActiveChatId(null);
-              onClose();
+              deleteChatGroup.mutate(groupId, {
+                onSuccess: () => {
+                  setActiveChatId(null);
+                  onClose();
+                },
+              });
             }}
             disabled={deleteChatGroup.isPending}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--destructive)]/10 px-3 py-2 text-xs font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/20 transition-all hover:bg-[var(--destructive)]/20 active:scale-[0.98] disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--destructive)]/10 px-3 py-2 text-xs font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/20 transition-all hover:bg-[var(--destructive)]/20 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
           >
-            <Trash2 size="0.8125rem" />
-            Delete Entire Group
+            {deleteChatGroup.isPending ? (
+              <Loader2 size="0.8125rem" className="animate-spin" />
+            ) : (
+              <Trash2 size="0.8125rem" />
+            )}
+            {deleteChatGroup.isPending ? "Deleting group..." : "Delete Entire Group"}
           </button>
         </div>
       </div>
