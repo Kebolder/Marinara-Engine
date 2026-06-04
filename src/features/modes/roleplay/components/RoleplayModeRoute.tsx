@@ -4,7 +4,6 @@ import { useChatStore } from "../../../../shared/stores/chat.store";
 import { useEncounterStore } from "../../../../shared/stores/encounter.store";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import { spriteApi } from "../../../../shared/api/image-generation-api";
-import { agentConfigEnabled, useAgentConfigs, type AgentConfigRow } from "../../../catalog/agents/index";
 import { useDeleteChat } from "../../../catalog/chats/index";
 import { spriteKeys, type SpriteInfo } from "../../../catalog/sprites/index";
 import {
@@ -85,7 +84,6 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
     fallbackChatMode,
     personaFallback: "active-persona",
   });
-  const { data: agentConfigs } = useAgentConfigs();
   const { chatBackground, updateMeta } = useChatMetadataSync({
     chat: data.chat,
     chatMeta: data.chatMeta,
@@ -96,18 +94,11 @@ export function RoleplayModeRoute({ activeChatId, fallbackChatMode = "roleplay" 
   const enabledAgentTypes = useMemo(() => {
     const set = new Set<string>();
     const activeAgentIds: string[] = Array.isArray(data.chatMeta.activeAgentIds) ? data.chatMeta.activeAgentIds : [];
-    if (activeAgentIds.length === 0) return set;
-    const enabledById = new Map<string, boolean>();
-    for (const config of (agentConfigs ?? []) as AgentConfigRow[]) {
-      const enabled = agentConfigEnabled(config.enabled, true);
-      enabledById.set(config.id, enabled);
-      enabledById.set(config.type, enabled);
-    }
     for (const id of activeAgentIds) {
-      if (enabledById.get(id) !== false) set.add(id);
+      if (typeof id === "string" && id.trim()) set.add(id.trim());
     }
     return set;
-  }, [agentConfigs, data.chatMeta.activeAgentIds]);
+  }, [data.chatMeta.activeAgentIds]);
   const agentsUiEnabled = enabledAgentTypes.size > 0;
   const expressionAgentEnabled = enabledAgentTypes.has("expression");
   const combatAgentEnabled = enabledAgentTypes.has("combat");

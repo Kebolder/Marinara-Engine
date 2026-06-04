@@ -648,10 +648,6 @@ function builtInAgentFallback(type: string): JsonRecord | null {
   };
 }
 
-function agentConfigEnabled(agent: JsonRecord): boolean {
-  return boolish(agent.enabled, true);
-}
-
 function positiveInteger(value: unknown, fallback: number, max: number): number {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isFinite(parsed) || parsed < 1) return fallback;
@@ -904,7 +900,6 @@ async function resolveAgents(deps: AgentDeps, input: GenerationAgentRuntimeInput
   const rows = agentRows.filter((agent) => {
     const type = builtInAgentType(agent);
     const id = readString(agent.id);
-    if (!agentConfigEnabled(agent)) return false;
     const requestedExplicitly = requestedAgentTypes && (requestedAgentTypes.has(type) || requestedAgentTypes.has(id));
     const scopedToChat = scopedAgentIds.size > 0 && (scopedAgentIds.has(type) || scopedAgentIds.has(id));
     if (

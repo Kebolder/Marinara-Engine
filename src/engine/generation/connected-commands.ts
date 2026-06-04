@@ -269,7 +269,7 @@ async function resolveIllustratorLlmConnectionId(
   fallbackConnectionId: string | null | undefined,
 ): Promise<string | null> {
   const agents = await storage.list<JsonRecord>("agents");
-  const illustratorAgent = agents.find((agent) => boolish(agent.enabled, true) && isIllustratorAgent(agent));
+  const illustratorAgent = agents.find(isIllustratorAgent);
   const agentConnectionId = readString(illustratorAgent?.connectionId).trim();
   if (agentConnectionId) return agentConnectionId;
 

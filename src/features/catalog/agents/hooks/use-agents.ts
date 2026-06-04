@@ -150,18 +150,6 @@ export function agentCreditLabel(value: unknown): string {
   return typeof value === "string" && value.trim() ? value.trim() : DEFAULT_AGENT_CREDIT;
 }
 
-export function agentConfigEnabled(value: unknown, fallback = true): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (["true", "1", "yes", "on"].includes(normalized)) return true;
-    if (["false", "0", "no", "off"].includes(normalized)) return false;
-    if (!normalized) return fallback;
-  }
-  return fallback;
-}
-
 function normalizeAgentUpdatePayload(data: Record<string, unknown>): Record<string, unknown> {
   const nested = data.data;
   const patch =

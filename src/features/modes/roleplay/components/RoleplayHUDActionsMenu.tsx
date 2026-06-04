@@ -14,7 +14,6 @@ import {
 import { BUILT_IN_AGENTS } from "../../../../engine/contracts/types/agent";
 import type { Message } from "../../../../engine/contracts/types/chat";
 import {
-  agentConfigEnabled,
   useUpdateAgentRunData,
   type AgentConfigRow,
   type AgentRunRow,
@@ -521,7 +520,6 @@ function isCustomAgentConfig(config: AgentConfigRow): boolean {
 }
 
 function isAgentConfigActiveForMenu(config: AgentConfigRow, enabledAgentTypes?: Set<string>): boolean {
-  if (!agentConfigEnabled(config.enabled, true)) return false;
   if (enabledAgentTypes && enabledAgentTypes.size > 0) {
     return enabledAgentTypes.has(config.type) || enabledAgentTypes.has(config.id);
   }

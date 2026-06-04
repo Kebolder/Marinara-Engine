@@ -19,11 +19,8 @@ import {
 } from "lucide-react";
 import { useUIStore } from "../../../../shared/stores/ui.store";
 import {
-  agentConfigEnabled,
   useAgentConfigs,
-  useCreateAgent,
   useDeleteAgent,
-  useUpdateAgent,
   type AgentConfigRow,
 } from "../hooks/use-agents";
 import { useCustomTools, useDeleteCustomTool, type CustomToolRow } from "../hooks/use-custom-tools";
@@ -37,10 +34,7 @@ import {
 } from "../hooks/use-regex-scripts";
 import {
   BUILT_IN_AGENTS,
-  DEFAULT_AGENT_TOOLS,
-  getDefaultBuiltInAgentSettings,
   type AgentCategory,
-  type AgentPhase,
 } from "../../../../engine/contracts/types/agent";
 import { showConfirmDialog } from "../../../../shared/lib/app-dialogs";
 import { cn } from "../../../../shared/lib/utils";
@@ -49,8 +43,6 @@ export function AgentsPanel() {
   const { data: agentConfigs, isLoading } = useAgentConfigs();
   const { data: customTools } = useCustomTools();
   const { data: regexScripts } = useRegexScripts();
-  const createAgent = useCreateAgent();
-  const updateAgent = useUpdateAgent();
   const deleteAgent = useDeleteAgent();
   const deleteTool = useDeleteCustomTool();
   const deleteRegex = useDeleteRegexScript();
@@ -62,7 +54,6 @@ export function AgentsPanel() {
   const createRegexScript = useCreateRegexScript();
   const [importError, setImportError] = useState<string | null>(null);
   const [importSuccess, setImportSuccess] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"category" | "status">("category");
   const [draggedRegexId, setDraggedRegexId] = useState<string | null>(null);
   const [regexDragReadyId, setRegexDragReadyId] = useState<string | null>(null);
 
@@ -141,46 +132,6 @@ export function AgentsPanel() {
     () => agentConfigRows.filter((config) => !builtInAgentTypes.has(config.type)),
     [agentConfigRows, builtInAgentTypes],
   );
-  const configByType = useMemo(
-    () => new Map(agentConfigRows.map((config) => [config.type, config])),
-    [agentConfigRows],
-  );
-
-  const statusAgents: AgentPanelRow[] = useMemo(
-    () => [
-      ...BUILT_IN_AGENTS.map((agent) => {
-        const config = configByType.get(agent.id);
-        return {
-          id: agent.id,
-          type: agent.id,
-          name: agent.name,
-          description: agent.description,
-          category: agent.category,
-          phase: agent.phase,
-          enabled: config ? agentConfigEnabled(config.enabled, true) : true,
-          configId: config?.id,
-          custom: false,
-        };
-      }),
-      ...customAgents.map((agent) => ({
-        id: agent.id,
-        type: agent.type,
-        name: agent.name,
-        description: agent.description,
-        category: "custom" as const,
-        phase: agent.phase as AgentPhase,
-        enabled: agentConfigEnabled(agent.enabled, true),
-        configId: agent.id,
-        custom: true,
-      })),
-    ],
-    [configByType, customAgents],
-  );
-  const statusAgentByType = useMemo(() => new Map(statusAgents.map((agent) => [agent.type, agent])), [statusAgents]);
-
-  const activeAgents = useMemo(() => statusAgents.filter((agent) => agent.enabled), [statusAgents]);
-  const inactiveAgents = useMemo(() => statusAgents.filter((agent) => !agent.enabled), [statusAgents]);
-
   const handleCreateAgent = () => {
     // Create a new custom agent immediately in DB then open editor
     openAgentDetail("__new__");
@@ -192,32 +143,6 @@ export function AgentsPanel() {
 
   const handleCreateRegex = () => {
     openRegexDetail("__new__");
-  };
-
-  const handleToggleAgentEnabled = async (agent: AgentPanelRow) => {
-    const enabled = !agent.enabled;
-    const config = agent.configId
-      ? agentConfigRows.find((row) => row.id === agent.configId)
-      : null;
-    if (config) {
-      await updateAgent.mutateAsync({ id: config.id, enabled });
-      return;
-    }
-    // Custom agents are persisted rows, so this handler should never synthesize them.
-    if (agent.custom) return;
-    await createAgent.mutateAsync({
-      type: agent.type,
-      name: agent.name,
-      description: agent.description,
-      phase: agent.phase,
-      enabled,
-      connectionId: null,
-      promptTemplate: "",
-      settings: {
-        ...getDefaultBuiltInAgentSettings(agent.type),
-        enabledTools: DEFAULT_AGENT_TOOLS[agent.type] ?? [],
-      },
-    });
   };
 
   const handleRegexDrop = (targetId: string) => {
@@ -237,31 +162,6 @@ export function AgentsPanel() {
   return (
     <div className="flex flex-col gap-1 p-3">
       {isLoading && <div className="py-4 text-center text-xs text-[var(--muted-foreground)]">Loading...</div>}
-
-      <div className="mb-1 flex items-center gap-1 rounded-lg bg-[var(--secondary)] p-1 ring-1 ring-[var(--border)]">
-        <button
-          onClick={() => setViewMode("category")}
-          className={cn(
-            "flex-1 rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
-            viewMode === "category"
-              ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/25"
-              : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-          )}
-        >
-          By Category
-        </button>
-        <button
-          onClick={() => setViewMode("status")}
-          className={cn(
-            "flex-1 rounded-md px-2 py-1 text-[0.625rem] font-medium transition-all",
-            viewMode === "status"
-              ? "bg-[var(--primary)]/15 text-[var(--primary)] ring-1 ring-[var(--primary)]/25"
-              : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-          )}
-        >
-          By Status
-        </button>
-      </div>
 
       {/* ── Regex Scripts (moved to top) ── */}
       <PanelSection
@@ -419,189 +319,112 @@ export function AgentsPanel() {
         )}
       </PanelSection>
 
-      {viewMode === "category" ? (
-        <>
-          {/* ── Built-in Agents ── */}
-          {[
-            {
-              category: "writer" as AgentCategory,
-              title: "Writer Agents",
-              icon: <PenLine size="0.8125rem" />,
-              desc: "Prose quality, continuity, directions, and narrative flow.",
-            },
-            {
-              category: "tracker" as AgentCategory,
-              title: "Tracker Agents",
-              icon: <Radar size="0.8125rem" />,
-              desc: "Track world state, expressions, quests, backgrounds, and characters.",
-            },
-            {
-              category: "misc" as AgentCategory,
-              title: "Misc Agents",
-              icon: <Puzzle size="0.8125rem" />,
-              desc: "Utilities, combat, illustrations, and other helpers.",
-            },
-          ].map(({ category, title, icon, desc }) => {
-            const agents = BUILT_IN_AGENTS.filter((a) => a.category === category);
-            return (
-              <PanelSection key={category} title={title} icon={icon}>
-                <div className="mb-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{desc}</div>
-                {!agents.length ? (
-                  <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                    No agents in this category.
-                  </p>
-                ) : (
-                  agents.map((agent) =>
-                    renderAgentCard({
-                      ...(statusAgentByType.get(agent.id) ?? {
-                        id: agent.id,
-                        type: agent.id,
-                        name: agent.name,
-                        description: agent.description,
-                        category: agent.category,
-                        phase: agent.phase,
-                        enabled: true,
-                        custom: false,
-                      }),
-                      openAgentDetail,
-                      onToggleEnabled: handleToggleAgentEnabled,
-                      toggleDisabled: createAgent.isPending || updateAgent.isPending,
-                    }),
-                  )
-                )}
-              </PanelSection>
-            );
-          })}
-        </>
-      ) : (
-        <>
-          <PanelSection title="Enabled Agents" icon={<Sparkles size="0.8125rem" />}>
-            <div className="mb-1.5 text-[0.625rem] text-[var(--muted-foreground)]">
-              Built-ins default to active unless explicitly disabled in their config.
-            </div>
-            {!activeAgents.length ? (
-              <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No active agents.</p>
+      {/* ── Built-in Agents ── */}
+      {[
+        {
+          category: "writer" as AgentCategory,
+          title: "Writer Agents",
+          icon: <PenLine size="0.8125rem" />,
+          desc: "Prose quality, continuity, directions, and narrative flow.",
+        },
+        {
+          category: "tracker" as AgentCategory,
+          title: "Tracker Agents",
+          icon: <Radar size="0.8125rem" />,
+          desc: "Track world state, expressions, quests, backgrounds, and characters.",
+        },
+        {
+          category: "misc" as AgentCategory,
+          title: "Misc Agents",
+          icon: <Puzzle size="0.8125rem" />,
+          desc: "Utilities, combat, illustrations, and other helpers.",
+        },
+      ].map(({ category, title, icon, desc }) => {
+        const agents = BUILT_IN_AGENTS.filter((a) => a.category === category);
+        return (
+          <PanelSection key={category} title={title} icon={icon}>
+            <div className="mb-1.5 text-[0.625rem] text-[var(--muted-foreground)]">{desc}</div>
+            {!agents.length ? (
+              <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No agents in this category.</p>
             ) : (
-              activeAgents.map((agent) =>
+              agents.map((agent) =>
                 renderAgentCard({
-                  ...agent,
+                  id: agent.id,
+                  type: agent.id,
+                  name: agent.name,
+                  description: agent.description,
+                  category: agent.category,
+                  custom: false,
                   openAgentDetail,
-                  onToggleEnabled: handleToggleAgentEnabled,
-                  toggleDisabled: createAgent.isPending || updateAgent.isPending,
                 }),
               )
             )}
           </PanelSection>
-          <PanelSection title="Disabled Agents" icon={<Sparkles size="0.8125rem" />}>
-            {!inactiveAgents.length ? (
-              <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No inactive agents.</p>
-            ) : (
-              inactiveAgents.map((agent) =>
-                renderAgentCard({
-                  ...agent,
-                  openAgentDetail,
-                  onToggleEnabled: handleToggleAgentEnabled,
-                  toggleDisabled: createAgent.isPending || updateAgent.isPending,
-                }),
-              )
-            )}
-          </PanelSection>
-        </>
-      )}
+        );
+      })}
 
-      {viewMode === "category" && (
-        <PanelSection
-          title="Custom Agents"
-          icon={<Sparkles size="0.8125rem" />}
-          action={
-            <button
-              onClick={handleCreateAgent}
-              className="rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--primary)]"
-              title="Create custom agent"
-            >
-              <Plus size="0.8125rem" />
-            </button>
-          }
-        >
-          <div className="text-[0.625rem] text-[var(--muted-foreground)] mb-1.5">
-            Create your own AI agents with custom instructions and settings.
-          </div>
-          {!customAgents.length ? (
-            <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1 py-2">No custom agents yet.</p>
-          ) : (
-            customAgents.map((agent) => {
-              return (
-                <div
-                  key={agent.id}
-                  className={cn(
-                    "flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]",
-                    !agentConfigEnabled(agent.enabled, true) && "opacity-55",
-                  )}
+      <PanelSection
+        title="Custom Agents"
+        icon={<Sparkles size="0.8125rem" />}
+        action={
+          <button
+            onClick={handleCreateAgent}
+            className="rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--primary)]"
+            title="Create custom agent"
+          >
+            <Plus size="0.8125rem" />
+          </button>
+        }
+      >
+        <div className="text-[0.625rem] text-[var(--muted-foreground)] mb-1.5">
+          Create your own AI agents with custom instructions and settings.
+        </div>
+        {!customAgents.length ? (
+          <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1 py-2">No custom agents yet.</p>
+        ) : (
+          customAgents.map((agent) => {
+            return (
+              <div
+                key={agent.id}
+                className="flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]"
+              >
+                <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                <button className="min-w-0 flex-1 text-left" onClick={() => openAgentDetail(agent.id)}>
+                  <div className="text-xs font-medium font-mono">{agent.name}</div>
+                  <div className="text-[0.625rem] text-[var(--muted-foreground)] line-clamp-2">
+                    {agent.description || "No description"}
+                  </div>
+                </button>
+                <button
+                  className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)]"
+                  title="Edit agent"
+                  onClick={() => openAgentDetail(agent.id)}
                 >
-                  <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                  <button className="min-w-0 flex-1 text-left" onClick={() => openAgentDetail(agent.id)}>
-                    <div className="text-xs font-medium font-mono">{agent.name}</div>
-                    <div className="text-[0.625rem] text-[var(--muted-foreground)] line-clamp-2">
-                      {agent.description || "No description"}
-                    </div>
-                  </button>
-                  <button
-                    className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)] disabled:opacity-50"
-                    title={agentConfigEnabled(agent.enabled, true) ? "Disable agent" : "Enable agent"}
-                    aria-label={agentConfigEnabled(agent.enabled, true) ? "Disable agent" : "Enable agent"}
-                    aria-pressed={agentConfigEnabled(agent.enabled, true)}
-                    disabled={updateAgent.isPending}
-                    onClick={() =>
-                      void handleToggleAgentEnabled({
-                        id: agent.id,
-                        type: agent.type,
-                        name: agent.name,
-                        description: agent.description,
-                        category: "custom",
-                        phase: agent.phase as AgentPhase,
-                        enabled: agentConfigEnabled(agent.enabled, true),
-                        configId: agent.id,
-                        custom: true,
+                  <Pencil size="0.8125rem" />
+                </button>
+                <button
+                  className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)]"
+                  title="Delete agent"
+                  onClick={async () => {
+                    if (
+                      await showConfirmDialog({
+                        title: "Delete Agent",
+                        message: `Delete "${agent.name}"?`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
                       })
+                    ) {
+                      deleteAgent.mutate(agent.id);
                     }
-                  >
-                    {agentConfigEnabled(agent.enabled, true) ? (
-                      <ToggleRight size="0.8125rem" />
-                    ) : (
-                      <ToggleLeft size="0.8125rem" />
-                    )}
-                  </button>
-                  <button
-                    className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)]"
-                    title="Edit agent"
-                    onClick={() => openAgentDetail(agent.id)}
-                  >
-                    <Pencil size="0.8125rem" />
-                  </button>
-                  <button
-                    className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)]"
-                    title="Delete agent"
-                    onClick={async () => {
-                      if (
-                        await showConfirmDialog({
-                          title: "Delete Agent",
-                          message: `Delete "${agent.name}"?`,
-                          confirmLabel: "Delete",
-                          tone: "destructive",
-                        })
-                      ) {
-                        deleteAgent.mutate(agent.id);
-                      }
-                    }}
-                  >
-                    <Trash2 size="0.8125rem" />
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </PanelSection>
-      )}
+                  }}
+                >
+                  <Trash2 size="0.8125rem" />
+                </button>
+              </div>
+            );
+          })
+        )}
+      </PanelSection>
 
       {/* ── Custom Function Tools ── */}
       <PanelSection
@@ -677,9 +500,6 @@ type AgentPanelRow = {
   name: string;
   description: string;
   category: AgentCategory | "custom";
-  phase: AgentPhase;
-  enabled: boolean;
-  configId?: string;
   custom: boolean;
 };
 
@@ -689,25 +509,15 @@ function renderAgentCard({
   name,
   description,
   category,
-  phase,
-  enabled,
-  configId,
   custom,
   openAgentDetail,
-  onToggleEnabled,
-  toggleDisabled,
 }: AgentPanelRow & {
   openAgentDetail: (id: string) => void;
-  onToggleEnabled: (agent: AgentPanelRow) => void | Promise<void>;
-  toggleDisabled: boolean;
 }) {
   return (
     <div
       key={id}
-      className={cn(
-        "flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]",
-        !enabled && "opacity-60",
-      )}
+      className="flex items-start gap-2.5 rounded-lg p-2 transition-colors hover:bg-[var(--sidebar-accent)]"
     >
       <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
       <button className="min-w-0 flex-1 text-left" onClick={() => openAgentDetail(custom ? id : type)}>
@@ -719,37 +529,7 @@ function renderAgentCard({
           <span className="text-[0.5625rem] uppercase tracking-wide text-[var(--muted-foreground)]/80">
             {custom ? "custom" : category}
           </span>
-          <span
-            className={cn(
-              "rounded px-1 py-0.5 text-[0.5rem] uppercase tracking-wide",
-              enabled ? "bg-emerald-500/10 text-emerald-400" : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
-            )}
-          >
-            {enabled ? "enabled" : "disabled"}
-          </span>
         </div>
-      </button>
-      <button
-        className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)] disabled:opacity-50"
-        title={enabled ? "Disable agent" : "Enable agent"}
-        aria-label={enabled ? "Disable agent" : "Enable agent"}
-        aria-pressed={enabled}
-        disabled={toggleDisabled}
-        onClick={() =>
-          void onToggleEnabled({
-            id,
-            type,
-            name,
-            description,
-            category,
-            phase,
-            enabled,
-            configId,
-            custom,
-          })
-        }
-      >
-        {enabled ? <ToggleRight size="0.8125rem" /> : <ToggleLeft size="0.8125rem" />}
       </button>
       <button
         className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition-colors hover:text-[var(--primary)]"

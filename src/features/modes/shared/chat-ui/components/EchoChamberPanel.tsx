@@ -9,7 +9,6 @@ import { X, Trash2 } from "lucide-react";
 import { useAgentStore } from "../../../../../shared/stores/agent.store";
 import { useUIStore } from "../../../../../shared/stores/ui.store";
 import type { EchoChamberSide } from "../../../../../shared/stores/ui.store";
-import { agentConfigEnabled, useAgentConfigs } from "../../../../catalog/agents/index";
 import { useChatStore } from "../../../../../shared/stores/chat.store";
 import { useChat } from "../../../../catalog/chats/index";
 import { agentApi } from "../../../../../shared/api/agent-api";
@@ -77,20 +76,14 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: chat } = useChat(activeChatId);
-  const { data: agentConfigs } = useAgentConfigs();
 
-  // Mirror the enabledAgentTypes logic from ChatArea so per-chat overrides are respected
   const echoEnabled = useMemo(() => {
     if (!chat) return false;
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
     const meta = readEchoRecord(raw);
     const activeAgentIds: string[] = Array.isArray(meta.activeAgentIds) ? meta.activeAgentIds : [];
-    if (!activeAgentIds.includes("echo-chamber")) return false;
-    const cfg = ((agentConfigs ?? []) as Array<{ type: string; enabled?: unknown }>).find(
-      (a) => a.type === "echo-chamber",
-    );
-    return cfg ? agentConfigEnabled(cfg.enabled, true) : true;
-  }, [chat, agentConfigs]);
+    return activeAgentIds.includes("echo-chamber");
+  }, [chat]);
 
   useEffect(() => {
     if (!activeChatId || !echoEnabled || echoDismissedForChat || echoChamberOpen) return;

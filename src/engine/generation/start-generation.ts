@@ -2194,7 +2194,7 @@ function chatActiveAgentIds(chat: JsonRecord): Set<string> {
 }
 
 function chatHasLorebookKeeperEnabled(chat: JsonRecord, agent: JsonRecord): boolean {
-  if (!boolish(agent.enabled, false) || agentType(agent) !== LOREBOOK_KEEPER_AGENT_TYPE) return false;
+  if (agentType(agent) !== LOREBOOK_KEEPER_AGENT_TYPE) return false;
   const activeAgentIds = chatActiveAgentIds(chat);
   if (activeAgentIds.size > 0) {
     const id = readString(agent.id).trim();
@@ -3113,7 +3113,7 @@ async function* streamMainGenerationLoop(args: {
   } = args;
   let content = "";
   let thinking = "";
-  const usages: unknown[] = [];
+  const turnUsages: unknown[] = [];
   const conversation: LlmMessage[] = [...baseMessages];
   let promptSnapshot: MainGenerationPromptSnapshot | null = null;
   let iteration = 0;
@@ -3122,6 +3122,7 @@ async function* streamMainGenerationLoop(args: {
     throwIfAborted(signal);
     iteration++;
     const pendingToolCalls: LLMToolCall[] = [];
+    const streamUsages: unknown[] = [];
     let turnContent = "";
     const thinkingParser = createInlineThinkingStreamParser();
     const emitInlineParts = function* (text: string): Generator<GenerationEvent> {
@@ -3172,9 +3173,11 @@ async function* streamMainGenerationLoop(args: {
         const normalized = normalizeToolCall(chunk.data);
         if (normalized) pendingToolCalls.push(normalized);
       } else if (chunk.type === "usage" && chunk.data != null) {
-        usages.push(chunk.data);
+        streamUsages.push(chunk.data);
       }
     }
+    const streamUsage = mergeStreamUsageChunks(streamUsages);
+    if (streamUsage != null) turnUsages.push(streamUsage);
     for (const part of thinkingParser.flush()) {
       if (!part.text) continue;
       if (part.type === "thinking") {
@@ -3237,15 +3240,41 @@ async function* streamMainGenerationLoop(args: {
     }
   }
 
-  return { content, thinking, usage: mergeUsages(usages), promptSnapshot };
+  return { content, thinking, usage: mergeTurnUsages(turnUsages), promptSnapshot };
 }
 
 /**
- * Aggregate per-turn usage records across a multi-turn tool-call loop.
+ * Merge usage chunks from a single provider stream.
+ *
+ * Some providers emit cumulative or repeated usage events during one request.
+ * Those chunks must not be summed or prompt tokens can be counted multiple
+ * times. Latest numeric value wins per key, while sparse chunks still combine
+ * distinct fields such as input and output token counts.
+ */
+function mergeStreamUsageChunks(usages: unknown[]): unknown {
+  if (usages.length === 0) return null;
+  if (usages.length === 1) return usages[0];
+  const records = usages.filter(isRecord);
+  if (records.length === 0) return usages[usages.length - 1] ?? null;
+  const merged: Record<string, unknown> = {};
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        merged[key] = value;
+      } else if (!(key in merged) || value != null) {
+        merged[key] = value;
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * Aggregate per-request usage records across a multi-turn tool-call loop.
  *
  * Each LLM turn (every iteration of `streamMainGenerationLoop`) emits its own
- * `usage` chunk. When the loop runs once with no tool calls, behavior is
- * byte-identical to the pre-loop world — the single record is returned as-is.
+ * merged usage record. When the loop runs once with no tool calls, behavior is
+ * byte-identical to the provider's final usage object.
  * When the loop iterates 2+ times, numeric leaf fields (prompt/completion/total
  * tokens, cached/reasoning/cost breakdowns) are summed so downstream
  * `generationInfo.usage` reflects total cost, not just the final turn's slice.
@@ -3254,7 +3283,7 @@ async function* streamMainGenerationLoop(args: {
  * (different providers, different keys) so we never silently report wrong-typed
  * data.
  */
-function mergeUsages(usages: unknown[]): unknown {
+function mergeTurnUsages(usages: unknown[]): unknown {
   if (usages.length === 0) return null;
   if (usages.length === 1) return usages[0];
   const records = usages.filter(isRecord);
