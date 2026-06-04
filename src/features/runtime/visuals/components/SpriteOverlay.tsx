@@ -401,7 +401,7 @@ function CharacterSprite({
     const fullBodySprites = allowFullBody
       ? allSprites.filter((sprite) => isFullBodySpriteExpression(sprite.expression))
       : [];
-    const spritePools = [fullBodySprites, expressionSprites];
+    const spritePools = fullBodyOnly ? [fullBodySprites] : [expressionSprites, fullBodySprites];
 
     const fullBodyBaseExpression = (value: string) => (value.startsWith("full_") ? value.slice(5) : value);
     const findMatchingSprite = (predicate: (spriteExpression: string) => boolean) => {
@@ -434,7 +434,7 @@ function CharacterSprite({
     });
     if (neutral) return neutral;
 
-    return fullBodySprites[0]?.url ?? expressionSprites[0]?.url ?? null;
+    return spritePools.find((spriteList) => spriteList.length > 0)?.[0]?.url ?? null;
   }, [sprites, expression, fullBodyOnly, spriteDisplayModes]);
 
   const standardSizeClass =
