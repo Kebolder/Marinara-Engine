@@ -33,6 +33,8 @@ type ProfileImportProgressState = {
   imported?: ProfileImportStats;
   warnings?: ProfileImportWarning[];
   error?: string;
+  sourceFormat?: string;
+  converted?: ProfileImportConversion;
 };
 
 type ProfileImportWarning = {
@@ -47,6 +49,14 @@ type ProfileImportResult = {
   message?: string;
   imported?: ProfileImportStats;
   warnings?: ProfileImportWarning[];
+  sourceFormat?: string;
+  converted?: ProfileImportConversion;
+};
+
+type ProfileImportConversion = {
+  applied?: boolean;
+  from?: string;
+  to?: string;
 };
 
 function formatProfileImportDuration(seconds: number) {
@@ -104,6 +114,30 @@ function formatProfileImportWarnings(warnings?: ProfileImportWarning[]) {
   return `${count} warning${count === 1 ? "" : "s"}`;
 }
 
+function formatProfileImportSourceFormat(sourceFormat?: string) {
+  if (!sourceFormat) return "";
+  const labels: Record<string, string> = {
+    "refactor-native": "refactor native",
+    "legacy-modern-fileStorage": "legacy fileStorage",
+    "legacy-array": "legacy array",
+    "refactor-collections": "refactor collections",
+  };
+  return labels[sourceFormat] ?? sourceFormat;
+}
+
+function formatProfileImportMetadata(progress: ProfileImportProgressState) {
+  const source = formatProfileImportSourceFormat(progress.sourceFormat);
+  const parts = source ? [`Source: ${source}`] : [];
+  if (progress.converted?.applied) {
+    const from = formatProfileImportSourceFormat(progress.converted.from);
+    const to = formatProfileImportSourceFormat(progress.converted.to);
+    parts.push(from && to ? `Conversion: ${from} -> ${to}` : "Conversion: applied");
+  } else if (progress.converted?.applied === false) {
+    parts.push("Conversion: none");
+  }
+  return parts.join(". ");
+}
+
 export function ProfileImportSection() {
   const qc = useQueryClient();
   const remoteProfileInputRef = useRef<HTMLInputElement>(null);
@@ -132,6 +166,8 @@ export function ProfileImportSection() {
     qc.invalidateQueries();
     const imported = data?.imported;
     const warnings = Array.isArray(data?.warnings) ? data.warnings : [];
+    const sourceFormat = typeof data?.sourceFormat === "string" ? data.sourceFormat : undefined;
+    const converted = data?.converted && typeof data.converted === "object" ? data.converted : undefined;
     const summary = formatProfileImportStats(imported);
     const skippedSummary = formatProfileImportSkippedStats(imported);
     const warningSummary = formatProfileImportWarnings(warnings);
@@ -146,6 +182,8 @@ export function ProfileImportSection() {
         elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
         imported,
         warnings,
+        sourceFormat,
+        converted,
       };
     });
     toast.success(
@@ -291,9 +329,7 @@ export function ProfileImportSection() {
         )}
       >
         {profileImportBusy ? <Loader2 size="1rem" className="animate-spin" /> : <Download size="1rem" />}
-        {profileImportBusy
-          ? "Importing Profile..."
-          : "Import Profile (JSON/ZIP)"}
+        {profileImportBusy ? "Importing Profile..." : "Import Profile (JSON/ZIP)"}
       </button>
 
       {profileImportProgress && (
@@ -349,6 +385,11 @@ export function ProfileImportSection() {
               {formatProfileImportStats(profileImportProgress.imported) && (
                 <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
                   Imported so far: {formatProfileImportStats(profileImportProgress.imported)}
+                </div>
+              )}
+              {formatProfileImportMetadata(profileImportProgress) && (
+                <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {formatProfileImportMetadata(profileImportProgress)}
                 </div>
               )}
               {formatProfileImportSkippedStats(profileImportProgress.imported) && (
