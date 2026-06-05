@@ -589,10 +589,10 @@ fn should_apply_custom_parameter(
     strip_stop: bool,
     skip_keys: &[&str],
 ) -> bool {
-    !skip_keys.contains(&key)
-        && !is_reserved_custom_parameter_key(key)
-        && !(strip_sampling && is_sampling_parameter_key(key))
-        && !(strip_stop && is_stop_parameter_key(key))
+    !(skip_keys.contains(&key)
+        || is_reserved_custom_parameter_key(key)
+        || strip_sampling && is_sampling_parameter_key(key)
+        || strip_stop && is_stop_parameter_key(key))
 }
 
 fn apply_custom_parameters_to_object(
