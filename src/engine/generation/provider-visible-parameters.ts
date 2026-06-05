@@ -240,6 +240,11 @@ function isGemini3Model(model: string): boolean {
   );
 }
 
+function isGemini3ProModel(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return isGemini3Model(normalized) && normalized.includes("-pro");
+}
+
 function isGemini25Model(model: string): boolean {
   const normalized = model.toLowerCase();
   return (
@@ -249,35 +254,99 @@ function isGemini25Model(model: string): boolean {
   );
 }
 
-function googleThinkingLevel(parameters: JsonRecord): string | null {
-  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"]);
+function isGemini25ProModel(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return isGemini25Model(normalized) && normalized.includes("-pro");
+}
+
+function googleThinkingLevel(model: string, parameters: JsonRecord): string | null {
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
   if (!effort) return null;
+  if (["none", "minimal"].includes(effort)) return isGemini3ProModel(model) ? "low" : "minimal";
   if (["low", "medium"].includes(effort)) return effort;
   if (["high", "maximum", "xhigh"].includes(effort)) return "high";
   return null;
 }
 
+function googleThinkingBudget(model: string, parameters: JsonRecord): number | null {
+  const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"])?.toLowerCase();
+  if (!effort) return null;
+  const pro = isGemini25ProModel(model);
+  if (effort === "none" || effort === "minimal") return pro ? 128 : 0;
+  if (effort === "low") return 1024;
+  if (effort === "medium") return 8192;
+  if (["high", "maximum", "xhigh"].includes(effort)) return pro ? 32768 : 24576;
+  return null;
+}
+
 function googleThinkingConfig(model: string, parameters: JsonRecord): Record<string, unknown> | null {
   if (isGemini3Model(model)) {
-    const level = googleThinkingLevel(parameters);
+    const level = googleThinkingLevel(model, parameters);
     return level ? { thinkingLevel: level, includeThoughts: true } : null;
   }
 
   if (isGemini25Model(model)) {
-    const effort = parameterString(parameters, ["reasoningEffort", "reasoning_effort"]);
-    if (!effort) return null;
-    const budget =
-      effort === "low"
-        ? 1024
-        : effort === "medium"
-          ? 8192
-          : ["high", "maximum", "xhigh"].includes(effort)
-            ? 24576
-            : null;
-    return budget ? { thinkingBudget: budget, includeThoughts: true } : null;
+    const budget = googleThinkingBudget(model, parameters);
+    return budget !== null ? { thinkingBudget: budget, includeThoughts: true } : null;
   }
 
   return null;
+}
+
+function isGoogleGemini3UnsupportedGenerationConfigKey(key: string): boolean {
+  return ["temperature", "topP", "top_p", "topK", "top_k", "candidateCount", "candidate_count"].includes(key);
+}
+
+function isGoogleGenerationConfigCustomParameterKey(key: string): boolean {
+  return [
+    "stopSequences",
+    "stop_sequences",
+    "responseMimeType",
+    "response_mime_type",
+    "responseModalities",
+    "response_modalities",
+    "thinkingConfig",
+    "thinking_config",
+    "modelConfig",
+    "model_config",
+    "temperature",
+    "topP",
+    "top_p",
+    "topK",
+    "top_k",
+    "candidateCount",
+    "candidate_count",
+    "maxOutputTokens",
+    "max_output_tokens",
+    "responseLogprobs",
+    "response_logprobs",
+    "logprobs",
+    "presencePenalty",
+    "presence_penalty",
+    "frequencyPenalty",
+    "frequency_penalty",
+    "seed",
+    "responseSchema",
+    "response_schema",
+    "responseJsonSchema",
+    "response_json_schema",
+    "routingConfig",
+    "routing_config",
+    "audioTimestamp",
+    "audio_timestamp",
+    "mediaResolution",
+    "media_resolution",
+    "speechConfig",
+    "speech_config",
+    "enableAffectiveDialog",
+    "enable_affective_dialog",
+    "enableEnhancedCivicAnswers",
+    "enable_enhanced_civic_answers",
+    "imageConfig",
+    "image_config",
+    "responseFormat",
+    "response_format",
+  ].includes(key);
 }
 
 function applyCustomParameters(
@@ -456,6 +525,7 @@ function visibleOpenAiCompatibleParameters(
 function visibleGoogleParameters(connection: JsonRecord, parameters: JsonRecord): Record<string, unknown> {
   const model = readString(connection.model);
   const gemini3 = isGemini3Model(model);
+  const body: Record<string, unknown> = {};
   const generationConfig: Record<string, unknown> = {
     maxOutputTokens: requestMaxTokens(connection, parameters),
   };
@@ -466,25 +536,32 @@ function visibleGoogleParameters(connection: JsonRecord, parameters: JsonRecord)
     const topK = parameterInteger(parameters, ["topK", "top_k"]);
     if (topK !== null && topK > 0) generationConfig.topK = topK;
   }
+  const frequencyPenalty = parameterNumber(parameters, ["frequencyPenalty", "frequency_penalty"]);
+  if (frequencyPenalty !== null) generationConfig.frequencyPenalty = frequencyPenalty;
+  const presencePenalty = parameterNumber(parameters, ["presencePenalty", "presence_penalty"]);
+  if (presencePenalty !== null) generationConfig.presencePenalty = presencePenalty;
   const thinkingConfig = googleThinkingConfig(model, parameters);
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig;
-  if (!gemini3) {
-    const stop = stopSequences(parameters);
-    if (stop) generationConfig.stopSequences = stop;
-  }
+  const stop = stopSequences(parameters);
+  if (stop) generationConfig.stopSequences = stop;
   const custom = parseRecord(parameters.customParameters ?? parameters.custom_params);
   const customGenerationConfig = parseRecord(custom.generationConfig);
   for (const [key, value] of Object.entries(customGenerationConfig)) {
     if (isReservedCustomParameterKey(key)) continue;
-    if (gemini3 && (isSamplingParameterKey(key) || isStopParameterKey(key))) continue;
+    if (gemini3 && isGoogleGemini3UnsupportedGenerationConfigKey(key)) continue;
     if (generationConfig[key] == null) generationConfig[key] = value;
   }
-  applyCustomParameters(generationConfig, parameters, {
-    stripSampling: gemini3,
-    stripStop: gemini3,
-    skipKeys: ["generationConfig"],
-  });
-  return { generationConfig };
+  for (const [key, value] of Object.entries(custom)) {
+    if (key === "generationConfig" || isReservedCustomParameterKey(key)) continue;
+    if (isGoogleGenerationConfigCustomParameterKey(key)) {
+      if (gemini3 && isGoogleGemini3UnsupportedGenerationConfigKey(key)) continue;
+      if (generationConfig[key] == null) generationConfig[key] = value;
+      continue;
+    }
+    if (body[key] == null) body[key] = value;
+  }
+  body.generationConfig = generationConfig;
+  return body;
 }
 
 export function providerVisibleLlmParameters(

@@ -639,6 +639,10 @@ fn is_gemini_3_model(model: &str) -> bool {
         || normalized.contains("/gemini-3")
 }
 
+fn is_gemini_3_pro_model(model: &str) -> bool {
+    is_gemini_3_model(model) && model.to_ascii_lowercase().contains("-pro")
+}
+
 fn is_gemini_25_model(model: &str) -> bool {
     let normalized = model.to_ascii_lowercase();
     normalized.starts_with("gemini-2.5")
@@ -646,9 +650,16 @@ fn is_gemini_25_model(model: &str) -> bool {
         || normalized.contains("/gemini-2.5")
 }
 
-fn google_thinking_level(parameters: &Value) -> Option<&'static str> {
-    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
+fn is_gemini_25_pro_model(model: &str) -> bool {
+    is_gemini_25_model(model) && model.to_ascii_lowercase().contains("-pro")
+}
+
+fn google_thinking_level(model: &str, parameters: &Value) -> Option<&'static str> {
+    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?
+        .to_ascii_lowercase();
     match effort.as_str() {
+        "none" | "minimal" if is_gemini_3_pro_model(model) => Some("low"),
+        "none" | "minimal" => Some("minimal"),
         "low" => Some("low"),
         "medium" => Some("medium"),
         "high" | "maximum" | "xhigh" => Some("high"),
@@ -656,24 +667,93 @@ fn google_thinking_level(parameters: &Value) -> Option<&'static str> {
     }
 }
 
+fn google_thinking_budget(model: &str, parameters: &Value) -> Option<i64> {
+    let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?
+        .to_ascii_lowercase();
+    let pro = is_gemini_25_pro_model(model);
+    match effort.as_str() {
+        "none" | "minimal" if pro => Some(128),
+        "none" | "minimal" => Some(0),
+        "low" => Some(1024),
+        "medium" => Some(8192),
+        "high" | "maximum" | "xhigh" if pro => Some(32768),
+        "high" | "maximum" | "xhigh" => Some(24576),
+        _ => None,
+    }
+}
+
 fn google_thinking_config(model: &str, parameters: &Value) -> Option<Value> {
     if is_gemini_3_model(model) {
-        return google_thinking_level(parameters)
+        return google_thinking_level(model, parameters)
             .map(|level| json!({ "thinkingLevel": level, "includeThoughts": true }));
     }
 
     if is_gemini_25_model(model) {
-        let effort = param_string(parameters, &["reasoningEffort", "reasoning_effort"])?;
-        let budget = match effort.as_str() {
-            "low" => 1024,
-            "medium" => 8192,
-            "high" | "maximum" | "xhigh" => 24576,
-            _ => return None,
-        };
+        let budget = google_thinking_budget(model, parameters)?;
         return Some(json!({ "thinkingBudget": budget, "includeThoughts": true }));
     }
 
     None
+}
+
+fn is_google_gemini_3_unsupported_generation_config_key(key: &str) -> bool {
+    matches!(
+        key,
+        "temperature" | "topP" | "top_p" | "topK" | "top_k" | "candidateCount" | "candidate_count"
+    )
+}
+
+fn is_google_generation_config_custom_parameter_key(key: &str) -> bool {
+    matches!(
+        key,
+        "stopSequences"
+            | "stop_sequences"
+            | "responseMimeType"
+            | "response_mime_type"
+            | "responseModalities"
+            | "response_modalities"
+            | "thinkingConfig"
+            | "thinking_config"
+            | "modelConfig"
+            | "model_config"
+            | "temperature"
+            | "topP"
+            | "top_p"
+            | "topK"
+            | "top_k"
+            | "candidateCount"
+            | "candidate_count"
+            | "maxOutputTokens"
+            | "max_output_tokens"
+            | "responseLogprobs"
+            | "response_logprobs"
+            | "logprobs"
+            | "presencePenalty"
+            | "presence_penalty"
+            | "frequencyPenalty"
+            | "frequency_penalty"
+            | "seed"
+            | "responseSchema"
+            | "response_schema"
+            | "responseJsonSchema"
+            | "response_json_schema"
+            | "routingConfig"
+            | "routing_config"
+            | "audioTimestamp"
+            | "audio_timestamp"
+            | "mediaResolution"
+            | "media_resolution"
+            | "speechConfig"
+            | "speech_config"
+            | "enableAffectiveDialog"
+            | "enable_affective_dialog"
+            | "enableEnhancedCivicAnswers"
+            | "enable_enhanced_civic_answers"
+            | "imageConfig"
+            | "image_config"
+            | "responseFormat"
+            | "response_format"
+    )
 }
 
 fn anthropic_thinking_effort(model: &str, parameters: &Value) -> Option<&'static str> {
@@ -2660,15 +2740,23 @@ fn google_generation_config(request: &LlmRequest) -> Value {
             generation_config["topK"] = json!(top_k);
         }
     }
+    if let Some(frequency_penalty) =
+        param_f64(&request.parameters, &["frequencyPenalty", "frequency_penalty"])
+    {
+        generation_config["frequencyPenalty"] = json!(frequency_penalty);
+    }
+    if let Some(presence_penalty) =
+        param_f64(&request.parameters, &["presencePenalty", "presence_penalty"])
+    {
+        generation_config["presencePenalty"] = json!(presence_penalty);
+    }
     if let Some(thinking_config) =
         google_thinking_config(&request.connection.model, &request.parameters)
     {
         generation_config["thinkingConfig"] = thinking_config;
     }
-    if !is_gemini_3 {
-        if let Some(stop) = stop_sequences(&request.parameters) {
-            generation_config["stopSequences"] = json!(stop);
-        }
+    if let Some(stop) = stop_sequences(&request.parameters) {
+        generation_config["stopSequences"] = json!(stop);
     }
     if let Some(entries) = request
         .parameters
@@ -2680,7 +2768,9 @@ fn google_generation_config(request: &LlmRequest) -> Value {
             entries.get("generationConfig").and_then(Value::as_object)
         {
             for (key, value) in custom_generation_config {
-                if should_apply_custom_parameter(key, is_gemini_3, is_gemini_3, &[]) {
+                if should_apply_custom_parameter(key, false, false, &[])
+                    && !(is_gemini_3 && is_google_gemini_3_unsupported_generation_config_key(key))
+                {
                     if let Some(config) = generation_config.as_object_mut() {
                         if !config.contains_key(key) {
                             config.insert(key.clone(), value.clone());
@@ -2689,15 +2779,52 @@ fn google_generation_config(request: &LlmRequest) -> Value {
                 }
             }
         }
+        for (key, value) in entries {
+            if key == "generationConfig"
+                || !is_google_generation_config_custom_parameter_key(key)
+                || !should_apply_custom_parameter(key, false, false, &[])
+                || is_gemini_3 && is_google_gemini_3_unsupported_generation_config_key(key)
+            {
+                continue;
+            }
+            if let Some(config) = generation_config.as_object_mut() {
+                if !config.contains_key(key) {
+                    config.insert(key.clone(), value.clone());
+                }
+            }
+        }
     }
-    apply_custom_parameters_to_object(
-        &mut generation_config,
-        &request.parameters,
-        is_gemini_3,
-        is_gemini_3,
-        &["generationConfig"],
-    );
+    if is_gemini_3 {
+        if let Some(config) = generation_config.as_object_mut() {
+            config.retain(|key, _| !is_google_gemini_3_unsupported_generation_config_key(key));
+        }
+    }
     generation_config
+}
+
+fn apply_google_custom_parameters_to_body(body: &mut Value, request: &LlmRequest) {
+    let Some(entries) = request
+        .parameters
+        .get("customParameters")
+        .or_else(|| request.parameters.get("custom_params"))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let Some(body) = body.as_object_mut() else {
+        return;
+    };
+    for (key, value) in entries {
+        if key == "generationConfig"
+            || is_google_generation_config_custom_parameter_key(key)
+            || !should_apply_custom_parameter(key, false, false, &[])
+        {
+            continue;
+        }
+        if !body.contains_key(key) {
+            body.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 fn google_generate_body(request: &LlmRequest) -> Value {
@@ -2708,6 +2835,7 @@ fn google_generate_body(request: &LlmRequest) -> Value {
     if let Some(system_instruction) = google_system_instruction(request) {
         body["systemInstruction"] = system_instruction;
     }
+    apply_google_custom_parameters_to_body(&mut body, request);
     body
 }
 
@@ -3463,6 +3591,18 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
                 .expect("Gemini 3 reasoning effort should create thinking config");
         assert_eq!(config["thinkingLevel"], json!("medium"));
         assert_eq!(config["includeThoughts"], json!(true));
+
+        let flash_config =
+            google_thinking_config("gemini-3.5-flash", &json!({ "reasoningEffort": "minimal" }))
+                .expect("Gemini 3.5 Flash minimal effort should create thinking config");
+        assert_eq!(flash_config["thinkingLevel"], json!("minimal"));
+
+        let pro_config = google_thinking_config(
+            "gemini-3.1-pro-preview",
+            &json!({ "reasoningEffort": "minimal" }),
+        )
+        .expect("Gemini 3.1 Pro should clamp minimal effort to a supported level");
+        assert_eq!(pro_config["thinkingLevel"], json!("low"));
     }
 
     #[test]
@@ -3482,7 +3622,22 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
                 "temperature": 0.8,
                 "topP": 0.9,
                 "topK": 40,
-                "stop": ["</END>"]
+                "frequencyPenalty": 0.2,
+                "presencePenalty": 0.3,
+                "stop": ["</END>"],
+                "customParameters": {
+                    "generationConfig": {
+                        "candidateCount": 2,
+                        "topP": 0.4,
+                        "responseMimeType": "application/json"
+                    },
+                    "safetySettings": [
+                        {
+                            "category": "HARM_CATEGORY_HARASSMENT",
+                            "threshold": "BLOCK_ONLY_HIGH"
+                        }
+                    ]
+                }
             }),
         );
         let body = google_generate_body(&request);
@@ -3494,7 +3649,15 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output
         assert!(config.get("temperature").is_none());
         assert!(config.get("topP").is_none());
         assert!(config.get("topK").is_none());
-        assert!(config.get("stopSequences").is_none());
+        assert!(config.get("candidateCount").is_none());
+        assert_eq!(config["frequencyPenalty"], json!(0.2));
+        assert_eq!(config["presencePenalty"], json!(0.3));
+        assert_eq!(config["stopSequences"], json!(["</END>"]));
+        assert_eq!(config["responseMimeType"], json!("application/json"));
+        assert_eq!(
+            body["safetySettings"][0]["category"],
+            json!("HARM_CATEGORY_HARASSMENT")
+        );
     }
 
     #[test]

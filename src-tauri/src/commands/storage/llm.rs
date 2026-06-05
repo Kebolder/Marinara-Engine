@@ -783,7 +783,17 @@ fn provider_model_catalog(provider: &str) -> Vec<Value> {
             "claude-opus-4-7[1m]",
             "claude-opus-4-6",
         ],
-        "google" | "google_vertex" => &["gemini-1.5-pro", "gemini-1.5-flash", "text-embedding-004"],
+        "google" | "google_vertex" => &[
+            "gemini-3.5-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-preview-customtools",
+            "gemini-3.1-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "text-embedding-004",
+        ],
         "openrouter" => &[
             "openai/gpt-4o-mini",
             "anthropic/claude-3.5-sonnet",
