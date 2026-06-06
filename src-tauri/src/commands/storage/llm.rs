@@ -109,8 +109,9 @@ pub(crate) fn llm_request_from_body(
 }
 
 pub(crate) async fn llm_complete(state: &AppState, body: Value) -> AppResult<Value> {
-    let content = marinara_llm::complete(llm_request_from_body(state, body)?).await?;
-    Ok(Value::String(content))
+    let completion = marinara_llm::complete_rich(llm_request_from_body(state, body)?).await?;
+    serde_json::to_value(completion)
+        .map_err(|error| AppError::new("llm_response_error", error.to_string()))
 }
 
 pub(crate) async fn llm_embed(state: &AppState, body: Value) -> AppResult<Value> {

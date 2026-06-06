@@ -94,6 +94,14 @@ pub struct LlmCompletion {
     #[serde(rename = "toolCalls")]
     pub tool_calls: Vec<Value>,
     #[serde(
+        rename = "finishReason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finish_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Value>,
+    #[serde(
         rename = "providerMetadata",
         alias = "provider_metadata",
         default,
@@ -108,27 +116,9 @@ pub async fn complete(request: LlmRequest) -> AppResult<String> {
 
 pub async fn complete_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     match request.connection.provider.as_str() {
-        "anthropic" => complete_anthropic(request)
-            .await
-            .map(|content| LlmCompletion {
-                content,
-                tool_calls: Vec::new(),
-                provider_metadata: None,
-            }),
-        "google" | "google_vertex" => complete_google(request).await.map(|content| LlmCompletion {
-            content,
-            tool_calls: Vec::new(),
-            provider_metadata: None,
-        }),
-        "claude_subscription" => {
-            complete_claude_subscription(request)
-                .await
-                .map(|content| LlmCompletion {
-                    content,
-                    tool_calls: Vec::new(),
-                    provider_metadata: None,
-                })
-        }
+        "anthropic" => complete_anthropic_rich(request).await,
+        "google" | "google_vertex" => complete_google_rich(request).await,
+        "claude_subscription" => complete_claude_subscription_rich(request).await,
         "cohere" if should_use_cohere_compatibility(&request) => {
             complete_openai_compatible_rich(request).await
         }
@@ -2477,6 +2467,18 @@ async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCom
     }
     let tool_calls = responses_tool_calls(&json);
     let provider_metadata = openai_responses_provider_metadata(&json);
+    let usage = json.get("usage").cloned();
+    let finish_reason = if !tool_calls.is_empty() {
+        Some("tool_calls".to_string())
+    } else {
+        json.get("status").and_then(Value::as_str).map(|status| {
+            if status.eq_ignore_ascii_case("incomplete") {
+                "length".to_string()
+            } else {
+                status.to_string()
+            }
+        })
+    };
     if content.trim().is_empty() && tool_calls.is_empty() {
         return Err(AppError::with_details(
             "llm_response_error",
@@ -2487,6 +2489,8 @@ async fn complete_openai_responses_rich(request: LlmRequest) -> AppResult<LlmCom
     Ok(LlmCompletion {
         content,
         tool_calls,
+        finish_reason,
+        usage,
         provider_metadata,
     })
 }
@@ -3774,7 +3778,43 @@ fn log_claude_subscription_status(value: &Value, requested_model: &str) {
     }
 }
 
-fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResult<String> {
+fn claude_subscription_usage_from_json(value: &Value) -> Option<Value> {
+    let mut usage = value.get("usage").cloned().unwrap_or_else(|| json!({}));
+    let Some(usage_object) = usage.as_object_mut() else {
+        return Some(usage);
+    };
+    if let Some(model_usage) = value.get("modelUsage") {
+        usage_object.insert("modelUsage".to_string(), model_usage.clone());
+    }
+    if let Some(fast_mode_state) = value.get("fast_mode_state") {
+        usage_object.insert("fastModeState".to_string(), fast_mode_state.clone());
+    }
+    (!usage_object.is_empty()).then_some(usage)
+}
+
+fn claude_subscription_completion_from_json(
+    value: &Value,
+    requested_model: &str,
+) -> Option<LlmCompletion> {
+    let content = claude_subscription_text_from_json(value)?;
+    log_claude_subscription_status(value, requested_model);
+    Some(LlmCompletion {
+        content,
+        tool_calls: Vec::new(),
+        finish_reason: value
+            .get("subtype")
+            .or_else(|| value.get("finish_reason"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        usage: claude_subscription_usage_from_json(value),
+        provider_metadata: None,
+    })
+}
+
+fn parse_claude_subscription_output_rich(
+    raw: &str,
+    requested_model: &str,
+) -> AppResult<LlmCompletion> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(AppError::new(
@@ -3783,9 +3823,9 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
         ));
     }
     if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        if let Some(text) = claude_subscription_text_from_json(&value) {
-            log_claude_subscription_status(&value, requested_model);
-            return Ok(text);
+        if let Some(completion) = claude_subscription_completion_from_json(&value, requested_model)
+        {
+            return Ok(completion);
         }
         if claude_subscription_json_declares_empty_result(&value) {
             let diagnostic = claude_subscription_output_diagnostic(&value)
@@ -3797,7 +3837,13 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
             ));
         }
     }
-    let mut text = String::new();
+    let mut completion = LlmCompletion {
+        content: String::new(),
+        tool_calls: Vec::new(),
+        finish_reason: None,
+        usage: None,
+        provider_metadata: None,
+    };
     let mut empty_result_diagnostic: Option<Value> = None;
     for line in trimmed.lines() {
         let line = line.trim();
@@ -3805,16 +3851,21 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
             continue;
         }
         if let Ok(value) = serde_json::from_str::<Value>(line) {
-            if let Some(piece) = claude_subscription_text_from_json(&value) {
-                log_claude_subscription_status(&value, requested_model);
-                text.push_str(&piece);
+            if let Some(piece) = claude_subscription_completion_from_json(&value, requested_model) {
+                completion.content.push_str(&piece.content);
+                if piece.finish_reason.is_some() {
+                    completion.finish_reason = piece.finish_reason;
+                }
+                if piece.usage.is_some() {
+                    completion.usage = piece.usage;
+                }
             } else if claude_subscription_json_declares_empty_result(&value) {
                 empty_result_diagnostic = Some(value);
             }
         }
     }
-    if !text.trim().is_empty() {
-        return Ok(text);
+    if !completion.content.trim().is_empty() {
+        return Ok(completion);
     }
     if let Some(value) = empty_result_diagnostic {
         let diagnostic = claude_subscription_output_diagnostic(&value)
@@ -3825,7 +3876,13 @@ fn parse_claude_subscription_output(raw: &str, requested_model: &str) -> AppResu
             redact_sensitive_json(value),
         ));
     }
-    Ok(trimmed.to_string())
+    Ok(LlmCompletion {
+        content: trimmed.to_string(),
+        tool_calls: Vec::new(),
+        finish_reason: None,
+        usage: None,
+        provider_metadata: None,
+    })
 }
 
 fn parse_claude_subscription_json_output(raw: &str) -> Option<Value> {
@@ -3947,7 +4004,7 @@ pub fn diagnose_claude_subscription_model(model: &str, fast_mode: bool) -> AppRe
     }))
 }
 
-async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> {
+async fn complete_claude_subscription_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     let prompt_selection = claude_subscription_prompt(&request);
     let model_selection = claude_subscription_model_selection(&request.connection.model);
     let mut command = Command::new(claude_subscription_command());
@@ -4035,7 +4092,7 @@ async fn complete_claude_subscription(request: LlmRequest) -> AppResult<String> 
             })),
         ));
     }
-    parse_claude_subscription_output(&stdout, &model_selection.cli_model)
+    parse_claude_subscription_output_rich(&stdout, &model_selection.cli_model)
 }
 
 fn build_anthropic_body(request: &LlmRequest, stream: bool) -> Value {
@@ -4157,21 +4214,40 @@ async fn anthropic_request(
     .await
 }
 
-async fn complete_anthropic(request: LlmRequest) -> AppResult<String> {
+async fn complete_anthropic_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     let body = build_anthropic_body(&request, false);
     let response = anthropic_request(&request, &body, "anthropic.messages").await?;
-    parse_json_response(response, |json| {
-        json.get("content")
-            .and_then(Value::as_array)
-            .and_then(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.get("text").and_then(Value::as_str))
-                    .find(|text| !text.trim().is_empty())
-            })
-            .map(ToOwned::to_owned)
+    let (status, json) = read_json_response(response).await?;
+    if !status.is_success() {
+        return Err(provider_http_error(status, json));
+    }
+    let content = json
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .find(|text| !text.trim().is_empty())
+        })
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            AppError::with_details(
+                "llm_response_error",
+                "Provider response did not contain assistant text",
+                redact_sensitive_json(json.clone()),
+            )
+        })?;
+    Ok(LlmCompletion {
+        content,
+        tool_calls: Vec::new(),
+        finish_reason: json
+            .get("stop_reason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        usage: json.get("usage").cloned(),
+        provider_metadata: None,
     })
-    .await
 }
 
 async fn stream_anthropic(
@@ -4556,7 +4632,7 @@ fn google_generate_body(request: &LlmRequest) -> Value {
     body
 }
 
-async fn complete_google(request: LlmRequest) -> AppResult<String> {
+async fn complete_google_rich(request: LlmRequest) -> AppResult<LlmCompletion> {
     let url = google_endpoint(&request, "generateContent", false);
     let body = google_generate_body(&request);
     log_prompt_connection_request("google.generateContent", &url, &request, &body);
@@ -4567,29 +4643,56 @@ async fn complete_google(request: LlmRequest) -> AppResult<String> {
             .json(&body),
     )
     .await?;
-    parse_json_response(response, |json| {
-        json.get("candidates")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|candidate| candidate.get("content"))
-            .and_then(|content| content.get("parts"))
-            .and_then(Value::as_array)
-            .and_then(|parts| {
-                parts.iter().find_map(|part| {
-                    if part
-                        .get("thought")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                    {
-                        None
-                    } else {
-                        part.get("text").and_then(Value::as_str)
-                    }
-                })
+    let (status, json) = read_json_response(response).await?;
+    if !status.is_success() {
+        return Err(provider_http_error(status, json));
+    }
+    let candidate = json
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .ok_or_else(|| {
+            AppError::with_details(
+                "llm_response_error",
+                "Provider response did not contain a completion candidate",
+                redact_sensitive_json(json.clone()),
+            )
+        })?;
+    let content = candidate
+        .get("content")
+        .and_then(|content| content.get("parts"))
+        .and_then(Value::as_array)
+        .and_then(|parts| {
+            parts.iter().find_map(|part| {
+                if part
+                    .get("thought")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    None
+                } else {
+                    part.get("text").and_then(Value::as_str)
+                }
             })
-            .map(ToOwned::to_owned)
+        })
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            AppError::with_details(
+                "llm_response_error",
+                "Provider response did not contain assistant text",
+                redact_sensitive_json(json.clone()),
+            )
+        })?;
+    Ok(LlmCompletion {
+        content,
+        tool_calls: Vec::new(),
+        finish_reason: candidate
+            .get("finishReason")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        usage: json.get("usageMetadata").cloned(),
+        provider_metadata: None,
     })
-    .await
 }
 
 async fn stream_google(
@@ -4947,6 +5050,12 @@ async fn parse_cohere_response_rich(response: reqwest::Response) -> AppResult<Ll
     Ok(LlmCompletion {
         content,
         tool_calls,
+        finish_reason: message
+            .get("finish_reason")
+            .or_else(|| json.get("finish_reason"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        usage: json.get("usage").cloned(),
         provider_metadata: None,
     })
 }
@@ -5009,6 +5118,12 @@ async fn parse_json_response_rich(response: reqwest::Response) -> AppResult<LlmC
     Ok(LlmCompletion {
         content,
         tool_calls,
+        finish_reason: choice
+            .get("finish_reason")
+            .or_else(|| message.get("finish_reason"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        usage: json.get("usage").cloned(),
         provider_metadata: None,
     })
 }
@@ -5987,6 +6102,54 @@ data: {"type":"response.output_item.done","item":{"type":"function_call","call_i
         assert!(error.message.contains("response headers"));
     }
 
+    #[tokio::test]
+    async fn openai_compatible_complete_rich_preserves_result_metadata() {
+        let url = serve_response(
+            "200 OK",
+            "application/json",
+            br#"{"choices":[{"finish_reason":"tool_calls","message":{"content":"Need a roll.","tool_calls":[{"id":"call_1","function":{"name":"roll_dice","arguments":"{\"notation\":\"1d20\"}"}}]}}],"usage":{"prompt_tokens":11,"completion_tokens":7}}"#.to_vec(),
+        )
+        .await;
+        let mut request = request_for("openai", "gpt-4o", json!({}));
+        request.connection.base_url = url;
+        request.messages = vec![test_message("user", "Roll.")];
+
+        let completion = complete_openai_compatible_rich(request)
+            .await
+            .expect("rich completion should parse");
+
+        assert_eq!(completion.content, "Need a roll.");
+        assert_eq!(completion.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(
+            completion.usage.as_ref().unwrap()["prompt_tokens"],
+            json!(11)
+        );
+        assert_eq!(completion.tool_calls[0]["id"], json!("call_1"));
+        assert_eq!(
+            completion.tool_calls[0]["function"]["name"],
+            json!("roll_dice")
+        );
+    }
+
+    #[test]
+    fn claude_subscription_output_rich_preserves_usage_metadata() {
+        let completion = parse_claude_subscription_output_rich(
+            r#"{"type":"result","subtype":"success","result":"OK","usage":{"input_tokens":10,"output_tokens":2},"fast_mode_state":"off","modelUsage":{"claude-sonnet-4-5":{"input_tokens":10,"output_tokens":2}}}"#,
+            "claude-sonnet-4-5",
+        )
+        .expect("Claude subscription result should parse");
+
+        assert_eq!(completion.content, "OK");
+        assert_eq!(completion.finish_reason.as_deref(), Some("success"));
+        let usage = completion.usage.expect("usage should be preserved");
+        assert_eq!(usage["input_tokens"], json!(10));
+        assert_eq!(
+            usage["modelUsage"]["claude-sonnet-4-5"]["output_tokens"],
+            json!(2)
+        );
+        assert_eq!(usage["fastModeState"], json!("off"));
+    }
+
     #[test]
     fn google_vertex_default_base_uses_aiplatform_endpoint() {
         assert_eq!(
@@ -6775,7 +6938,7 @@ data: {"type":"content_block_delta","index":0,"delta":{"thinking":"summary witho
 
     #[test]
     fn claude_subscription_empty_json_result_is_an_error() {
-        let error = parse_claude_subscription_output(
+        let error = parse_claude_subscription_output_rich(
             r#"{"type":"result","subtype":"success","result":"","usage":{"input_tokens":10,"output_tokens":0},"fast_mode_state":"off","modelUsage":{"claude-sonnet-4-5":{}}}"#,
             "claude-sonnet-4-5",
         )
