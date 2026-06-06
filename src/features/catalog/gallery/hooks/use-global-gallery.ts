@@ -11,6 +11,7 @@ import { globalGalleryKeys } from "../query-keys";
 import { galleryApi } from "../../../../shared/api/image-generation-api";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
 
 export interface GlobalGalleryImage {
   id: string;
@@ -65,33 +66,13 @@ export function useGlobalGalleryImages() {
 export function useUploadGlobalGalleryImages() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ files, folderId }: { files: File[]; folderId: string | null }) => {
-      const uploads = await Promise.allSettled(
-        files.map((file) => galleryApi.uploadGlobal<GlobalGalleryImage>(file, folderId)),
-      );
-
-      const successful = uploads.filter(
-        (result): result is PromiseFulfilledResult<GlobalGalleryImage> => result.status === "fulfilled",
-      );
-
-      // Intentional partial-success-as-failure: if some files succeed and one
-      // fails, the successful rows are already persisted yet we still throw (and a
-      // retry re-uploads everything, duplicating the winners). Kept this way to
-      // match useUploadCharacterGalleryImage and the chat gallery's
-      // useUploadGalleryImage so all gallery uploads behave identically — "fixing"
-      // it only here would split that behavior. If true partial-success semantics
-      // are wanted, change every gallery upload together, not just this one.
-      if (successful.length !== uploads.length) {
-        const failedCount = uploads.length - successful.length;
-        throw new Error(
-          failedCount === 1
-            ? "One gallery image failed to upload."
-            : `${failedCount} gallery images failed to upload.`,
-        );
-      }
-
-      return successful.map((result) => result.value);
-    },
+    mutationFn: ({ files, folderId }: { files: File[]; folderId: string | null }) =>
+      runGalleryUploadBatch(
+        files,
+        (file) => galleryApi.uploadGlobal<GlobalGalleryImage>(file, folderId),
+        (failed) =>
+          failed === 1 ? "The gallery image failed to upload." : `All ${failed} gallery images failed to upload.`,
+      ),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: globalGalleryKeys.images });
     },

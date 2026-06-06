@@ -689,6 +689,7 @@ pub(crate) fn storage_create_inner(
     validate_chat_folder_for_create(state, &entity, &value)?;
     validate_connection_folder_for_create(state, &entity, &value)?;
     validate_lorebook_folder_for_create(state, &entity, &value)?;
+    validate_gallery_folder_for_create(state, &entity, &value)?;
     if entity == "messages" {
         return Ok(shared::project_timeline_message(
             message_swipes::create_message(
@@ -769,6 +770,7 @@ pub(crate) fn storage_update_inner(
     validate_chat_folder_for_patch(state, &entity, &id, &patch)?;
     validate_connection_folder_for_patch(state, &entity, &patch)?;
     validate_lorebook_folder_for_patch(state, &entity, &id, &patch)?;
+    validate_gallery_folder_for_patch(state, &entity, &patch)?;
     let mut normalized_patch =
         normalize_chat_for_update(&entity, shared::normalize_update_patch(&entity, patch)?)?;
     if entity == "chats" {
@@ -1437,6 +1439,55 @@ fn validate_lorebook_folder_parent(
             .map(str::to_string);
     }
     Ok(())
+}
+
+/// Reject a `global-gallery` row whose `folderId` points at a `gallery-folders`
+/// row that does not exist. The dedicated upload command coerces a missing
+/// folder to root, but the generic create/update path (used by the lightbox
+/// move and any remote caller) must guard the reference itself so a stale UI
+/// race or remote write can't strand an image under a ghost folder.
+pub(crate) fn validate_gallery_folder_for_create(
+    state: &AppState,
+    entity: &str,
+    value: &Value,
+) -> Result<(), AppError> {
+    if entity != "global-gallery" {
+        return Ok(());
+    }
+    validate_gallery_folder_assignment(state, parse_chat_folder_id(value.get("folderId"))?)
+}
+
+pub(crate) fn validate_gallery_folder_for_patch(
+    state: &AppState,
+    entity: &str,
+    patch: &Value,
+) -> Result<(), AppError> {
+    if entity != "global-gallery" {
+        return Ok(());
+    }
+    let Some(object) = patch.as_object() else {
+        return Err(AppError::invalid_input("Patch must be an object"));
+    };
+    if !object.contains_key("folderId") {
+        return Ok(());
+    }
+    validate_gallery_folder_assignment(state, parse_chat_folder_id(patch.get("folderId"))?)
+}
+
+fn validate_gallery_folder_assignment(
+    state: &AppState,
+    folder_id: Option<String>,
+) -> Result<(), AppError> {
+    let Some(folder_id) = folder_id else {
+        return Ok(());
+    };
+    if state.storage.get("gallery-folders", &folder_id)?.is_some() {
+        Ok(())
+    } else {
+        Err(AppError::invalid_input(format!(
+            "gallery-folders/{folder_id} was not found"
+        )))
+    }
 }
 
 fn parse_chat_folder_id(folder_id: Option<&Value>) -> Result<Option<String>, AppError> {

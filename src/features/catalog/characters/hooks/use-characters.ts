@@ -14,6 +14,7 @@ import { characterApi } from "../../../../shared/api/character-api";
 import { storageApi } from "../../../../shared/api/storage-api";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import { galleryApi } from "../../../../shared/api/image-generation-api";
+import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
 import type { CharacterCardVersion } from "../../../../engine/contracts/types/character";
 import {
@@ -416,26 +417,15 @@ export function useCharacterGalleryImages(characterId: string | null) {
 export function useUploadCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (files: File[]) => {
-      const uploads = await Promise.allSettled(
-        files.map((file) => galleryApi.uploadCharacter<CharacterGalleryImage>(characterId, file)),
-      );
-
-      const successfulUploads = uploads.filter(
-        (result): result is PromiseFulfilledResult<CharacterGalleryImage> => result.status === "fulfilled",
-      );
-
-      if (successfulUploads.length !== uploads.length) {
-        const failedCount = uploads.length - successfulUploads.length;
-        throw new Error(
-          failedCount === 1
-            ? "One character gallery image failed to upload."
-            : `${failedCount} character gallery images failed to upload.`,
-        );
-      }
-
-      return successfulUploads.map((result) => result.value);
-    },
+    mutationFn: (files: File[]) =>
+      runGalleryUploadBatch(
+        files,
+        (file) => galleryApi.uploadCharacter<CharacterGalleryImage>(characterId, file),
+        (failed) =>
+          failed === 1
+            ? "The character gallery image failed to upload."
+            : `All ${failed} character gallery images failed to upload.`,
+      ),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: characterKeys.gallery(characterId) });
     },

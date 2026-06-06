@@ -66,6 +66,11 @@ export function PersonaGalleryTab({ personaId, personaName }: { personaId: strin
     (files: File[]) => {
       if (files.length === 0) return;
       upload.mutate(files, {
+        onSuccess: ({ failed }) => {
+          if (failed > 0) {
+            toast.warning(`${failed} image${failed === 1 ? "" : "s"} failed to upload; the rest were saved.`);
+          }
+        },
         onError: (error) => {
           toast.error(error instanceof Error ? error.message : "Failed to upload persona gallery images.");
         },

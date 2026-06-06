@@ -4,6 +4,7 @@ import { personaApi } from "../../../../shared/api/persona-api";
 import { galleryApi } from "../../../../shared/api/image-generation-api";
 import { resolveGalleryFileUrl } from "../../../../shared/api/local-file-api";
 import { storageApi } from "../../../../shared/api/storage-api";
+import { runGalleryUploadBatch } from "../../../../shared/lib/gallery-upload";
 import { storageCommandsApi } from "../../../../shared/api/storage-commands-api";
 import { personaAvatarUrl, type PersonaAvatarSource } from "../lib/persona-avatar-url";
 import { PERSONA_SUMMARY_FIELDS } from "../lib/persona-summary-fields";
@@ -312,33 +313,15 @@ export function usePersonaGalleryImages(personaId: string | null) {
 export function useUploadPersonaGalleryImage(personaId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (files: File[]) => {
-      const uploads = await Promise.allSettled(
-        files.map((file) => galleryApi.uploadPersona<PersonaGalleryImage>(personaId, file)),
-      );
-
-      const successfulUploads = uploads.filter(
-        (result): result is PromiseFulfilledResult<PersonaGalleryImage> => result.status === "fulfilled",
-      );
-
-      // Intentional partial-success-as-failure: if some files succeed and one
-      // fails, the successful rows are already persisted yet we still throw (and a
-      // retry re-uploads everything, duplicating the winners). Kept this way to
-      // match useUploadCharacterGalleryImage and the chat gallery's
-      // useUploadGalleryImage so all gallery uploads behave identically — "fixing"
-      // it only here would split that behavior. If true partial-success semantics
-      // are wanted, change every gallery upload together, not just this one.
-      if (successfulUploads.length !== uploads.length) {
-        const failedCount = uploads.length - successfulUploads.length;
-        throw new Error(
-          failedCount === 1
-            ? "One persona gallery image failed to upload."
-            : `${failedCount} persona gallery images failed to upload.`,
-        );
-      }
-
-      return successfulUploads.map((result) => result.value);
-    },
+    mutationFn: (files: File[]) =>
+      runGalleryUploadBatch(
+        files,
+        (file) => galleryApi.uploadPersona<PersonaGalleryImage>(personaId, file),
+        (failed) =>
+          failed === 1
+            ? "The persona gallery image failed to upload."
+            : `All ${failed} persona gallery images failed to upload.`,
+      ),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: personaKeys.gallery(personaId) });
     },

@@ -5,6 +5,9 @@ pub(crate) fn admin_clear_all(state: &AppState, body: Value) -> AppResult<Value>
     if body.get("confirm").and_then(Value::as_bool) != Some(true) {
         return Err(AppError::invalid_input("confirm must be true"));
     }
+    for collection in GALLERY_FILE_COLLECTIONS {
+        remove_gallery_collection_files(state, collection)?;
+    }
     state.storage.clear_all()?;
     clear_runtime_media(state)?;
     Ok(json!({ "success": true, "cleared": "all" }))
@@ -115,12 +118,31 @@ pub(crate) fn admin_expunge(state: &AppState, body: Value) -> AppResult<Value> {
     Ok(json!({ "success": true, "clearedCollections": cleared_collections }))
 }
 
+/// Gallery collections whose rows reference managed image files in the shared
+/// `gallery` asset folder. Their files must be removed before the rows are
+/// cleared, or expunge/clear-all leaves orphaned files behind. Per-row removal
+/// (rather than nuking the whole folder) is what lets a per-scope expunge — e.g.
+/// "personas" — drop only its own gallery's files without touching the others.
+const GALLERY_FILE_COLLECTIONS: &[&str] =
+    &["gallery", "character-gallery", "persona-gallery", "global-gallery"];
+
+fn remove_gallery_collection_files(state: &AppState, collection: &str) -> AppResult<()> {
+    if !GALLERY_FILE_COLLECTIONS.contains(&collection) {
+        return Ok(());
+    }
+    for row in state.storage.list(collection)? {
+        media_uploads::remove_managed_record_file(state, "gallery", &row, "filePath", "filename");
+    }
+    Ok(())
+}
+
 fn clear_collections(
     state: &AppState,
     collections: &[&str],
     cleared: &mut Vec<String>,
 ) -> AppResult<()> {
     for collection in collections {
+        remove_gallery_collection_files(state, collection)?;
         state.storage.replace_all(collection, Vec::new())?;
         cleared.push((*collection).to_string());
     }

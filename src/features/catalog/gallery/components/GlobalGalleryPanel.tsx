@@ -120,6 +120,11 @@ export function GlobalGalleryPanel() {
       upload.mutate(
         { files, folderId: uploadFolderId },
         {
+          onSuccess: ({ failed }) => {
+            if (failed > 0) {
+              toast.warning(`${failed} image${failed === 1 ? "" : "s"} failed to upload; the rest were saved.`);
+            }
+          },
           onError: (error) => {
             toast.error(error instanceof Error ? error.message : "Failed to upload gallery images.");
           },
@@ -415,6 +420,7 @@ export function GlobalGalleryPanel() {
         <GlobalGalleryLightbox
           image={lightbox}
           folders={folderList}
+          movePending={move.isPending}
           onClose={() => setLightbox(null)}
           onMove={(folderId) => {
             // Optimistically reflect the move in the lightbox, but roll back (and
@@ -448,12 +454,14 @@ export function GlobalGalleryPanel() {
 function GlobalGalleryLightbox({
   image,
   folders,
+  movePending,
   onClose,
   onMove,
   onDelete,
 }: {
   image: GlobalGalleryImage;
   folders: GalleryFolder[];
+  movePending: boolean;
   onClose: () => void;
   onMove: (folderId: string | null) => void;
   onDelete: () => void;
@@ -469,6 +477,29 @@ function GlobalGalleryLightbox({
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
+        return;
+      }
+      // Trap Tab/Shift+Tab inside the dialog (it declares aria-modal), matching
+      // the persona/character lightboxes so focus can't escape to the page behind.
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), select:not([disabled])'),
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
@@ -505,8 +536,9 @@ function GlobalGalleryLightbox({
             <select
               value={image.folderId ?? ""}
               onChange={(e) => onMove(e.target.value ? e.target.value : null)}
+              disabled={movePending}
               aria-label="Move image to folder"
-              className="min-w-0 flex-1 rounded-md border border-white/20 bg-black/40 px-2 py-1 text-xs text-white outline-none"
+              className="min-w-0 flex-1 rounded-md border border-white/20 bg-black/40 px-2 py-1 text-xs text-white outline-none disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="">Unfiled</option>
               {folders.map((folder) => (
