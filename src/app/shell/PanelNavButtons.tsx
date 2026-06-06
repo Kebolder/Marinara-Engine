@@ -4,7 +4,7 @@ import { useAgentStore } from "../../shared/stores/agent.store";
 import { useUIStore } from "../../shared/stores/ui.store";
 import { cn } from "../../shared/lib/utils";
 
-export const RIGHT_PANEL_BUTTONS = [
+const RIGHT_PANEL_BUTTONS = [
   {
     panel: "bot-browser" as const,
     icon: Bot,
