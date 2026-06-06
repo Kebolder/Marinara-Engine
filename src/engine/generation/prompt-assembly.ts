@@ -1648,6 +1648,17 @@ function shouldForceRoleplaySummaryIntoSystem(chat: JsonRecord): boolean {
   return mode === "roleplay" || meta.sceneStatus === "active";
 }
 
+function shouldFallbackInsertChatSummary(
+  chat: JsonRecord,
+  selectedPreset: SelectedPromptPreset | null,
+  summary: string | null,
+): boolean {
+  if (!selectedPreset || !summary?.trim()) return false;
+  if (presetCanInsertChatSummary(selectedPreset, summary)) return false;
+  const mode = readString(chat.mode || chat.chatMode, "conversation");
+  return mode === "conversation" || shouldForceRoleplaySummaryIntoSystem(chat);
+}
+
 function appendSummaryToSystemPrompt(
   messages: ChatMLMessage[],
   summary: string | null,
@@ -1798,7 +1809,10 @@ function shouldCompactHistoryForSummary(
   const meta = parseRecord(chat.metadata);
   if (!hasConversationSummaryCompaction(meta)) return false;
   if (!selectedPreset) return true;
-  return presetCanInsertChatSummary(selectedPreset, summary) || shouldForceRoleplaySummaryIntoSystem(chat);
+  return (
+    presetCanInsertChatSummary(selectedPreset, summary) ||
+    shouldFallbackInsertChatSummary(chat, selectedPreset, summary)
+  );
 }
 
 function compactedHistoryLimit(meta: JsonRecord, fallbackLimit: number, shouldCompact: boolean): number {
@@ -3257,7 +3271,11 @@ export async function assembleGenerationPrompt(
     reusableContext?.history ??
     historyMessages(
       input.storedMessages,
-      compactedHistoryLimit(chatMeta, historyLimit, shouldCompactHistoryForSummary(input.chat, selectedPreset, summary)),
+      compactedHistoryLimit(
+        chatMeta,
+        historyLimit,
+        shouldCompactHistoryForSummary(input.chat, selectedPreset, summary),
+      ),
       chatMeta.excludePastReasoning === false,
     );
   const agentData = input.agentData ?? {};
@@ -3352,7 +3370,11 @@ export async function assembleGenerationPrompt(
     });
   }
 
-  if (!usedFallbackSystemPrompt && !insertedSummary && shouldForceRoleplaySummaryIntoSystem(input.chat)) {
+  if (
+    !usedFallbackSystemPrompt &&
+    !insertedSummary &&
+    shouldFallbackInsertChatSummary(input.chat, selectedPreset, summary)
+  ) {
     appendSummaryToSystemPrompt(messages, summary, wrapFormat);
   }
 
