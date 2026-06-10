@@ -311,22 +311,35 @@ export async function connectionsRoutes(app: FastifyInstance) {
     const debugLog = (message: string, ...args: any[]) => logDebugOverride(requestDebug, message, ...args);
     const start = Date.now();
     try {
-      // Claude (Subscription) has no HTTP endpoint — verify the local SDK
-      // can be loaded and that an auth source exists, then return success.
       if (conn.provider === "claude_subscription") {
-        try {
-          await import("@anthropic-ai/claude-agent-sdk");
-        } catch (err) {
+        if (!conn.model) {
           return {
             success: false,
-            message: `Claude Agent SDK unavailable: ${err instanceof Error ? err.message : "Unknown error"}`,
+            message: "No model configured. Set a Claude subscription model first.",
             latencyMs: Date.now() - start,
             modelName: null,
           };
         }
+        const provider = createLLMProvider(
+          conn.provider,
+          "",
+          conn.apiKey,
+          conn.maxContext,
+          conn.openrouterProvider,
+          conn.maxTokensOverride,
+          conn.claudeFastMode === "true",
+        );
+        let responseText = "";
+        for await (const chunk of provider.chat([{ role: "user", content: "Reply with OK." }], {
+          model: conn.model,
+          maxTokens: 32,
+          stream: false,
+        })) {
+          responseText += chunk;
+        }
         return {
           success: true,
-          message: "Claude Agent SDK loaded. The first chat will fail if `claude login` has not been run on this host.",
+          message: `Claude Agent SDK completed a real request: ${responseText.trim().slice(0, 120) || "OK"}`,
           latencyMs: Date.now() - start,
           modelName: conn.model,
         };

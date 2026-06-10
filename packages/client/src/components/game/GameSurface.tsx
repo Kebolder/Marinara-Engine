@@ -2621,8 +2621,9 @@ export function GameSurface({
   // Also resolve persona sprite ID for expression lookup
   const personaSpriteId = useMemo(() => {
     const config = chatMeta.gameSetupConfig as Record<string, unknown> | undefined;
-    return (config?.personaId as string | undefined) ?? null;
-  }, [chatMeta.gameSetupConfig]);
+    const configuredPersonaId = typeof config?.personaId === "string" ? config.personaId.trim() : "";
+    return personaInfo?.id ?? (configuredPersonaId || null);
+  }, [chatMeta.gameSetupConfig, personaInfo?.id]);
 
   const spriteQueries = useQueries({
     queries: characterIds.map((id) => ({
@@ -2774,6 +2775,15 @@ export function GameSurface({
 
   const activeFullBodySprite = useMemo(() => {
     if (!fullBodyTarget) return null;
+    const targetName = normalizeSceneAssetName(fullBodyTarget.name);
+    const personaName = personaInfo?.name ? normalizeSceneAssetName(personaInfo.name) : "";
+    if (personaSpriteId && personaName && targetName === personaName) {
+      const pose =
+        fullBodyTarget.mode === "combat"
+          ? resolveCombatFullBodyPose(fullBodyTarget.token, personaSpriteQuery.data)
+          : resolveDialogueFullBodyPose(fullBodyTarget.token, personaSpriteQuery.data);
+      return pose ? { characterId: personaSpriteId, pose: `full_${pose}` } : null;
+    }
     const activeCharacterEntries = characterIds.flatMap((id) => {
       const character = characterMap.get(id);
       return character ? ([[id, character]] as Array<[string, NonNullable<ReturnType<typeof characterMap.get>>]>) : [];
@@ -2802,7 +2812,17 @@ export function GameSurface({
       characterId,
       pose: `full_${pose}`,
     };
-  }, [characterIds, characterMap, fullBodyTarget, librarySpriteQueries, speakingLibraryCharacters, spriteQueries]);
+  }, [
+    characterIds,
+    characterMap,
+    fullBodyTarget,
+    librarySpriteQueries,
+    personaInfo?.name,
+    personaSpriteId,
+    personaSpriteQuery.data,
+    speakingLibraryCharacters,
+    spriteQueries,
+  ]);
 
   // Build sprite expression map for the full-body SpriteOverlay.
   const gameSpriteExpressions = useMemo(

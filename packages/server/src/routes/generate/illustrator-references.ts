@@ -165,7 +165,7 @@ export async function resolveIllustratorCharacterReferences(args: {
     ) ||
       personaAliases.some((alias) => textContainsAlias(normalizedPromptText, alias)));
 
-  if (selected.size === 0 && args.fallbackToChatCharacters !== false) {
+  if (selected.size === 0 && args.fallbackToChatCharacters === true) {
     for (const character of args.chatCharacters) {
       const source = sourcesById.get(character.id);
       if (source) selected.set(source.id, source);

@@ -367,6 +367,41 @@ export function normalizeHapticAgentCommands(data: Record<string, unknown>): Arr
   return [];
 }
 
+const SELFIE_WORD_RE = /\b(?:selfie|photo|pic|picture|image)\b/i;
+const USER_SELFIE_REQUEST_RE =
+  /\b(?:send|show|share|take|snap|give|attach|post|can\s+i\s+see|could\s+i\s+see|let\s+me\s+see|want|wanna)\b[\s\S]{0,120}\b(?:selfie|photo|pic|picture)\b|\b(?:selfie|photo|pic|picture)\b[\s\S]{0,80}\b(?:please|pls|send|show|share|take|snap)\b/i;
+const ASSISTANT_SELFIE_CLAIM_RE =
+  /\b(?:send|sent|sending|share|shares|shared|attach|attaches|attached|post|posts|posted|take|takes|took|snap|snaps|snapped)\b[\s\S]{0,120}\b(?:selfie|photo|pic|picture)\b|\[\s*[^\]]{0,80}\b(?:send|sends|sent|share|shares|take|takes|snap|snaps)\b[^\]]{0,120}\b(?:selfie|photo|pic|picture)\b[^\]]*\]/i;
+
+function inferSelfieContextFromResponse(response: string): string | undefined {
+  const compact = response.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+  const bracketMatch = compact.match(/\[[^\]]*\b(?:selfie|photo|pic|picture)\b[^\]]*\]/i);
+  const source = bracketMatch?.[0] ?? compact;
+  return source
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/^.*?\b(?:selfie|photo|pic|picture)\b[:\s-]*/i, "")
+    .trim()
+    .slice(0, 240);
+}
+
+function recoverImplicitSelfieCommand(args: {
+  response: string;
+  latestUserMessage?: string | null;
+  imageGenerationEnabled: boolean;
+  existingCommands: CharacterCommand[];
+}): SelfieCommand | null {
+  if (!args.imageGenerationEnabled) return null;
+  if (args.existingCommands.some((command) => command.type === "selfie")) return null;
+  const response = args.response.trim();
+  if (!SELFIE_WORD_RE.test(response)) return null;
+  const userAskedForSelfie = USER_SELFIE_REQUEST_RE.test(args.latestUserMessage ?? "");
+  const assistantClaimsSelfie = ASSISTANT_SELFIE_CLAIM_RE.test(response);
+  if (!userAskedForSelfie && !assistantClaimsSelfie) return null;
+  return { type: "selfie", context: inferSelfieContextFromResponse(response) };
+}
+
 const COMPLETE_OUTPUT_END_RE = /[.!?…。！？]["'”’)\]}»›]*$/;
 const COMPLETE_SENTENCE_RE = /[.!?…。！？](?:["'”’)\]}»›]+)?(?=\s|$)/g;
 
@@ -3181,6 +3216,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (hasImageGen) {
               commandLines.push(
                 `- [selfie] or [selfie: context="description of what the selfie shows"] - you send a photo of yourself. Use this when the user asks for a selfie, photo, or pic, or when you want to share what you look like right now.`,
+                `   If you say you are sending, sharing, taking, or attaching a selfie/photo/pic, include [selfie] in that same response. Do not only narrate the action.`,
                 ``,
               );
             }
@@ -5984,6 +6020,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let toolDefs: LLMToolDefinition[] | undefined;
         const allToolDefs: LLMToolDefinition[] = [];
         const agentOnlyToolNames = new Set([
+          "save_lorebook_entry",
           "read_chat_summary",
           "append_chat_summary",
           "read_chat_variable",
@@ -6203,6 +6240,98 @@ export async function generateRoutes(app: FastifyInstance) {
           chatMeta,
           onUpdateMetadata: updateChatMetadataForTools,
         };
+        const resolveAgentWritableLorebookId = (agentSettings: Record<string, unknown>): string | null => {
+          const enabledTools = Array.isArray(agentSettings.enabledTools) ? agentSettings.enabledTools : [];
+          const lorebookWriteEnabled =
+            agentSettings.lorebookWriteEnabled === true || enabledTools.includes("save_lorebook_entry");
+          if (!lorebookWriteEnabled) return null;
+          for (const key of ["writableLorebookId", "targetLorebookId"]) {
+            const value = agentSettings[key];
+            if (typeof value === "string" && value.trim()) return value.trim();
+          }
+          const writableIds = agentSettings.writableLorebookIds;
+          if (Array.isArray(writableIds)) {
+            const first = writableIds.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+            if (first) return first.trim();
+          }
+          return null;
+        };
+        const createLorebookEntryWriter = (agent: ResolvedAgent, agentSettings: Record<string, unknown>) => {
+          const writableLorebookId = resolveAgentWritableLorebookId(agentSettings);
+          if (!writableLorebookId) return undefined;
+          return async (entry: {
+            name: string;
+            content: string;
+            description?: string;
+            keys: string[];
+            tag?: string;
+            mode: "create" | "replace" | "append";
+          }) => {
+            const targetLorebook = await lorebooksStore.getById(writableLorebookId);
+            if (!targetLorebook) {
+              return { error: "Selected lorebook is no longer available.", lorebookId: writableLorebookId };
+            }
+
+            const existingEntries = await lorebooksStore.listEntries(writableLorebookId);
+            const normalizedName = entry.name.trim().toLocaleLowerCase();
+            const existing = existingEntries.find(
+              (candidate: any) =>
+                typeof candidate.name === "string" && candidate.name.trim().toLocaleLowerCase() === normalizedName,
+            ) as any;
+            const keys = Array.from(new Set(entry.keys.map((key) => key.trim()).filter(Boolean)));
+
+            if (!existing || entry.mode === "create") {
+              const created = await lorebooksStore.createEntry({
+                lorebookId: writableLorebookId,
+                name: entry.name,
+                content: entry.content,
+                description: entry.description ?? "",
+                keys,
+                tag: entry.tag ?? "",
+                enabled: true,
+                constant: false,
+                selective: false,
+                position: 0,
+                depth: 4,
+                role: "system",
+              });
+              return {
+                applied: true,
+                action: "created",
+                lorebookId: writableLorebookId,
+                lorebookName: (targetLorebook as any).name,
+                entryId: (created as any)?.id ?? null,
+                name: entry.name,
+                sourceAgentId: agent.id,
+              };
+            }
+
+            const existingContent = typeof existing.content === "string" ? existing.content : "";
+            const nextContent =
+              entry.mode === "append" && existingContent.trim()
+                ? existingContent.includes(entry.content)
+                  ? existingContent
+                  : `${existingContent.trim()}\n\n${entry.content}`
+                : entry.content;
+            const existingKeys = Array.isArray(existing.keys) ? existing.keys.filter((key: unknown): key is string => typeof key === "string") : [];
+            const updated = await lorebooksStore.updateEntry(existing.id, {
+              content: nextContent,
+              description: entry.description ?? existing.description ?? "",
+              keys: Array.from(new Set([...existingKeys, ...keys])),
+              ...(entry.tag !== undefined ? { tag: entry.tag } : {}),
+              enabled: true,
+            });
+            return {
+              applied: true,
+              action: entry.mode === "append" ? "appended" : "replaced",
+              lorebookId: writableLorebookId,
+              lorebookName: (targetLorebook as any).name,
+              entryId: (updated as any)?.id ?? existing.id,
+              name: entry.name,
+              sourceAgentId: agent.id,
+            };
+          };
+        };
 
         // ── Resolve tool context for all agents ──
         // This enables built-in and custom tools for any agent in the pipeline.
@@ -6227,6 +6356,7 @@ export async function generateRoutes(app: FastifyInstance) {
           );
           if (agentTools.length === 0) continue;
           const allowedToolNames = new Set(agentTools.map((td) => td.function.name));
+          const saveLorebookEntry = createLorebookEntryWriter(agent, agentSettings);
           if (agent.type === "spotify") {
             const spotifyAgent = agent as SpotifyRuntimeAgent;
             spotifyAgent.__spotifyToolCalls = new Set<string>();
@@ -6256,6 +6386,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
               const results = await executeToolCalls([call], {
                 ...baseToolExecutionContext,
+                saveLorebookEntry,
               });
               const result = results[0]?.result ?? "Tool execution failed";
               if (agent.type === "spotify" && call.function.name === "spotify_play") {
@@ -7923,6 +8054,17 @@ export async function generateRoutes(app: FastifyInstance) {
                   parsed.commands.length,
                   parsed.commands.map((c) => c.type),
                 );
+              }
+              const recoveredSelfieCommand = recoverImplicitSelfieCommand({
+                response: fullResponse,
+                latestUserMessage: input.userMessage,
+                imageGenerationEnabled:
+                  typeof chatMeta.imageGenConnectionId === "string" && chatMeta.imageGenConnectionId.trim().length > 0,
+                existingCommands: parsedCommands,
+              });
+              if (recoveredSelfieCommand) {
+                parsedCommands = [...parsedCommands, recoveredSelfieCommand];
+                logger.info("[generate] Recovered implicit selfie command for chat %s", input.chatId);
               }
             }
             if (roleplayDmCommandsEnabled) {
@@ -9770,7 +9912,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
                       // Collect character reference images when enabled. Prefer
                       // full-body sprites, then fall back to avatar portraits.
-                      const useAvatarRefs = illustratorAgent?.settings?.useAvatarReferences !== false;
+                      const useAvatarRefs = illustratorAgent?.settings?.useAvatarReferences === true;
                       let illustratorRefImages: string[] | undefined;
                       if (useAvatarRefs) {
                         const referenceResolution = await resolveIllustratorCharacterReferences({
@@ -9794,6 +9936,7 @@ export async function generateRoutes(app: FastifyInstance) {
                             typeof illData.reason === "string" ? illData.reason : "",
                             combinedResponse,
                           ].join("\n"),
+                          fallbackToChatCharacters: false,
                         });
                         if (referenceResolution.referenceImages.length > 0) {
                           illustratorRefImages = referenceResolution.referenceImages;

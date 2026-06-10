@@ -32,6 +32,16 @@ export type LorebookSearchFn = (
   category?: string | null,
 ) => Promise<Array<{ name: string; content: string; tag: string; keys: string[] }>>;
 
+/** Lorebook writer function injected from the route layer. */
+export type SaveLorebookEntryFn = (entry: {
+  name: string;
+  content: string;
+  description?: string;
+  keys: string[];
+  tag?: string;
+  mode: "create" | "replace" | "append";
+}) => Promise<Record<string, unknown>>;
+
 /** Spotify API credentials injected from the route layer. */
 export interface SpotifyCredentials {
   accessToken: string;
@@ -42,6 +52,10 @@ export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promis
 export type MetadataPatchInput = MetadataPatch | MetadataUpdater;
 
 const MAX_APPEND_BYTES = 16 * 1024;
+const MAX_LOREBOOK_ENTRY_CONTENT_BYTES = 64 * 1024;
+const MAX_LOREBOOK_ENTRY_DESCRIPTION_BYTES = 4 * 1024;
+const MAX_LOREBOOK_ENTRY_NAME_LENGTH = 160;
+const MAX_LOREBOOK_ENTRY_KEYS = 24;
 const MAX_CHAT_VARIABLE_KEY_LENGTH = 128;
 const MAX_CHAT_VARIABLE_VALUE_BYTES = 64 * 1024;
 const MAX_CHAT_VARIABLES = 256;
@@ -137,6 +151,7 @@ export interface ToolExecutionContext {
   onUpdateMetadata?: (patch: MetadataPatchInput) => Promise<MetadataPatch>;
   customTools?: CustomToolDef[];
   searchLorebook?: LorebookSearchFn;
+  saveLorebookEntry?: SaveLorebookEntryFn;
   spotify?: SpotifyCredentials;
   spotifyRepeatAfterPlay?: "off" | "track" | "context";
 }
@@ -196,6 +211,8 @@ async function executeSingleTool(
       return triggerEvent(args);
     case "search_lorebook":
       return searchLorebook(args, context?.searchLorebook);
+    case "save_lorebook_entry":
+      return saveLorebookEntry(args, context?.saveLorebookEntry);
     case "read_chat_summary":
       return readChatSummary(context?.chatMeta);
     case "append_chat_summary":
@@ -228,6 +245,7 @@ async function executeSingleTool(
           "set_expression",
           "trigger_event",
           "search_lorebook",
+          "save_lorebook_entry",
           "read_chat_summary",
           "append_chat_summary",
           "read_chat_variable",
@@ -564,6 +582,52 @@ async function searchLorebook(
     results,
     count: results.length,
   };
+}
+
+function normalizeLorebookEntryKeys(value: unknown, fallbackName: string): string[] {
+  const raw = Array.isArray(value) ? value : [];
+  const keys = raw
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0)
+    .slice(0, MAX_LOREBOOK_ENTRY_KEYS);
+  if (keys.length > 0) return Array.from(new Set(keys));
+  return fallbackName ? [fallbackName] : [];
+}
+
+function normalizeLorebookWriteMode(value: unknown): "create" | "replace" | "append" {
+  return value === "create" || value === "append" || value === "replace" ? value : "replace";
+}
+
+async function saveLorebookEntry(
+  args: Record<string, unknown>,
+  saveFn?: SaveLorebookEntryFn,
+): Promise<Record<string, unknown>> {
+  if (!saveFn) {
+    return { error: "Lorebook writing is not available in this context." };
+  }
+  if (typeof args.name !== "string" || !args.name.trim()) {
+    return { error: "save_lorebook_entry requires a non-empty name" };
+  }
+  if (typeof args.content !== "string" || !args.content.trim()) {
+    return { error: "save_lorebook_entry requires non-empty content" };
+  }
+
+  const name = args.name.trim().slice(0, MAX_LOREBOOK_ENTRY_NAME_LENGTH);
+  const content = trimToUtf8Bytes(args.content.trim(), MAX_LOREBOOK_ENTRY_CONTENT_BYTES);
+  const description =
+    typeof args.description === "string" && args.description.trim()
+      ? trimToUtf8Bytes(args.description.trim(), MAX_LOREBOOK_ENTRY_DESCRIPTION_BYTES)
+      : undefined;
+  const tag = typeof args.tag === "string" && args.tag.trim() ? args.tag.trim().slice(0, 80) : undefined;
+
+  return saveFn({
+    name,
+    content,
+    description,
+    keys: normalizeLorebookEntryKeys(args.keys, name),
+    tag,
+    mode: normalizeLorebookWriteMode(args.mode),
+  });
 }
 
 // ── Spotify Tool Implementations ──

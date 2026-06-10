@@ -76,6 +76,52 @@ function loadSdk(): Promise<SdkModule> {
   return cachedSdk;
 }
 
+const SDK_ERROR_DETAIL_LIMIT = 1600;
+
+function compactSdkErrorText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const compact = value.trim().replace(/\s+/g, " ");
+  return compact ? compact.slice(0, SDK_ERROR_DETAIL_LIMIT) : null;
+}
+
+function collectSdkErrorDetails(err: unknown, seen = new Set<unknown>()): string[] {
+  if (!err || seen.has(err)) return [];
+  seen.add(err);
+
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    const message = compactSdkErrorText(err.message);
+    if (message) parts.push(message);
+  } else {
+    const message = compactSdkErrorText(String(err));
+    if (message && message !== "[object Object]") parts.push(message);
+  }
+
+  if (typeof err === "object") {
+    const record = err as Record<string, unknown>;
+    for (const key of ["stderr", "stdout", "details", "detail", "code", "status"]) {
+      const value = compactSdkErrorText(record[key]);
+      if (value) parts.push(`${key}: ${value}`);
+    }
+    const errors = record.errors;
+    if (Array.isArray(errors)) {
+      for (const item of errors) parts.push(...collectSdkErrorDetails(item, seen));
+    }
+    if (record.cause) parts.push(...collectSdkErrorDetails(record.cause, seen));
+  }
+
+  return Array.from(new Set(parts));
+}
+
+function formatClaudeSdkError(err: unknown): string {
+  const parts = collectSdkErrorDetails(err);
+  const message = parts.length > 0 ? parts.join(" | ") : err instanceof Error ? err.message : String(err);
+  if (/Claude Code request failed/i.test(message)) {
+    return `${message}. Confirm \`claude login\` was run by the same OS user/HOME as the Marinara server, or set ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN in the server environment. HOME=${process.env.HOME ?? "unset"}.`;
+  }
+  return message;
+}
+
 /** @internal Test-only seam. Replaces the cached SDK module with a fake or clears it. */
 export function __setSdkForTesting(mod: Pick<SdkModule, "query"> | null): void {
   cachedSdk = mod ? (Promise.resolve(mod as SdkModule) as Promise<SdkModule>) : null;
@@ -548,7 +594,7 @@ export class ClaudeSubscriptionProvider extends BaseLLMProvider {
         options.model,
         resumeSessionId ?? "fold-path",
       );
-      const friendly = err instanceof Error ? err.message : String(err);
+      const friendly = formatClaudeSdkError(err);
       throw new Error(`Claude (Subscription) request failed: ${friendly}`);
     } finally {
       if (options.signal) options.signal.removeEventListener("abort", onUpstreamAbort);

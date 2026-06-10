@@ -813,6 +813,133 @@ const CHAT_METADATA_TOOL_NAMES = new Set([
   "read_chat_variable",
   "write_chat_variable",
 ]);
+const LOREBOOK_WRITE_TOOL_NAME = "save_lorebook_entry";
+
+function resolveRetryAgentWritableLorebookId(settings: Record<string, unknown>): string | null {
+  const enabledTools = Array.isArray(settings.enabledTools) ? settings.enabledTools : [];
+  const lorebookWriteEnabled = settings.lorebookWriteEnabled === true || enabledTools.includes(LOREBOOK_WRITE_TOOL_NAME);
+  if (!lorebookWriteEnabled) return null;
+  for (const key of ["writableLorebookId", "targetLorebookId"]) {
+    const value = settings[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const writableIds = settings.writableLorebookIds;
+  if (Array.isArray(writableIds)) {
+    const first = writableIds.find((value): value is string => typeof value === "string" && value.trim().length > 0);
+    if (first) return first.trim();
+  }
+  return null;
+}
+
+async function attachRetryLorebookWriterToolContexts(args: {
+  lorebooksStore: ReturnType<typeof createLorebooksStorage>;
+  resolvedAgents: ResolvedRetryAgent[];
+}) {
+  const { lorebooksStore, resolvedAgents } = args;
+  const tool = toLLMToolDefinition(LOREBOOK_WRITE_TOOL_NAME);
+  if (!tool) return;
+
+  for (const entry of resolvedAgents) {
+    const settings = parseSettingsRecord(entry.resolved.settings);
+    const writableLorebookId = resolveRetryAgentWritableLorebookId(settings);
+    if (!writableLorebookId) continue;
+
+    const existingContext = entry.resolved.toolContext;
+    const tools = existingContext?.tools.some((item) => item.function.name === LOREBOOK_WRITE_TOOL_NAME)
+      ? [...existingContext.tools]
+      : [...(existingContext?.tools ?? []), tool];
+
+    entry.resolved.toolContext = {
+      tools,
+      executeToolCall: async (call) => {
+        if (call.function.name !== LOREBOOK_WRITE_TOOL_NAME) {
+          if (existingContext) return existingContext.executeToolCall(call);
+          return JSON.stringify({
+            error: `Tool not allowed for agent ${entry.resolved.type}: ${call.function.name}`,
+            allowed: [LOREBOOK_WRITE_TOOL_NAME],
+          });
+        }
+
+        const saveLorebookEntry = async (loreEntry: {
+          name: string;
+          content: string;
+          description?: string;
+          keys: string[];
+          tag?: string;
+          mode: "create" | "replace" | "append";
+        }) => {
+          const targetLorebook = await lorebooksStore.getById(writableLorebookId);
+          if (!targetLorebook) {
+            return { error: "Selected lorebook is no longer available.", lorebookId: writableLorebookId };
+          }
+          const existingEntries = await lorebooksStore.listEntries(writableLorebookId);
+          const normalizedName = loreEntry.name.trim().toLocaleLowerCase();
+          const existing = existingEntries.find(
+            (candidate: any) =>
+              typeof candidate.name === "string" && candidate.name.trim().toLocaleLowerCase() === normalizedName,
+          ) as any;
+          const keys = Array.from(new Set(loreEntry.keys.map((key) => key.trim()).filter(Boolean)));
+
+          if (!existing || loreEntry.mode === "create") {
+            const created = await lorebooksStore.createEntry({
+              lorebookId: writableLorebookId,
+              name: loreEntry.name,
+              content: loreEntry.content,
+              description: loreEntry.description ?? "",
+              keys,
+              tag: loreEntry.tag ?? "",
+              enabled: true,
+              constant: false,
+              selective: false,
+              position: 0,
+              depth: 4,
+              role: "system",
+            });
+            return {
+              applied: true,
+              action: "created",
+              lorebookId: writableLorebookId,
+              lorebookName: (targetLorebook as any).name,
+              entryId: (created as any)?.id ?? null,
+              name: loreEntry.name,
+              sourceAgentId: entry.resolved.id,
+            };
+          }
+
+          const existingContent = typeof existing.content === "string" ? existing.content : "";
+          const nextContent =
+            loreEntry.mode === "append" && existingContent.trim()
+              ? existingContent.includes(loreEntry.content)
+                ? existingContent
+                : `${existingContent.trim()}\n\n${loreEntry.content}`
+              : loreEntry.content;
+          const existingKeys = Array.isArray(existing.keys)
+            ? existing.keys.filter((key: unknown): key is string => typeof key === "string")
+            : [];
+          const updated = await lorebooksStore.updateEntry(existing.id, {
+            content: nextContent,
+            description: loreEntry.description ?? existing.description ?? "",
+            keys: Array.from(new Set([...existingKeys, ...keys])),
+            ...(loreEntry.tag !== undefined ? { tag: loreEntry.tag } : {}),
+            enabled: true,
+          });
+          return {
+            applied: true,
+            action: loreEntry.mode === "append" ? "appended" : "replaced",
+            lorebookId: writableLorebookId,
+            lorebookName: (targetLorebook as any).name,
+            entryId: (updated as any)?.id ?? existing.id,
+            name: loreEntry.name,
+            sourceAgentId: entry.resolved.id,
+          };
+        };
+
+        const results = await executeToolCalls([call], { saveLorebookEntry });
+        return results[0]?.result ?? "Tool execution failed";
+      },
+    };
+  }
+}
 
 async function attachRetryChatMetadataToolContexts(args: {
   chats: ReturnType<typeof createChatsStorage>;
@@ -1914,7 +2041,7 @@ async function applyRetryResultEffects(args: {
 
             // Collect character reference images when enabled. Prefer full-body
             // sprites, then fall back to avatar portraits.
-            const useAvatarRefs = illustratorAgent?.resolved.settings?.useAvatarReferences !== false;
+            const useAvatarRefs = illustratorAgent?.resolved.settings?.useAvatarReferences === true;
             let referenceImages: string[] | undefined;
             if (useAvatarRefs) {
               const referenceResolution = await resolveIllustratorCharacterReferences({
@@ -1940,6 +2067,7 @@ async function applyRetryResultEffects(args: {
                   typeof illData.reason === "string" ? illData.reason : "",
                   agentContext.mainResponse ?? "",
                 ].join("\n"),
+                fallbackToChatCharacters: false,
               });
               if (referenceResolution.referenceImages.length > 0) {
                 referenceImages = referenceResolution.referenceImages;
@@ -2213,6 +2341,7 @@ export async function registerRetryAgentsRoute(app: FastifyInstance) {
       });
       await attachRetrySpotifyToolContexts({ agentsStore, chats, chatId, chatMeta, resolvedAgents });
       await attachRetryChatMetadataToolContexts({ chats, chatId, chatMeta, resolvedAgents });
+      await attachRetryLorebookWriterToolContexts({ lorebooksStore, resolvedAgents });
       const cyoaAgentWillRun = resolvedAgents.some((e) => e.resolved.type === "cyoa");
       const agentContext = await buildRetryAgentContext({
         cyoaAgentWillRun,

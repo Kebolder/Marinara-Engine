@@ -108,6 +108,8 @@ function createCustomAgentType(name: string): string {
   return `custom-${slug}-${suffix}`;
 }
 
+const LOREBOOK_WRITE_TOOL_NAME = "save_lorebook_entry";
+
 // Mirrors the server's buildSpotifyRedirectUri rule: Spotify only accepts
 // https:// or http://127.0.0.1, so fall back to loopback whenever the page
 // is served over plain HTTP from a non-loopback host.
@@ -234,6 +236,8 @@ export function AgentEditor() {
   const [localIncludePreGenInjections, setLocalIncludePreGenInjections] = useState(false);
   const [localIncludeParallelResults, setLocalIncludeParallelResults] = useState(false);
   const [localEnabledTools, setLocalEnabledTools] = useState<string[]>([]);
+  const [localLorebookWriteEnabled, setLocalLorebookWriteEnabled] = useState(false);
+  const [localWritableLorebookId, setLocalWritableLorebookId] = useState("");
   const [localSpotifyClientId, setLocalSpotifyClientId] = useState("");
   const [localSourceLorebookIds, setLocalSourceLorebookIds] = useState<string[]>([]);
   const [localUseChatActiveLorebooks, setLocalUseChatActiveLorebooks] = useState(false);
@@ -298,7 +302,20 @@ export function AgentEditor() {
       setLocalInjectAsSection(
         (settings.injectAsSection as boolean | undefined) ?? defaultSettings.injectAsSection === true,
       );
-      setLocalEnabledTools(settings.enabledTools ?? DEFAULT_AGENT_TOOLS[dbConfig.type] ?? []);
+      const enabledTools = Array.isArray(settings.enabledTools)
+        ? settings.enabledTools.filter((tool: unknown): tool is string => typeof tool === "string")
+        : (DEFAULT_AGENT_TOOLS[dbConfig.type] ?? []);
+      const writableLorebookId =
+        typeof settings.writableLorebookId === "string"
+          ? settings.writableLorebookId
+          : typeof settings.targetLorebookId === "string"
+            ? settings.targetLorebookId
+            : Array.isArray(settings.writableLorebookIds) && typeof settings.writableLorebookIds[0] === "string"
+              ? settings.writableLorebookIds[0]
+              : "";
+      setLocalEnabledTools(enabledTools);
+      setLocalLorebookWriteEnabled(settings.lorebookWriteEnabled === true || enabledTools.includes(LOREBOOK_WRITE_TOOL_NAME));
+      setLocalWritableLorebookId(writableLorebookId);
       setLocalSpotifyClientId(settings.spotifyClientId ?? "");
       setLocalSourceLorebookIds(settings.sourceLorebookIds ?? []);
       setLocalUseChatActiveLorebooks(
@@ -342,6 +359,8 @@ export function AgentEditor() {
       setLocalResultType("context_injection");
       setLocalIncludePreGenInjections(false);
       setLocalIncludeParallelResults(false);
+      setLocalLorebookWriteEnabled(false);
+      setLocalWritableLorebookId("");
       setLocalPrompt("");
     } else {
       // Brand new custom agent — start empty
@@ -370,6 +389,8 @@ export function AgentEditor() {
       setLocalResultType("context_injection");
       setLocalIncludePreGenInjections(false);
       setLocalIncludeParallelResults(false);
+      setLocalLorebookWriteEnabled(false);
+      setLocalWritableLorebookId("");
       setLocalPrompt("");
     }
     setDirty(false);
@@ -510,6 +531,19 @@ export function AgentEditor() {
             1,
             Math.min(MAX_CUSTOM_AGENT_ACTIVATION_SCAN_DEPTH, Math.floor(Number(localActivationScanDepth) || 1)),
           );
+    const writableLorebookId = localWritableLorebookId.trim();
+    const lorebookWriterEnabled = isEditingCustomAgent && localLorebookWriteEnabled;
+    if (lorebookWriterEnabled && !writableLorebookId) {
+      setSaveError("Select a target lorebook before enabling lorebook writing for this agent.");
+      return;
+    }
+    const effectiveEnabledTools = Array.from(
+      new Set(
+        lorebookWriterEnabled
+          ? [...localEnabledTools, LOREBOOK_WRITE_TOOL_NAME]
+          : localEnabledTools.filter((tool) => tool !== LOREBOOK_WRITE_TOOL_NAME),
+      ),
+    );
 
     // Preserve OAuth fields the form doesn't expose. The server replaces
     // `settings` wholesale, so anything we omit here would be wiped — and the
@@ -546,7 +580,10 @@ export function AgentEditor() {
         ...(localMaxTokens !== "" ? { maxTokens: clampAgentMaxTokens(localMaxTokens) } : {}),
         ...(localRunInterval !== "" ? { runInterval: Number(localRunInterval) } : {}),
         ...(localInjectAsSection ? { injectAsSection: true } : {}),
-        enabledTools: localEnabledTools,
+        enabledTools: effectiveEnabledTools,
+        ...(lorebookWriterEnabled
+          ? { lorebookWriteEnabled: true, writableLorebookId, writableLorebookIds: [writableLorebookId] }
+          : {}),
         ...(localSpotifyClientId ? { spotifyClientId: localSpotifyClientId } : {}),
         ...(isKnowledgeRetrievalAgent || isKnowledgeRouterAgent
           ? { useChatActiveLorebooks: localUseChatActiveLorebooks }
@@ -607,6 +644,8 @@ export function AgentEditor() {
     localActivationScanDepth,
     localInjectAsSection,
     localEnabledTools,
+    localLorebookWriteEnabled,
+    localWritableLorebookId,
     localSpotifyClientId,
     localUseChatActiveLorebooks,
     localSourceLorebookIds,
@@ -644,6 +683,10 @@ export function AgentEditor() {
   const effectivePhase =
     (isCustomAgent || isNewCustomAgent) && localResultType === "text_rewrite" ? "post_processing" : localPhase;
   const showTurnDataAccess = (isCustomAgent || isNewCustomAgent) && effectivePhase === "post_processing";
+  const visibleBuiltInTools = useMemo(
+    () => BUILT_IN_TOOLS.filter((tool) => tool.name !== LOREBOOK_WRITE_TOOL_NAME),
+    [],
+  );
 
   // ── Loading / not found ──
   if (!agentDetailId || (!builtIn && !dbConfig && agentDetailId !== "__new__")) {
@@ -973,6 +1016,69 @@ export function AgentEditor() {
             </FieldGroup>
           )}
 
+          {(isCustomAgent || isNewCustomAgent) && (
+            <FieldGroup
+              label="Lorebook Writer"
+              icon={<BookOpen size="0.875rem" className="text-amber-400" />}
+              help="Lets this custom agent call a function that creates or updates entries in one selected lorebook."
+            >
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  aria-pressed={localLorebookWriteEnabled}
+                  onClick={() => {
+                    setLocalLorebookWriteEnabled((value) => !value);
+                    markDirty();
+                  }}
+                  className={cn(
+                    "flex w-full items-start gap-3 rounded-xl p-3 text-left text-xs ring-1 transition-all",
+                    localLorebookWriteEnabled
+                      ? "bg-[var(--primary)]/10 ring-[var(--primary)] text-[var(--foreground)]"
+                      : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                  )}
+                >
+                  {localLorebookWriteEnabled ? (
+                    <ToggleRight size="1.25rem" className="mt-0.5 shrink-0 text-emerald-400" />
+                  ) : (
+                    <ToggleLeft size="1.25rem" className="mt-0.5 shrink-0" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="block font-semibold">Allow lorebook entry writes</span>
+                    <span className="mt-0.5 block text-[0.625rem] leading-tight">
+                      The agent can only write to the lorebook selected below.
+                    </span>
+                  </span>
+                </button>
+
+                <div className="space-y-1.5">
+                  <p className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Target lorebook</p>
+                  {allLorebooks && allLorebooks.length > 0 ? (
+                    <select
+                      value={localWritableLorebookId}
+                      disabled={!localLorebookWriteEnabled}
+                      onChange={(event) => {
+                        setLocalWritableLorebookId(event.target.value);
+                        markDirty();
+                      }}
+                      className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    >
+                      <option value="">Select a lorebook</option>
+                      {allLorebooks.map((lorebook) => (
+                        <option key={lorebook.id} value={lorebook.id}>
+                          {lorebook.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[0.625rem] text-amber-200">
+                      Create a lorebook before enabling writes for this agent.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </FieldGroup>
+          )}
+
           {/* ── Connection Override ── */}
           <FieldGroup
             label="Connection Override"
@@ -1080,11 +1186,11 @@ export function AgentEditor() {
                   }}
                   className="rounded border-[var(--border)] bg-[var(--secondary)] text-[var(--primary)] focus:ring-[var(--ring)]"
                 />
-                <span className="text-sm">Send character &amp; persona avatars as reference images</span>
+                <span className="text-sm">Send matching character &amp; persona avatars as reference images</span>
               </label>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                Sends all character avatars in the scene plus your persona avatar to the image generator for visual
-                reference. Works best with providers that support reference images (NovelAI, Stability, A1111, ComfyUI).
+                Sends references only for characters or persona names matched in the Illustrator request. Works best
+                with providers that support reference images (NovelAI, Stability, A1111, ComfyUI).
               </p>
             </FieldGroup>
           )}
@@ -2172,7 +2278,7 @@ export function AgentEditor() {
               during generation.
             </p>
             <div className="space-y-2">
-              {BUILT_IN_TOOLS.map((tool: ToolDefinition) => (
+              {visibleBuiltInTools.map((tool: ToolDefinition) => (
                 <ToolCard
                   key={tool.name}
                   tool={tool}
