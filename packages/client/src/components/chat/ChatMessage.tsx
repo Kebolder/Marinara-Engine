@@ -43,7 +43,6 @@ import { useShallow } from "zustand/react/shallow";
 import { createMessageMacroResolver } from "../../lib/chat-macros";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useUIStore } from "../../stores/ui.store";
-import { useChatStore } from "../../stores/chat.store";
 import { useTranslate } from "../../hooks/use-translate";
 import { api } from "../../lib/api-client";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
@@ -239,6 +238,7 @@ interface ChatMessageProps {
   groupChatMode?: string;
   chatCharacterIds?: string[];
   expressionAvatarResolver?: ExpressionAvatarResolver;
+  hasDraftInput?: boolean;
   /** Distance from the latest message (0 = newest). Used for depth-range regex filtering. */
   messageDepth?: number;
   /** 1-based ordinal position in the message list. Shown under avatar when actions visible. */
@@ -715,6 +715,7 @@ export const ChatMessage = memo(function ChatMessage({
   groupChatMode,
   chatCharacterIds,
   expressionAvatarResolver,
+  hasDraftInput = false,
   messageDepth,
   messageIndex,
   messageOrderIndex,
@@ -759,8 +760,7 @@ export const ChatMessage = memo(function ChatMessage({
       theme: s.theme,
     })),
   );
-  const hasInput = useChatStore((s) => s.currentInput.trim().length > 0);
-  const isGuided = guideGenerations && hasInput;
+  const isGuided = guideGenerations && hasDraftInput;
   const regenerateButtonTitle = isGuided ? "Regenerate (guided)" : "Regenerate";
   const regenerateGuidedClass = isGuided
     ? "text-[var(--primary)] bg-[var(--primary)]/15 ring-1 ring-[var(--primary)]/30 hover:text-[var(--primary)]"

@@ -62,6 +62,7 @@ const MAX_CHAT_VARIABLES = 256;
 const SPOTIFY_TRACK_INDEX_TTL_MS = 20 * 60_000;
 const SPOTIFY_TRACK_INDEX_CACHE_MAX = 24;
 const SPOTIFY_TRACK_INDEX_MAX_TRACKS = 2_500;
+const SPOTIFY_TRACK_PAGE_SIZE = 50;
 const SPOTIFY_RECENT_TRACK_HISTORY_LIMIT = 24;
 const SPOTIFY_RECENT_TRACK_PROMPT_LIMIT = 12;
 const SPOTIFY_PLAYBACK_SETTLE_MS = 650;
@@ -1132,6 +1133,10 @@ function hashFraction(value: string): number {
   return Number.parseInt(hex, 16) / 0xffffffff;
 }
 
+function createSpotifySelectionVariant(): string {
+  return `${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function scoreSpotifyCandidate(track: SpotifyTrackCandidate, phrase: string, tokens: string[]): number {
   const name = normalizeSpotifyText(track.name);
   const artist = normalizeSpotifyText(track.artist);
@@ -1222,6 +1227,7 @@ function selectSpotifyTrackCandidates(args: {
   limit: number;
   playlistId: string;
   recentTrackUris?: string[];
+  selectionVariant?: string;
 }): { candidates: SpotifyTrackCandidate[]; mode: string; tokens: string[]; recentAvoidedCount: number } {
   const phrase = normalizeSpotifyText(args.query);
   const tokens = buildSpotifyCandidateTokens(args.query);
@@ -1232,10 +1238,10 @@ function selectSpotifyTrackCandidates(args: {
       candidates: sampleSpotifyTracksWithRecentAvoidance({
         tracks: args.tracks,
         count: args.limit,
-        seed: `${args.playlistId}:balanced`,
+        seed: `${args.playlistId}:balanced:${args.selectionVariant ?? ""}`,
         recentTrackUris,
       }),
-      mode: recentAvoidedCount > 0 ? "balanced_sample_recent_aware" : "balanced_sample",
+      mode: recentAvoidedCount > 0 ? "balanced_sample_rotating_recent_aware" : "balanced_sample_rotating",
       tokens,
       recentAvoidedCount,
     };
@@ -1245,9 +1251,16 @@ function selectSpotifyTrackCandidates(args: {
     .map((track) => ({ ...track, score: scoreSpotifyCandidate(track, phrase, tokens) }))
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
   const strong = scored.filter((track) => (track.score ?? 0) >= 2);
-  const selected: SpotifyTrackCandidate[] = strong
-    .filter((track) => !recentTrackUris.has(track.uri))
-    .slice(0, Math.max(0, Math.floor(args.limit * 0.8)));
+  const strongTarget = strong.length > 0 ? Math.max(1, Math.floor(args.limit * 0.75)) : 0;
+  const selected: SpotifyTrackCandidate[] =
+    strongTarget > 0
+      ? sampleSpotifyTracksWithRecentAvoidance({
+          tracks: strong.filter((track) => !recentTrackUris.has(track.uri)),
+          count: strongTarget,
+          seed: `${args.playlistId}:${phrase}:${args.selectionVariant ?? ""}:strong`,
+          recentTrackUris,
+        })
+      : [];
   const seen = new Set(selected.map((track) => track.uri));
   const reserve = args.limit - selected.length;
 
@@ -1255,7 +1268,7 @@ function selectSpotifyTrackCandidates(args: {
     const fallback = sampleSpotifyTracksWithRecentAvoidance({
       tracks: args.tracks.filter((track) => !seen.has(track.uri)),
       count: reserve,
-      seed: `${args.playlistId}:${phrase}:fallback`,
+      seed: `${args.playlistId}:${phrase}:${args.selectionVariant ?? ""}:fallback`,
       recentTrackUris,
     });
     selected.push(...fallback);
@@ -1266,11 +1279,11 @@ function selectSpotifyTrackCandidates(args: {
     mode:
       recentAvoidedCount > 0
         ? strong.length > 0
-          ? "scored_candidates_recent_aware"
-          : "balanced_sample_recent_aware"
+          ? "scored_candidates_rotating_recent_aware"
+          : "balanced_sample_rotating_recent_aware"
         : strong.length > 0
-          ? "scored_candidates"
-          : "balanced_sample",
+          ? "scored_candidates_rotating"
+          : "balanced_sample_rotating",
     tokens,
     recentAvoidedCount,
   };
@@ -1323,7 +1336,7 @@ async function fetchSpotifyTrackIndex(
   let offset = 0;
   let total = 0;
   let fetchedItems = 0;
-  const batchSize = playlistId === "liked" ? 50 : 100;
+  const batchSize = SPOTIFY_TRACK_PAGE_SIZE;
 
   while (offset < SPOTIFY_TRACK_INDEX_MAX_TRACKS) {
     const pageSize = Math.min(batchSize, SPOTIFY_TRACK_INDEX_MAX_TRACKS - offset);
@@ -1388,12 +1401,14 @@ async function spotifyGetPlaylistTracks(
       const query = [args.query, args.mood, args.scene].filter((part) => typeof part === "string").join(" ");
       const candidateLimit = clampNumber(args.candidateLimit ?? args.limit ?? 60, 60, 1, 80);
       const recentTrackUris = getSpotifyRecentTrackUris(context?.chatMeta);
+      const selectionVariant = createSpotifySelectionVariant();
       const selection = selectSpotifyTrackCandidates({
         tracks: index.tracks,
         query,
         limit: candidateLimit,
         playlistId,
         recentTrackUris,
+        selectionVariant,
       });
 
       return {
@@ -1408,6 +1423,7 @@ async function spotifyGetPlaylistTracks(
         matchedTokens: selection.tokens,
         recentTrackUris: recentTrackUris.slice(0, SPOTIFY_RECENT_TRACK_PROMPT_LIMIT),
         recentAvoidedCount: selection.recentAvoidedCount,
+        candidateSample: selectionVariant,
         truncated: index.truncated,
         hint:
           "Server indexed the playlist and returned only selected candidates. Recently played tracks are suppressed when alternatives exist; avoid recentTrackUris unless no fitting non-recent candidate appears. Pick 3-5 URIs from this shortlist; do not request every page unless you truly need manual browsing.",

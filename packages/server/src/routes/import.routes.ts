@@ -363,27 +363,36 @@ async function importCharacterBuffer(
 
     const avatarB64 = buffer.toString("base64");
     charData._avatarDataUrl = `data:image/png;base64,${avatarB64}`;
-    return importSTCharacter(charData, db, {
-      timestampOverrides,
-      importEmbeddedLorebook,
-      tagImportMode,
-      existingTagKeys,
-    });
+    try {
+      return await importSTCharacter(charData, db, {
+        timestampOverrides,
+        importEmbeddedLorebook,
+        tagImportMode,
+        existingTagKeys,
+      });
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   if (fileName.toLowerCase().endsWith(".charx")) {
     return importCharX(buffer, db, { timestampOverrides, importEmbeddedLorebook, tagImportMode, existingTagKeys });
   }
 
+  let json: Record<string, unknown>;
   try {
-    const json = JSON.parse(buffer.toString("utf-8"));
-    return importSTCharacter(json, db, { timestampOverrides, importEmbeddedLorebook, tagImportMode, existingTagKeys });
+    json = JSON.parse(buffer.toString("utf-8"));
   } catch {
     return {
       success: false,
       error:
         "Invalid file format. Expected a JSON character card, a PNG with embedded character data, or a .charx file.",
     };
+  }
+  try {
+    return await importSTCharacter(json, db, { timestampOverrides, importEmbeddedLorebook, tagImportMode, existingTagKeys });
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -684,11 +693,15 @@ export async function importRoutes(app: FastifyInstance) {
     if (rawTagImportMode !== undefined && tagImportMode === undefined) return invalidTagImportModeResponse();
     delete body.importEmbeddedLorebook;
     delete body.tagImportMode;
-    return importSTCharacter(body, app.db, {
-      timestampOverrides: readTimestampOverridesFromBody(body),
-      importEmbeddedLorebook,
-      tagImportMode,
-    });
+    try {
+      return await importSTCharacter(body, app.db, {
+        timestampOverrides: readTimestampOverridesFromBody(body),
+        importEmbeddedLorebook,
+        tagImportMode,
+      });
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   /** Inspect character cards before importing, so clients can ask about embedded lorebooks. */

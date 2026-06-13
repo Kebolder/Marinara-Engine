@@ -159,7 +159,6 @@ export const ChatInput = memo(function ChatInput({
   const setInputDraft = useChatStore((s) => s.setInputDraft);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
   const setCurrentInput = useChatStore((s) => s.setCurrentInput);
-  const currentInput = useChatStore((s) => s.currentInput);
   const activeChat = useChatStore((s) => s.activeChat);
   const chatMetadata = useMemo(() => parseChatMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const inactiveCharacterIds = useMemo(
@@ -1053,6 +1052,7 @@ export const ChatInput = memo(function ChatInput({
       if (!activeChatId || isStreaming) return;
       setCharPickerOpen(false);
       setCharPickerPos(null);
+      const guideText = getValue();
       try {
         await generate(
           guideGenerations && hasInput
@@ -1060,7 +1060,7 @@ export const ChatInput = memo(function ChatInput({
                 chatId: activeChatId,
                 connectionId: null,
                 forCharacterId: characterId,
-                generationGuide: buildGuidedGenerationInstructionMessage(currentInput),
+                generationGuide: buildGuidedGenerationInstructionMessage(guideText),
                 generationGuideSource: "guide",
               }
             : { chatId: activeChatId, connectionId: null, forCharacterId: characterId },
@@ -1070,7 +1070,7 @@ export const ChatInput = memo(function ChatInput({
         toast.error(msg);
       }
     },
-    [activeChatId, isStreaming, generate, hasInput, currentInput, guideGenerations],
+    [activeChatId, isStreaming, generate, hasInput, guideGenerations],
   );
 
   // Close character picker on outside click

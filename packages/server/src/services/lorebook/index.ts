@@ -115,6 +115,27 @@ function readStringArray(value: unknown): string[] {
   return uniqueStrings(safeJsonParse<string[]>(value, []));
 }
 
+function resolveLorebookCharacterIds(book: Pick<RelevantLorebook, "characterId" | "characterIds">): string[] {
+  return uniqueStrings([...(book.characterIds ?? []), book.characterId]);
+}
+
+function resolveLorebookPersonaIds(book: Pick<RelevantLorebook, "personaId" | "personaIds">): string[] {
+  return uniqueStrings([...(book.personaIds ?? []), book.personaId]);
+}
+
+function activeLorebookMatchesFilters(book: RelevantLorebook, filters: LorebookFilters): boolean {
+  if (!filters.activeLorebookIds?.includes(book.id)) return false;
+
+  const characterIds = resolveLorebookCharacterIds(book);
+  if (characterIds.length > 0) return characterIds.some((id) => filters.characterIds?.includes(id));
+
+  const personaIds = resolveLorebookPersonaIds(book);
+  if (personaIds.length > 0) return !!filters.personaId && personaIds.includes(filters.personaId);
+
+  if (book.chatId) return book.chatId === filters.chatId;
+  return true;
+}
+
 function pushSourceText(
   target: Partial<Record<LorebookMatchingSource, string[]>>,
   source: LorebookMatchingSource,
@@ -189,7 +210,7 @@ export function filterRelevantLorebooks(lorebooks: RelevantLorebook[], filters?:
     if (excludedLorebookIds.has(book.id)) return false;
     if (book.sourceAgentId && excludedSourceAgentIds.has(book.sourceAgentId)) return false;
     if (book.isGlobal) return true;
-    if (filters.activeLorebookIds?.includes(book.id)) return true;
+    if (activeLorebookMatchesFilters(book, filters)) return true;
     if ((book.characterIds ?? []).some((id) => filters.characterIds?.includes(id))) return true;
     if (book.characterId && filters.characterIds?.includes(book.characterId)) return true;
     if (filters.personaId && (book.personaIds ?? []).includes(filters.personaId)) return true;

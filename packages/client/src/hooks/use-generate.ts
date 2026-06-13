@@ -295,6 +295,31 @@ function sortMessagesByCreatedAt(messages: Message[]): Message[] {
   });
 }
 
+function parseMessageExtraRecordForMerge(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function mergeCachedGeneratedMessage(existing: Message, incoming: Message): Message {
+  const merged = { ...existing, ...incoming };
+  const existingExtra = parseMessageExtraRecordForMerge(existing.extra);
+  const incomingExtra = parseMessageExtraRecordForMerge(incoming.extra);
+  // The saved-message SSE snapshot can predate post-processing extras such as
+  // expression avatars or illustration attachments already present in cache.
+  if (Object.keys(existingExtra).length > 0 || Object.keys(incomingExtra).length > 0) {
+    merged.extra = { ...existingExtra, ...incomingExtra } as unknown as Message["extra"];
+  }
+  return merged;
+}
+
 function upsertPersistedMessages(qc: QueryClient, chatId: string, incoming: Message[]) {
   if (incoming.length === 0) return;
 
@@ -317,7 +342,7 @@ function upsertPersistedMessages(qc: QueryClient, chatId: string, incoming: Mess
       page.map((msg) => {
         existingIds.add(msg.id);
         const persisted = persistedById.get(msg.id);
-        return persisted ? { ...msg, ...persisted } : msg;
+        return persisted ? mergeCachedGeneratedMessage(msg, persisted) : msg;
       }),
     );
 
@@ -439,6 +464,125 @@ function getCachedChatForGeneration(qc: QueryClient, chatId: string): Chat | und
   if (detail) return detail;
   const list = qc.getQueryData<Chat[]>(chatKeys.list());
   return list?.find((chat) => chat.id === chatId);
+}
+
+function parseChatCharacterIds(rawIds: unknown): string[] {
+  if (Array.isArray(rawIds)) {
+    return rawIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  }
+  if (typeof rawIds !== "string") return [];
+  try {
+    const parsed = JSON.parse(rawIds);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function getCachedCharacterName(qc: QueryClient, characterId: string): string | null {
+  const detail = qc.getQueryData<CachedCharacterRow>(characterKeys.detail(characterId));
+  const list = qc.getQueryData<CachedCharacterRow[]>(characterKeys.list());
+  const row = detail ?? list?.find((character) => character.id === characterId);
+  const parsed = parseCharacterRowData(row?.data);
+  return (
+    (parsed && typeof parsed.name === "string" && parsed.name.trim()) ||
+    (typeof row?.name === "string" && row.name.trim()) ||
+    null
+  );
+}
+
+function getCachedChatSpeakerNames(qc: QueryClient, chatId: string): string[] {
+  const chat = getCachedChatForGeneration(qc, chatId);
+  const ids = parseChatCharacterIds(chat?.characterIds);
+  const names = ids.map((id) => getCachedCharacterName(qc, id)).filter((name): name is string => !!name);
+  return [...new Set(names)];
+}
+
+function normalizeSpeakerLabel(value: string): string {
+  return value.normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function firstSpeakerColonIndex(value: string): number {
+  const ascii = value.indexOf(":");
+  const fullWidth = value.indexOf("：");
+  if (ascii === -1) return fullWidth;
+  if (fullWidth === -1) return ascii;
+  return Math.min(ascii, fullWidth);
+}
+
+function createLeadingSpeakerPrefixFilter(initialLabels: string[]) {
+  const labels = new Set<string>();
+  let normalizedLabels: string[] = [];
+  let pending = "";
+  let done = false;
+
+  const addLabels = (nextLabels: string[]) => {
+    let changed = false;
+    for (const label of nextLabels) {
+      const trimmed = label.trim();
+      if (!trimmed || labels.has(trimmed)) continue;
+      labels.add(trimmed);
+      changed = true;
+    }
+    if (changed) {
+      normalizedLabels = [...labels].map(normalizeSpeakerLabel).filter(Boolean);
+    }
+  };
+
+  const finish = () => {
+    done = true;
+    const flushed = pending;
+    pending = "";
+    return flushed;
+  };
+
+  addLabels(initialLabels);
+
+  return {
+    addLabels,
+    reset() {
+      pending = "";
+      done = false;
+    },
+    discard() {
+      pending = "";
+      done = true;
+    },
+    flush() {
+      return pending ? finish() : "";
+    },
+    push(chunk: string) {
+      if (done || normalizedLabels.length === 0) return chunk;
+
+      pending += chunk;
+      const candidate = pending.trimStart();
+      if (!candidate) return "";
+
+      const colonIndex = firstSpeakerColonIndex(candidate);
+      const newlineMatch = candidate.match(/[\r\n]/);
+      const newlineIndex = newlineMatch?.index ?? -1;
+
+      if (colonIndex >= 0 && (newlineIndex === -1 || newlineIndex > colonIndex)) {
+        const label = normalizeSpeakerLabel(candidate.slice(0, colonIndex));
+        if (normalizedLabels.includes(label)) {
+          done = true;
+          pending = "";
+          return candidate.slice(colonIndex + 1).replace(/^\s+/, "");
+        }
+        return finish();
+      }
+
+      if (newlineIndex >= 0 || candidate.length > 96) return finish();
+
+      const normalizedCandidate = normalizeSpeakerLabel(candidate);
+      const stillPossibleSpeakerPrefix =
+        !normalizedCandidate || normalizedLabels.some((label) => label.startsWith(normalizedCandidate));
+
+      return stillPossibleSpeakerPrefix ? "" : finish();
+    },
+  };
 }
 
 function shouldRefreshGameStateAfterGeneration(qc: QueryClient, chatId: string) {
@@ -741,6 +885,10 @@ export function useGenerate() {
       const streamingEnabled = transportStreaming;
       const chatModeForGeneration = getCachedChatMode(qc, params.chatId);
       const shouldDisplayRawStream = chatModeForGeneration !== "conversation" || !!params.regenerateMessageId;
+      const leadingSpeakerPrefixFilter = createLeadingSpeakerPrefixFilter([
+        ...getCachedChatSpeakerNames(qc, params.chatId),
+        ...(params.mentionedCharacterNames ?? []),
+      ]);
       let fullBuffer = ""; // What the user sees (or accumulates silently when streaming is off)
       let pendingText = ""; // Tokens waiting to be typed out
       let receivedContent = false; // Whether any actual message content was received
@@ -752,7 +900,7 @@ export function useGenerate() {
       let gameStatePatchAnchor: { messageId: string; swipeIndex: number } | null = null;
       const normalizeLineBreakSpacing = (text: string) =>
         chatModeForGeneration === "roleplay" ? text.replace(/[ \t]+(\r?\n)/g, "$1") : text;
-      const appendGeneratedChunk = (chunk: string) => {
+      const appendVisibleGeneratedChunk = (chunk: string) => {
         const normalizedChunk = normalizeLineBreakSpacing(chunk);
         if (/^\r?\n/.test(normalizedChunk)) {
           fullBuffer = fullBuffer.replace(/[ \t]+$/, "");
@@ -765,6 +913,14 @@ export function useGenerate() {
         } else {
           fullBuffer = normalizeLineBreakSpacing(fullBuffer + normalizedChunk);
         }
+      };
+      const flushLeadingSpeakerPrefix = () => {
+        const heldPrefix = leadingSpeakerPrefixFilter.flush();
+        if (heldPrefix) appendVisibleGeneratedChunk(heldPrefix);
+      };
+      const appendGeneratedChunk = (chunk: string) => {
+        const visibleChunk = leadingSpeakerPrefixFilter.push(chunk);
+        if (visibleChunk) appendVisibleGeneratedChunk(visibleChunk);
       };
 
       // ── Streaming think-tag filter ──
@@ -823,13 +979,6 @@ export function useGenerate() {
         }
       };
 
-      const commonPrefixLength = (a: string, b: string) => {
-        const max = Math.min(a.length, b.length);
-        let index = 0;
-        while (index < max && a.charCodeAt(index) === b.charCodeAt(index)) index++;
-        return index;
-      };
-
       const replaceGeneratedContentWithTypewriter = (content: string) => {
         const nextContent = normalizeLineBreakSpacing(content);
         cancelAnimationFrame(rafId);
@@ -845,16 +994,22 @@ export function useGenerate() {
         if (nextContent.startsWith(fullBuffer)) {
           pendingText = nextContent.slice(fullBuffer.length);
         } else {
-          const prefixLength = commonPrefixLength(fullBuffer, nextContent);
-          fullBuffer = nextContent.slice(0, prefixLength);
-          pendingText = nextContent.slice(prefixLength);
-          setStreamBuffer(fullBuffer, params.chatId);
+          // Final cleanup can remove a speaker prefix, hidden command, or
+          // thinking block near the start. Re-animating from the common prefix
+          // makes the roleplay stream visibly jump backward and retype.
+          fullBuffer = nextContent;
+          pendingText = "";
         }
 
         if (pendingText) {
           startTypewriter();
         } else {
           setStreamBuffer(fullBuffer, params.chatId);
+          if (typewriterDone) {
+            const done = typewriterDone;
+            typewriterDone = null;
+            done();
+          }
         }
       };
 
@@ -1269,9 +1424,11 @@ export function useGenerate() {
 
             case "group_turn": {
               const turn = event.data as { characterId: string; characterName: string; index: number };
+              leadingSpeakerPrefixFilter.addLabels([turn.characterName]);
 
               // If this isn't the first character, flush the previous one's content
               if (turn.index > 0) {
+                flushLeadingSpeakerPrefix();
                 // Drain typewriter for the previous character (only if streaming)
                 if (streamingEnabled && (pendingText.length > 0 || typingActive)) {
                   await new Promise<void>((resolve) => {
@@ -1318,6 +1475,7 @@ export function useGenerate() {
                 // Reset the stream buffer for the new character
                 fullBuffer = "";
                 pendingText = "";
+                leadingSpeakerPrefixFilter.reset();
                 thinkState = streamingEnabled ? "detect" : "done";
                 thinkBuf = "";
                 thinkCloseTag = "</think>";
@@ -1361,6 +1519,7 @@ export function useGenerate() {
               // Consistency Editor replaced the message — update displayed text
               const rw = event.data as { editedText?: string; changes?: Array<{ description: string }> };
               if (rw.editedText) {
+                leadingSpeakerPrefixFilter.discard();
                 if (streamingEnabled) {
                   // Drain any pending typewriter first
                   if (pendingText.length > 0 || typingActive) {
@@ -1385,12 +1544,14 @@ export function useGenerate() {
 
             case "content_replace": {
               // Server stripped character commands — replace the displayed content
+              leadingSpeakerPrefixFilter.discard();
               const cleanContent = event.data as string;
               replaceGeneratedContentWithTypewriter(cleanContent);
               break;
             }
 
             case "message_saved": {
+              flushLeadingSpeakerPrefix();
               const savedMessage = event.data as Message;
               await qc.cancelQueries({ queryKey: chatKeys.messages(params.chatId), exact: true });
               persistedMessages.set(savedMessage.id, savedMessage);
@@ -1635,6 +1796,7 @@ export function useGenerate() {
             case "typing": {
               // Generation is about to start — show "X is typing..."
               const typingNames = (event as any).characters as string[] | undefined;
+              leadingSpeakerPrefixFilter.addLabels(typingNames ?? []);
               const typingLabel = typingNames?.length === 1 ? typingNames[0] : (typingNames?.join(", ") ?? "Character");
               useChatStore.getState().setPerChatTyping(params.chatId, typingLabel);
               if (isActiveChat()) setTypingCharacterName(typingLabel);
@@ -1675,6 +1837,7 @@ export function useGenerate() {
 
             case "error": {
               // Flush pending text so the user sees what arrived before the error
+              flushLeadingSpeakerPrefix();
               flushTypewriterBuffer();
               if (isActiveChat()) setProcessing(false);
               clearMariPhaseForThisChat();
@@ -1703,6 +1866,7 @@ export function useGenerate() {
         }
 
         // Wait for typewriter to finish draining pending text (streaming mode only)
+        flushLeadingSpeakerPrefix();
         if (streamingEnabled && shouldDisplayRawStream && isActiveChat() && (pendingText.length > 0 || typingActive)) {
           await new Promise<void>((resolve) => {
             if (pendingText.length === 0 && !typingActive) {
@@ -1719,6 +1883,7 @@ export function useGenerate() {
         }
       } catch (error) {
         // Flush everything instantly on error so user sees what arrived
+        flushLeadingSpeakerPrefix();
         flushTypewriterBuffer();
         // Abort is intentional — don't log or toast
         if (error instanceof DOMException && error.name === "AbortError") return receivedContent;

@@ -1077,6 +1077,9 @@ function GeneralSettings() {
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
   const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
   const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
+  const imageIllustrationWidth = useUIStore((s) => s.imageIllustrationWidth);
+  const imageIllustrationHeight = useUIStore((s) => s.imageIllustrationHeight);
+  const setImageIllustrationDimensions = useUIStore((s) => s.setImageIllustrationDimensions);
   const imagePortraitWidth = useUIStore((s) => s.imagePortraitWidth);
   const imagePortraitHeight = useUIStore((s) => s.imagePortraitHeight);
   const setImagePortraitDimensions = useUIStore((s) => s.setImagePortraitDimensions);
@@ -1482,10 +1485,17 @@ function GeneralSettings() {
 
           <ImageDimensionRow
             label="Backgrounds"
-            help="Used for Game mode generated backgrounds and special scene illustrations."
+            help="Used for Game mode generated backgrounds."
             width={imageBackgroundWidth}
             height={imageBackgroundHeight}
             onCommit={setImageBackgroundDimensions}
+          />
+          <ImageDimensionRow
+            label="Illustrations"
+            help="Used for Illustrator agent images saved to chat galleries, including comic pages and scene illustrations."
+            width={imageIllustrationWidth}
+            height={imageIllustrationHeight}
+            onCommit={setImageIllustrationDimensions}
           />
           <ImageDimensionRow
             label="Portraits"

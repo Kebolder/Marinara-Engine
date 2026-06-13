@@ -97,6 +97,7 @@ import { dedupeSessionSummaryLists } from "../services/game/session-summary-norm
 import {
   generationParametersSchema,
   isClaudeAdaptiveOnlyNoSamplingModel,
+  supportsXhighReasoningEffort,
   resolveMacros,
   scoreMusic,
   scoreAmbient,
@@ -1367,15 +1368,11 @@ function resolveGameReasoningEffort(
   ) {
     return undefined;
   }
+  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
   if (reasoningEffort === "max") return isNativeAnthropicAdaptiveOnly ? "max" : "high";
-  if (reasoningEffort === "xhigh") return reasoningEffort;
+  if (reasoningEffort === "xhigh") return supportsXhigh ? "xhigh" : "high";
   if (reasoningEffort !== "maximum") return reasoningEffort;
 
-  const supportsXhigh =
-    modelLower.startsWith("gpt-5.5") ||
-    modelLower.startsWith("gpt-5.4") ||
-    modelLower === "grok-4.20-multi-agent" ||
-    isClaudeAdaptiveOnly;
   return isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
 }
 
@@ -1397,8 +1394,7 @@ function gameGenOptions(
   const isNativeAnthropicAdaptiveOnly =
     (providerLower === "anthropic" || providerLower === "claude_subscription") && isClaudeAdaptiveOnly;
   const isGrokAutoReasoning = m.startsWith("grok-4.3") || m.startsWith("grok-4-1-fast") || m.startsWith("x-ai/grok-");
-  const supportsXhigh =
-    m.startsWith("gpt-5.5") || m.startsWith("gpt-5.4") || m === "grok-4.20-multi-agent" || isClaudeAdaptiveOnly;
+  const supportsXhigh = supportsXhighReasoningEffort(m);
   const base: ChatOptions = {
     model,
     maxTokens: 8192,

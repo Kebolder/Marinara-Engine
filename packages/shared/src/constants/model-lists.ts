@@ -24,6 +24,16 @@ export function isClaudeAdaptiveOnlyNoSamplingModel(model: string): boolean {
   );
 }
 
+export function supportsXhighReasoningEffort(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return (
+    normalized.startsWith("gpt-5.5") ||
+    normalized.startsWith("gpt-5.4") ||
+    normalized === "grok-4.20-multi-agent" ||
+    isClaudeAdaptiveOnlyNoSamplingModel(normalized)
+  );
+}
+
 // ── OpenAI (from #model_openai_select) ──
 
 export const OPENAI_MODELS: KnownModel[] = [

@@ -70,6 +70,35 @@ function isLorebookScopeActiveForChat(value: unknown, chatId?: string | null): b
   return true;
 }
 
+type LorebookScopeFilters = {
+  activeLorebookIds?: string[];
+  characterIds?: string[];
+  personaId?: string | null;
+  chatId?: string;
+};
+
+type LinkedLorebook = {
+  id: string;
+  characterId?: string | null;
+  characterIds?: string[];
+  personaId?: string | null;
+  personaIds?: string[];
+  chatId?: string | null;
+};
+
+function activeLorebookMatchesFilters(book: LinkedLorebook, filters: LorebookScopeFilters): boolean {
+  if (!filters.activeLorebookIds?.includes(book.id)) return false;
+
+  const characterIds = resolveLinkIds(book.characterIds, book.characterId);
+  if (characterIds.length > 0) return characterIds.some((id) => filters.characterIds?.includes(id));
+
+  const personaIds = resolveLinkIds(book.personaIds, book.personaId);
+  if (personaIds.length > 0) return !!filters.personaId && personaIds.includes(filters.personaId);
+
+  if (book.chatId) return book.chatId === filters.chatId;
+  return true;
+}
+
 /** Parse DB row booleans ("true"/"false") → real booleans and JSON strings → objects. */
 function parseLorebookRow(row: Record<string, unknown>) {
   const characterIds = resolveLinkIds(row.characterIds, row.characterId);
@@ -363,7 +392,7 @@ export function createLorebooksStorage(db: DB) {
      * Get all enabled entries from lorebooks that are relevant for a given context.
      * A lorebook is relevant if it's enabled AND one of:
      *  - `isGlobal` is true
-     *  - Its ID is in `activeLorebookIds` (user explicitly added it to this chat)
+     *  - Its ID is in `activeLorebookIds`, while any character/persona/chat owner link still matches this context
      *  - Its `characterId` matches one of the chat's active characters
      *  - Its `personaId` matches the chat's active persona
      *  - Its `chatId` matches the current chat
@@ -406,8 +435,8 @@ export function createLorebooksStorage(db: DB) {
           if (b.sourceAgentId && excludedSourceAgentIds.has(b.sourceAgentId)) return false;
           // Globally active lorebooks bypass all scope filters
           if (b.isGlobal) return true;
-          // Explicitly added to this chat
-          if (filters.activeLorebookIds?.includes(b.id)) return true;
+          // Explicitly added to this chat, while still respecting owner links.
+          if (activeLorebookMatchesFilters(b, filters)) return true;
           // Belongs to one of the active characters
           if ((b.characterIds ?? []).some((id) => filters.characterIds?.includes(id))) return true;
           if (b.characterId && filters.characterIds?.includes(b.characterId)) return true;

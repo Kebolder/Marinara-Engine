@@ -213,7 +213,9 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
         });
       } else if (hasEmbeddedLorebook) {
         throw new Error(
-          typeof result?.error === "string" ? result.error : "Embedded lorebook import failed without a lorebook ID.",
+          typeof result?.error === "string"
+            ? result.error
+            : "Character imported but the embedded lorebook could not be saved — the import has been rolled back.",
         );
       }
     } catch (err) {

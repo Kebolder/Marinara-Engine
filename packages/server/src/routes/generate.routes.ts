@@ -25,6 +25,7 @@ import {
   buildQuestJournalData,
   compactQuestProgressForContext,
   isClaudeAdaptiveOnlyNoSamplingModel,
+  supportsXhighReasoningEffort,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -52,7 +53,7 @@ import { createRegexScriptsStorage } from "../services/storage/regex-scripts.sto
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
-import { processLorebooks } from "../services/lorebook/index.js";
+import { filterRelevantLorebooks, processLorebooks } from "../services/lorebook/index.js";
 import {
   filterGameInternalAgentIds,
   resolveGameLorebookScopeExclusions,
@@ -263,7 +264,7 @@ import {
   type PerceptionContext,
 } from "../services/game/perception.service.js";
 import { getMoraleTier, formatMoraleContext } from "../services/game/morale.service.js";
-import type { GameMap, GameNpc, LorebookEntry } from "@marinara-engine/shared";
+import type { GameMap, GameNpc, Lorebook, LorebookEntry } from "@marinara-engine/shared";
 import { sidecarModelService } from "../services/sidecar/sidecar-model.service.js";
 
 function cardPromptText(value: unknown): string {
@@ -1078,6 +1079,12 @@ function readSpotifyTrackNamesForUris(agent: SpotifyRuntimeAgent, uris: string[]
     .map(formatSpotifyTrackName);
 }
 
+function spotifyUrisAreFromKnownCandidates(agent: SpotifyRuntimeAgent, uris: string[]): boolean {
+  if (uris.length === 0) return false;
+  const knownUris = new Set((agent.__spotifyCandidateTracks ?? []).map((track) => track.uri));
+  return uris.every((uri) => knownUris.has(uri));
+}
+
 function readSpotifyPlaybackTrackUri(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const record = data as Record<string, unknown>;
@@ -1365,6 +1372,15 @@ async function applySpotifyAgentPlaybackFallback(
   if (action !== "play" || requestedUris.length === 0) return normalizedResult;
 
   const spotifyPlayCalled = agent.__spotifyToolCalls instanceof Set && agent.__spotifyToolCalls.has("spotify_play");
+  if (!spotifyPlayCalled && !spotifyUrisAreFromKnownCandidates(agent, requestedUris)) {
+    return playSpotifyFallbackCandidates({
+      agent,
+      result: normalizedResult,
+      resultData: data,
+      context,
+      reason: readSpotifyStringField(data, "mood") || "Spotify DJ grouped-result playback",
+    });
+  }
   if (spotifyPlayCalled && agent.__spotifyPlayError) {
     return { ...normalizedResult, success: false, error: agent.__spotifyPlayError };
   }
@@ -2271,7 +2287,7 @@ export async function generateRoutes(app: FastifyInstance) {
         let frequencyPenalty = 0;
         let presencePenalty = 0;
         let showThoughts = true;
-        let reasoningEffort: "low" | "medium" | "high" | "maximum" | null = null;
+        let reasoningEffort: "low" | "medium" | "high" | "xhigh" | "maximum" | null = null;
         let verbosity: "low" | "medium" | "high" | null = null;
         let serviceTier: "flex" | "priority" | null = null;
         let assistantPrefill = "";
@@ -2445,6 +2461,30 @@ export async function generateRoutes(app: FastifyInstance) {
             })),
             input,
           );
+        let promptScopedLorebookIdSetPromise: Promise<Set<string>> | null = null;
+        const getPromptScopedLorebookIdSet = () => {
+          promptScopedLorebookIdSetPromise ??= (async () => {
+            const allLorebooks = (await lorebooksStore.list()) as unknown as Lorebook[];
+            const relevantLorebooks = filterRelevantLorebooks(allLorebooks, {
+              chatId: input.chatId,
+              characterIds: promptCharacterIds,
+              personaId,
+              activeLorebookIds: chatActiveLorebookIds,
+              excludedLorebookIds: gameLorebookScopeExclusions.excludedLorebookIds,
+              excludedSourceAgentIds: gameLorebookScopeExclusions.excludedSourceAgentIds,
+            });
+            return new Set(relevantLorebooks.map((lorebook) => lorebook.id));
+          })();
+          return promptScopedLorebookIdSetPromise;
+        };
+        const filterChatActiveLorebookSourceIdsForPrompt = async (
+          sourceIds: string[],
+          source: "manual" | "chat_active" | "none",
+        ) => {
+          if (source !== "chat_active" || sourceIds.length === 0) return sourceIds;
+          const scopedIds = await getPromptScopedLorebookIdSet();
+          return sourceIds.filter((id) => scopedIds.has(id));
+        };
 
         // ── Compute chat embedding for semantic lorebook matching (if any entries are vectorized) ──
         sendProgress("embedding");
@@ -3651,7 +3691,7 @@ export async function generateRoutes(app: FastifyInstance) {
             sendProgress("lorebooks");
             const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
               chatId: input.chatId,
-              characterIds,
+              characterIds: promptCharacterIds,
               personaId,
               activeLorebookIds: chatActiveLorebookIds,
               excludedLorebookIds: gameLorebookScopeExclusions.excludedLorebookIds,
@@ -3707,7 +3747,7 @@ export async function generateRoutes(app: FastifyInstance) {
           sendProgress("lorebooks");
           const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
             chatId: input.chatId,
-            characterIds,
+            characterIds: promptCharacterIds,
             personaId,
             activeLorebookIds: chatActiveLorebookIds,
             excludedLorebookIds: gameLorebookScopeExclusions.excludedLorebookIds,
@@ -3921,19 +3961,18 @@ export async function generateRoutes(app: FastifyInstance) {
         const modelLower = (conn.model ?? "").toLowerCase();
         const providerLower = (conn.provider ?? "").toLowerCase();
 
-        // Resolve "maximum" reasoning effort to the highest provider-facing level.
+        // Resolve "xhigh" and "maximum" reasoning effort to provider-facing levels.
         // Native Anthropic/Claude subscription adaptive-only models use "max";
         // OpenAI-compatible Claude routes keep "xhigh". All other models get "high".
         let resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null =
           reasoningEffort !== "maximum" ? reasoningEffort : null;
+        const supportsXhigh = supportsXhighReasoningEffort(modelLower);
+        if (reasoningEffort === "xhigh" && !supportsXhigh) {
+          resolvedEffort = "high";
+        }
         if (reasoningEffort === "maximum") {
           const isNativeAnthropicAdaptiveOnly =
             (providerLower === "anthropic" || providerLower === "claude_subscription") &&
-            isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-          const supportsXhigh =
-            modelLower.startsWith("gpt-5.5") ||
-            modelLower.startsWith("gpt-5.4") ||
-            modelLower === "grok-4.20-multi-agent" ||
             isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
           resolvedEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
         }
@@ -5639,10 +5678,11 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Load lorebook entries
           try {
-            const { sourceLorebookIds: sourceIds } = resolveKnowledgeSourceLorebookIds({
+            const { sourceLorebookIds: rawSourceIds, source } = resolveKnowledgeSourceLorebookIds({
               settings: knowledgeRetrievalAgent.settings,
               chatActiveLorebookIds: chatActiveLorebookIds,
             });
+            const sourceIds = await filterChatActiveLorebookSourceIdsForPrompt(rawSourceIds, source);
             if (sourceIds.length > 0) {
               const entries = await lorebooksStore.listEntriesByLorebooks(sourceIds);
               const activeEntries = entries.filter((e: any) => e.enabled !== false);
@@ -5704,10 +5744,11 @@ export async function generateRoutes(app: FastifyInstance) {
         let knowledgeRouterKeywordScanEntries: LorebookEntry[] = [];
         if (knowledgeRouterAgent) {
           try {
-            const { sourceLorebookIds: sourceIds } = resolveKnowledgeSourceLorebookIds({
+            const { sourceLorebookIds: rawSourceIds, source } = resolveKnowledgeSourceLorebookIds({
               settings: knowledgeRouterAgent.settings,
               chatActiveLorebookIds: chatActiveLorebookIds,
             });
+            const sourceIds = await filterChatActiveLorebookSourceIdsForPrompt(rawSourceIds, source);
             if (sourceIds.length > 0) {
               const entries = (await lorebooksStore.listEntriesByLorebooks(sourceIds)) as LorebookEntry[];
               // Honor per-chat entry state overrides — a user can disable an entry for
@@ -6210,7 +6251,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const searchLorebookForTools = async (query: string, category?: string | null) => {
           const entries = await lorebooksStore.listActiveEntries({
             chatId: input.chatId,
-            characterIds,
+            characterIds: promptCharacterIds,
             personaId,
             activeLorebookIds: chatActiveLorebookIds,
             excludedLorebookIds: gameLorebookScopeExclusions.excludedLorebookIds,
@@ -8816,7 +8857,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   retryCtx,
                   agentCfg.provider,
                   agentCfg.model,
-                  agentCfg.toolContext,
+                  agentCfg.type === "spotify" ? undefined : agentCfg.toolContext,
                 );
                 const finalizedRetryResults = await applySpotifyAgentPlaybackFallbacks(
                   [retried],
@@ -9902,9 +9943,8 @@ export async function generateRoutes(app: FastifyInstance) {
                         (chatMeta.imageStyleProfileId as string | undefined) ??
                         null;
 
-                      // Scene illustrations share the landscape background canvas.
-                      const imgWidth = imageSettings.background.width;
-                      const imgHeight = imageSettings.background.height;
+                      const imgWidth = imageSettings.illustration.width;
+                      const imgHeight = imageSettings.illustration.height;
 
                       // Prepend style to the prompt for better results
                       let fullPrompt = style ? `${style}, ${imagePrompt}` : imagePrompt;

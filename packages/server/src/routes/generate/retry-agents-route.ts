@@ -2062,8 +2062,8 @@ async function applyRetryResultEffects(args: {
               (typeof setupConfig.imageStyleProfileId === "string" ? setupConfig.imageStyleProfileId : "") ||
               (typeof chatMeta.imageStyleProfileId === "string" ? chatMeta.imageStyleProfileId : "") ||
               null;
-            const imgWidth = imageSettings.background.width;
-            const imgHeight = imageSettings.background.height;
+            const imgWidth = imageSettings.illustration.width;
+            const imgHeight = imageSettings.illustration.height;
 
             const gameArtStylePrompt =
               typeof agentContext.memory._gameImageStylePrompt === "string"

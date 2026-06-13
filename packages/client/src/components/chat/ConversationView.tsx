@@ -351,6 +351,7 @@ export function ConversationView({
   const typingCharacterName = useChatStore((s) => s.typingCharacterName);
   const delayedCharacterInfo = useChatStore((s) => s.delayedCharacterInfo);
   const conversationMessageStyle = useUIStore((s) => s.conversationMessageStyle);
+  const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const liveTypingName = useMemo(() => {
     if (typingCharacterName) return typingCharacterName;
     if (streamingCharacterId) return characterMap.get(streamingCharacterId)?.name ?? "Character";
@@ -1146,6 +1147,7 @@ export function ConversationView({
                 multiSelectMode={multiSelectMode}
                 isSelected={selectedMessageIds?.has(msg.id)}
                 onToggleSelect={onToggleSelectMessage}
+                hasDraftInput={hasDraftInput}
                 messageStyle={conversationMessageStyle}
                 contentParts={contentParts}
                 visiblePartCount={visiblePartCount}
@@ -1169,6 +1171,7 @@ export function ConversationView({
                   characterMap={characterMap}
                   personaInfo={personaInfo as any}
                   chatCharacterIds={chatCharIds}
+                  hasDraftInput={hasDraftInput}
                   messageStyle={conversationMessageStyle}
                   contentParts={liveStreamContentParts}
                   visiblePartCount={liveStreamContentParts?.length}
@@ -1196,6 +1199,7 @@ export function ConversationView({
             characterMap={characterMap}
             personaInfo={personaInfo as any}
             chatCharacterIds={chatCharIds}
+            hasDraftInput={hasDraftInput}
             messageStyle={conversationMessageStyle}
             contentParts={liveStreamContentParts}
             visiblePartCount={liveStreamContentParts?.length}

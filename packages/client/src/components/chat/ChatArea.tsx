@@ -206,7 +206,6 @@ export function ChatArea() {
   const isStreaming = isStreamingGlobal && streamingChatId === activeChatId;
   const isPageActive = usePageActivity();
   const regenerateMessageId = useChatStore((s) => s.regenerateMessageId);
-  const currentInput = useChatStore((s) => s.currentInput);
   const chatBackground = useUIStore((s) => s.chatBackground);
   const weatherEffects = useUIStore((s) => s.weatherEffects);
   const messagesPerPage = useUIStore((s) => s.messagesPerPage);
@@ -961,6 +960,7 @@ export function ChatArea() {
       }
       try {
         // Regenerate as a new swipe on the existing message
+        const currentInput = useChatStore.getState().currentInput;
         const hasInput = currentInput ? currentInput.trim().length > 0 : false;
         await generate(
           guideGenerations && hasInput
@@ -977,7 +977,7 @@ export function ChatArea() {
         // Error toast is shown by the generate hook
       }
     },
-    [activeChatId, isStreaming, generate, currentInput, guideGenerations],
+    [activeChatId, isStreaming, generate, guideGenerations],
   );
 
   const handleRetryAgents = useCallback(async () => {

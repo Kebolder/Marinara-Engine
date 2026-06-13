@@ -730,8 +730,7 @@ function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type">): bool
   return (
     config.type === "expression" ||
     config.type === "illustrator" ||
-    config.type === "lorebook-keeper" ||
-    config.type === "spotify"
+    config.type === "lorebook-keeper"
   );
 }
 
@@ -917,8 +916,8 @@ function buildSpotifyAgentMessages(config: AgentExecConfig, template: string, co
 
   userParts.push(
     isGame
-      ? `Pick music for this game turn only. Use tools to inspect playback and fetch/search candidate tracks.`
-      : `Pick music for this roleplay turn. Use tools to inspect playback and fetch/search candidate tracks; if nothing is active or the current track does not fit, call spotify_play with a fitting queue.`,
+      ? `Pick music intent for this game turn only. If Spotify tools are available, you may use them; otherwise return JSON with action, mood, and searchQuery so the server can fetch a real track and apply playback after this response.`
+      : `Pick music intent for this roleplay turn. If Spotify tools are available, you may use them; otherwise return JSON with action, mood, and searchQuery so the server can fetch real tracks and apply playback after this response.`,
   );
   userParts.push(`Now return the requested format.`);
 
@@ -1109,8 +1108,13 @@ function buildAgentMessages(
     finalParts.push(`</agent_results>`);
   }
 
-  if (finalParts.length > 0) {
-    finalParts.push("\nNow return the requested format(s).");
+  // Echo Chamber is a parallel agent, so group-chat history can end on assistant.
+  // Anthropic treats a trailing assistant turn as prefill and rejects some models.
+  const requiresTerminalUserInstruction = finalParts.length > 0 || contextAgentTypes.includes("echo-chamber");
+
+  if (requiresTerminalUserInstruction) {
+    const instruction = "Now return the requested format(s).";
+    finalParts.push(finalParts.length > 0 ? `\n${instruction}` : instruction);
     const finalContent = finalParts.join("\n");
     const last = messages[messages.length - 1]!;
     if (last.role === "user") {

@@ -20,7 +20,7 @@ export type EditableGenerationParameters = Pick<
 
 type EditableGenerationParameterOverrides = Partial<EditableGenerationParameters>;
 
-const REASONING_LEVELS = [null, "low", "medium", "high", "maximum"] as const;
+const REASONING_LEVELS = [null, "low", "medium", "high", "xhigh", "maximum"] as const;
 const VERBOSITY_LEVELS = [null, "low", "medium", "high"] as const;
 const OPENROUTER_SERVICE_TIERS = [null, "flex", "priority"] as const;
 const MAX_GENERATION_OUTPUT_TOKENS = 128000;
@@ -79,6 +79,7 @@ export function parseEditableGenerationParameters(raw: unknown): EditableGenerat
     source.reasoningEffort === "low" ||
     source.reasoningEffort === "medium" ||
     source.reasoningEffort === "high" ||
+    source.reasoningEffort === "xhigh" ||
     source.reasoningEffort === "maximum"
   ) {
     next.reasoningEffort = source.reasoningEffort;
@@ -242,7 +243,7 @@ export function GenerationParametersFields({
           <span className="inline-flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
             Reasoning Effort
             <HelpTooltip
-              text="How much the model should 'think' before responding. Higher effort produces more thoughtful, nuanced output but uses more tokens and is slower."
+              text="How much the model should 'think' before responding. Xhigh is used on supported models; unsupported models receive High instead."
               size="0.625rem"
             />
           </span>

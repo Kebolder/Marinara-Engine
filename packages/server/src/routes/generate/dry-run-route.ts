@@ -3,6 +3,7 @@ import {
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
+  supportsXhighReasoningEffort,
   resolveMacros,
   stripMacroComments,
   type APIProvider,
@@ -610,7 +611,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     let frequencyPenalty = 0;
     let presencePenalty = 0;
     let showThoughts = true;
-    let reasoningEffort: "low" | "medium" | "high" | "maximum" | null = null;
+    let reasoningEffort: "low" | "medium" | "high" | "xhigh" | "maximum" | null = null;
     let verbosity: "low" | "medium" | "high" | null = null;
     let serviceTier: "flex" | "priority" | null = null;
     let assistantPrefill = "";
@@ -1452,19 +1453,18 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     const modelLower = (conn.model ?? "").toLowerCase();
     const providerLower = (conn.provider ?? "").toLowerCase();
 
-    // Resolve "maximum" reasoning effort to the highest provider-facing level.
+    // Resolve "xhigh" and "maximum" reasoning effort to provider-facing levels.
     // Native Anthropic/Claude subscription adaptive-only models use "max";
     // OpenAI-compatible Claude routes keep "xhigh". All other models get "high".
     let resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null =
       reasoningEffort !== "maximum" ? reasoningEffort : null;
+    const supportsXhigh = supportsXhighReasoningEffort(modelLower);
+    if (reasoningEffort === "xhigh" && !supportsXhigh) {
+      resolvedEffort = "high";
+    }
     if (reasoningEffort === "maximum") {
       const isNativeAnthropicAdaptiveOnly =
         (providerLower === "anthropic" || providerLower === "claude_subscription") &&
-        isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-      const supportsXhigh =
-        modelLower.startsWith("gpt-5.5") ||
-        modelLower.startsWith("gpt-5.4") ||
-        modelLower === "grok-4.20-multi-agent" ||
         isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
       resolvedEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
     }

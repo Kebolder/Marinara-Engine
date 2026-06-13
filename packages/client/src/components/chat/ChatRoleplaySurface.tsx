@@ -857,6 +857,7 @@ export function ChatRoleplaySurface({
   isGrouped,
 }: RoleplaySurfaceProps) {
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(activeChatId));
+  const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const linkedChatName = chat?.connectedChatId
     ? getConnectedChatDisplayName(allChats?.find((c) => c.id === chat.connectedChatId))
@@ -899,11 +900,18 @@ export function ChatRoleplaySurface({
   }, [activeChatId]);
 
   const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);
+  const pendingLoadMoreRevealRef = useRef<{
+    previousLength: number;
+    previousStartIndex: number;
+    previousEndIndex: number;
+  } | null>(null);
 
   useEffect(() => {
     setTranscriptWindowStart(null);
+    pendingLoadMoreRevealRef.current = null;
   }, [activeChatId]);
 
+  const messagesLength = messages?.length ?? 0;
   const transcriptWindow = useMemo(
     () => getTranscriptRenderWindow(messages, { startIndex: transcriptWindowStart }),
     [messages, transcriptWindowStart],
@@ -926,6 +934,34 @@ export function ChatRoleplaySurface({
   const jumpToLatestTranscriptMessages = () => {
     setTranscriptWindowStart(null);
   };
+
+  const handleLoadMoreClick = () => {
+    if (transcriptWindow.hiddenBeforeCount > 0) {
+      showOlderTranscriptMessages();
+      return;
+    }
+    pendingLoadMoreRevealRef.current = {
+      previousLength: messagesLength,
+      previousStartIndex: transcriptWindow.startIndex,
+      previousEndIndex: transcriptWindow.endIndex,
+    };
+    onLoadMore();
+  };
+
+  useLayoutEffect(() => {
+    const pending = pendingLoadMoreRevealRef.current;
+    if (!pending || isFetchingNextPage) return;
+    if (messagesLength <= pending.previousLength) {
+      pendingLoadMoreRevealRef.current = null;
+      return;
+    }
+
+    const addedCount = messagesLength - pending.previousLength;
+    const previousVisibleCount = Math.max(1, pending.previousEndIndex - pending.previousStartIndex);
+    const previousVisibleStart = pending.previousStartIndex + addedCount;
+    setTranscriptWindowStart(Math.max(0, previousVisibleStart - previousVisibleCount));
+    pendingLoadMoreRevealRef.current = null;
+  }, [isFetchingNextPage, messagesLength]);
 
   useEffect(() => {
     if (!messages) return;
@@ -1236,10 +1272,11 @@ export function ChatRoleplaySurface({
                 ref={scrollRef}
                 data-chat-scroll
                 className={cn(
-                  "rpg-chat-messages-mobile mari-messages-scroll relative h-full overflow-y-auto overflow-x-hidden pt-4",
+                  "rpg-chat-messages-mobile mari-messages-scroll relative h-full overflow-y-auto overflow-x-hidden",
                   centerCompact ? "px-3" : "px-3 md:px-[15%]",
                 )}
                 style={{
+                  paddingTop: Math.max(16, chromeHeights.top + 12),
                   paddingBottom: Math.max(16, chromeHeights.bottom + 12),
                   scrollPaddingTop: Math.max(16, chromeHeights.top + 8),
                   scrollPaddingBottom: Math.max(16, chromeHeights.bottom + 12),
@@ -1248,7 +1285,7 @@ export function ChatRoleplaySurface({
                 {hasNextPage && (
                   <div className="mb-3 flex justify-center">
                     <button
-                      onClick={onLoadMore}
+                      onClick={handleLoadMoreClick}
                       disabled={isFetchingNextPage}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-[var(--card)] px-3 py-1.5 text-xs font-medium text-foreground/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] hover:text-foreground/90 disabled:opacity-50"
                     >
@@ -1308,6 +1345,7 @@ export function ChatRoleplaySurface({
                           characterMap={characterMap}
                           personaInfo={personaInfo}
                           chatMode={chatMode}
+                          hasDraftInput={hasDraftInput}
                           messageDepth={messageDepth}
                           messageIndex={messageOrderIndex + 1}
                           messageOrderIndex={messageOrderIndex}
@@ -1337,6 +1375,7 @@ export function ChatRoleplaySurface({
                           characterMap={characterMap}
                           personaInfo={personaInfo}
                           chatMode={chatMode}
+                          hasDraftInput={hasDraftInput}
                           messageDepth={messageDepth}
                           messageIndex={messageOrderIndex + 1}
                           messageOrderIndex={messageOrderIndex}

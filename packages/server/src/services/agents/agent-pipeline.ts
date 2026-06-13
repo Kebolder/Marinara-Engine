@@ -146,9 +146,11 @@ async function executeGroup(
   onResult?: AgentResultCallback,
 ): Promise<AgentResult[]> {
   const groupContext = buildAgentContext(group.agents[0]!, context);
-  // Separate tool-using agents (can't be batched) from regular agents
-  const toolAgents = group.agents.filter((a) => a.toolContext?.tools.length);
-  const batchAgents = group.agents.filter((a) => !a.toolContext?.tools.length);
+  // Separate tool-using agents (can't be batched) from regular agents.
+  // Spotify post-processing is intentionally batched as JSON intent first; playback
+  // is applied after parsing the grouped response so it cannot fire early mid-agent.
+  const toolAgents = group.agents.filter((a) => shouldUseToolsDuringAgentExecution(a));
+  const batchAgents = group.agents.filter((a) => !shouldUseToolsDuringAgentExecution(a));
 
   logger.debug("[agent-pipeline] executeGroup: %d batchable, %d tool-using %j", batchAgents.length, toolAgents.length, {
     batch: batchAgents.map((a) => a.type),
@@ -185,6 +187,11 @@ async function executeGroup(
 
   const [batchResults, toolResults] = await Promise.all([batchResultsPromise, toolResultsPromise]);
   return [...batchResults, ...toolResults];
+}
+
+function shouldUseToolsDuringAgentExecution(agent: ResolvedAgent): boolean {
+  if (!agent.toolContext?.tools.length) return false;
+  return !(agent.phase === "post_processing" && agent.type === "spotify");
 }
 
 /**
