@@ -30,6 +30,7 @@ import { createAgentsStorage } from "../../services/storage/agents.storage.js";
 import { createCharactersStorage } from "../../services/storage/characters.storage.js";
 import { createChatsStorage } from "../../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../../services/storage/connections.storage.js";
+import { findLastUserMessageIdBefore } from "../../services/generation/message-history.js";
 import { resolveConnectionImageDefaults } from "../../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../../services/image/image-prompt-compiler.js";
@@ -91,21 +92,6 @@ type PersonaContext = {
 
 function cardPromptText(value: unknown): string {
   return typeof value === "string" ? stripMacroComments(value).trim() : "";
-}
-
-async function findLastUserMessageIdBefore(
-  chats: ReturnType<typeof createChatsStorage>,
-  chatId: string,
-  beforeMessageId?: string | null,
-): Promise<string | null> {
-  const rows = await chats.listMessages(chatId);
-  const beforeIndex = beforeMessageId ? rows.findIndex((message: any) => message.id === beforeMessageId) : -1;
-  const startIndex = beforeIndex >= 0 ? beforeIndex - 1 : rows.length - 1;
-  for (let index = startIndex; index >= 0; index -= 1) {
-    const message = rows[index] as any;
-    if (message?.role === "user" && typeof message.id === "string") return message.id;
-  }
-  return null;
 }
 
 type ResolvedRetryAgent = {
