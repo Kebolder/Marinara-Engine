@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Professor Mari DB service
 // ──────────────────────────────────────────────
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -11,10 +12,12 @@ import type { DB } from "../../db/connection.js";
 import { flushDB } from "../../db/connection.js";
 import { FILE_BACKED_TABLES } from "../../db/file-backed-store.js";
 import * as schema from "../../db/schema/index.js";
-import { getFileStorageDir } from "../../config/runtime-config.js";
+import { getFileStorageDir, getMonorepoRoot } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { newId, now } from "../../utils/id-generator.js";
+import { normalizeThemeCss } from "../../utils/theme-css.js";
+import { getMariImagesService } from "./mari-images.service.js";
 import type {
   MariDbCommandResult,
   MariDbDiffSummary,
@@ -95,9 +98,31 @@ type MariCliEnvelope = {
   sessionId?: string;
 };
 
+type CodeCommandContext = {
+  command: string;
+  sessionId: string;
+  cwd?: string;
+};
+
+type ProcessRunResult = {
+  command: string;
+  cwd: string;
+  ok: boolean;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  truncated: boolean;
+};
+
 const PREVIEW_LIMIT = 50;
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const HISTORY_LIMIT = 50;
+const COMMAND_OUTPUT_LIMIT = 32_000;
+const CODE_READ_TIMEOUT_MS = 30_000;
+const CODE_CHECK_TIMEOUT_MS = 15 * 60 * 1000;
 const FILE_BACKED_TABLE_SET = new Set<string>(FILE_BACKED_TABLES);
 const THEME_TABLE = "custom_themes";
 const THEME_ACTIVE_TRUE = "true";
@@ -106,6 +131,101 @@ const BOOLEAN_FLAGS = new Set(["active", "activate", "apply", "cascade", "dry-ru
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function truncateOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): { text: string; truncated: boolean } {
+  if (value.length <= limit) return { text: value, truncated: false };
+  return { text: `${value.slice(0, limit)}\n… output truncated at ${limit} characters …`, truncated: true };
+}
+
+function appendLimited(current: string, chunk: string, limit = COMMAND_OUTPUT_LIMIT): { text: string; truncated: boolean } {
+  if (current.length >= limit) return { text: current, truncated: true };
+  const next = current + chunk;
+  return truncateOutput(next, limit);
+}
+
+function displayCommand(bin: string, args: string[]) {
+  return [bin, ...args].map((part) => (/[\s"']/.test(part) ? JSON.stringify(part) : part)).join(" ");
+}
+
+function runProcess(bin: string, args: string[], options: { cwd: string; timeoutMs: number }): Promise<ProcessRunResult> {
+  const startedAt = Date.now();
+  const command = displayCommand(bin, args);
+  return new Promise((resolveRun) => {
+    let stdout = "";
+    let stderr = "";
+    let truncated = false;
+    let settled = false;
+    let timedOut = false;
+
+    const child = spawn(bin, args, {
+      cwd: options.cwd,
+      env: process.env,
+      shell: process.platform === "win32",
+      windowsHide: true,
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, options.timeoutMs);
+    timer.unref?.();
+
+    const finish = (exitCode: number | null, signal: NodeJS.Signals | null, spawnError?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (spawnError) {
+        stderr = stderr ? `${stderr}\n${spawnError.message}` : spawnError.message;
+      }
+      resolveRun({
+        command,
+        cwd: options.cwd,
+        ok: exitCode === 0 && !timedOut && !spawnError,
+        exitCode,
+        signal,
+        stdout,
+        stderr,
+        durationMs: Date.now() - startedAt,
+        timedOut,
+        truncated,
+      });
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const result = appendLimited(stdout, chunk.toString());
+      stdout = result.text;
+      truncated ||= result.truncated;
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const result = appendLimited(stderr, chunk.toString());
+      stderr = result.text;
+      truncated ||= result.truncated;
+    });
+    child.on("error", (err) => finish(null, null, err));
+    child.on("close", (code, signal) => finish(code, signal));
+  });
+}
+
+function parseGitStatusFiles(status: string): string[] {
+  const files = new Set<string>();
+  for (const line of status.split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith("##")) continue;
+    const raw = line.slice(3).trim();
+    if (!raw) continue;
+    const renamed = raw.split(" -> ");
+    files.add(renamed[renamed.length - 1] ?? raw);
+  }
+  return [...files].sort((a, b) => a.localeCompare(b));
+}
+
+async function readPackageVersion(cwd: string): Promise<string | null> {
+  try {
+    const pkg = JSON.parse(await readFile(resolve(cwd, "package.json"), "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" ? pkg.version : null;
+  } catch {
+    return null;
+  }
 }
 
 const CASCADES: Array<{ parent: string; child: string; parentKey: string; childKey: string }> = [
@@ -293,7 +413,12 @@ function serializeRow(table: string, row: Row): Row {
 }
 
 function parseThemeRow(row: Row): Row {
-  return { ...parseRow(THEME_TABLE, row), isActive: row.isActive === THEME_ACTIVE_TRUE };
+  const parsed = parseRow(THEME_TABLE, row);
+  return {
+    ...parsed,
+    css: typeof parsed.css === "string" ? normalizeThemeCss(parsed.css) : parsed.css,
+    isActive: row.isActive === THEME_ACTIVE_TRUE,
+  };
 }
 
 function summarizeThemeRow(row: Row): Row {
@@ -446,7 +571,8 @@ async function parseCssInput(flags: Map<string, string | boolean>, cwd?: string)
   const file = flagString(flags, "css-file") ?? flagString(flags, "file");
   if (raw !== undefined && file) throw new Error("Use only one of --css or --css-file");
   if (raw === undefined && !file) throw new Error("Missing --css '<css>' or --css-file <path>");
-  return file ? readFile(resolve(cwd ? resolve(cwd) : process.cwd(), file), "utf8") : raw!;
+  const css = file ? await readFile(resolve(cwd ? resolve(cwd) : process.cwd(), file), "utf8") : raw!;
+  return normalizeThemeCss(css);
 }
 
 function createWherePredicate(expr: string | undefined): (row: Row) => boolean {
@@ -490,11 +616,21 @@ export class MariDbService {
     const command = formatCommand(argv, envelope.command);
     const sessionId = envelope.sessionId || "mari-cli";
     try {
-      if (argv[0] === "theme" || argv[0] === "themes") {
+      const group = argv[0];
+      if (!group || group === "help" || group === "--help" || group === "-h") {
+        return { ok: true, mode: "read", command, output: this.topLevelHelpText() };
+      }
+      if (group === "code") {
+        return await this.executeCodeCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group === "theme" || group === "themes") {
         return await this.executeThemeCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
       }
-      if (argv[0] !== "db") {
-        if (argv[0] === "storage") {
+      if (group === "image" || group === "images" || group === "media") {
+        return await getMariImagesService(this.db).execute(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
+      }
+      if (group !== "db") {
+        if (group === "storage") {
           return {
             ok: false,
             mode: "read",
@@ -502,7 +638,7 @@ export class MariDbService {
             error: "mari storage tx is reserved for a later hot-reload repair phase; use mari db for managed data edits.",
           };
         }
-        return { ok: false, mode: "read", command, error: this.helpText() };
+        return { ok: false, mode: "read", command, error: this.topLevelHelpText() };
       }
       return await this.executeDbCommand(argv.slice(1), { command, sessionId, cwd: envelope.cwd });
     } catch (err) {
@@ -650,11 +786,217 @@ export class MariDbService {
     return validationFromIssues(issues);
   }
 
+  private codeCwd(cwd?: string) {
+    return resolve(cwd?.trim() ? cwd : getMonorepoRoot());
+  }
+
+  private async executeCodeCommand(args: string[], context: CodeCommandContext): Promise<MariDbCommandResult> {
+    const sub = args[0];
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h") {
+      return { ok: true, mode: "read", command: context.command, output: this.codeHelpText() };
+    }
+    const parsed = parseArgs(args.slice(1));
+    if (hasFlag(parsed.flags, "help")) return { ok: true, mode: "read", command: context.command, output: this.codeHelpText() };
+
+    switch (sub) {
+      case "status":
+        return this.executeCodeStatus(context);
+      case "diff":
+        return this.executeCodeDiff(context, parsed.flags);
+      case "check":
+        return this.executeCodeCheck(context, parsed.flags);
+      case "health":
+        return this.executeCodeHealth(context);
+      case "reload":
+        return this.executeCodeReload(args.slice(1), context);
+      case "continue":
+        return this.executeCodeContinue(parsed.positionals[0], context);
+      default:
+        return {
+          ok: false,
+          mode: "read",
+          command: context.command,
+          error: `Unknown mari code command: ${sub}\n${this.codeHelpText()}`,
+        };
+    }
+  }
+
+  private async executeCodeStatus(context: CodeCommandContext): Promise<MariDbCommandResult> {
+    const cwd = this.codeCwd(context.cwd);
+    const [repoRoot, branch, status, stat, version] = await Promise.all([
+      runProcess("git", ["rev-parse", "--show-toplevel"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      runProcess("git", ["branch", "--show-current"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      runProcess("git", ["status", "--short", "--branch"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      runProcess("git", ["diff", "--stat"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      readPackageVersion(cwd),
+    ]);
+    const statusText = status.stdout.trim();
+    return {
+      ok: status.ok,
+      mode: "read",
+      command: context.command,
+      output: {
+        workspace: cwd,
+        repoRoot: repoRoot.ok ? repoRoot.stdout.trim() : null,
+        dataDir: getFileStorageDir(),
+        packageVersion: version,
+        runtime: {
+          pid: process.pid,
+          node: process.version,
+          platform: process.platform,
+          uptimeSeconds: Math.round(process.uptime()),
+        },
+        git: {
+          branch: branch.stdout.trim() || null,
+          clean: status.ok && !statusText.split(/\r?\n/).some((line) => line && !line.startsWith("##")),
+          statusShort: statusText,
+          changedFiles: parseGitStatusFiles(statusText),
+          diffStat: stat.stdout.trim(),
+          errors: [repoRoot, branch, status, stat].filter((result) => !result.ok).map((result) => result.stderr.trim() || `${result.command} failed`),
+        },
+      },
+    };
+  }
+
+  private async executeCodeDiff(context: CodeCommandContext, flags: Map<string, string | boolean>): Promise<MariDbCommandResult> {
+    const cwd = this.codeCwd(context.cwd);
+    const cached = hasFlag(flags, "cached") || hasFlag(flags, "staged");
+    const includePatch = hasFlag(flags, "patch") || hasFlag(flags, "full");
+    const diffBaseArgs = ["diff", ...(cached ? ["--cached"] : [])];
+    const [status, stat, nameOnly, patch] = await Promise.all([
+      runProcess("git", ["status", "--short", "--branch"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      runProcess("git", [...diffBaseArgs, "--stat"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      runProcess("git", [...diffBaseArgs, "--name-only"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      includePatch ? runProcess("git", [...diffBaseArgs, "--patch"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }) : Promise.resolve(null),
+    ]);
+    const statusText = status.stdout.trim();
+    const gitFiles = nameOnly.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const changedFiles = [...new Set([...parseGitStatusFiles(statusText), ...gitFiles])].sort((a, b) => a.localeCompare(b));
+    return {
+      ok: status.ok && stat.ok && nameOnly.ok && (!patch || patch.ok),
+      mode: "read",
+      command: context.command,
+      output: {
+        workspace: cwd,
+        cached,
+        statusShort: statusText,
+        changedFiles,
+        stat: stat.stdout.trim(),
+        patch: patch?.stdout,
+        truncated: Boolean(patch?.truncated || stat.truncated || nameOnly.truncated),
+        errors: [status, stat, nameOnly, patch].filter((result): result is ProcessRunResult => !!result && !result.ok).map((result) => result.stderr.trim() || `${result.command} failed`),
+      },
+    };
+  }
+
+  private async executeCodeCheck(context: CodeCommandContext, flags: Map<string, string | boolean>): Promise<MariDbCommandResult> {
+    const cwd = this.codeCwd(context.cwd);
+    const changedOnly = hasFlag(flags, "changed");
+    const result = await runProcess("pnpm", ["check"], { cwd, timeoutMs: CODE_CHECK_TIMEOUT_MS });
+    return {
+      ok: result.ok,
+      mode: "read",
+      command: context.command,
+      output: {
+        scope: changedOnly ? "changed" : "workspace",
+        note: changedOnly ? "No changed-file-only checker is wired yet; ran the baseline pnpm check." : undefined,
+        result,
+      },
+      error: result.ok ? undefined : "pnpm check failed",
+    };
+  }
+
+  private async executeCodeHealth(context: CodeCommandContext): Promise<MariDbCommandResult> {
+    const cwd = this.codeCwd(context.cwd);
+    const [gitStatus, validation] = await Promise.all([
+      runProcess("git", ["status", "--short"], { cwd, timeoutMs: CODE_READ_TIMEOUT_MS }),
+      this.validate().catch((err) => ({
+        status: "blocked" as const,
+        errors: [{ level: "error" as const, message: err instanceof Error ? err.message : String(err) }],
+        notices: [],
+        infos: [],
+      })),
+    ]);
+    return {
+      ok: validation.status === "passed",
+      mode: "read",
+      command: context.command,
+      output: {
+        status: validation.status === "passed" ? "ok" : "attention_required",
+        workspace: cwd,
+        dataDir: getFileStorageDir(),
+        server: {
+          pid: process.pid,
+          node: process.version,
+          platform: process.platform,
+          uptimeSeconds: Math.round(process.uptime()),
+        },
+        git: {
+          clean: gitStatus.ok && gitStatus.stdout.trim().length === 0,
+          statusShort: gitStatus.stdout.trim(),
+        },
+        dataValidation: validation,
+      },
+    };
+  }
+
+  private executeCodeReload(args: string[], context: CodeCommandContext): MariDbCommandResult {
+    const sub = args[0];
+    const parsed = parseArgs(args.slice(1));
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(parsed.flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.codeReloadHelpText() };
+    }
+    if (sub !== "request") {
+      return { ok: false, mode: "read", command: context.command, error: `Unknown mari code reload command: ${sub}\n${this.codeReloadHelpText()}` };
+    }
+    const kind = flagString(parsed.flags, "kind") ?? "client";
+    if (!["client", "server", "full"].includes(kind)) {
+      return { ok: false, mode: "read", command: context.command, error: "--kind must be client, server, or full" };
+    }
+    const reason = flagString(parsed.flags, "reason")?.trim() || "Workspace changes need reload/restart verification.";
+    return {
+      ok: true,
+      mode: "read",
+      command: context.command,
+      output: {
+        status: "reload_requested",
+        kind,
+        reason,
+        resume: hasFlag(parsed.flags, "resume"),
+        requestedAt: now(),
+        workspace: this.codeCwd(context.cwd),
+        note: "Automatic suspend/resume is not wired in this build yet. Stop generation after this request, ask the user to perform the reload/restart, then verify with mari code health or targeted checks.",
+        manualSteps:
+          kind === "client"
+            ? ["Reload the browser tab or rely on Vite HMR if it already updated.", "Continue after the UI reconnects."]
+            : kind === "server"
+              ? ["Restart the Marinara server or wait for tsx watch/dev launcher to restart it.", "Run mari code health after reconnecting."]
+              : ["Restart the Marinara server and reload the browser client.", "Run mari code health after reconnecting."],
+      },
+    };
+  }
+
+  private executeCodeContinue(runId: string | undefined, context: CodeCommandContext): MariDbCommandResult {
+    if (!runId) return { ok: false, mode: "read", command: context.command, error: "Usage: mari code continue <run-id>" };
+    return {
+      ok: false,
+      mode: "read",
+      command: context.command,
+      error: "Durable workspace run resume is planned but not implemented yet. Reopen Professor Mari and paste the run context or continue manually.",
+    };
+  }
+
   private async executeThemeCommand(args: string[], context: { command: string; sessionId: string; cwd?: string }): Promise<MariDbCommandResult> {
     const sub = args[0];
     const rest = args.slice(1);
     const parsed = parseArgs(rest);
     const flags = parsed.flags;
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.themeHelpText() };
+    }
 
     switch (sub) {
       case "list": {
@@ -740,6 +1082,9 @@ export class MariDbService {
     const sub = args[0];
     const rest = args.slice(1);
     const parsed = parseArgs(rest);
+    if (!sub || sub === "help" || sub === "--help" || sub === "-h" || hasFlag(parsed.flags, "help")) {
+      return { ok: true, mode: "read", command: context.command, output: this.helpText() };
+    }
     switch (sub) {
       case "status":
         return { ok: true, mode: "read", command: context.command, output: { status: "ok", dataDir: getFileStorageDir(), tables: FILE_BACKED_TABLES.length } };
@@ -1432,6 +1777,44 @@ export class MariDbService {
     return join(this.journalDir(), "mari-db-history.jsonl");
   }
 
+  private topLevelHelpText() {
+    return [
+      "Usage: mari <group> <command>",
+      "Core code/workspace: mari code status|diff|check|health|reload",
+      "Live app data:       mari db status|tables|list|get|search|insert|patch|replace|delete|transform|validate",
+      "Customization:       mari themes list|active|get|create|update|set-active",
+      "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
+      "Discovery:           mari <group> --help or mari <group> <command> --help",
+      "Writes dry-run by default where supported; --apply requests browser approval.",
+    ].join("\n");
+  }
+
+  private codeHelpText() {
+    return [
+      "Usage: mari code <command>",
+      "status                 Show workspace, runtime, git status, changed files, and diff stat.",
+      "diff [--patch]          Show changed files and git diff --stat. Add --patch for a truncated patch.",
+      "diff --cached [--patch] Show staged changed files and diff summary.",
+      "check [--changed]       Run validation. --changed currently falls back to baseline pnpm check.",
+      "health                 Show server/runtime health and database validation status.",
+      "reload request --kind client|server|full --reason <text> [--resume]",
+      "continue <run-id>       Planned durable resume command; not implemented yet.",
+      "Examples:",
+      "  mari code status",
+      "  mari code diff --patch",
+      "  mari code check",
+      "  mari code reload request --kind server --reason \"Server route changed\" --resume",
+    ].join("\n");
+  }
+
+  private codeReloadHelpText() {
+    return [
+      "Usage: mari code reload request --kind client|server|full --reason <text> [--resume]",
+      "Records that a reload/restart is needed and returns manual resume instructions for this build.",
+      "Automatic suspend/resume cards are planned for the durable workspace-runs phase.",
+    ].join("\n");
+  }
+
   private themeHelpText() {
     return [
       "Usage: mari themes <command>",
@@ -1445,11 +1828,10 @@ export class MariDbService {
 
   private helpText() {
     return [
-      "Usage: mari db <command> or mari themes <command>",
+      "Usage: mari db <command>",
       "Discovery: status, tables, schema <table>, counts, data-dir, now, new-id",
       "Read: list <table>, get <table> <id>, select <table> --where <expr>, search <table|all> <query>, validate [--table <table>]",
       "Write: insert|patch|replace|delete|transform ... (dry-run by default; --apply requests browser approval)",
-      "Themes: mari themes list|active|get|create|update|set-active",
       `Known tables: ${FILE_BACKED_TABLES.slice(0, 8).join(", ")} ... (${FILE_BACKED_TABLES.length})`,
       `Journal directory: ${this.journalDir()} (${basename(getFileStorageDir())})`,
     ].join("\n");
