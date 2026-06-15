@@ -188,6 +188,7 @@ export const FILE_BACKED_TABLES = [
   "memory_chunks",
   "discord_bridge_thread_bindings",
   "discord_bridge_message_mappings",
+  "discord_bridge_user_personas",
   "chat_folders",
   "api_connection_folders",
   "custom_themes",
@@ -1478,7 +1479,9 @@ class FileTableStore {
       tables,
     };
     const path = manifestPath(this.rootDir);
-    await atomicWriteFile(path, JSON.stringify(manifest, null, 2), { refreshBackup: !this.backupRecoveredPaths.has(path) });
+    await atomicWriteFile(path, JSON.stringify(manifest, null, 2), {
+      refreshBackup: !this.backupRecoveredPaths.has(path),
+    });
     this.backupRecoveredPaths.clear();
   }
 

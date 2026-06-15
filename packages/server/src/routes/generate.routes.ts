@@ -2,6 +2,7 @@
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 import type { FastifyInstance } from "fastify";
+import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
@@ -68,6 +69,7 @@ import { localEmbed, isLocalEmbedderAvailable } from "../services/local-embedder
 import { cosineSimilarity } from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import { createDiscordBridgeStorage } from "../services/storage/discord-bridge.storage.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
 import { filterRelevantLorebooks, processLorebooks, type LorebookScanResult } from "../services/lorebook/index.js";
 import {
@@ -97,7 +99,7 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
-import { yieldToEventLoop, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
+import { yieldToEventLoop, fitMessagesToContext, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -1237,6 +1239,10 @@ function buildPersonaGalleryEmojiUrl(personaId: string, filename: string): strin
   return `/api/characters/personas/${encodeURIComponent(personaId)}/gallery/file/${encodeURIComponent(filename)}`;
 }
 
+function contentHash(content: string) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
 
@@ -1253,6 +1259,7 @@ export async function generateRoutes(app: FastifyInstance) {
   const customStickersStore = createCustomStickersStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const personaGallery = createPersonaGalleryStorage(app.db);
+  const bridgeStorage = createDiscordBridgeStorage(app.db);
 
   /**
    * In-memory cache for OpenAI Responses API encrypted reasoning items.
@@ -1418,12 +1425,27 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // Mirror user message to Discord (deferred â€” personaName resolved later)
       if (userMsg?.id) {
+        const discordBridgeInput = input.discordBridge;
+        if (discordBridgeInput) {
+          const binding = await bridgeStorage.getThreadBindingById(discordBridgeInput.bindingId);
+          if (!binding || binding.chatId !== input.chatId) {
+            throw new Error("Discord bridge binding does not match this chat");
+          }
+          await bridgeStorage.upsertMessageMapping({
+            bindingId: binding.id,
+            marinaraMessageId: userMsg.id,
+            discordMessageIds: [discordBridgeInput.discordMessageId],
+            role: "user",
+            direction: "discord_to_engine",
+            contentHash: contentHash(input.userMessage ?? ""),
+          });
+        }
         publishChatEvent(
           createChatRealtimeEvent({
             type: "chat_message_created",
             chatId: input.chatId,
             messageId: userMsg.id,
-            source: "engine",
+            source: discordBridgeInput ? "discord_bridge" : "engine",
           }),
         );
       }
