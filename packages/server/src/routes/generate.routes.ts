@@ -106,8 +106,10 @@ import {
   buildParticipantPromptEntries,
   buildParticipantSnapshot,
   compactPersonaSummary,
+  formatParticipantHistoryContent,
   formatParticipantPromptBlock,
   formatParticipantsMacro,
+  participantSnapshotPersonaName,
   participantPersonaName,
   participantSpeakerName,
   type ParticipantPromptEntry,
@@ -1767,6 +1769,13 @@ export async function generateRoutes(app: FastifyInstance) {
         // Skip illustration/selfie attachments (type "image") â€” those are generated
         // by agents and should be invisible to the main model.
         let content = appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), attachments);
+        if (m.role === "user") {
+          content = formatParticipantHistoryContent({
+            content,
+            personaSnapshot: extra.personaSnapshot,
+            participantSnapshot: extra.participantSnapshot,
+          });
+        }
         const userUploadedImages = attachments?.filter((a) => a.type?.startsWith("image/"));
         if (m.role === "assistant" && userUploadedImages?.length) {
           const photoName = userUploadedImages[0]?.filename ?? userUploadedImages[0]?.name;
@@ -1863,7 +1872,8 @@ export async function generateRoutes(app: FastifyInstance) {
         };
       }
 
-      const participantRows = discordBridgeInput ? await bridgeStorage.listActiveParticipants(input.chatId) : [];
+      const participantRows =
+        discordBridgeInput || chatMode === "roleplay" ? await bridgeStorage.listActiveParticipants(input.chatId) : [];
       const participantEntries: ParticipantPromptEntry[] = buildParticipantPromptEntries(participantRows, allPersonas);
       const activeParticipantEntry =
         activeDiscordParticipant || discordBridgeInput?.discordUserId
@@ -2624,7 +2634,14 @@ export async function generateRoutes(app: FastifyInstance) {
                 const files = extractFileAttachmentInputs(att);
                 return {
                   role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-                  content: appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
+                  content:
+                    m.role === "user"
+                      ? formatParticipantHistoryContent({
+                          content: appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
+                          personaSnapshot: ex.personaSnapshot,
+                          participantSnapshot: ex.participantSnapshot,
+                        })
+                      : appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
                   contextKind: "history" as const,
                   characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
                   ...(imgs?.length ? { images: imgs } : {}),
@@ -2705,9 +2722,13 @@ export async function generateRoutes(app: FastifyInstance) {
             }
             const ts = new Date(raw.createdAt as string);
             // Resolve author name for this message
+            const rawExtra = parseExtra(raw?.extra);
             const author =
               msg.role === "user"
-                ? personaName
+                ? (participantSnapshotPersonaName({
+                    personaSnapshot: rawExtra.personaSnapshot,
+                    participantSnapshot: rawExtra.participantSnapshot,
+                  }) ?? personaName)
                 : ((raw.characterId ? charIdToName.get(raw.characterId as string) : null) ??
                   convoCharNames[0] ??
                   "Character");
