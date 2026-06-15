@@ -84,6 +84,7 @@ import {
   persistLorebookKeeperUpdates,
   resolveLorebookKeeperTarget,
 } from "./lorebook-keeper-utils.js";
+import { createChatRealtimeEvent, publishChatEvent } from "../../services/chat-events.service.js";
 import {
   agentWriteApprovalRequired,
   buildLorebookWriteApprovalProposal,
@@ -2281,6 +2282,14 @@ async function applyRetryResultEffects(args: {
           // We just wrote editedText, so that becomes the new expected stored content.
           expectedStoredMessageContent = editedText;
           await chats.updateMessageContent(retryMessageId, editedText);
+          publishChatEvent(
+            createChatRealtimeEvent({
+              type: "chat_message_updated",
+              chatId,
+              messageId: retryMessageId,
+              source: "engine",
+            }),
+          );
           const originalText = strictEditNeeded ? originalResponseBeforeRewrite : null;
           if (originalText) {
             await chats.updateMessageExtra(retryMessageId, {

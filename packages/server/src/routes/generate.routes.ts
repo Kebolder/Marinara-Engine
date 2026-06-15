@@ -1,6 +1,6 @@
-// ──────────────────────────────────────────────
+﻿// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
-// ──────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 import type { FastifyInstance } from "fastify";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
@@ -258,6 +258,7 @@ import { registerRetryAgentsRoute } from "./generate/retry-agents-route.js";
 import { fingerprintChatSummary } from "../services/prompt/chat-summary-fingerprint.js";
 import { sendSseEvent, startSseKeepalive, startSseReply, trySendSseEvent } from "./generate/sse.js";
 import { runTurnGameBotTurns } from "../services/turn-games/turn-game-bot-runner.service.js";
+import { createChatRealtimeEvent, publishChatEvent } from "../services/chat-events.service.js";
 import {
   getActiveTurnGame,
   getTurnGameContextText,
@@ -960,10 +961,10 @@ async function rankEmojiNamesBySemantic(names: string[], query: string): Promise
   }
 }
 
-/** Order a pool of emoji names per the selection mode (does NOT cap — the formatter slices to maxCount). */
+/** Order a pool of emoji names per the selection mode (does NOT cap â€” the formatter slices to maxCount). */
 async function orderEmojiNames(names: string[], prefs: CustomEmojiSelectionPrefs, query: string): Promise<string[]> {
   if (names.length <= 1) return names;
-  // Reached for random/semantic, and as the tool-call fallback path — rank semantically when possible.
+  // Reached for random/semantic, and as the tool-call fallback path â€” rank semantically when possible.
   if (prefs.mode === "semantic" || prefs.mode === "tool-call") {
     const ranked = await rankEmojiNamesBySemantic(names, query);
     if (ranked) return ranked;
@@ -974,8 +975,8 @@ async function orderEmojiNames(names: string[], prefs: CustomEmojiSelectionPrefs
 /**
  * Tool-call selection: one short auxiliary completion (on the chosen connection)
  * picks which candidate asset names fit the latest message. Returns the validated
- * picks (≤ maxCount), or null on any failure so the caller can fall back to
- * semantic/random. Never throws — generation must not depend on it.
+ * picks (â‰¤ maxCount), or null on any failure so the caller can fall back to
+ * semantic/random. Never throws â€” generation must not depend on it.
  */
 async function selectCustomAssetNamesByToolCall(
   assetLabel: string,
@@ -1092,7 +1093,7 @@ function buildCustomEmojiAdvertisement(
 ): string | null {
   const toTokens = (names: string[]) => names.map((name) => `:${name}:`).join(" ");
   const lead =
-    "You can use custom emojis in your reply by writing their name between colons, e.g. :name: — they render as small inline images. Use them only where they fit naturally; do not overuse them.";
+    "You can use custom emojis in your reply by writing their name between colons, e.g. :name: â€” they render as small inline images. Use them only where they fit naturally; do not overuse them.";
 
   // Single responder (1:1 chats and individual-turn group mode): own first, then global, capped to maxCount total.
   if (responders.length === 1) {
@@ -1133,7 +1134,7 @@ function buildCustomStickerAdvertisement(
 ): string | null {
   const toTokens = (names: string[]) => names.map((name) => `sticker:${name}:`).join(" ");
   const lead =
-    "You can send a sticker by writing its name as sticker:name: — it posts as a large block image on its own line. Send one only when it genuinely fits the moment, not in every message.";
+    "You can send a sticker by writing its name as sticker:name: â€” it posts as a large block image on its own line. Send one only when it genuinely fits the moment, not in every message.";
 
   if (responders.length === 1) {
     const merged = [...(orderedOwnByChar.get(responders[0]!.charId) ?? [])];
@@ -1187,10 +1188,10 @@ function buildReactionAnnotation(reactions: unknown, resolveReactorName: (reacto
 }
 
 /**
- * Add a reactor to a message's reactions (add-only, idempotent — a no-op if the
+ * Add a reactor to a message's reactions (add-only, idempotent â€” a no-op if the
  * reactor already reacted with this emoji). Applies a character's `[react:]`
  * directive server-side. `imageUrl` is stored for a custom (`:name:`) reaction so
- * the chip renders without re-resolving the gallery. Pure — returns a new array.
+ * the chip renders without re-resolving the gallery. Pure â€” returns a new array.
  */
 function addMessageReactor(
   reactions: unknown,
@@ -1255,7 +1256,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
   /**
    * In-memory cache for OpenAI Responses API encrypted reasoning items.
-   * Keyed by chatId → opaque reasoning items from the last response.
+   * Keyed by chatId â†’ opaque reasoning items from the last response.
    * These are replayed on the next turn so the model can continue its reasoning chain.
    */
   const encryptedReasoningCache = new Map<string, unknown[]>();
@@ -1348,14 +1349,14 @@ export async function generateRoutes(app: FastifyInstance) {
         ? input.narrativeDirectorMode
         : null;
 
-    // ── Discord webhook URL (parsed once, used for mirroring below) ──
+    // â”€â”€ Discord webhook URL (parsed once, used for mirroring below) â”€â”€
     const discordWebhookUrl = typeof earlyMeta.discordWebhookUrl === "string" ? earlyMeta.discordWebhookUrl : "";
     let pendingUserDiscordMsg = "";
     let currentTurnUserMessageId: string | null = null;
 
-    // Save user message — skip for impersonate (no real user message to save)
+    // Save user message â€” skip for impersonate (no real user message to save)
     if (!input.impersonate && (input.userMessage || input.attachments?.length)) {
-      // ── Commit game state: lock in the game state the user was seeing ──
+      // â”€â”€ Commit game state: lock in the game state the user was seeing â”€â”€
       // Find the last assistant message's active swipe and commit its game state.
       // This ensures swipes/regens always use the state from the user's accepted turn.
       const preMessages = await chats.listMessages(input.chatId).catch(releaseActiveGenerationAndRethrow);
@@ -1415,7 +1416,18 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
 
-      // Mirror user message to Discord (deferred — personaName resolved later)
+      // Mirror user message to Discord (deferred â€” personaName resolved later)
+      if (userMsg?.id) {
+        publishChatEvent(
+          createChatRealtimeEvent({
+            type: "chat_message_created",
+            chatId: input.chatId,
+            messageId: userMsg.id,
+            source: "engine",
+          }),
+        );
+      }
+
       pendingUserDiscordMsg = discordWebhookUrl && input.userMessage ? input.userMessage : "";
     }
 
@@ -1425,7 +1437,7 @@ export async function generateRoutes(app: FastifyInstance) {
     const fallbackConnectionId = input.connectionId || chat.connectionId;
     let connId = impersonateConnectionOverride || fallbackConnectionId;
 
-    // ── Random connection: pick one from the random pool ──
+    // â”€â”€ Random connection: pick one from the random pool â”€â”€
     if (connId === "random") {
       const pool = await connections.listRandomPool().catch(releaseActiveGenerationAndRethrow);
       if (!pool.length) {
@@ -1463,7 +1475,7 @@ export async function generateRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "API connection not found" });
     }
 
-    // Resolve base URL — fall back to provider default if empty
+    // Resolve base URL â€” fall back to provider default if empty
     const baseUrl = resolveBaseUrl(conn);
     if (!baseUrl) {
       releaseActiveGeneration();
@@ -1524,7 +1536,7 @@ export async function generateRoutes(app: FastifyInstance) {
         logger.info("[generate] Conversation client disconnected; generation will continue for chat: %s", input.chatId);
         return;
       }
-      logger.info("[abort] Client disconnected — aborting generation");
+      logger.info("[abort] Client disconnected â€” aborting generation");
       abortController.abort();
       if (baseUrl) {
         const backendRoot = baseUrl.replace(/\/v1\/?$/, "");
@@ -1560,15 +1572,15 @@ export async function generateRoutes(app: FastifyInstance) {
       }
     };
 
-    // ── SSE progress helper: tells the client what phase we're in ──
+    // â”€â”€ SSE progress helper: tells the client what phase we're in â”€â”€
     const sendProgress = (phase: string) => {
       trySendSseEvent(reply, { type: "progress", data: { phase } });
     };
 
     try {
-      // ── Turn-game bot seats (UNO, etc.): drive the active game's bot players and
+      // â”€â”€ Turn-game bot seats (UNO, etc.): drive the active game's bot players and
       //    short-circuit the normal conversation pipeline. Gated by an explicit
-      //    flag so it can never affect a regular chat/roleplay generation. ──
+      //    flag so it can never affect a regular chat/roleplay generation. â”€â”€
       if (input.turnGameBots && requestChatMode === "conversation") {
         await runTurnGameBotTurns({
           db: app.db,
@@ -1591,7 +1603,7 @@ export async function generateRoutes(app: FastifyInstance) {
         chatMode === "conversation" || chatMode === "roleplay" || chatMode === "visual_novel";
       const preferLatestVisibleGameState = shouldPreferLatestVisibleGameState(input);
 
-      // ── Conversation-start filter: find the latest "isConversationStart" marker ──
+      // â”€â”€ Conversation-start filter: find the latest "isConversationStart" marker â”€â”€
       let startIdx = 0;
       for (let i = allChatMessages.length - 1; i >= 0; i--) {
         const extra = parseExtra(allChatMessages[i]!.extra);
@@ -1609,7 +1621,7 @@ export async function generateRoutes(app: FastifyInstance) {
       let regenerateUserMessage: SimpleMessage | null = null;
       let regenerateUserSourceMessage: SimpleMessage | null = null;
 
-      // ── Regeneration as swipe: exclude the target message from context ──
+      // â”€â”€ Regeneration as swipe: exclude the target message from context â”€â”€
       if (input.regenerateMessageId) {
         regenMsg = scopedMessages.find((m: any) => m.id === input.regenerateMessageId);
         if (!regenMsg) {
@@ -1648,7 +1660,7 @@ export async function generateRoutes(app: FastifyInstance) {
         return row ? (parseGameStateRow(row as Record<string, unknown>) as unknown as Record<string, unknown>) : null;
       };
 
-      // ── Context message limit (from chat metadata, off by default) ──
+      // â”€â”€ Context message limit (from chat metadata, off by default) â”€â”€
       const lorebookKeeperSettings = getLorebookKeeperSettings(chatMeta);
       const contextMessageLimit = chatMeta.contextMessageLimit as number | null;
       if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
@@ -1679,7 +1691,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // Annotate assistant messages that have user-uploaded image attachments
         // so the model is aware it sent a photo in prior turns.
-        // Skip illustration/selfie attachments (type "image") — those are generated
+        // Skip illustration/selfie attachments (type "image") â€” those are generated
         // by agents and should be invisible to the main model.
         let content = appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), attachments);
         const userUploadedImages = attachments?.filter((a) => a.type?.startsWith("image/"));
@@ -1719,7 +1731,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
 
-      // Always collapse 3+ consecutive blank lines into a double newline —
+      // Always collapse 3+ consecutive blank lines into a double newline â€”
       // these waste tokens and produce messy logs regardless of user regex settings.
       // Matches pure newlines AND lines that contain only whitespace.
       for (const msg of mappedMessages) {
@@ -1737,14 +1749,14 @@ export async function generateRoutes(app: FastifyInstance) {
         throw new Error("All characters in this chat are disabled. Enable at least one character before generating.");
       }
 
-      // Resolve persona — prefer per-chat personaId, fall back to globally active persona
-      // (Game mode skips the fallback — persona must be explicitly selected in the setup wizard)
+      // Resolve persona â€” prefer per-chat personaId, fall back to globally active persona
+      // (Game mode skips the fallback â€” persona must be explicitly selected in the setup wizard)
       let personaId: string | null = null;
       let personaName = "User";
       let personaDescription = "";
       let personaFields: { personality?: string; scenario?: string; backstory?: string; appearance?: string } = {};
       const allPersonas = await chars.listPersonas();
-      // ── Game mode: apply segment edit overlays to message content ──
+      // â”€â”€ Game mode: apply segment edit overlays to message content â”€â”€
       // Users can edit individual narration/dialogue segments in the VN UI.
       // Edits are stored as chat-metadata overlays; apply them so the model
       // sees the corrected text in its conversation history.
@@ -1782,7 +1794,7 @@ export async function generateRoutes(app: FastifyInstance) {
         postToDiscordWebhook(discordWebhookUrl, { content: pendingUserDiscordMsg, username: personaName });
       }
 
-      // ── Assembler path: use the highest-priority prompt preset for this generation ──
+      // â”€â”€ Assembler path: use the highest-priority prompt preset for this generation â”€â”€
       const chatPromptPresetId = (chat.promptPresetId as string | null) ?? null;
       const presetCandidates = buildGenerationPromptPresetCandidates({
         chatMode,
@@ -1823,7 +1835,7 @@ export async function generateRoutes(app: FastifyInstance) {
         return groupHistoryCharacterNamesByIdPromise;
       };
 
-      // ── Professor Mari fetch follow-up loop ──
+      // â”€â”€ Professor Mari fetch follow-up loop â”€â”€
       // After Mari executes a [fetch:], the fetched data is persisted to
       // chatMeta.mariContext but only injected into the prompt at the START
       // of a generation pass. Without a follow-up turn she goes silent
@@ -2027,10 +2039,10 @@ export async function generateRoutes(app: FastifyInstance) {
           return promptRegexScripts;
         };
 
-        // ── Apply regex scripts to prompt message content ──
+        // â”€â”€ Apply regex scripts to prompt message content â”€â”€
         // Macro context is available now, so regex find/replace/trim fields can use prompt macros.
         // Gated to iteration 0 because applyRegexScriptsToPromptMessages mutates
-        // message.content in place — running it again on a Mari follow-up pass
+        // message.content in place â€” running it again on a Mari follow-up pass
         // would stack non-idempotent user regex scripts on already-rewritten text.
         // The newly appended Mari turn is run through the same transforms below
         // before it lands in runningMessagesForFollowUp, so each message still
@@ -2049,7 +2061,7 @@ export async function generateRoutes(app: FastifyInstance) {
             });
           }
 
-          // Always collapse 3+ consecutive blank lines into a double newline —
+          // Always collapse 3+ consecutive blank lines into a double newline â€”
           // these waste tokens and produce messy logs regardless of user regex settings.
           // Matches pure newlines AND lines that contain only whitespace.
           for (const msg of mappedMessages) {
@@ -2125,7 +2137,7 @@ export async function generateRoutes(app: FastifyInstance) {
           return sourceIds.filter((id) => scopedIds.has(id));
         };
 
-        // ── Compute chat embedding for semantic lorebook matching (if any entries are vectorized) ──
+        // â”€â”€ Compute chat embedding for semantic lorebook matching (if any entries are vectorized) â”€â”€
         sendProgress("embedding");
         const _tEmbed = Date.now();
         let chatContextEmbedding: number[] | null = null;
@@ -2158,7 +2170,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
         } catch {
-          // Embedding generation is optional — if it fails, fall back to keyword-only matching
+          // Embedding generation is optional â€” if it fails, fall back to keyword-only matching
         }
         logger.debug(`[timing] Embedding: ${Date.now() - _tEmbed}ms`);
 
@@ -2319,7 +2331,7 @@ export async function generateRoutes(app: FastifyInstance) {
           });
         }
 
-        // ── Conversation mode: inject built-in DM-style system prompt ──
+        // â”€â”€ Conversation mode: inject built-in DM-style system prompt â”€â”€
         let convoAwarenessBlock: string | null = null;
         if (chatMode === "conversation") {
           // Gather character names and status for the prompt.
@@ -2423,7 +2435,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const effectiveStatus = (c: { charId: string; status: string }): string =>
             seatedGameCharIds.has(c.charId) ? "online" : c.status;
 
-          // ── Offline skip: if ALL characters are offline, don't generate ──
+          // â”€â”€ Offline skip: if ALL characters are offline, don't generate â”€â”€
           // The user message is already saved. When the character comes back online,
           // the autonomous messaging system will trigger a catch-up generation.
           const allOffline =
@@ -2436,7 +2448,7 @@ export async function generateRoutes(app: FastifyInstance) {
             return;
           }
 
-          // ── Typing delay: DND/idle characters don't respond instantly ──
+          // â”€â”€ Typing delay: DND/idle characters don't respond instantly â”€â”€
           if (!input.regenerateMessageId && !input.impersonate && !input.skipPresenceDelay) {
             const schedSvc = await import("../services/conversation/schedule.service.js");
             // Check if any characters were @mentioned
@@ -2465,7 +2477,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const characterStatuses = Object.fromEntries(
                 respondingConvoCharInfo.map((character) => [character.charId, character.status]),
               );
-              // Send "delayed" event first — client shows "will respond in a moment" / "when they're back"
+              // Send "delayed" event first â€” client shows "will respond in a moment" / "when they're back"
               reply.raw.write(
                 `data: ${JSON.stringify({
                   type: "delayed",
@@ -2493,7 +2505,7 @@ export async function generateRoutes(app: FastifyInstance) {
               });
               if (abortController.signal.aborted) return;
 
-              // Re-read messages after the delay — the user may have sent
+              // Re-read messages after the delay â€” the user may have sent
               // follow-up messages while the character was busy/idle.
               const refreshed = await chats.listMessages(input.chatId);
               let rStartIdx = 0;
@@ -2525,7 +2537,7 @@ export async function generateRoutes(app: FastifyInstance) {
               });
               finalMessages = resolveHistoryMessageMacros(finalMessages);
             }
-            // Send "typing" event — client switches to "X is typing..."
+            // Send "typing" event â€” client switches to "X is typing..."
             reply.raw.write(`data: ${JSON.stringify({ type: "typing", characters: respondingConvoCharNames })}\n\n`);
           }
 
@@ -2631,7 +2643,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
           if (currentBucket) buckets.push(currentBucket);
 
-          // ── Auto-summarize missing past days and completed weeks ──
+          // â”€â”€ Auto-summarize missing past days and completed weeks â”€â”€
           // This scans the full scoped conversation, not the display/context-limited
           // prompt slice, so a failed day can still be retried after it ages out of
           // the latest visible window.
@@ -2699,7 +2711,7 @@ export async function generateRoutes(app: FastifyInstance) {
           const daySummaries = summaryRun.daySummaries;
           const weekSummaries = summaryRun.weekSummaries;
 
-          // Build a lookup: dateKey → weekKey for days that belong to a consolidated week
+          // Build a lookup: dateKey â†’ weekKey for days that belong to a consolidated week
           const dayToWeek = new Map<string, string>();
           for (const [weekKey] of Object.entries(weekSummaries)) {
             const monday = parseDateKey(weekKey);
@@ -2723,7 +2735,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const monday = parseDateKey(wk);
               const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
               allKeyDetails.push({
-                label: `Week of ${wk} – ${fmtDateKey(sunday)}`,
+                label: `Week of ${wk} â€“ ${fmtDateKey(sunday)}`,
                 details: entry.keyDetails,
               });
             }
@@ -2763,9 +2775,9 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // Flatten: consolidated weeks → single <summary week="..."> block,
-          // non-consolidated summarized days → <summary date="..."> block,
-          // today → individual timestamped messages.
+          // Flatten: consolidated weeks â†’ single <summary week="..."> block,
+          // non-consolidated summarized days â†’ <summary date="..."> block,
+          // today â†’ individual timestamped messages.
           // The tail block is spliced in at firstTodayIdx so it sits between
           // the last summary and today's first verbatim message.
           const weekBlocksEmitted = new Set<string>();
@@ -2777,7 +2789,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (tailEntries.length === 0) return [];
             // Match today's verbatim format: timestamp prefix, with user turns speaker-labeled.
             // The [DD.MM HH:MM] prefix unambiguously distinguishes tail turns
-            // from today's [HH:MM] turns, so no wrapper tag is needed — the
+            // from today's [HH:MM] turns, so no wrapper tag is needed â€” the
             // model can see from the timestamps alone where today begins.
             return tailEntries.map((m) => ({
               role: m.role as "user" | "assistant" | "system",
@@ -2787,7 +2799,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
           finalMessages = buckets.flatMap((b, bIdx) => {
             // Splice the tail in immediately before today's first verbatim
-            // message. firstTodayIdx is null when today has no messages yet —
+            // message. firstTodayIdx is null when today has no messages yet â€”
             // in that case we fall through to the post-loop append below.
             const prefix = bIdx === firstTodayIdx ? buildTailTurns() : [];
 
@@ -2795,7 +2807,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const bucket = b as Bucket;
               const weekKey = dayToWeek.get(bucket.date);
 
-              // Day belongs to a consolidated week → emit one week summary block (first occurrence)
+              // Day belongs to a consolidated week â†’ emit one week summary block (first occurrence)
               if (weekKey && weekSummaries[weekKey]) {
                 if (weekBlocksEmitted.has(weekKey)) return prefix; // already emitted for this week
                 weekBlocksEmitted.add(weekKey);
@@ -2807,7 +2819,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   ...prefix,
                   {
                     role: "system" as const,
-                    content: `<summary week="${weekKey} – ${fmtDateKey(sunday)}">\n${wEntry.summary}\n</summary>`,
+                    content: `<summary week="${weekKey} â€“ ${fmtDateKey(sunday)}">\n${wEntry.summary}\n</summary>`,
                   },
                 ];
               }
@@ -2824,7 +2836,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   },
                 ];
               }
-              // Unsummarized past day — keep each message as its own turn
+              // Unsummarized past day â€” keep each message as its own turn
               const turns = bucket.msgs.map((m, idx) => {
                 let content = `${m.author}: ${m.content}`;
                 if (idx === 0) content = `<date="${bucket.date}">\n${content}`;
@@ -2895,7 +2907,7 @@ export async function generateRoutes(app: FastifyInstance) {
             conversationInstructionParts.filter((part) => part.trim().length > 0).join("\n\n"),
           );
 
-          // ── Character Commands: build a commands block if any features are enabled ──
+          // â”€â”€ Character Commands: build a commands block if any features are enabled â”€â”€
           if (conversationCommandsEnabled) {
             const scheduleCommandEnabled = isConversationCommandEnabled(chatMeta, "schedule_update");
             const crossPostCommandEnabled = isConversationCommandEnabled(chatMeta, "cross_post");
@@ -2931,7 +2943,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
               }
             }
-            // Also check if the CURRENT chat is a group — characters in this chat can target each other
+            // Also check if the CURRENT chat is a group â€” characters in this chat can target each other
             if (characterIds.length > 1) {
               for (const id of characterIds) memoryTargetCharIds.add(id);
             }
@@ -2992,7 +3004,7 @@ export async function generateRoutes(app: FastifyInstance) {
             if (crossPostCommandEnabled && crossPostTargets.length > 0) {
               addCommandLines(
                 `- [cross_post: target="${crossPostTargets.map((t) => `"${t}"`).join("|")}"] - if you want to redirect your message to a different chat. Use this when the user suggests you say something in another chat, or when it makes sense to message someone else.`,
-                ` Example: ${personaName} says "maybe ask about that in the group chat?" → You respond: [cross_post: target="${crossPostTargets[0] ?? "group chat"}"] Hey guys, does anyone know about…`,
+                ` Example: ${personaName} says "maybe ask about that in the group chat?" â†’ You respond: [cross_post: target="${crossPostTargets[0] ?? "group chat"}"] Hey guys, does anyone know aboutâ€¦`,
               );
             }
 
@@ -3003,7 +3015,7 @@ export async function generateRoutes(app: FastifyInstance) {
               );
             }
 
-            // Memory command — only available when there are valid targets (characters in shared group chats)
+            // Memory command â€” only available when there are valid targets (characters in shared group chats)
             if (memoryCommandEnabled && memoryTargetNames.length > 0) {
               addCommandLines(
                 `- [memory: target="${memoryTargetNames.map((n) => `"${n}"`).join("|")}", summary="brief description of what happened"] - create a memory that another character will remember. Use this when something notable happens between you and another character that they would naturally remember (e.g., shared a meal, had an argument, made plans). Don't overuse this; only for genuinely memorable moments.`,
@@ -3011,21 +3023,21 @@ export async function generateRoutes(app: FastifyInstance) {
               );
             }
 
-            // Scene command — only in conversation mode
+            // Scene command â€” only in conversation mode
             if (sceneCommandEnabled && chatMode === "conversation") {
               addCommandLines(
                 `- [scene: scenario="brief description of what happens in this scene", background="place"] - initiate a mini-roleplay scene branching from this conversation. The system will plan and create a complete immersive scene for you.`,
-                `   Example: You agree to go stargazing → include [scene: scenario="lying on a blanket in the park, looking at the stars together", background="park"]`,
+                `   Example: You agree to go stargazing â†’ include [scene: scenario="lying on a blanket in the park, looking at the stars together", background="park"]`,
                 `   WHEN TO USE: You SHOULD proactively trigger a scene whenever the conversation naturally leads to an activity, outing, or situation that would be more immersive as a scene. Examples:`,
-                `   - {{user}} says "I'm coming over" or "Let's go to the park" → trigger a scene for arriving/being at that location.`,
-                `   - You invite {{user}} somewhere and they accept → trigger a scene for that activity.`,
-                `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives → trigger a scene.`,
+                `   - {{user}} says "I'm coming over" or "Let's go to the park" â†’ trigger a scene for arriving/being at that location.`,
+                `   - You invite {{user}} somewhere and they accept â†’ trigger a scene for that activity.`,
+                `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives â†’ trigger a scene.`,
                 `   Do NOT wait for {{user}} to explicitly ask for a scene. If the conversation implies you and {{user}} are about to DO something together, initiate the scene yourself.`,
-                `   EXCEPTION: Do NOT start a scene for playing UNO, cards, or other board/table games — those have their own [uno] command. Use [uno], not [scene], for a game of UNO.`,
+                `   EXCEPTION: Do NOT start a scene for playing UNO, cards, or other board/table games â€” those have their own [uno] command. Use [uno], not [scene], for a game of UNO.`,
               );
             }
 
-            // UNO turn-game — conversation mode only, when no game is running yet
+            // UNO turn-game â€” conversation mode only, when no game is running yet
             // and at least one other character is present to play with.
             if (
               chatMode === "conversation" &&
@@ -3034,9 +3046,9 @@ export async function generateRoutes(app: FastifyInstance) {
               !(await getActiveTurnGame(app.db, input.chatId))
             ) {
               addCommandLines(
-                `- [uno] - start a game of UNO at the table. Include this ONLY when ${personaName} proposes playing UNO (or cards) and you are willing to play right now. The system deals the cards and runs the game — you do NOT narrate dealing or describe the hands.`,
+                `- [uno] - start a game of UNO at the table. Include this ONLY when ${personaName} proposes playing UNO (or cards) and you are willing to play right now. The system deals the cards and runs the game â€” you do NOT narrate dealing or describe the hands.`,
                 `   If you are busy, tired, or simply don't feel like it, just say so in character and do NOT include [uno]. Agreeing to play IS including [uno].`,
-                `   Example: ${personaName} says "anyone up for a round of uno?" and you're in → "Oh, you're SO on. [uno]"`,
+                `   Example: ${personaName} says "anyone up for a round of uno?" and you're in â†’ "Oh, you're SO on. [uno]"`,
               );
             }
 
@@ -3052,7 +3064,7 @@ export async function generateRoutes(app: FastifyInstance) {
               );
             }
 
-            // Haptic command — only when devices are connected and haptic feedback is enabled
+            // Haptic command â€” only when devices are connected and haptic feedback is enabled
             const hapticEnabled = chatMeta.enableHapticFeedback === true;
             if (hapticCommandEnabled && hapticEnabled) {
               const { hapticService } = await import("../services/haptic/buttplug-service.js");
@@ -3061,14 +3073,14 @@ export async function generateRoutes(app: FastifyInstance) {
                 try {
                   await hapticService.connect(getChatHapticIntifaceUrl(chatMeta));
                 } catch {
-                  logger.warn("[haptic] Auto-connect to Intiface Central failed — is the server running?");
+                  logger.warn("[haptic] Auto-connect to Intiface Central failed â€” is the server running?");
                 }
               }
               if (hapticService.connected && hapticService.devices.length > 0) {
                 const deviceNames = hapticService.devices.map((d) => d.name).join(", ");
                 addCommandLines(
                   `- [haptic: action="vibrate|oscillate|rotate|position|stop", intensity=0.0-1.0, duration=seconds (0 = loop until next command)] or [haptic: action="stop"] - control or stop the user's connected intimate device(s) (${deviceNames}). Use this during physical/intimate/sensual moments to provide haptic feedback that matches the narrative. Vary intensity based on the scene.`,
-                  `   You can include multiple [haptic] commands in one message for patterns (e.g., escalating: 0.2 → 0.5 → 0.8).`,
+                  `   You can include multiple [haptic] commands in one message for patterns (e.g., escalating: 0.2 â†’ 0.5 â†’ 0.8).`,
                   `   Example: *trails a finger slowly down your arm* [haptic: action="vibrate", intensity=0.3, duration=2]`,
                 );
               }
@@ -3084,15 +3096,15 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── React capability ──
+          // â”€â”€ React capability â”€â”€
           // Tell the character it can react to the user's latest message. Standard
           // emojis always work; any custom emojis are advertised in the shared
           // conversation asset context below. Whether
-          // to react — and how warmly or dryly — is emergent from personality, not
+          // to react â€” and how warmly or dryly â€” is emergent from personality, not
           // dictated here.
           conversationSystemPrompt +=
-            '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
-          // ── Home Professor Mari: inject assistant knowledge & commands ──
+            '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="ðŸ˜‚"] on its own line â€” any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
+          // â”€â”€ Home Professor Mari: inject assistant knowledge & commands â”€â”€
           if (isHomeProfessorMariAssistantChat) {
             conversationSystemPrompt += "\n\n" + MARI_ASSISTANT_PROMPT;
 
@@ -3138,7 +3150,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 conversationSystemPrompt += "\n\n" + namesSections.join("\n\n");
               }
             } catch {
-              // Non-critical — continue without name lists
+              // Non-critical â€” continue without name lists
             }
 
             // Inject previously fetched context from chatMeta.mariContext
@@ -3198,16 +3210,16 @@ export async function generateRoutes(app: FastifyInstance) {
           const userActivity = input.userActivity?.replace(/\s+/g, " ").trim().slice(0, 120) ?? "";
           const userStatusLine = userActivity ? `${userStatusLabel} - ${userActivity}` : userStatusLabel;
 
-          // Build @mention line — tells the LLM which characters were directly pinged
+          // Build @mention line â€” tells the LLM which characters were directly pinged
           const mentionedNames = (input.mentionedCharacterNames ?? []).filter((n: string) =>
             convoCharInfo.some((c) => normalizeTextForMatch(c.name) === normalizeTextForMatch(n)),
           );
           let mentionLine: string | null = null;
           if (mentionedNames.length > 0) {
             if (convoCharInfo.length === 1) {
-              mentionLine = `${personaName} @mentioned you directly — treat this as an urgent ping that demands your attention even if you are busy or away.`;
+              mentionLine = `${personaName} @mentioned you directly â€” treat this as an urgent ping that demands your attention even if you are busy or away.`;
             } else {
-              mentionLine = `${personaName} @mentioned: ${mentionedNames.join(", ")} — this is an urgent ping directed at ${mentionedNames.length === 1 ? "that person" : "those people"} specifically. The mentioned character(s) should feel compelled to respond promptly even if busy or away.`;
+              mentionLine = `${personaName} @mentioned: ${mentionedNames.join(", ")} â€” this is an urgent ping directed at ${mentionedNames.length === 1 ? "that person" : "those people"} specifically. The mentioned character(s) should feel compelled to respond promptly even if busy or away.`;
             }
           }
 
@@ -3235,7 +3247,7 @@ export async function generateRoutes(app: FastifyInstance) {
             `</context>`,
           ].join("\n");
 
-          // ── Cross-chat awareness: show messages from other chats this character is in ──
+          // â”€â”€ Cross-chat awareness: show messages from other chats this character is in â”€â”€
           // (awarenessBlock is injected later, after persona info)
           const crossChatEnabled = chatMeta.crossChatAwareness !== false; // on by default
           if (crossChatEnabled && !input.regenerateMessageId) {
@@ -3256,7 +3268,7 @@ export async function generateRoutes(app: FastifyInstance) {
             );
           }
 
-          // ── Connected chat context: inject linked roleplay/game details ──
+          // â”€â”€ Connected chat context: inject linked roleplay/game details â”€â”€
           let connectedChatBlock: string | null = null;
           const connectedInfluenceCommandEnabled =
             conversationCommandsEnabled && isConversationCommandEnabled(chatMeta, "influence");
@@ -3466,7 +3478,7 @@ export async function generateRoutes(app: FastifyInstance) {
             { role: "user" as const, content: contextBlock },
           ];
 
-          // ── Lorebook injection for conversation mode ──
+          // â”€â”€ Lorebook injection for conversation mode â”€â”€
           {
             sendProgress("lorebooks");
             const lorebookResult = await processLorebooks(app.db, toLorebookScanMessages(), null, {
@@ -3521,7 +3533,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Lorebook injection for preset-less roleplay / visual_novel ──
+        // â”€â”€ Lorebook injection for preset-less roleplay / visual_novel â”€â”€
         // Conversation mode handles this above; game mode handles it below;
         // preset-driven chats get lorebook content via the preset assembler.
         if (!presetId && (chatMode === "roleplay" || chatMode === "visual_novel")) {
@@ -3586,7 +3598,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Author's Notes injection ──
+        // â”€â”€ Author's Notes injection â”€â”€
         const authorNotes = (chatMeta.authorNotes as string | undefined)?.trim();
         if (authorNotes) {
           const authorNotesDepth = (chatMeta.authorNotesDepth as number) ?? 4;
@@ -3595,8 +3607,8 @@ export async function generateRoutes(app: FastifyInstance) {
           ]);
         }
 
-        // ── Roleplay/Game: inject pending OOC influences from connected conversation ──
-        // Skip OOC injection entirely for scene chats — scenes are self-contained
+        // â”€â”€ Roleplay/Game: inject pending OOC influences from connected conversation â”€â”€
+        // Skip OOC injection entirely for scene chats â€” scenes are self-contained
         const isSceneChat = chatMeta.sceneStatus === "active";
         if ((chatMode === "roleplay" || chatMode === "game") && chat.connectedChatId && !isSceneChat) {
           const pendingInfluences = await chats.listPendingInfluences(input.chatId);
@@ -3610,8 +3622,8 @@ export async function generateRoutes(app: FastifyInstance) {
               const influenceBlock = [
                 `<ooc_influences>`,
                 chatMode === "game"
-                  ? `The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside the game. Use them to steer the next scene, NPC reactions, objectives, or world state when appropriate — don't mention them explicitly as "OOC" in the narrative.`
-                  : `The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside of the roleplay. Weave them naturally into the story — don't mention them explicitly as "OOC" in the narrative.`,
+                  ? `The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside the game. Use them to steer the next scene, NPC reactions, objectives, or world state when appropriate â€” don't mention them explicitly as "OOC" in the narrative.`
+                  : `The following out-of-character notes come from a connected conversation. They represent things the players discussed or decided outside of the roleplay. Weave them naturally into the story â€” don't mention them explicitly as "OOC" in the narrative.`,
                 ...influenceLines,
                 `</ooc_influences>`,
               ].join("\n");
@@ -3632,8 +3644,8 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Roleplay/Game: inject durable conversation notes (persist until cleared) ──
-        // Same scene bypass as influences — scenes are self-contained.
+        // â”€â”€ Roleplay/Game: inject durable conversation notes (persist until cleared) â”€â”€
+        // Same scene bypass as influences â€” scenes are self-contained.
         if ((chatMode === "roleplay" || chatMode === "game") && chat.connectedChatId && !isSceneChat) {
           const persistentNotes = await chats.listNotes(input.chatId);
           if (persistentNotes.length > 0) {
@@ -3646,8 +3658,8 @@ export async function generateRoutes(app: FastifyInstance) {
               const noteBlock = [
                 `<conversation_notes>`,
                 chatMode === "game"
-                  ? `Durable notes from a connected conversation. These persist across every turn until the user clears them and represent things the players have established as ongoing truth — character knowledge, world facts, recurring dynamics. Use them to inform NPC behavior, world state, and scene framing — don't reference them explicitly as "notes" in the narrative.`
-                  : `Durable notes from a connected conversation. These persist across every turn until the user clears them and represent things the character has been told to durably remember about themselves, the user, or the world. Use them to inform behavior, knowledge, and reactions naturally — don't reference them explicitly as "notes" in the narrative.`,
+                  ? `Durable notes from a connected conversation. These persist across every turn until the user clears them and represent things the players have established as ongoing truth â€” character knowledge, world facts, recurring dynamics. Use them to inform NPC behavior, world state, and scene framing â€” don't reference them explicitly as "notes" in the narrative.`
+                  : `Durable notes from a connected conversation. These persist across every turn until the user clears them and represent things the character has been told to durably remember about themselves, the user, or the world. Use them to inform behavior, knowledge, and reactions naturally â€” don't reference them explicitly as "notes" in the narrative.`,
                 ...noteLines,
                 `</conversation_notes>`,
               ].join("\n");
@@ -3674,7 +3686,7 @@ export async function generateRoutes(app: FastifyInstance) {
               `<ooc>casual comment or reaction about what just happened in the RP</ooc>`,
               ``,
               `The <ooc> text is stripped from the roleplay response and posted as a message in the conversation chat.`,
-              `Use this very sparingly — only when a character would genuinely want to comment out-of-character. Most RP responses should NOT include <ooc> tags.`,
+              `Use this very sparingly â€” only when a character would genuinely want to comment out-of-character. Most RP responses should NOT include <ooc> tags.`,
               `</ooc_instruction>`,
             ].join("\n");
 
@@ -3688,7 +3700,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Connection defaults + per-chat overrides (Chat Settings → Advanced Parameters) ──
+        // â”€â”€ Connection defaults + per-chat overrides (Chat Settings â†’ Advanced Parameters) â”€â”€
         const connectionParams = parseStoredGenerationParameters(conn.defaultParameters);
         const chatParams = parseStoredGenerationParameters(chatMeta.chatParameters);
 
@@ -3797,12 +3809,12 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // enableThinking tells providers to activate reasoning mode (e.g. Anthropic
         // extended thinking, Gemini thinkingConfig). Only true when the user has
-        // explicitly requested reasoning via reasoningEffort — showThoughts alone
+        // explicitly requested reasoning via reasoningEffort â€” showThoughts alone
         // just controls whether thinking tokens are *displayed*, not whether
         // reasoning mode is activated.
         const enableThinking = !!resolvedEffort;
 
-        // ── Claude 4.5+ sampling parameter restrictions ──
+        // â”€â”€ Claude 4.5+ sampling parameter restrictions â”€â”€
         const modelLc = (conn.model ?? "").toLowerCase();
 
         // Claude adaptive-only models: ALL sampling params removed (temperature, top_p, top_k
@@ -3816,7 +3828,7 @@ export async function generateRoutes(app: FastifyInstance) {
           presencePenalty = 0;
         }
 
-        // Claude 4.5/4.6: only temperature is supported — strip other sampling params.
+        // Claude 4.5/4.6: only temperature is supported â€” strip other sampling params.
         const isClaudeTemperatureOnly =
           !isClaudeNoSampling &&
           (/claude-(opus|sonnet)-4-[56]/.test(modelLc) || /claude-(opus|sonnet)-4\.[56]/.test(modelLc));
@@ -3922,7 +3934,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
         const characterMacroProfilesById = buildCharacterMacroProfilesById(charInfo);
 
-        // ── Custom emoji/sticker assets: advertise available tokens to Conversation responders ──
+        // â”€â”€ Custom emoji/sticker assets: advertise available tokens to Conversation responders â”€â”€
         if (chatMode === "conversation") {
           const mentionedNames = new Set(
             (input.mentionedCharacterNames ?? [])
@@ -4048,7 +4060,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Random/semantic — and the fallback when tool-call is unset, multi-responder, or failed.
+            // Random/semantic â€” and the fallback when tool-call is unset, multi-responder, or failed.
             if (!toolSelectionHandled && !emojiAdvertisement) {
               const orderedShared = await orderEmojiNames(sharedEmojiNames, emojiPrefs, assetQuery);
               const orderedOwnByChar = new Map<string, string[]>();
@@ -4206,7 +4218,7 @@ export async function generateRoutes(app: FastifyInstance) {
               resolvePromptMacros,
             });
 
-          // ── Lorebook injection for game mode ──
+          // â”€â”€ Lorebook injection for game mode â”€â”€
           if (!presetHandledLorebooks) {
             sendProgress("lorebooks");
             const lorebookResult = await processLorebooks(
@@ -4349,14 +4361,14 @@ export async function generateRoutes(app: FastifyInstance) {
           });
         }
 
-        // ── Inject cross-chat awareness (after persona info so it appears right before chat history) ──
+        // â”€â”€ Inject cross-chat awareness (after persona info so it appears right before chat history) â”€â”€
         if (convoAwarenessBlock) {
           const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
           const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
           finalMessages.splice(insertAt, 0, { role: "system", content: convoAwarenessBlock });
         }
 
-        // ── Memory recall: semantic retrieval of relevant past conversation fragments ──
+        // â”€â”€ Memory recall: semantic retrieval of relevant past conversation fragments â”€â”€
         // Default: on for conversation mode and scene chats, off for roleplay (opt-in via chat settings)
         const memoryRecallDefault = chatMode === "conversation" || isSceneChat;
         const enableMemoryRecall =
@@ -4423,7 +4435,7 @@ export async function generateRoutes(app: FastifyInstance) {
           );
         }
 
-        // ── Group chat processing ──
+        // â”€â”€ Group chat processing â”€â”€
         const isGroupChat = characterIds.length > 1;
         const groupResponseOrder = (chatMeta.groupResponseOrder as string) ?? "sequential";
         // Conversation mode stays merged by default, but Manual uses the same individual
@@ -4489,8 +4501,8 @@ export async function generateRoutes(app: FastifyInstance) {
         const allowLatestGameStateFallback = !input.regenerateMessageId;
         const gameState = latestGameState ? parseGameStateRow(latestGameState as Record<string, unknown>) : null;
 
-        // Build base agent context (without mainResponse — that comes after generation)
-        // Fetch enough history for the hungriest agent — individual agents trim to their own contextSize.
+        // Build base agent context (without mainResponse â€” that comes after generation)
+        // Fetch enough history for the hungriest agent â€” individual agents trim to their own contextSize.
         const agentContextSize =
           resolvedAgents.length > 0
             ? Math.max(...resolvedAgents.map((a) => normalizeAgentContextSize(a.settings.contextSize)))
@@ -4705,7 +4717,7 @@ export async function generateRoutes(app: FastifyInstance) {
             agentContext.memory._lorebookKeeperTargetLorebookName = targetLorebookName;
           }
 
-          // ── Interval gating: only run every N assistant messages ──
+          // â”€â”€ Interval gating: only run every N assistant messages â”€â”€
           const lkAgent = resolvedAgents.find((a) => a.type === "lorebook-keeper")!;
           const runInterval = (lkAgent.settings.runInterval as number) ?? 8;
           const lastRun = await agentsStore.getLastSuccessfulRunByType("lorebook-keeper", input.chatId);
@@ -4721,11 +4733,11 @@ export async function generateRoutes(app: FastifyInstance) {
           if (lorebookKeeperSettings.readBehindMessages > 0 && !historicalLorebookTarget) {
             resolvedAgents.splice(resolvedAgents.indexOf(lkAgent), 1);
           } else if (runInterval > 1 && pendingLorebookMessages < runInterval) {
-            // Not enough canon messages since the last successful run — remove from pipeline.
+            // Not enough canon messages since the last successful run â€” remove from pipeline.
             resolvedAgents.splice(resolvedAgents.indexOf(lkAgent), 1);
           }
 
-          // ── Feed existing target-lorebook entries to the agent for deduplication ──
+          // â”€â”€ Feed existing target-lorebook entries to the agent for deduplication â”€â”€
           if (resolvedAgents.some((a) => a.type === "lorebook-keeper")) {
             try {
               const existingEntries = await loadLorebookKeeperExistingEntries(lorebooksStore, targetLorebookId);
@@ -4864,7 +4876,7 @@ export async function generateRoutes(app: FastifyInstance) {
               try {
                 await hapticService.connect(getChatHapticIntifaceUrl(chatMeta));
               } catch {
-                logger.warn("[haptic] Auto-connect to Intiface Central failed — is the server running?");
+                logger.warn("[haptic] Auto-connect to Intiface Central failed â€” is the server running?");
               }
             }
             if (hapticService.connected && hapticService.devices.length > 0) {
@@ -4875,9 +4887,9 @@ export async function generateRoutes(app: FastifyInstance) {
               }));
               logger.debug(`[haptic] Injected ${hapticService.devices.length} device(s) into agent context`);
             } else if (!hapticService.connected) {
-              logger.warn("[haptic] Agent enabled but Intiface Central is not connected — skipping device injection");
+              logger.warn("[haptic] Agent enabled but Intiface Central is not connected â€” skipping device injection");
             } else {
-              logger.warn("[haptic] Agent enabled and connected, but no devices found — did you scan for devices?");
+              logger.warn("[haptic] Agent enabled and connected, but no devices found â€” did you scan for devices?");
             }
           } catch (err) {
             logger.error(err, "[haptic] Failed to inject device info");
@@ -4953,7 +4965,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // If the knowledge-router agent is enabled, load candidate lorebook entries
         // for routing. The router picks IDs from this list and the selected entries
-        // are injected verbatim — no per-entry summarization pass.
+        // are injected verbatim â€” no per-entry summarization pass.
         const knowledgeRouterAgent = resolvedAgents.find((a) => a.type === "knowledge-router");
         const promptCharacterIdSet = new Set(promptCharacterIds);
         const knowledgeRouterActiveCharacterTags = Array.from(
@@ -4975,7 +4987,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const sourceIds = await filterChatActiveLorebookSourceIdsForPrompt(rawSourceIds, source);
             if (sourceIds.length > 0) {
               const entries = (await lorebooksStore.listEntriesByLorebooks(sourceIds)) as LorebookEntry[];
-              // Honor per-chat entry state overrides — a user can disable an entry for
+              // Honor per-chat entry state overrides â€” a user can disable an entry for
               // this chat without touching the global lorebook, and ephemeral entries
               // carry per-chat countdown state. Mirrors the projection the standard
               // lorebook activation pipeline does in services/lorebook/index.ts.
@@ -5030,9 +5042,9 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Tracker Data Injection
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // The Card Evolution Auditor proposes user-facing character-card edits,
         // so gate it by assistant-message cadence instead of auditing every turn.
         if (resolvedAgents.some((a) => a.type === "card-evolution-auditor")) {
@@ -5149,7 +5161,7 @@ export async function generateRoutes(app: FastifyInstance) {
           trySendSseEvent(reply, { type: "agent_warning", data: warning });
         }
 
-        // Create the pipeline (exclude text rewrite agents — they run last,
+        // Create the pipeline (exclude text rewrite agents â€” they run last,
         // after all other post-processing agents have produced their context).
         const textRewriteAgents = resolvedAgents.filter(
           (a) => a.phase === "post_processing" && resolveAgentResultType(a) === "text_rewrite",
@@ -5164,7 +5176,7 @@ export async function generateRoutes(app: FastifyInstance) {
         );
 
         // When manualTrackers is enabled, strip tracker-category agents from the
-        // automatic pipeline — the user will trigger them manually via retry-agents.
+        // automatic pipeline â€” the user will trigger them manually via retry-agents.
         const manualTrackers = chatMeta.manualTrackers === true;
         if (manualTrackers) {
           const trackerIds = new Set(BUILT_IN_AGENTS.filter((a) => a.category === "tracker").map((a) => a.id));
@@ -5223,12 +5235,12 @@ export async function generateRoutes(app: FastifyInstance) {
         let directorSecretPlotResults: AgentResult[] = [];
         let directorSecretPlotArcForPrompt: unknown = directorSecretPlotMemory.overarchingArc;
 
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Phase 1: Pre-generation agents
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         logger.debug(`[timing] Prompt assembly + context: ${Date.now() - _tAssemble}ms`);
         // Only run pre-gen agents on fresh generations (user sent a new message),
-        // NOT on regenerations/swipes — EXCEPT for context-injection agents (like
+        // NOT on regenerations/swipes â€” EXCEPT for context-injection agents (like
         // prose-guardian) which improve writing quality and should run every time.
         // On regens, reuse cached injections from the first generation to save tokens.
         // Post-gen agents still run after every response.
@@ -5250,7 +5262,7 @@ export async function generateRoutes(app: FastifyInstance) {
           (a) => a.phase === "pre_generation" && !EXCLUDED_FROM_PIPELINE.has(a.type) && !reviewedAgentTypes.has(a.type),
         );
 
-        // ── Run pre-gen agents, knowledge retrieval, and knowledge router in parallel when possible ──
+        // â”€â”€ Run pre-gen agents, knowledge retrieval, and knowledge router in parallel when possible â”€â”€
         const shouldRunKR = !!(
           knowledgeRetrievalAgent &&
           agentContext.memory._knowledgeRetrievalMaterial &&
@@ -5312,7 +5324,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         // Helper: wrap a separate-injection agent's text and append it to the last
         // user message. Used by both knowledge-retrieval and knowledge-router on
-        // both fresh generations AND regen-cache replays — keeping the wrap+append
+        // both fresh generations AND regen-cache replays â€” keeping the wrap+append
         // in one place prevents the two paths from drifting again (PR #228 had to
         // fix exactly that drift once already).
         const appendSeparateAgentInjection = (agentType: string, text: string): void => {
@@ -5378,7 +5390,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Build the knowledge retrieval promise
           // Wrapped in try/catch so a KR failure (LLM error, parse error, etc.) never
-          // aborts the whole generation — knowledge retrieval is an optional enhancement,
+          // aborts the whole generation â€” knowledge retrieval is an optional enhancement,
           // not a critical dependency. (Same pattern as the router promise below.)
           const krPromise = shouldRunKR
             ? (async () => {
@@ -5409,11 +5421,11 @@ export async function generateRoutes(app: FastifyInstance) {
                   return krResult;
                 } catch (err) {
                   // Emit agent_error so the client closes the pending state opened by
-                  // agent_start above — without this the UI shows the agent as forever-
+                  // agent_start above â€” without this the UI shows the agent as forever-
                   // running. (Mirrors the Illustrator agent's failure protocol.)
                   // Use trySendSseEvent rather than reply.raw.write so a disconnected
                   // client doesn't turn this caught failure back into a rejected promise.
-                  logger.warn(err, "[knowledge-retrieval] failed — continuing generation without retrieved context");
+                  logger.warn(err, "[knowledge-retrieval] failed â€” continuing generation without retrieved context");
                   trySendSseEvent(reply, {
                     type: "agent_error",
                     data: {
@@ -5429,7 +5441,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Build the knowledge router promise
           // Wrapped in try/catch so a router failure (LLM error, parse error, etc.)
-          // never aborts the whole generation — routing is an optional enhancement,
+          // never aborts the whole generation â€” routing is an optional enhancement,
           // not a critical dependency.
           const krRouterPromise = shouldRunRouter
             ? (async () => {
@@ -5475,11 +5487,11 @@ export async function generateRoutes(app: FastifyInstance) {
                   return routerResult;
                 } catch (err) {
                   // Emit agent_error so the client closes the pending state opened by
-                  // agent_start above — without this the UI shows the agent as forever-
+                  // agent_start above â€” without this the UI shows the agent as forever-
                   // running. (Mirrors the Illustrator agent's failure protocol.)
                   // Use trySendSseEvent rather than reply.raw.write so a disconnected
                   // client doesn't turn this caught failure back into a rejected promise.
-                  logger.warn(err, "[knowledge-router] failed — continuing generation without routed context");
+                  logger.warn(err, "[knowledge-router] failed â€” continuing generation without routed context");
                   trySendSseEvent(reply, {
                     type: "agent_error",
                     data: {
@@ -5496,8 +5508,8 @@ export async function generateRoutes(app: FastifyInstance) {
           const [preGenResult, krResult, routerResult] = await Promise.all([preGenPromise, krPromise, krRouterPromise]);
           contextInjections = [...reviewedAgentInjections, ...preGenResult];
 
-          // ── Failure gate: only block generation if a critical pre-gen agent failed ──
-          // Secret plot maintenance shapes the hidden arc — generating without
+          // â”€â”€ Failure gate: only block generation if a critical pre-gen agent failed â”€â”€
+          // Secret plot maintenance shapes the hidden arc â€” generating without
           // it would produce incoherent output. Other agents are enhancement-only.
           const preGenResults = [
             ...directorSecretPlotResults,
@@ -5520,7 +5532,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   result,
                 });
               } catch {
-                // Non-critical — cadence should not block the generation pipeline.
+                // Non-critical â€” cadence should not block the generation pipeline.
               }
             }
           }
@@ -5529,7 +5541,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (criticalFailed.length > 0) {
             const failedNames = criticalFailed.map((r) => r.agentType).join(", ");
             const firstError = criticalFailed[0]!.error ?? "unknown error";
-            logger.error(`[pre-gen] FATAL: critical agent(s) failed (${failedNames}) — aborting generation`);
+            logger.error(`[pre-gen] FATAL: critical agent(s) failed (${failedNames}) â€” aborting generation`);
             sendSseEvent(reply, {
               type: "error",
               data: `Critical pre-generation agent failed (${failedNames}): ${firstError}. Please try again.`,
@@ -5538,7 +5550,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
           if (nonCriticalFailed.length > 0) {
             const failedNames = nonCriticalFailed.map((r) => r.agentType).join(", ");
-            logger.warn(`[pre-gen] Non-critical agent(s) failed (${failedNames}) — continuing generation`);
+            logger.warn(`[pre-gen] Non-critical agent(s) failed (${failedNames}) â€” continuing generation`);
           }
 
           for (const result of preGenResults) {
@@ -5636,10 +5648,10 @@ export async function generateRoutes(app: FastifyInstance) {
           }
           clearUnusedRuntimeAgentSections(finalMessages, runtimeAgentSectionTokens);
         } else if (input.regenerateMessageId) {
-          // Regeneration — try to reuse cached context injections from the original generation.
+          // Regeneration â€” try to reuse cached context injections from the original generation.
           // This must run regardless of whether `hasPreGenAgents` is true, because the cached
           // injections may have come from agents in `EXCLUDED_FROM_PIPELINE` (knowledge-retrieval,
-          // knowledge-router) — which `hasPreGenAgents` excludes. Without this, a chat whose
+          // knowledge-router) â€” which `hasPreGenAgents` excludes. Without this, a chat whose
           // only pre-gen agent is KR or Router would silently drop the lore on every regen.
           const regenExtra = parseExtra(regenMsg?.extra);
           // Backwards compat: old caches stored plain string[], and some edited
@@ -5683,7 +5695,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 )
               ).map(attachAgentName);
 
-              // Failure gate — same as the new-message path
+              // Failure gate â€” same as the new-message path
               const regenPreGenResults = pipeline.results.filter(
                 (r) =>
                   r.agentType !== "knowledge-retrieval" &&
@@ -5695,7 +5707,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 const failedNames = failedRegen.map((r) => r.agentType).join(", ");
                 const firstError = failedRegen[0]!.error ?? "unknown error";
                 logger.error(
-                  `[pre-gen] FATAL: ${failedRegen.length} agent(s) failed on regen (${failedNames}) — aborting generation`,
+                  `[pre-gen] FATAL: ${failedRegen.length} agent(s) failed on regen (${failedNames}) â€” aborting generation`,
                 );
                 sendSseEvent(reply, {
                   type: "error",
@@ -5773,14 +5785,14 @@ export async function generateRoutes(app: FastifyInstance) {
           trySendSseEvent(reply, { type: "agent_result", data: immersiveHtmlResult });
         }
 
-        // ── Early exit if client disconnected during knowledge retrieval / injection ──
+        // â”€â”€ Early exit if client disconnected during knowledge retrieval / injection â”€â”€
         if (abortController.signal.aborted) return;
 
-        // ── Main Generation Tool Configuration ──
+        // â”€â”€ Main Generation Tool Configuration â”€â”€
         // Tool definitions (toolDefs) and custom tool metadata (customToolDefs)
         // were already resolved earlier for the agent pipeline and are reused here.
 
-        // ── Impersonate: inject instruction to respond as the user's character ──
+        // â”€â”€ Impersonate: inject instruction to respond as the user's character â”€â”€
         // Only on the user's actual turn (iteration 0). A Mari follow-up pass
         // is a continuation of the assistant's prior message, not a new user
         // turn, so re-injecting impersonate/prefill would scramble the prompt.
@@ -6037,7 +6049,7 @@ export async function generateRoutes(app: FastifyInstance) {
           return [];
         };
 
-        // ── Determine characters to generate for ──
+        // â”€â”€ Determine characters to generate for â”€â”€
         // Individual group mode: each character responds separately
         // Merged/single: one generation for the first (or mentioned) character
         const useIndividualLoop = isGroupChat && groupChatMode === "individual" && !input.regenerateMessageId; // regeneration always targets one message
@@ -6227,6 +6239,15 @@ export async function generateRoutes(app: FastifyInstance) {
           fullResponse = "";
           fullThinking = "";
           providerThinking = "";
+          if (!input.impersonate) {
+            publishChatEvent(
+              createChatRealtimeEvent({
+                type: "chat_generation_started",
+                chatId: input.chatId,
+                source: "engine",
+              }),
+            );
+          }
           if (
             tailMessages.assistantPrefillInjected &&
             !tailMessages.googleUserRegenerationInjected &&
@@ -6288,7 +6309,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (enableChatTools && provider.chatComplete) {
             const maxToolRounds = getMaxToolRounds();
             let loopMessages: ChatMessage[] = initialProviderMessages;
-            // ── Seed encrypted reasoning cache from DB ──
+            // â”€â”€ Seed encrypted reasoning cache from DB â”€â”€
             // OpenAI Responses API uses encrypted reasoning items for multi-turn continuity.
             // These must be replayed on each request. If the in-memory cache was lost (e.g. server
             // restart), recover from the last assistant message's persisted extra.
@@ -6644,7 +6665,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── LOG_LEVEL=debug or Settings -> Advanced -> Debug mode: log full response + usage to server console ──
+          // â”€â”€ LOG_LEVEL=debug or Settings -> Advanced -> Debug mode: log full response + usage to server console â”€â”€
           if (isDebug || requestDebug) {
             debugLog("[debug] LLM response (%d chars, %dms):\n%s", fullResponse.length, durationMs, fullResponse);
             if (fullThinking) {
@@ -6655,7 +6676,7 @@ export async function generateRoutes(app: FastifyInstance) {
               const visibleCompletionTokens = getVisibleCompletionTokens(usage);
               const hiddenThinkingUnreported = fullThinking.trim().length > 0 && hiddenCompletionTokens == null;
               debugLog(
-                "[debug] Token usage — prompt: %s  completion: %s  visibleCompletion: %s  reasoning: %s  total: %s  cached: %s  cacheWrite: %s  finish: %s",
+                "[debug] Token usage â€” prompt: %s  completion: %s  visibleCompletion: %s  reasoning: %s  total: %s  cached: %s  cacheWrite: %s  finish: %s",
                 usage.promptTokens ?? "N/A",
                 usage.completionTokens ?? "N/A",
                 hiddenThinkingUnreported
@@ -6674,7 +6695,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 usage.completionTokens >= effectiveMaxTokensForSend
               ) {
                 debugLog(
-                  "[debug] Completion budget warning — hidden thinking was present and completion usage reached maxTokens=%s; visible response may be short even when finish=%s.",
+                  "[debug] Completion budget warning â€” hidden thinking was present and completion usage reached maxTokens=%s; visible response may be short even when finish=%s.",
                   effectiveMaxTokensForSend,
                   finishReason ?? "N/A",
                 );
@@ -6682,7 +6703,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Parse and strip hidden character commands ──
+          // â”€â”€ Parse and strip hidden character commands â”€â”€
           let parsedCommands: CharacterCommand[] = [];
           let conversationCommandContent: string | null = null;
           let contentReplaced = false;
@@ -6798,7 +6819,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Extract <ooc> tags from roleplay responses and post to connected conversation ──
+          // â”€â”€ Extract <ooc> tags from roleplay responses and post to connected conversation â”€â”€
           let oocMessages: string[] = [];
           if (chatMode === "roleplay" && !input.impersonate && chat.connectedChatId) {
             const OOC_RE = /<ooc>([\s\S]*?)<\/ooc>/gi;
@@ -6818,7 +6839,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Strip character name prefix in individual group mode ──
+          // â”€â”€ Strip character name prefix in individual group mode â”€â”€
           // LLMs often prefix the response with the character name even when told not to.
           // Also strip any leftover <speaker> tags from individual mode responses.
           if (isGroupChat && groupChatMode === "individual" && targetCharId) {
@@ -6848,7 +6869,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Strip leaked timestamps from conversation mode responses ──
+          // â”€â”€ Strip leaked timestamps from conversation mode responses â”€â”€
           // Models sometimes echo [HH:MM] timestamps despite instructions not to.
           // Strip them before storage to prevent compounding on future generations.
           if (chatMode === "conversation" && !input.impersonate) {
@@ -6890,7 +6911,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // Guard: don't save empty responses — the model returned nothing useful.
+          // Guard: don't save empty responses â€” the model returned nothing useful.
           // Exception: if the model emitted character commands (e.g. [fetch:...]) with
           // no surrounding prose, treat the commands as the useful output. Skip saving
           // a blank assistant bubble but still return the commands so they execute.
@@ -7044,6 +7065,14 @@ export async function generateRoutes(app: FastifyInstance) {
               type: "message_saved",
               data: savedMessagePayload,
             });
+            publishChatEvent(
+              createChatRealtimeEvent({
+                type: input.regenerateMessageId ? "chat_message_updated" : "chat_message_created",
+                chatId: input.chatId,
+                messageId: savedMsg.id,
+                source: "engine",
+              }),
+            );
 
             if (chatMode === "game" && !input.impersonate) {
               const mapUpdates = parseMapUpdateCommands(fullResponse);
@@ -7144,9 +7173,9 @@ export async function generateRoutes(app: FastifyInstance) {
           };
         };
 
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Phase 2: Fire parallel agents alongside the main generation
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         const hasParallelAgents = pipelineAgents.some((a) => a.phase === "parallel");
         let parallelPromise: Promise<AgentResult[]> | null = null;
         if (hasParallelAgents && !abortController.signal.aborted) {
@@ -7154,7 +7183,7 @@ export async function generateRoutes(app: FastifyInstance) {
           parallelPromise = pipeline.runParallel();
         }
 
-        // ── Run generation ──
+        // â”€â”€ Run generation â”€â”€
         // (firstSavedMsg/lastSavedMsg/collectedCommands/collectedOocMessages
         // are declared above the follow-up loop so they survive iterations.)
 
@@ -7312,16 +7341,16 @@ export async function generateRoutes(app: FastifyInstance) {
           allResponses.push(fullResponse);
         }
 
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Collect parallel results + Phase 3: Post-processing agents
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Await parallel agents that were started alongside the generation
         let parallelResults: AgentResult[] = [];
         if (parallelPromise) {
           try {
             parallelResults = await parallelPromise;
           } catch {
-            // Non-critical — parallel agents may fail independently
+            // Non-critical â€” parallel agents may fail independently
           }
         }
 
@@ -7601,7 +7630,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const validation = validateSpriteExpressionEntries(rawExpressions, availableSprites);
             let validatedExpressions = validation.expressions as typeof spriteData.expressions;
             if (!Array.isArray(spriteData.expressions) && rawExpressions.length === 0) {
-              logger.warn("[generate] Expression agent returned no expression entries — filling required targets");
+              logger.warn("[generate] Expression agent returned no expression entries â€” filling required targets");
             }
             for (const warning of validation.warnings) {
               logger.warn("[generate] %s", warning.message);
@@ -7682,7 +7711,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Auto-retry failed agents once ──
+          // â”€â”€ Auto-retry failed agents once â”€â”€
           const failedResults = postResults.filter((r) => !r.success);
           if (failedResults.length > 0 && !abortController.signal.aborted) {
             const retryResults: AgentResult[] = [];
@@ -7766,12 +7795,12 @@ export async function generateRoutes(app: FastifyInstance) {
           if (isDebug) {
             for (const r of postResults) {
               app.log.debug(
-                "[debug] Agent result: %s — %s (%dms, %d tokens)%s",
+                "[debug] Agent result: %s â€” %s (%dms, %d tokens)%s",
                 r.agentType,
                 r.success ? "OK" : "FAILED",
                 r.durationMs,
                 r.tokensUsed,
-                r.error ? ` — ${r.error}` : "",
+                r.error ? ` â€” ${r.error}` : "",
               );
             }
           }
@@ -7819,7 +7848,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 ? lorebookKeeperProcessedMessageId
                 : messageId;
 
-            // Validate background agent result — reject hallucinated filenames
+            // Validate background agent result â€” reject hallucinated filenames
             if (
               result.success &&
               result.type === "background_change" &&
@@ -7851,7 +7880,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 if (availableBgs) {
                   const valid = availableBgs.some((b) => b.filename === bgData.chosen);
                   if (!valid) {
-                    logger.warn(`[generate] Background agent chose "${bgData.chosen}" which doesn't exist — rejecting`);
+                    logger.warn(`[generate] Background agent chose "${bgData.chosen}" which doesn't exist â€” rejecting`);
                     bgData.chosen = null;
                   }
                 }
@@ -7895,7 +7924,7 @@ export async function generateRoutes(app: FastifyInstance) {
                           agentType: "background",
                           agentName: currentBackgroundAgent?.name ?? "Background",
                           error:
-                            "No image generation connection set on the Background agent, and no default agent image connection is configured. Assign one in Settings → Agents → Background.",
+                            "No image generation connection set on the Background agent, and no default agent image connection is configured. Assign one in Settings â†’ Agents â†’ Background.",
                         },
                       });
                     } else {
@@ -8009,11 +8038,11 @@ export async function generateRoutes(app: FastifyInstance) {
                   result,
                 });
               } catch {
-                // Non-critical — don't fail the whole generation
+                // Non-critical â€” don't fail the whole generation
               }
             }
 
-            // Validate expression agent results — reject hallucinated expressions and unknown characters
+            // Validate expression agent results â€” reject hallucinated expressions and unknown characters
             if (result.success && result.type === "sprite_change" && result.data && typeof result.data === "object") {
               const spriteData = result.data as {
                 expressions?: Array<{
@@ -8140,7 +8169,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 // cross-contaminated playerStats (e.g. { status: "...", activeQuests: [] })
                 // would clobber the real data and break downstream handlers (quest, persona-
                 // stats) that read from this snapshot.  Therefore we ALWAYS carry forward
-                // these fields from the previous snapshot — the dedicated tracker agents
+                // these fields from the previous snapshot â€” the dedicated tracker agents
                 // (character-tracker, persona-stats, quest, custom-tracker) will update
                 // them with authoritative data in their own handler blocks below.
                 const snapshotChars = parseJsonField<any[]>(prevSnap?.presentCharacters, []);
@@ -8186,11 +8215,11 @@ export async function generateRoutes(app: FastifyInstance) {
                       currentGameStateForLocks,
                     ),
                   },
-                  null, // manual overrides are one-shot — never carry forward
+                  null, // manual overrides are one-shot â€” never carry forward
                 );
                 // Send game state to client so HUD updates live
                 // ONLY send the fields world-state actually produces (date/time/location/weather/temperature).
-                // Do NOT spread the whole `gs` — in batch mode the model may cross-contaminate
+                // Do NOT spread the whole `gs` â€” in batch mode the model may cross-contaminate
                 // fields like presentCharacters:[] from other agent tasks, clobbering the HUD.
                 const worldStatePatch = {
                   date: newDate,
@@ -8238,7 +8267,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Character Tracker agent → merge presentCharacters into latest game state
+            // Character Tracker agent â†’ merge presentCharacters into latest game state
             if (
               result.success &&
               result.type === "character_tracker_update" &&
@@ -8271,7 +8300,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   ? lockedCharacterPatch.presentCharacters
                   : chars;
 
-                // ── Enrich with avatar paths ──
+                // â”€â”€ Enrich with avatar paths â”€â”€
                 // 1. Match against known character records in this chat
                 // 2. Fall back to stored NPC avatars (per-chat generated/uploaded)
                 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
@@ -8317,7 +8346,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   `[generate] character-tracker: ${chars.length} characters to persist (msg=${messageId}, swipe=${targetSwipeIndex})`,
                 );
 
-                // ── Auto-generate NPC avatars if enabled ──
+                // â”€â”€ Auto-generate NPC avatars if enabled â”€â”€
                 const charTrackerAgent = resolvedAgents.find((a) => a.type === "character-tracker");
                 const autoGenAvatars = !!charTrackerAgent?.settings?.autoGenerateAvatars;
                 const npcImgConnId = (charTrackerAgent?.settings?.imageConnectionId as string) ?? null;
@@ -8487,14 +8516,14 @@ export async function generateRoutes(app: FastifyInstance) {
                   for (const char of chars) {
                     const name = (char.name as string) ?? "";
                     if (!name || prevNames.has(normalizeTextForMatch(name))) continue;
-                    // Skip player-character cards — only track NPCs
+                    // Skip player-character cards â€” only track NPCs
                     if (charInfo.some((c) => normalizeTextForMatch(c.name) === normalizeTextForMatch(name))) continue;
                     const appearance = (char.appearance as string) || "";
                     const mood = (char.mood as string) || "";
                     const npc: GameNpc = {
                       id: normalizeTextForMatch(name).replace(/[^\p{L}\p{N}]+/gu, "-") || newId(),
                       name,
-                      emoji: "👤",
+                      emoji: "ðŸ‘¤",
                       description: appearance,
                       location: "",
                       reputation: 0,
@@ -8511,7 +8540,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Persona Stats agent → update personaStats on the latest game state snapshot
+            // Persona Stats agent â†’ update personaStats on the latest game state snapshot
             if (
               result.success &&
               result.type === "persona_stats_update" &&
@@ -8583,7 +8612,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Custom Tracker agent → merge custom fields into playerStats.customTrackerFields
+            // Custom Tracker agent â†’ merge custom fields into playerStats.customTrackerFields
             if (
               result.success &&
               result.type === "custom_tracker_update" &&
@@ -8632,7 +8661,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Quest Tracker agent → merge quest updates into playerStats.activeQuests
+            // Quest Tracker agent â†’ merge quest updates into playerStats.activeQuests
             if (
               result.success &&
               result.type === "quest_update" &&
@@ -8644,7 +8673,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 const qData = result.data as Record<string, unknown>;
                 const updates = Array.isArray(qData.updates) ? qData.updates : [];
                 logger.debug(
-                  "[generate] Quest agent result — updates: %d, data keys: %s %s",
+                  "[generate] Quest agent result â€” updates: %d, data keys: %s %s",
                   updates.length,
                   Object.keys(qData).join(","),
                   JSON.stringify(qData).slice(0, 500),
@@ -8699,7 +8728,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Lorebook Keeper agent → persist new/updated entries to the database
+            // Lorebook Keeper agent â†’ persist new/updated entries to the database
             if (result.success && result.type === "lorebook_update" && result.data && typeof result.data === "object") {
               try {
                 if (isAgentWriteApprovalEnvelope(result.data)) continue;
@@ -8744,7 +8773,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // Combat agent → persist encounterActive flag to chatMeta so we can
+            // Combat agent â†’ persist encounterActive flag to chatMeta so we can
             // skip the combat agent on subsequent generations when no encounter is running.
             if (result.success && result.agentType === "combat" && result.data && typeof result.data === "object") {
               try {
@@ -8760,7 +8789,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // ── Haptic agent: execute device commands from agent output ──
+            // â”€â”€ Haptic agent: execute device commands from agent output â”€â”€
             if (result.success && result.type === "haptic_command" && result.data && typeof result.data === "object") {
               try {
                 const hData = result.data as Record<string, unknown>;
@@ -8808,7 +8837,7 @@ export async function generateRoutes(app: FastifyInstance) {
                       }
                     } else {
                       logger.warn(
-                        `[haptic] Agent produced ${cmds.length} command(s) but Intiface Central is disconnected — commands dropped`,
+                        `[haptic] Agent produced ${cmds.length} command(s) but Intiface Central is disconnected â€” commands dropped`,
                       );
                     }
                   } else {
@@ -8822,7 +8851,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            // ── ILLUSTRATOR HANDLER: generate image from agent prompt ──
+            // â”€â”€ ILLUSTRATOR HANDLER: generate image from agent prompt â”€â”€
             if (
               result.success &&
               result.type === "image_prompt" &&
@@ -8839,7 +8868,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
               // Always log what the illustrator decided
               logger.debug(
-                `[illustrator] shouldGenerate=${shouldGenerate}, reason="${(illData.reason as string) ?? "none"}", prompt="${imagePrompt.slice(0, 500) || "(empty)"}"${illData.parseError ? " [JSON PARSE ERROR — raw: " + ((illData.raw as string) ?? "").slice(0, 300) + "]" : ""}`,
+                `[illustrator] shouldGenerate=${shouldGenerate}, reason="${(illData.reason as string) ?? "none"}", prompt="${imagePrompt.slice(0, 500) || "(empty)"}"${illData.parseError ? " [JSON PARSE ERROR â€” raw: " + ((illData.raw as string) ?? "").slice(0, 300) + "]" : ""}`,
               );
 
               if (shouldGenerate && imagePrompt) {
@@ -9076,7 +9105,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         agentType: "illustrator",
                         agentName: illustratorAgent?.name ?? "Illustrator",
                         error:
-                          "No image generation connection set on the Illustrator agent, and no default Illustrator image connection is configured. Go to Settings → Connections and mark an image generation connection as the default for Illustrator, or assign one directly in Settings → Agents → Illustrator.",
+                          "No image generation connection set on the Illustrator agent, and no default Illustrator image connection is configured. Go to Settings â†’ Connections and mark an image generation connection as the default for Illustrator, or assign one directly in Settings â†’ Agents â†’ Illustrator.",
                       },
                     })}\n\n`,
                   );
@@ -9085,7 +9114,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          // ── Text rewrite/editing agents: run after ALL other agents ──
+          // â”€â”€ Text rewrite/editing agents: run after ALL other agents â”€â”€
           if (textRewriteRunAgents.length > 0 && messageId && !abortController.signal.aborted) {
             let currentResponseForRewrite = combinedResponse;
             const originalResponseBeforeRewrite = combinedResponse;
@@ -9172,6 +9201,14 @@ export async function generateRoutes(app: FastifyInstance) {
                       });
                     }
                     textRewriteApplied = true;
+                    publishChatEvent(
+                      createChatRealtimeEvent({
+                        type: "chat_message_updated",
+                        chatId: input.chatId,
+                        messageId,
+                        source: "engine",
+                      }),
+                    );
                     reply.raw.write(
                       `data: ${JSON.stringify({
                         type: "text_rewrite",
@@ -9186,7 +9223,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   }
                 }
               } catch {
-                // Non-critical — don't fail generation if a rewrite agent errors.
+                // Non-critical â€” don't fail generation if a rewrite agent errors.
               }
             }
 
@@ -9213,9 +9250,9 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Character Command Execution (Conversation mode)
-        // ────────────────────────────────────────
+        // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (collectedCommands.length > 0 && !abortController.signal.aborted) {
           const professorMariCommandTypes = new Set([
             "create_persona",
@@ -9240,7 +9277,7 @@ export async function generateRoutes(app: FastifyInstance) {
             for (const { command, characterId, messageId, swipeIndex } of collectedCommands) {
               try {
                 if (command.type === "schedule_update") {
-                  // ── Schedule Update: modify the character's current schedule block ──
+                  // â”€â”€ Schedule Update: modify the character's current schedule block â”€â”€
                   const schedCmd = command as ScheduleUpdateCommand;
                   if (characterId && (schedCmd.status || schedCmd.activity)) {
                     const freshChat = await chats.getById(input.chatId);
@@ -9312,7 +9349,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     }
                   }
                 } else if (command.type === "cross_post") {
-                  // ── Cross-Post: copy/redirect message to another chat ──
+                  // â”€â”€ Cross-Post: copy/redirect message to another chat â”€â”€
                   const crossCmd = command as CrossPostCommand;
                   const targetName = normalizeTextForMatch(crossCmd.target);
 
@@ -9359,7 +9396,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     logger.warn(`[commands] Cross-post target "${crossCmd.target}" not found`);
                   }
                 } else if (command.type === "selfie") {
-                  // ── Selfie: generate an image from the character's appearance ──
+                  // â”€â”€ Selfie: generate an image from the character's appearance â”€â”€
                   const selfieCmd = command as SelfieCommand;
 
                   // Use the chat-level image gen connection (set by user in chat settings)
@@ -9588,7 +9625,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     );
                   }
                 } else if (command.type === "memory") {
-                  // ── Memory: store a fake memory on the target character ──
+                  // â”€â”€ Memory: store a fake memory on the target character â”€â”€
                   const memCmd = command as MemoryCommand;
                   const targetName = normalizeTextForMatch(memCmd.target);
 
@@ -9622,7 +9659,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     await chars.update(targetChar.id, { extensions } as any);
 
                     logger.info(
-                      `[commands] Memory created: "${srcCharName}" → "${targetData.name}": ${memCmd.summary}`,
+                      `[commands] Memory created: "${srcCharName}" â†’ "${targetData.name}": ${memCmd.summary}`,
                     );
                   } else {
                     logger.warn(`[commands] Memory target character "${memCmd.target}" not found`);
@@ -9630,7 +9667,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "influence") {
-                  // ── Influence: queue OOC influence for the connected chat ──
+                  // â”€â”€ Influence: queue OOC influence for the connected chat â”€â”€
                   const infCmd = command as InfluenceCommand;
                   const freshChat = await chats.getById(input.chatId);
                   const connectedId = freshChat?.connectedChatId as string | null;
@@ -9647,7 +9684,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "note") {
-                  // ── Note: persist a durable note in the connected roleplay's prompt ──
+                  // â”€â”€ Note: persist a durable note in the connected roleplay's prompt â”€â”€
                   const noteCmd = command as NoteCommand;
                   const freshChat = await chats.getById(input.chatId);
                   const connectedId = freshChat?.connectedChatId as string | null;
@@ -9664,7 +9701,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "spotify") {
-                  // ── Spotify: play a selected track on the user's active Spotify player ──
+                  // â”€â”€ Spotify: play a selected track on the user's active Spotify player â”€â”€
                   const spotifyCmd = command as SpotifyCommand;
                   if (chatMode !== "conversation") {
                     logger.debug("[spotify/conversation] Ignored song command outside conversation mode");
@@ -9746,7 +9783,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     continue;
                   }
                   if (characterId && reactCmd.emoji) {
-                    // React to the user's most recent message — the turn being answered.
+                    // React to the user's most recent message â€” the turn being answered.
                     const targetId = [...chatMessages].reverse().find((m: any) => m.role === "user")?.id as
                       | string
                       | undefined;
@@ -9787,7 +9824,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "dm") {
-                  // ── Roleplay DM: post into the linked conversation when available; otherwise create a DM chat ──
+                  // â”€â”€ Roleplay DM: post into the linked conversation when available; otherwise create a DM chat â”€â”€
                   const dmCmd = command as DirectMessageCommand;
                   try {
                     const messageText = stripConversationPromptTimestamps(dmCmd.message).trim().slice(0, 4000);
@@ -9955,7 +9992,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "haptic") {
-                  // ── Haptic: send command to connected intimate devices ──
+                  // â”€â”€ Haptic: send command to connected intimate devices â”€â”€
                   const hapCmd = command as HapticCommand;
                   try {
                     const { hapticService } = await import("../services/haptic/buttplug-service.js");
@@ -9977,10 +10014,10 @@ export async function generateRoutes(app: FastifyInstance) {
                       );
                     } else if (!hapticService.connected) {
                       logger.warn(
-                        `[commands] Haptic command [${hapCmd.action}] skipped — Intiface Central not connected`,
+                        `[commands] Haptic command [${hapCmd.action}] skipped â€” Intiface Central not connected`,
                       );
                     } else {
-                      logger.warn(`[commands] Haptic command [${hapCmd.action}] skipped — no devices found`);
+                      logger.warn(`[commands] Haptic command [${hapCmd.action}] skipped â€” no devices found`);
                     }
                   } catch (hapErr) {
                     logger.error(hapErr, "[commands] Haptic command failed");
@@ -9988,7 +10025,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "scene") {
-                  // ── Scene: plan + create a mini-roleplay branching from this conversation ──
+                  // â”€â”€ Scene: plan + create a mini-roleplay branching from this conversation â”€â”€
                   const scnCmd = command as SceneCommand;
                   try {
                     const originChat = await chats.getById(input.chatId);
@@ -10064,7 +10101,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 if (command.type === "uno") {
-                  // ── UNO: a character agreed to play — deal a game at the table ──
+                  // â”€â”€ UNO: a character agreed to play â€” deal a game at the table â”€â”€
                   try {
                     const existingGame = await getActiveTurnGame(app.db, input.chatId);
                     if (existingGame) {
@@ -10130,7 +10167,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   }
                 }
 
-                // ── Assistant commands (Professor Mari) ──
+                // â”€â”€ Assistant commands (Professor Mari) â”€â”€
                 if (command.type === "create_persona") {
                   const cpCmd = command as CreatePersonaCommand;
                   try {
@@ -10676,7 +10713,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   logger.info(`[commands] Assistant navigate: panel=${navCmd.panel}, tab=${navCmd.tab ?? "none"}`);
                 }
 
-                // ── Fetch command (Professor Mari) ──
+                // â”€â”€ Fetch command (Professor Mari) â”€â”€
                 if (command.type === "fetch") {
                   const fetchCmd = command as FetchCommand;
                   try {
@@ -10891,10 +10928,10 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        // ── Trigger follow-up generation if Professor Mari's fetch landed ──
+        // â”€â”€ Trigger follow-up generation if Professor Mari's fetch landed â”€â”€
         // Mari's fetched payload was persisted to chatMeta.mariContext by the
         // fetch handler above, but mariContext is only read into the prompt at
-        // the start of a generation pass — without a follow-up turn Mari would
+        // the start of a generation pass â€” without a follow-up turn Mari would
         // go silent right after the fetch snackbar. Gating on the success flag
         // (rather than just the presence of a parsed [fetch:]) avoids burning
         // an extra pass when the fetch handler found nothing or threw.
@@ -10938,7 +10975,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           // Reset hoisted per-iteration accumulators before continuing.
-          // (firstSavedMsg stays — it's "first across the whole turn".
+          // (firstSavedMsg stays â€” it's "first across the whole turn".
           //  lastSavedMsg, pendingIllustration are overwritten naturally.)
           collectedCommands.length = 0;
           collectedOocMessages.length = 0;
@@ -10946,7 +10983,7 @@ export async function generateRoutes(app: FastifyInstance) {
           continue;
         }
 
-        // ── Background: chunk & embed new messages for memory recall ──
+        // â”€â”€ Background: chunk & embed new messages for memory recall â”€â”€
         // Runs once on the final iteration (fire-and-forget). Lives inside the
         // loop because charInfo is scoped here; only executes when we break.
         {
@@ -10966,7 +11003,7 @@ export async function generateRoutes(app: FastifyInstance) {
         break;
       } // end of Professor Mari follow-up loop
 
-      // ── Post OOC messages to connected conversation (Roleplay → Conversation) ──
+      // â”€â”€ Post OOC messages to connected conversation (Roleplay â†’ Conversation) â”€â”€
       if (collectedOocMessages.length > 0 && chat.connectedChatId && !abortController.signal.aborted) {
         try {
           for (const oocText of collectedOocMessages) {
@@ -11029,7 +11066,7 @@ export async function generateRoutes(app: FastifyInstance) {
     }
   });
 
-  // ── Active generation tracking for explicit abort ──
+  // â”€â”€ Active generation tracking for explicit abort â”€â”€
   const activeGenerations = new Map<string, { abortController: AbortController; backendUrl: string | null }>();
 
   // Expose the map so the route handler can register/unregister generations
