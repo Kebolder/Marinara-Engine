@@ -202,6 +202,11 @@ export const ConversationMessage = memo(function ConversationMessage({
       : null);
 
   const msgPersona = isUser && !plainUserMessages && extra.personaSnapshot ? extra.personaSnapshot : null;
+  const participantSnapshot = isUser && extra.participantSnapshot ? extra.participantSnapshot : null;
+  const participantLabel =
+    participantSnapshot && typeof participantSnapshot.discordDisplayName === "string"
+      ? `Discord: ${participantSnapshot.discordDisplayName}`
+      : null;
   const avatarUrl = isUser
     ? plainUserMessages
       ? null
@@ -574,6 +579,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     isUser,
     isGrouped: !!isGrouped,
     displayName,
+    participantLabel,
     avatarUrl,
     avatarCropStyle,
     nameColor,

@@ -88,6 +88,7 @@ export * from "./utils/regex-safety.js";
 export * from "./utils/game-state-text.js";
 export * from "./utils/custom-tracker-fields.js";
 export * from "./utils/tracker-field-locks.js";
+export * from "./utils/participant-tracker-state.js";
 export * from "./utils/chat-summary-entries.js";
 export * from "./utils/quest-state.js";
 export * from "./utils/quote-format.js";

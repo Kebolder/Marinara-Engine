@@ -309,6 +309,7 @@ Rules:
 4. Do not add, rename, or remove fields.
 5. Values are always strings. Store numbers as strings (for example "150").
 6. Changes must be proportional and realistic.
+7. Reserved multiplayer field: if a field named "Participant Tracker" exists, its value must stay a JSON string array. Each entry may include personaName, discordDisplayName, location, currentAction, inventory, status, and notes. Update only location/currentAction/inventory/status/notes from story events. Never change personaName, discordDisplayName, persona ownership, or who controls a persona.
 Schema:
 {
   "fields": [

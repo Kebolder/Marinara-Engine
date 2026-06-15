@@ -142,6 +142,9 @@ export interface AssemblerInput {
     backstory?: string;
     appearance?: string;
   };
+  speakerName?: string;
+  speakerPersona?: string;
+  participants?: string;
   /** Raw personaStats data (for rpgStats injection) */
   personaStats?: any;
   /** Chat messages from the DB (user + assistant + narrator etc.) */
@@ -283,6 +286,9 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     personaName: input.personaName,
     personaDescription: input.personaDescription,
     personaFields: input.personaFields,
+    speakerName: input.speakerName,
+    speakerPersona: input.speakerPersona,
+    participants: input.participants,
     variables: variableValues,
     groupScenarioOverrideText: input.groupScenarioOverrideText,
     lastInput: [...input.chatMessages].reverse().find((message) => message.role === "user")?.content,
@@ -306,6 +312,9 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     personaName: input.personaName,
     personaDescription: input.personaDescription,
     personaFields: input.personaFields,
+    speakerName: input.speakerName,
+    speakerPersona: input.speakerPersona,
+    participants: input.participants,
     personaStats: input.personaStats,
     chatMessages: input.chatMessages,
     lorebookScanMessages: input.lorebookScanMessages,

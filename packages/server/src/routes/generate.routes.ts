@@ -42,7 +42,10 @@ import type {
   AgentCallDebugEvent,
   AgentResult,
   AgentPhase,
+  APIProvider,
+  ChatParticipantSnapshot,
   CharacterStat,
+  DiscordBridgeParticipant,
   GameState,
   HapticDeviceCommand,
   PlayerStats,
@@ -99,6 +102,16 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
+import {
+  buildParticipantPromptEntries,
+  buildParticipantSnapshot,
+  compactPersonaSummary,
+  formatParticipantPromptBlock,
+  formatParticipantsMacro,
+  participantPersonaName,
+  participantSpeakerName,
+  type ParticipantPromptEntry,
+} from "../services/discord-bridge/participant-prompt-context.js";
 import { yieldToEventLoop, fitMessagesToContext, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
@@ -1360,6 +1373,27 @@ export async function generateRoutes(app: FastifyInstance) {
     const discordWebhookUrl = typeof earlyMeta.discordWebhookUrl === "string" ? earlyMeta.discordWebhookUrl : "";
     let pendingUserDiscordMsg = "";
     let currentTurnUserMessageId: string | null = null;
+    const discordBridgeInput = input.discordBridge;
+    let discordBridgeBinding: Awaited<ReturnType<typeof bridgeStorage.getThreadBindingById>> | null = null;
+    let activeDiscordParticipant: DiscordBridgeParticipant | null = null;
+    let discordTurnPersonaId: string | null = null;
+    if (discordBridgeInput) {
+      discordBridgeBinding = await bridgeStorage.getThreadBindingById(discordBridgeInput.bindingId);
+      if (!discordBridgeBinding || discordBridgeBinding.chatId !== input.chatId) {
+        releaseActiveGeneration();
+        return reply.status(400).send({ error: "Discord bridge binding does not match this chat" });
+      }
+      const boundPersonaId = (discordBridgeBinding.personaId as string | null) ?? (chat.personaId as string | null);
+      if (discordBridgeInput.discordUserId) {
+        const userPersona = await bridgeStorage.getUserPersona(
+          discordBridgeBinding.guildId,
+          discordBridgeInput.discordUserId,
+        );
+        discordTurnPersonaId = discordBridgeInput.personaId ?? userPersona?.personaId ?? boundPersonaId ?? null;
+      } else {
+        discordTurnPersonaId = discordBridgeInput.personaId ?? boundPersonaId ?? null;
+      }
+    }
 
     // Save user message â€” skip for impersonate (no real user message to save)
     if (!input.impersonate && (input.userMessage || input.attachments?.length)) {
@@ -1391,6 +1425,21 @@ export async function generateRoutes(app: FastifyInstance) {
         recordUserActivity(input.chatId);
       }
 
+      if (userMsg?.id && discordBridgeInput?.discordUserId && discordBridgeBinding) {
+        activeDiscordParticipant = await bridgeStorage.upsertDiscordParticipant({
+          chatId: input.chatId,
+          guildId: discordBridgeBinding.guildId,
+          discordUserId: discordBridgeInput.discordUserId,
+          discordDisplayName:
+            discordBridgeInput.discordDisplayName?.trim() || discordBridgeInput.discordUserId || "Discord User",
+          personaId: discordTurnPersonaId,
+          active: true,
+          hasSpoken: true,
+          lastMessageId: userMsg.id,
+          lastSpokeAt: userMsg.createdAt,
+        });
+      }
+
       // Store attachments in message extra if present
       if (input.attachments?.length && userMsg?.id) {
         await chats.updateMessageExtra(userMsg.id, { attachments: input.attachments }).catch(releaseActiveGenerationAndRethrow);
@@ -1400,39 +1449,41 @@ export async function generateRoutes(app: FastifyInstance) {
       if (userMsg?.id) {
         const snapshotPersonas = await chars.listPersonas().catch(releaseActiveGenerationAndRethrow);
         const snapshotPersona =
+          (discordTurnPersonaId ? snapshotPersonas.find((p: any) => p.id === discordTurnPersonaId) : null) ??
           (chat.personaId ? snapshotPersonas.find((p: any) => p.id === chat.personaId) : null) ??
           snapshotPersonas.find((p: any) => p.isActive === "true");
+        const messageExtra: Record<string, unknown> = {};
         if (snapshotPersona) {
-          await chats
-            .updateMessageExtra(userMsg.id, {
-              personaSnapshot: {
-                personaId: snapshotPersona.id,
-                name: snapshotPersona.name,
-                description: snapshotPersona.description ?? "",
-                personality: snapshotPersona.personality ?? "",
-                scenario: snapshotPersona.scenario ?? "",
-                backstory: snapshotPersona.backstory ?? "",
-                appearance: snapshotPersona.appearance ?? "",
-                avatarUrl: snapshotPersona.avatarPath || null,
-                nameColor: snapshotPersona.nameColor || null,
-                dialogueColor: snapshotPersona.dialogueColor || null,
-                boxColor: snapshotPersona.boxColor || null,
-              },
-            })
-            .catch(releaseActiveGenerationAndRethrow);
+          messageExtra.personaSnapshot = {
+            personaId: snapshotPersona.id,
+            name: snapshotPersona.name,
+            description: snapshotPersona.description ?? "",
+            personality: snapshotPersona.personality ?? "",
+            scenario: snapshotPersona.scenario ?? "",
+            backstory: snapshotPersona.backstory ?? "",
+            appearance: snapshotPersona.appearance ?? "",
+            avatarUrl: snapshotPersona.avatarPath || null,
+            nameColor: snapshotPersona.nameColor || null,
+            dialogueColor: snapshotPersona.dialogueColor || null,
+            boxColor: snapshotPersona.boxColor || null,
+          };
+        }
+        if (activeDiscordParticipant) {
+          messageExtra.participantSnapshot = buildParticipantSnapshot({
+            participant: activeDiscordParticipant,
+            persona: snapshotPersona ?? null,
+          });
+        }
+        if (Object.keys(messageExtra).length > 0) {
+          await chats.updateMessageExtra(userMsg.id, messageExtra).catch(releaseActiveGenerationAndRethrow);
         }
       }
 
       // Mirror user message to Discord (deferred â€” personaName resolved later)
       if (userMsg?.id) {
-        const discordBridgeInput = input.discordBridge;
         if (discordBridgeInput) {
-          const binding = await bridgeStorage.getThreadBindingById(discordBridgeInput.bindingId);
-          if (!binding || binding.chatId !== input.chatId) {
-            throw new Error("Discord bridge binding does not match this chat");
-          }
           await bridgeStorage.upsertMessageMapping({
-            bindingId: binding.id,
+            bindingId: discordBridgeBinding!.id,
             marinaraMessageId: userMsg.id,
             discordMessageIds: [discordBridgeInput.discordMessageId],
             role: "user",
@@ -1796,6 +1847,7 @@ export async function generateRoutes(app: FastifyInstance) {
         [...currentInputMessages()].reverse().find((message) => message.role === "user")?.content;
 
       const persona =
+        (discordTurnPersonaId ? allPersonas.find((p: any) => p.id === discordTurnPersonaId) : null) ??
         (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
         (chatMode !== "game" ? allPersonas.find((p: any) => p.isActive === "true") : null);
       if (persona) {
@@ -1810,6 +1862,22 @@ export async function generateRoutes(app: FastifyInstance) {
           appearance: cardPromptText(persona.appearance),
         };
       }
+
+      const participantRows = discordBridgeInput ? await bridgeStorage.listActiveParticipants(input.chatId) : [];
+      const participantEntries: ParticipantPromptEntry[] = buildParticipantPromptEntries(participantRows, allPersonas);
+      const activeParticipantEntry =
+        activeDiscordParticipant || discordBridgeInput?.discordUserId
+          ? (participantEntries.find((entry) => entry.participant.id === activeDiscordParticipant?.id) ??
+            participantEntries.find(
+              (entry) =>
+                entry.participant.discordUserId &&
+                entry.participant.discordUserId === discordBridgeInput?.discordUserId,
+            ) ??
+            null)
+          : null;
+      const participantSpeaker = participantSpeakerName(activeParticipantEntry, personaName);
+      const speakerPersona = compactPersonaSummary(activeParticipantEntry?.persona ?? persona ?? null);
+      const participantsMacro = formatParticipantsMacro(participantEntries);
 
       // Mirror user message to Discord now that personaName is resolved
       if (pendingUserDiscordMsg) {
@@ -2033,6 +2101,9 @@ export async function generateRoutes(app: FastifyInstance) {
           personaDescription,
           personaFields,
           variables: modePromptVariables,
+          speakerName: participantSpeaker,
+          speakerPersona,
+          participants: participantsMacro,
           groupScenarioOverrideText:
             typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
               ? (chatMeta.groupScenarioText as string).trim()
@@ -2248,6 +2319,9 @@ export async function generateRoutes(app: FastifyInstance) {
             personaName,
             personaDescription,
             personaFields,
+            speakerName: participantSpeaker,
+            speakerPersona,
+            participants: participantsMacro,
             personaStats: (() => {
               if (!persona?.personaStats) return undefined;
               if (typeof persona.personaStats !== "string") return persona.personaStats;
@@ -4514,6 +4588,17 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
+        const participantPromptBlock = formatParticipantPromptBlock({
+          activeEntry: activeParticipantEntry,
+          entries: participantEntries,
+          wrapFormat,
+        });
+        if (participantPromptBlock) {
+          const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
+          const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+          finalMessages.splice(insertAt, 0, { role: "system", content: participantPromptBlock });
+        }
+
         // Get current game state (if any)
         // Prefer committed game state after a real user turn, but keep visible
         // uncommitted tracker edits authoritative for continue/impersonate flows.
@@ -4558,6 +4643,10 @@ export async function generateRoutes(app: FastifyInstance) {
             content: resolved?.content ?? (m.content as string),
             characterId: m.characterId ?? undefined,
           };
+          const extra = parseExtra(m.extra);
+          if (m.role === "user" && extra.participantSnapshot) {
+            msg.participant = extra.participantSnapshot as ChatParticipantSnapshot;
+          }
           if (m.role === "assistant") {
             const messageSwipeIndex =
               typeof m.activeSwipeIndex === "number" && Number.isInteger(m.activeSwipeIndex) && m.activeSwipeIndex >= 0
@@ -4633,6 +4722,25 @@ export async function generateRoutes(app: FastifyInstance) {
                     : {}),
                 }
               : null,
+          participants: participantEntries.map((entry) => ({
+            participantId: entry.participant.id,
+            source: entry.participant.source,
+            guildId: entry.participant.guildId,
+            discordUserId: entry.participant.discordUserId,
+            discordDisplayName: entry.participant.discordDisplayName,
+            personaId: entry.participant.personaId,
+            personaName: participantPersonaName(entry),
+            active: entry.participant.active,
+            hasSpoken: entry.participant.hasSpoken,
+            lastMessageId: entry.participant.lastMessageId,
+            lastSpokeAt: entry.participant.lastSpokeAt,
+          })),
+          activeParticipant: activeParticipantEntry
+            ? buildParticipantSnapshot({
+                participant: activeParticipantEntry.participant,
+                persona: activeParticipantEntry.persona,
+              })
+            : null,
           memory: {},
           activatedLorebookEntries: null,
           writableLorebookIds: null,

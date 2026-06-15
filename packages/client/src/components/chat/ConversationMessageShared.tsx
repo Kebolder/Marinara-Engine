@@ -4,7 +4,12 @@
 // ──────────────────────────────────────────────
 import { Fragment, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { ChevronRight, EyeOff, FileText, X } from "lucide-react";
-import { normalizeTextForMatch, type MessageExtra, type QuoteFormat } from "@marinara-engine/shared";
+import {
+  normalizeTextForMatch,
+  type ChatParticipantSnapshot,
+  type MessageExtra,
+  type QuoteFormat,
+} from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
@@ -45,6 +50,7 @@ export interface MessageData {
     hiddenFromAI?: boolean;
     thinking?: string | null;
     generationReplay?: MessageExtra["generationReplay"];
+    participantSnapshot?: ChatParticipantSnapshot | null;
     attachments?: Array<{
       type: string;
       url?: string;
@@ -67,6 +73,7 @@ export interface MessageRenderContext {
   isGrouped: boolean;
   // identity
   displayName: string;
+  participantLabel: string | null;
   avatarUrl: string | null;
   avatarCropStyle: CSSProperties;
   nameColor?: string;
@@ -181,6 +188,19 @@ export function formatTimestamp(dateStr: string): string {
   } catch {
     return "";
   }
+}
+
+export function DiscordParticipantBadge({ label }: { label: string | null }) {
+  if (!label) return null;
+  return (
+    <span
+      className="inline-flex max-w-[12rem] shrink min-w-0 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--secondary)]/70 px-1.5 py-0.5 text-[0.625rem] font-medium leading-none text-[var(--muted-foreground)]"
+      title={`Discord participant: ${label}`}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--primary)]" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 export const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:gif|png|jpe?g|webp)(?:\?[^\s]*)?$/i;

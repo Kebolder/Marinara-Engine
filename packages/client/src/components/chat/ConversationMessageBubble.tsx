@@ -11,6 +11,7 @@ import {
   ConversationMessageAttachments,
   ConversationMessageTranslation,
   ConversationMessageSwipes,
+  DiscordParticipantBadge,
   nameColorStyle,
   formatTimestamp,
   type MessageRenderContext,
@@ -23,6 +24,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
     isUser,
     isGrouped,
     displayName,
+    participantLabel,
     avatarUrl,
     avatarCropStyle,
     nameColor,
@@ -139,7 +141,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
           )}
         >
           {/* Header — name + timestamp for first in group */}
-          {!isGrouped && (!isUser || hiddenFromAIHeader) && (
+          {!isGrouped && (!isUser || hiddenFromAIHeader || participantLabel) && (
             <div
               className={cn(
                 "mari-message-meta mb-0.5 flex items-baseline gap-2",
@@ -147,7 +149,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
               )}
             >
               {hiddenFromAIHeader}
-              {!isUser && (
+              {(!isUser || participantLabel) && (
                 <span
                   className="mari-message-name text-[0.9375rem] font-semibold leading-tight hover:underline cursor-default"
                   style={nameColorStyle(nameColor)}
@@ -155,6 +157,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                   {displayName}
                 </span>
               )}
+              <DiscordParticipantBadge label={participantLabel} />
               {!hideTimestamp && !isUser && (
                 <span className="mari-message-timestamp text-[0.6875rem] text-[var(--muted-foreground)]/60">
                   {formatTimestamp(message.createdAt)}

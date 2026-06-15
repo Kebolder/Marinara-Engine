@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+﻿import type { FastifyInstance } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
@@ -9,7 +9,11 @@ import {
   DEFAULT_GAME_SYSTEM_PROMPT,
   wrapConversationInstructions,
   unwrapConversationInstructions,
+  formatParticipantTrackerField,
+  splitParticipantTrackerFields,
   type GenerationParameterSendMap,
+  type APIProvider,
+  type CustomTrackerField,
   type LorebookEntryTimingState,
 } from "@marinara-engine/shared";
 import { randomUUID } from "crypto";
@@ -19,6 +23,7 @@ import { createPromptsStorage } from "../../services/storage/prompts.storage.js"
 import { createCharactersStorage } from "../../services/storage/characters.storage.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { createRegexScriptsStorage } from "../../services/storage/regex-scripts.storage.js";
+import { createDiscordBridgeStorage } from "../../services/storage/discord-bridge.storage.js";
 import { buildImpersonateInstruction } from "../../services/conversation/impersonate-prompt.js";
 import { processLorebooks } from "../../services/lorebook/index.js";
 import { resolveLorebookScopeExclusions } from "../../services/lorebook/game-lorebook-scope.js";
@@ -38,7 +43,18 @@ import {
 } from "../../services/prompt/index.js";
 import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
-import { yieldToEventLoop, type BaseLLMProvider, type ChatMessage } from "../../services/llm/base-provider.js";
+import {
+  buildParticipantPromptEntries,
+  compactPersonaSummary,
+  formatParticipantsMacro,
+  participantSpeakerName,
+} from "../../services/discord-bridge/participant-prompt-context.js";
+import {
+  yieldToEventLoop,
+  fitMessagesToContext,
+  type BaseLLMProvider,
+  type ChatMessage,
+} from "../../services/llm/base-provider.js";
 import {
   fitMessagesForModelAccess,
   mergeModelContextLimit,
@@ -663,7 +679,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     // Ephemeral user line (normal dry run only): mirrors an unsaved "what if I said this" turn.
-    // Impersonate mode does NOT add userMessage to history — same as POST /generate; direction is injected later.
+    // Impersonate mode does NOT add userMessage to history â€” same as POST /generate; direction is injected later.
     const userMessage = typeof body.userMessage === "string" ? body.userMessage : "";
     const lorebookGenerationTriggers = resolveDryRunLorebookGenerationTriggers(
       {
@@ -763,8 +779,9 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     let personaDescription = "";
     let personaFields: Record<string, string> = {};
     let persona: any = null;
+    let allPersonas: any[] = [];
     try {
-      const allPersonas = await chars.listPersonas();
+      allPersonas = await chars.listPersonas();
       persona =
         ((chat as any).personaId ? allPersonas.find((p: any) => p.id === (chat as any).personaId) : null) ??
         allPersonas.find((p: any) => p.isActive === "true");
@@ -782,6 +799,26 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     } catch {
       /* non-critical */
     }
+    const bridgeStorage = createDiscordBridgeStorage(app.db);
+    const participantRows = await bridgeStorage.listActiveParticipants(chatId);
+    const participantEntries = buildParticipantPromptEntries(participantRows, allPersonas);
+    const latestParticipantSnapshot = [...chatMessages]
+      .reverse()
+      .map((message: any) => parseExtra(message.extra)?.participantSnapshot)
+      .find((snapshot): snapshot is Record<string, unknown> => !!snapshot && typeof snapshot === "object");
+    const activeParticipantEntry =
+      participantEntries.find((entry) => entry.participant.id === latestParticipantSnapshot?.participantId) ??
+      participantEntries.find(
+        (entry) =>
+          typeof latestParticipantSnapshot?.discordUserId === "string" &&
+          entry.participant.discordUserId === latestParticipantSnapshot.discordUserId,
+      ) ??
+      [...participantEntries].reverse().find((entry) => entry.participant.hasSpoken) ??
+      participantEntries[0] ??
+      null;
+    const participantSpeaker = participantSpeakerName(activeParticipantEntry, personaName);
+    const speakerPersona = compactPersonaSummary(activeParticipantEntry?.persona ?? persona ?? null);
+    const participantsMacro = formatParticipantsMacro(participantEntries);
 
     const promptPresetCandidates = skipPreset
       ? []
@@ -849,6 +886,9 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       personaName,
       personaDescription,
       personaFields,
+      speakerName: participantSpeaker,
+      speakerPersona,
+      participants: participantsMacro,
       variables: modePromptVariables,
       groupScenarioOverrideText:
         typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
@@ -1261,6 +1301,9 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         personaName,
         personaDescription,
         personaFields,
+        speakerName: participantSpeaker,
+        speakerPersona,
+        participants: participantsMacro,
         personaStats: (() => {
           if (!persona?.personaStats) return undefined;
           if (typeof persona.personaStats !== "string") return persona.personaStats;
@@ -1494,7 +1537,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       }
     }
 
-    // ── Impersonate: same instruction block as POST /api/generate (no DB writes) ──
+    // â”€â”€ Impersonate: same instruction block as POST /api/generate (no DB writes) â”€â”€
     if (impersonate) {
       const impersonateInstruction = buildImpersonateInstruction({
         customPrompt: body.impersonatePromptTemplate ?? chatMeta.impersonatePrompt,
@@ -1521,7 +1564,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
     dedupeLastMessageWrappers(finalMessages);
 
-    // ── Parameter normalization (mirror /api/generate) ──
+    // â”€â”€ Parameter normalization (mirror /api/generate) â”€â”€
     const modelLower = (conn.model ?? "").toLowerCase();
     const providerLower = (conn.provider ?? "").toLowerCase();
 
@@ -1556,7 +1599,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     // enableThinking activates provider reasoning mode (separate from showing thoughts).
     const enableThinking = !!resolvedEffort;
 
-    // ── Claude 4.5+ sampling parameter restrictions ──
+    // â”€â”€ Claude 4.5+ sampling parameter restrictions â”€â”€
     const modelLc = (conn.model ?? "").toLowerCase();
 
     // Claude adaptive-only models: ALL sampling params removed except max_tokens (provider returns 400 otherwise).
@@ -1569,7 +1612,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       presencePenalty = 0;
     }
 
-    // Claude 4.5/4.6: only temperature supported — strip other sampling params.
+    // Claude 4.5/4.6: only temperature supported â€” strip other sampling params.
     const isClaudeTemperatureOnly =
       !isClaudeNoSampling &&
       (/claude-(opus|sonnet)-4-[56]/.test(modelLc) || /claude-(opus|sonnet)-4\.[56]/.test(modelLc));
@@ -1593,7 +1636,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
             conn.maxTokensOverride,
           );
 
-    // ── Mirror /api/generate: normalize + fit prompt to context ──
+    // â”€â”€ Mirror /api/generate: normalize + fit prompt to context â”€â”€
 
     // Collapse 3+ consecutive blank lines to save tokens
     for (const m of finalMessages) {
@@ -1689,7 +1732,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         try {
           if (!reply.raw.destroyed) reply.raw.write(": keepalive\n\n");
         } catch {
-          // Connection already closed — ignore
+          // Connection already closed â€” ignore
         }
       }, 15_000);
 

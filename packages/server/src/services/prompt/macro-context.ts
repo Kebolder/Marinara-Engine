@@ -27,6 +27,9 @@ export interface BuildPromptMacroContextInput {
   personaDescription?: string;
   personaFields?: PersonaFields;
   variables?: Record<string, string>;
+  speakerName?: string;
+  speakerPersona?: string;
+  participants?: string;
   groupScenarioOverrideText?: string | null;
   lastInput?: string;
   chatId?: string;
@@ -245,6 +248,9 @@ export async function buildPromptMacroContext(input: BuildPromptMacroContextInpu
     characters: characterMacroData.names,
     characterProfiles: characterMacroData.profiles,
     variables,
+    speaker: input.speakerName ?? input.personaName ?? "User",
+    speakerPersona: input.speakerPersona ?? "",
+    participants: input.participants ?? "",
     lastInput: input.lastInput,
     chatId: input.chatId,
     model: input.model,
