@@ -40,6 +40,8 @@ interface Props {
   draggable: boolean;
   isDragging: boolean;
   isDragReady: boolean;
+  /** True while a dragged folder hovers this row's nest band — draws a nest ring. */
+  isNestTarget?: boolean;
   onDragHandleMouseDown: () => void;
   onDragHandleMouseUp: () => void;
   onDragStart: (e: ReactDragEvent<HTMLDivElement>) => void;
@@ -58,6 +60,7 @@ export function LorebookFolderRow({
   draggable,
   isDragging,
   isDragReady,
+  isNestTarget = false,
   onDragHandleMouseDown,
   onDragHandleMouseUp,
   onDragStart,
@@ -170,6 +173,7 @@ export function LorebookFolderRow({
         "rounded-xl bg-[var(--secondary)]/60 ring-1 ring-[var(--border)] transition-all",
         !isCollapsed && "ring-amber-400/30",
         isDragging && "opacity-40",
+        isNestTarget && "ring-2 ring-amber-400",
       )}
       draggable={draggable && isDragReady}
       onDragStart={onDragStart}

@@ -31,6 +31,7 @@ import {
   useCreateLorebookFolder,
   useUpdateLorebookEntry,
   useReorderLorebookFolders,
+  useUpdateLorebookFolder,
   useTransferLorebookEntries,
   lorebookKeys,
 } from "../../hooks/use-lorebooks";
@@ -78,6 +79,7 @@ import {
   testPrimaryKeys,
   testSecondaryKeys,
   buildFolderForest,
+  canReparentFolder,
   type Lorebook,
   type LorebookEntry,
   type LorebookFolder,
@@ -321,6 +323,7 @@ export function LorebookEditor() {
   const updateEntry = useUpdateLorebookEntry();
   const reorderEntries = useReorderLorebookEntries();
   const createFolder = useCreateLorebookFolder();
+  const updateFolder = useUpdateLorebookFolder();
   const reorderFolders = useReorderLorebookFolders();
   const transferEntries = useTransferLorebookEntries();
 
@@ -430,6 +433,12 @@ export function LorebookEditor() {
   const [draggingFolderIdx, setDraggingFolderIdx] = useState<number | null>(null);
   const [folderDragReadyIdx, setFolderDragReadyIdx] = useState<number | null>(null);
   const [folderDropIdx, setFolderDropIdx] = useState<number | null>(null);
+  // Drag-to-nest: the folder hovered as a nest target (the middle band of a
+  // folder header), plus whether a dragged folder is over the root strip (drop
+  // there un-nests to top level). Kept separate from folderDropIdx so the nest
+  // ring and the reorder line never appear at the same time.
+  const [folderNestTargetId, setFolderNestTargetId] = useState<string | null>(null);
+  const [folderRootDropActive, setFolderRootDropActive] = useState(false);
 
   // ── Form state for lorebook overview ──
   const [formName, setFormName] = useState("");
@@ -736,6 +745,8 @@ export function LorebookEditor() {
     setDraggingFolderIdx(null);
     setFolderDragReadyIdx(null);
     setFolderDropIdx(null);
+    setFolderNestTargetId(null);
+    setFolderRootDropActive(false);
   }, []);
 
   const calcEntryDropIdx = useCallback((cardIdx: number, e: ReactDragEvent<HTMLDivElement>) => {
@@ -910,20 +921,53 @@ export function LorebookEditor() {
       if (!canReorderFolders || draggingFolderIdx === null) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
+      const dragged = folders[draggingFolderIdx];
+      const target = folders[idx];
       const rect = e.currentTarget.getBoundingClientRect();
+      const offset = rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5;
+      // The middle band nests the dragged folder inside this one; the top and
+      // bottom bands reorder it as a sibling. Only offer the nest band when the
+      // move is actually legal (canReparentFolder blocks self/descendant/cross-
+      // lorebook) and the folder isn't already inside this one — otherwise the
+      // whole header behaves as reorder.
+      const canNest =
+        !!dragged &&
+        !!target &&
+        dragged.parentFolderId !== target.id &&
+        canReparentFolder(folders, dragged.id, target.id).ok;
+      if (canNest && offset > 0.3 && offset < 0.7) {
+        setFolderNestTargetId(target.id);
+        setFolderDropIdx(null);
+        return;
+      }
+      setFolderNestTargetId(null);
       const midY = rect.top + rect.height / 2;
       setFolderDropIdx(e.clientY < midY ? idx : idx + 1);
     },
-    [canReorderFolders, draggingFolderIdx],
+    [canReorderFolders, draggingFolderIdx, folders],
   );
 
   const commitFolderDrop = useCallback(
     (e: ReactDragEvent<HTMLDivElement>) => {
       e.preventDefault();
       const sourceIdx = draggingFolderIdx;
+      const nestTargetId = folderNestTargetId;
       const targetIdx = folderDropIdx;
       resetFolderDragState();
-      if (!lorebookId || !canReorderFolders || sourceIdx === null || targetIdx === null) return;
+      if (!lorebookId || !canReorderFolders || sourceIdx === null) return;
+      const dragged = folders[sourceIdx];
+      if (!dragged) return;
+      // Nest band: reparent the dragged folder under the hovered one. Re-validate
+      // at drop time in case the tree shifted mid-drag.
+      if (nestTargetId) {
+        if (dragged.parentFolderId === nestTargetId) return;
+        if (!canReparentFolder(folders, dragged.id, nestTargetId).ok) return;
+        updateFolder.mutate({ lorebookId, folderId: dragged.id, parentFolderId: nestTargetId });
+        return;
+      }
+      // Reorder band: move within the flat order (the forest re-sorts each
+      // sibling group by it). Parent is unchanged.
+      if (targetIdx === null) return;
       let insertAt = targetIdx;
       if (sourceIdx < insertAt) insertAt--;
       if (sourceIdx === insertAt) return;
@@ -933,7 +977,46 @@ export function LorebookEditor() {
       ids.splice(insertAt, 0, moved);
       reorderFolders.mutate({ lorebookId, folderIds: ids });
     },
-    [canReorderFolders, draggingFolderIdx, folderDropIdx, folders, lorebookId, reorderFolders, resetFolderDragState],
+    [
+      canReorderFolders,
+      draggingFolderIdx,
+      folderNestTargetId,
+      folderDropIdx,
+      folders,
+      lorebookId,
+      reorderFolders,
+      updateFolder,
+      resetFolderDragState,
+    ],
+  );
+
+  // Root strip: dropping a nested folder here un-nests it back to the top level.
+  // Shown only while a folder that actually has a parent is being dragged.
+  const handleFolderRootDragOver = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>) => {
+      if (!canReorderFolders || draggingFolderIdx === null) return;
+      const dragged = folders[draggingFolderIdx];
+      if (!dragged || dragged.parentFolderId == null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setFolderNestTargetId(null);
+      setFolderDropIdx(null);
+      setFolderRootDropActive(true);
+    },
+    [canReorderFolders, draggingFolderIdx, folders],
+  );
+
+  const commitFolderRootDrop = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const sourceIdx = draggingFolderIdx;
+      resetFolderDragState();
+      if (!lorebookId || sourceIdx === null) return;
+      const dragged = folders[sourceIdx];
+      if (!dragged || dragged.parentFolderId == null) return;
+      updateFolder.mutate({ lorebookId, folderId: dragged.id, parentFolderId: null });
+    },
+    [draggingFolderIdx, folders, lorebookId, updateFolder, resetFolderDragState],
   );
 
   const handleAddFolder = useCallback(async () => {
@@ -1079,6 +1162,7 @@ export function LorebookEditor() {
           draggable={canReorderFolders}
           isDragging={draggingFolderIdx === fIdx}
           isDragReady={folderDragReadyIdx === fIdx}
+          isNestTarget={folderNestTargetId === folder.id}
           onDragHandleMouseDown={() => {
             if (canReorderFolders) setFolderDragReadyIdx(fIdx);
           }}
@@ -1880,7 +1964,25 @@ export function LorebookEditor() {
                   <div className="space-y-3">
                     {/* Folder block — nested tree (folders may contain sub-folders) */}
                     {folders.length > 0 && (
-                      <div className="space-y-1.5">{folderForest.roots.map((folder) => renderFolder(folder))}</div>
+                      <div className="space-y-1.5">
+                        {/* Un-nest target: drop a nested folder here to lift it back to top level. */}
+                        {draggingFolderIdx !== null && folders[draggingFolderIdx]?.parentFolderId != null && (
+                          <div
+                            onDragOver={handleFolderRootDragOver}
+                            onDragLeave={() => setFolderRootDropActive(false)}
+                            onDrop={commitFolderRootDrop}
+                            className={cn(
+                              "rounded-lg border border-dashed px-2 py-1.5 text-center text-[0.625rem] italic transition-colors",
+                              folderRootDropActive
+                                ? "border-amber-400 bg-amber-400/10 text-amber-200"
+                                : "border-[var(--border)] text-[var(--muted-foreground)]",
+                            )}
+                          >
+                            Drop here to move to the top level
+                          </div>
+                        )}
+                        {folderForest.roots.map((folder) => renderFolder(folder))}
+                      </div>
                     )}
 
                     {/* Root entries (entries with no folder).
