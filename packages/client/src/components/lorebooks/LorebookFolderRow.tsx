@@ -135,14 +135,23 @@ export function LorebookFolderRow({
     }
   }, [localName, folder.name, lorebookId, folder.id, updateFolder]);
 
+  // Guards the optimistic rollback below: if several parent changes fire in quick
+  // succession, only the latest may roll back — a stale out-of-order failure must
+  // not clobber a newer optimistic value.
+  const parentChangeSeqRef = useRef(0);
   const handleParentChange = useCallback(
     (parentFolderId: string | null) => {
       const previous = localParentId;
+      const seq = ++parentChangeSeqRef.current;
       // Optimistic flip; roll back if the move is rejected server-side.
       setLocalParentId(parentFolderId);
       updateFolder.mutate(
         { lorebookId, folderId: folder.id, parentFolderId },
-        { onError: () => setLocalParentId(previous) },
+        {
+          onError: () => {
+            if (parentChangeSeqRef.current === seq) setLocalParentId(previous);
+          },
+        },
       );
     },
     [localParentId, lorebookId, folder.id, updateFolder],
