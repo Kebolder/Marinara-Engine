@@ -313,8 +313,14 @@ export function PresetsPanel() {
     [filteredPresets, folderedPresetIds],
   );
 
+  // Presets shows GLOBAL regex scripts only. Character-scoped scripts (non-empty
+  // targetCharacterIds) live on the character (Advanced tab) and in a chat's
+  // Scoped Regex Scripts settings, so they are filtered out here.
   const sortedRegexScripts = useMemo(
-    () => [...((regexScripts ?? []) as RegexScriptRow[])].sort((a, b) => a.order - b.order),
+    () =>
+      ((regexScripts ?? []) as RegexScriptRow[])
+        .filter((script) => parseStringArray(script.targetCharacterIds).length === 0)
+        .sort((a, b) => a.order - b.order),
     [regexScripts],
   );
 

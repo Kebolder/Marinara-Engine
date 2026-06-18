@@ -678,21 +678,24 @@ export function ChatSettingsDrawer({
   // per-character list + the section badge, and whether the section shows at all.
   const chatScopedRegexGroups = useMemo(() => {
     if (!regexScripts) return [] as Array<{ characterId: string; name: string; scripts: RegexScriptRow[] }>;
-    const charById = new Map(((allCharacters as Array<{ id: string; name?: string }>) ?? []).map((c) => [c.id, c]));
+    const charById = new Map(((allCharacters as Array<{ id: string; data?: unknown }>) ?? []).map((c) => [c.id, c]));
     const scripts = regexScripts as RegexScriptRow[];
     return chatCharIds
-      .map((characterId) => ({
-        characterId,
-        name: charById.get(characterId)?.name ?? "Character",
-        scripts: scripts.filter((script) => {
-          try {
-            const ids = JSON.parse(script.targetCharacterIds ?? "[]");
-            return Array.isArray(ids) && ids.includes(characterId);
-          } catch {
-            return false;
-          }
-        }),
-      }))
+      .map((characterId) => {
+        const row = charById.get(characterId);
+        return {
+          characterId,
+          name: parseCharacterDisplayData({ data: row?.data }).name,
+          scripts: scripts.filter((script) => {
+            try {
+              const ids = JSON.parse(script.targetCharacterIds ?? "[]");
+              return Array.isArray(ids) && ids.includes(characterId);
+            } catch {
+              return false;
+            }
+          }),
+        };
+      })
       .filter((group) => group.scripts.length > 0);
   }, [regexScripts, allCharacters, chatCharIds]);
   const scopedRegexCount = useMemo(
