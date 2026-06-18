@@ -4122,7 +4122,10 @@ export async function gameRoutes(app: FastifyInstance) {
       gameStoryArc: appliedConclusion.updatedStoryArc,
       gamePlotTwists: appliedConclusion.updatedPlotTwists,
       gamePartyArcs: appliedConclusion.updatedPartyArcs,
-      gamePreviousSessionSummaries: [...prevSummaries, appliedConclusion.summary],
+      gamePreviousSessionSummaries: [
+        ...normalizeStoredSessionSummaries(freshMeta.gamePreviousSessionSummaries),
+        appliedConclusion.summary,
+      ],
       gameCharacterCards: appliedConclusion.updatedCards,
       ...buildMoraleMetadataUpdates(freshMeta, appliedConclusion.updatedMorale),
     }));
@@ -4247,7 +4250,10 @@ export async function gameRoutes(app: FastifyInstance) {
       gameStoryArc: appliedConclusion.updatedStoryArc,
       gamePlotTwists: appliedConclusion.updatedPlotTwists,
       gamePartyArcs: appliedConclusion.updatedPartyArcs,
-      gamePreviousSessionSummaries: [...prevSummaries, appliedConclusion.summary],
+      gamePreviousSessionSummaries: [
+        ...normalizeStoredSessionSummaries(freshMeta.gamePreviousSessionSummaries),
+        appliedConclusion.summary,
+      ],
       gameCharacterCards: appliedConclusion.updatedCards,
       ...buildMoraleMetadataUpdates(freshMeta, appliedConclusion.updatedMorale),
     }));
