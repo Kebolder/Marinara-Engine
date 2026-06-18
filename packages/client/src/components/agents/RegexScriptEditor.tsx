@@ -275,7 +275,7 @@ export function RegexScriptEditor() {
       trimStrings: localTrimStrings,
       placement: localPlacement,
       flags: localFlags,
-      promptOnly: localCharacterScopeEnabled ? true : localPromptOnly,
+      promptOnly: localPromptOnly,
       targetCharacterIds: localCharacterScopeEnabled ? localTargetCharacterIds : [],
       order: localOrder,
       minDepth: localMinDepth,
@@ -346,16 +346,14 @@ export function RegexScriptEditor() {
   };
 
   const toggleCharacterScope = () => {
-    const next = !localCharacterScopeEnabled;
-    setLocalCharacterScopeEnabled(next);
-    if (next) setLocalPromptOnly(true);
+    // Scope and prompt-only are independent: a scoped script can transform the
+    // prompt (prompt-only) OR displayed messages (gated by the chat's scoped mode).
+    setLocalCharacterScopeEnabled((prev) => !prev);
     markDirty();
   };
 
   const togglePromptOnly = () => {
-    const next = !localPromptOnly;
-    setLocalPromptOnly(next);
-    if (!next) setLocalCharacterScopeEnabled(false);
+    setLocalPromptOnly((prev) => !prev);
     markDirty();
   };
 
@@ -379,7 +377,7 @@ export function RegexScriptEditor() {
         trimStrings: localTrimStrings,
         placement: localPlacement,
         flags: localFlags,
-        promptOnly: localCharacterScopeEnabled ? true : localPromptOnly,
+        promptOnly: localPromptOnly,
         targetCharacterIds: localCharacterScopeEnabled ? localTargetCharacterIds : [],
         order: localOrder,
         minDepth: localMinDepth,
@@ -647,12 +645,12 @@ export function RegexScriptEditor() {
                   <div className="flex items-center gap-1.5 text-xs font-medium">
                     <Users size="0.75rem" className="text-orange-400" />
                     Specific Characters
-                    <HelpTooltip text="Limits prompt-only regex execution to prompts generated for selected character replies." />
+                    <HelpTooltip text="Limit this script to the selected characters. Prompt-only scripts then run only for those characters' prompts; display scripts apply per the chat's Scoped Regex mode." />
                   </div>
                   <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
                     {localCharacterScopeEnabled
                       ? `${localTargetCharacterIds.length} selected`
-                      : "Runs for every prompt target"}
+                      : "Applies to all characters"}
                   </div>
                 </div>
               </div>

@@ -6,8 +6,10 @@ import { characters as charactersTable } from "../../db/schema/index.js";
 import { logger } from "../../lib/logger.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
+import { createRegexScriptsStorage } from "../storage/regex-scripts.storage.js";
 import { importSTLorebook } from "./st-lorebook.importer.js";
-import type { CharacterData } from "@marinara-engine/shared";
+import { isPatternSafe } from "@marinara-engine/shared";
+import type { CharacterData, CreateRegexScriptInput, RegexPlacement } from "@marinara-engine/shared";
 import { existsSync, mkdirSync } from "fs";
 import { unlink, writeFile } from "fs/promises";
 import { join } from "path";
@@ -86,6 +88,74 @@ export interface STCharacterImportOptions {
   importEmbeddedLorebook?: boolean;
   tagImportMode?: STCharacterTagImportMode;
   existingTagKeys?: ReadonlySet<string>;
+  /** Where embedded regex scripts land: scoped to the character (default) or global. */
+  regexScriptScope?: "character" | "global";
+}
+
+// SillyTavern regex placement ids → our placement strings (1 = user input, 2 = AI output).
+function convertStPlacements(placement: unknown): RegexPlacement[] {
+  const out: RegexPlacement[] = [];
+  if (Array.isArray(placement)) {
+    for (const n of placement) {
+      if (n === 1 && !out.includes("user_input")) out.push("user_input");
+      else if (n === 2 && !out.includes("ai_output")) out.push("ai_output");
+    }
+  }
+  return out;
+}
+
+/**
+ * Convert a SillyTavern card's embedded `regex_scripts` into CreateRegexScriptInput
+ * rows scoped to the imported character. ST stores the pattern as `/source/flags`
+ * (or a bare source) and placements as numbers; scripts with an empty or
+ * ReDoS-prone source, or one that won't compile, are skipped.
+ */
+function convertStRegexScripts(
+  stScripts: unknown,
+  characterId: string,
+  scope: "character" | "global",
+): CreateRegexScriptInput[] {
+  if (!Array.isArray(stScripts)) return [];
+  const out: CreateRegexScriptInput[] = [];
+  for (const [index, entry] of stScripts.entries()) {
+    if (!entry || typeof entry !== "object") continue;
+    const s = entry as Record<string, unknown>;
+    const rawFind = typeof s.findRegex === "string" ? s.findRegex.trim() : "";
+    if (!rawFind) continue;
+    // ST patterns are usually `/source/flags`; fall back to treating the whole string as the source.
+    const delimited = /^\/(.*)\/([a-z]*)$/is.exec(rawFind);
+    const source = delimited ? delimited[1]! : rawFind;
+    if (!source || !isPatternSafe(source)) continue;
+    let flags = Array.from(new Set((delimited?.[2] || "gi").replace(/[^gimsuy]/g, ""))).join("");
+    if (!flags.includes("g")) flags += "g";
+    try {
+      new RegExp(source, flags);
+    } catch {
+      continue;
+    }
+    const placement = convertStPlacements(s.placement);
+    const resolvedPlacement: RegexPlacement[] = placement.length > 0 ? placement : ["ai_output"];
+    out.push({
+      name: typeof s.scriptName === "string" && s.scriptName.trim() ? s.scriptName.trim() : "Imported regex",
+      enabled: s.disabled !== true,
+      findRegex: source,
+      replaceString: typeof s.replaceString === "string" ? s.replaceString : "",
+      trimStrings: Array.isArray(s.trimStrings) ? s.trimStrings.filter((t): t is string => typeof t === "string") : [],
+      placement: resolvedPlacement,
+      flags,
+      // Imported scripts transform displayed messages, gated by the chat's Scoped
+      // Regex mode — they stay opt-in per chat rather than always rewriting prompts.
+      promptOnly: false,
+      targetCharacterIds: scope === "global" ? [] : [characterId],
+      // Preserve the card's authoring order so multi-script imports keep a stable
+      // execution/list order (all-zero ties leave it undefined). Gaps from skipped
+      // entries are harmless — list() only sorts by ascending order.
+      order: index,
+      minDepth: typeof s.minDepth === "number" ? s.minDepth : null,
+      maxDepth: typeof s.maxDepth === "number" ? s.maxDepth : null,
+    });
+  }
+  return out;
 }
 
 export type STCharacterTagImportMode = "all" | "none" | "existing";
@@ -222,6 +292,33 @@ export async function importSTCharacter(raw: Record<string, unknown>, db: DB, op
       await rollbackImportedCharacter(db, charId, avatarPath);
       logger.warn(err, "Rolled back character import after embedded lorebook import failed");
       throw err;
+    }
+  }
+
+  // Import any regex scripts embedded in the ST card, scoped to this character.
+  if (charId) {
+    const cardData = raw.data && typeof raw.data === "object" ? (raw.data as Record<string, unknown>) : raw;
+    const cardExtensions =
+      cardData.extensions && typeof cardData.extensions === "object"
+        ? (cardData.extensions as Record<string, unknown>)
+        : {};
+    const importedRegex = convertStRegexScripts(
+      cardExtensions.regex_scripts,
+      charId,
+      options?.regexScriptScope ?? "character",
+    );
+    if (importedRegex.length > 0) {
+      const regexStorage = createRegexScriptsStorage(db);
+      let created = 0;
+      for (const input of importedRegex) {
+        try {
+          await regexStorage.create(input);
+          created += 1;
+        } catch (err) {
+          logger.warn(err, "Failed to import an embedded regex script");
+        }
+      }
+      if (created > 0) logger.info("Imported %d embedded regex script(s) for character %s", created, charId);
     }
   }
 

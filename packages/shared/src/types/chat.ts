@@ -240,6 +240,14 @@ export interface ChatMetadata {
    * card styling is opt-in per chat.
    */
   cardCssMode?: "disabled" | "exclusive" | "chat";
+  /**
+   * How character-scoped regex scripts (those with target characters) apply at
+   * display time in this chat: "exclusive" (a scoped script only transforms its
+   * own character's messages) or "chat" (all scoped scripts transform every
+   * message). Defaults to "disabled" — scoped scripts are off at display unless
+   * opted in per chat. Global scripts (no target characters) are unaffected.
+   */
+  scopedRegexMode?: "disabled" | "exclusive" | "chat";
   /** Legacy display scale for roleplay Expression Engine sprites. */
   spriteScale?: number;
   /** Display scale for roleplay Expression Engine expression sprites. Falls back to spriteScale. */

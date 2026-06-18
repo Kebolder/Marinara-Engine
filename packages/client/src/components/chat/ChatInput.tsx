@@ -670,10 +670,13 @@ export const ChatInput = memo(function ChatInput({
     const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
     const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
     const resolveInputMacros = createInputMacroResolverForChat(chat, cachedCharacters, cachedPersonas, normalized);
-    let message = applyToUserInput(normalized, { resolveMacros: resolveInputMacros });
+    const chatMeta = parseChatMetadata(chat?.metadata);
+    let message = applyToUserInput(normalized, {
+      resolveMacros: resolveInputMacros,
+      scopedMode: chatMeta.scopedRegexMode,
+    });
 
     // Input translation: translate user's message before sending
-    const chatMeta = parseChatMetadata(chat?.metadata);
     if (chatMeta.translateInput && message.trim()) {
       try {
         const { translateText } = await import("../../lib/translate-text");
@@ -853,9 +856,12 @@ export const ChatInput = memo(function ChatInput({
     const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
     const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
     const resolveInputMacros = createInputMacroResolverForChat(chat, cachedCharacters, cachedPersonas, normalized);
-    let message = applyToUserInput(normalized, { resolveMacros: resolveInputMacros });
-
     const chatMeta = parseChatMetadata(chat?.metadata);
+    let message = applyToUserInput(normalized, {
+      resolveMacros: resolveInputMacros,
+      scopedMode: chatMeta.scopedRegexMode,
+    });
+
     if (chatMeta.translateInput && message.trim()) {
       try {
         const { translateText } = await import("../../lib/translate-text");
