@@ -27,7 +27,7 @@ import {
 import { showPromptDialog, showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 
-export function CustomEmojiTab({ onInsert }: { onInsert: (token: string) => void }) {
+export function CustomEmojiTab({ onInsert, query }: { onInsert: (token: string) => void; query: string }) {
   const { data: emojis } = useCustomEmojis();
   const upload = useUploadCustomEmoji();
   const rename = useRenameCustomEmoji();
@@ -41,7 +41,6 @@ export function CustomEmojiTab({ onInsert }: { onInsert: (token: string) => void
   const [editing, setEditing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
 
   const selectionPrefs = normalizeCustomEmojiSelection(parseChatMetadata(activeChat?.metadata).customEmojiSelection);
   const [maxCountDraft, setMaxCountDraft] = useState(selectionPrefs.maxCount);
@@ -199,16 +198,6 @@ export function CustomEmojiTab({ onInsert }: { onInsert: (token: string) => void
           )}
         </div>
       </div>
-
-      {(list.length > 0 || sourceGroups.length > 0) && (
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search emojis..."
-          className="mb-2 w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs text-foreground ring-1 ring-foreground/10 placeholder:text-foreground/40 focus:outline-none focus:ring-[var(--primary)]"
-        />
-      )}
 
       {showSettings && (
         <div className="mb-2 rounded-md bg-foreground/5 p-2 ring-1 ring-foreground/10">

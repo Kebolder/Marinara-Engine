@@ -1127,7 +1127,7 @@ interface EmojiPickerProps {
   /** Container (e.g. input bar) whose top edge determines vertical placement */
   containerRef?: React.RefObject<HTMLElement | null>;
   /** Optional extra tab (e.g. custom emojis) shown after the standard categories. */
-  customTab?: { icon: React.ReactNode; label?: string; render: () => React.ReactNode };
+  customTab?: { icon: React.ReactNode; label?: string; render: (query: string) => React.ReactNode };
 }
 
 export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, customTab }: EmojiPickerProps) {
@@ -1220,19 +1220,17 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
         ...(pos.left != null ? { left: pos.left } : {}),
       }}
     >
-      {/* Search (hidden on the custom tab, which renders its own controls) */}
-      {activeCategory !== "custom" && (
-        <div className="border-b border-foreground/10 px-3 py-2">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search emojis..."
-            className="w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs outline-none ring-1 ring-foreground/10 transition-shadow placeholder:text-foreground/35 focus:ring-foreground/20"
-            autoFocus
-          />
-        </div>
-      )}
+      {/* Search — filters the active standard category, or the custom tab's emojis */}
+      <div className="border-b border-foreground/10 px-3 py-2">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search emojis..."
+          className="w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs outline-none ring-1 ring-foreground/10 transition-shadow placeholder:text-foreground/35 focus:ring-foreground/20"
+          autoFocus
+        />
+      </div>
 
       {/* Category tabs */}
       <div className="flex items-center gap-0.5 border-b border-foreground/10 px-2 py-1">
@@ -1270,7 +1268,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
       {/* Emoji grid (or the custom-emoji tab content) */}
       <div className="flex-1 overflow-y-auto px-2 py-2">
         {activeCategory === "custom" && customTab
-          ? customTab.render()
+          ? customTab.render(search)
           : (search.trim()
               ? filteredCategories
               : [CATEGORIES[typeof activeCategory === "number" ? activeCategory : 0]]
