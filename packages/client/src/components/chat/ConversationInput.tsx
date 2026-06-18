@@ -1444,7 +1444,7 @@ export function ConversationInput({
 
       {/* :emoji: autocomplete */}
       {emojiCompletions.length > 0 && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 max-h-56 overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg">
+        <div className="absolute bottom-full left-0 right-0 mb-1 max-h-56 overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg sm:right-auto sm:w-[28rem] sm:max-w-full">
           {emojiCompletions.map((em, i) => (
             <button
               key={em.name}
