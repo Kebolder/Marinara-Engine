@@ -1241,6 +1241,29 @@ export function ConversationInput({
     [activeChatId, setInputDraft, syncInputState],
   );
 
+  const insertStickerToken = useCallback(
+    (name: string) => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const value = el.value;
+      const before = value.slice(0, start);
+      const after = value.slice(end);
+      // Put the sticker on its own line: a leading newline unless we're already at a line start,
+      // and a trailing newline so the user types their message on the line below it.
+      const lead = before.length === 0 || before.endsWith("\n") ? "" : "\n";
+      const insertText = `${lead}sticker:${name}:\n`;
+      el.value = before + insertText + after;
+      const cursor = before.length + insertText.length;
+      el.selectionStart = el.selectionEnd = cursor;
+      syncInputState(el.value);
+      if (activeChatId) setInputDraft(activeChatId, el.value);
+      el.focus();
+    },
+    [activeChatId, setInputDraft, syncInputState],
+  );
+
   const handleGifSelect = useCallback(
     async (gifUrl: string) => {
       if (!activeChatId) return;
@@ -1291,7 +1314,7 @@ export function ConversationInput({
         ],
       });
       if (choice === "insert") {
-        handleEmojiSelect(token); // inserts the token at the cursor; nothing is sent until the user submits
+        insertStickerToken(name); // drops the sticker on its own line so the user types below it
         return;
       }
       if (choice !== "send") return; // dismissed
@@ -1314,7 +1337,7 @@ export function ConversationInput({
       activeCharacterNames.length,
       generate,
       createMessage,
-      handleEmojiSelect,
+      insertStickerToken,
     ],
   );
 
