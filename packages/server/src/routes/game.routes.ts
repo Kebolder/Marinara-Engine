@@ -4114,8 +4114,7 @@ export async function gameRoutes(app: FastifyInstance) {
       return;
     }
 
-    await chats.updateMetadata(chatId, {
-      ...meta,
+    await chats.patchMetadata(chatId, (freshMeta) => ({
       ...(syncedSetupConfig ? { gameSetupConfig: syncedSetupConfig } : {}),
       gamePartyCharacterIds: syncedPartyIds,
       gameSessionNumber: sessionNumber,
@@ -4125,8 +4124,8 @@ export async function gameRoutes(app: FastifyInstance) {
       gamePartyArcs: appliedConclusion.updatedPartyArcs,
       gamePreviousSessionSummaries: [...prevSummaries, appliedConclusion.summary],
       gameCharacterCards: appliedConclusion.updatedCards,
-      ...buildMoraleMetadataUpdates(meta, appliedConclusion.updatedMorale),
-    });
+      ...buildMoraleMetadataUpdates(freshMeta, appliedConclusion.updatedMorale),
+    }));
 
     const sessionSummaryMsg = await chats.createMessage({
       chatId,
@@ -4240,8 +4239,7 @@ export async function gameRoutes(app: FastifyInstance) {
       return;
     }
 
-    await chats.updateMetadata(chatId, {
-      ...meta,
+    await chats.patchMetadata(chatId, (freshMeta) => ({
       ...(syncedSetupConfig ? { gameSetupConfig: syncedSetupConfig } : {}),
       gamePartyCharacterIds: syncedPartyIds,
       gameSessionNumber: sessionNumber,
@@ -4251,8 +4249,8 @@ export async function gameRoutes(app: FastifyInstance) {
       gamePartyArcs: appliedConclusion.updatedPartyArcs,
       gamePreviousSessionSummaries: [...prevSummaries, appliedConclusion.summary],
       gameCharacterCards: appliedConclusion.updatedCards,
-      ...buildMoraleMetadataUpdates(meta, appliedConclusion.updatedMorale),
-    });
+      ...buildMoraleMetadataUpdates(freshMeta, appliedConclusion.updatedMorale),
+    }));
 
     const summaryContent = `**Session ${sessionNumber} Concluded**\n\n${appliedConclusion.summary.summary}\n\n*Party Dynamics:* ${appliedConclusion.summary.partyDynamics}`;
     await chats.createMessage({
@@ -5079,12 +5077,11 @@ export async function gameRoutes(app: FastifyInstance) {
 
     const updatedChatCharacterIds = updatedPartyIds.filter((id) => !isPartyNpcId(id));
     await chats.update(chat.id, { characterIds: updatedChatCharacterIds });
-    const updatedSession = await chats.updateMetadata(chat.id, {
-      ...meta,
+    const updatedSession = await chats.patchMetadata(chat.id, () => ({
       gameSetupConfig: updatedSetupConfig,
       gamePartyCharacterIds: updatedPartyIds,
       gameCharacterCards: updatedCards,
-    });
+    }));
     if (!updatedSession) throw new Error("Failed to update game session");
 
     return {
@@ -5297,7 +5294,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const currentMorale = (meta.gameMorale as number) ?? 50;
     const result = applyMoraleEvent(currentMorale, input.event as MoraleEvent);
 
-    await chats.updateMetadata(input.chatId, { ...meta, ...buildMoraleMetadataUpdates(meta, result.value) });
+    await chats.patchMetadata(input.chatId, (freshMeta) => buildMoraleMetadataUpdates(freshMeta, result.value));
 
     return { morale: result };
   });
@@ -5314,7 +5311,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const currentState = (meta.gameActiveState as GameActiveState) || "exploration";
     const validatedState = validateTransition(currentState, newState);
 
-    await chats.updateMetadata(chatId, { ...meta, gameActiveState: validatedState });
+    await chats.patchMetadata(chatId, () => ({ gameActiveState: validatedState }));
 
     // Push OOC influence for combat transitions (exciting events)
     if (validatedState === "combat" && chat.connectedChatId) {
@@ -5872,7 +5869,7 @@ export async function gameRoutes(app: FastifyInstance) {
         break;
     }
 
-    await chats.updateMetadata(chatId, { ...meta, gameJournal: journal });
+    await chats.patchMetadata(chatId, () => ({ gameJournal: journal }));
 
     return { journal };
   });
@@ -5903,8 +5900,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const chat = await chats.getById(req.params.chatId);
     if (!chat) throw new Error("Chat not found");
 
-    const meta = parseMeta(chat.metadata);
-    await chats.updateMetadata(req.params.chatId, { ...meta, gamePlayerNotes: notes });
+    await chats.patchMetadata(req.params.chatId, () => ({ gamePlayerNotes: notes }));
 
     return { ok: true };
   });
@@ -5917,22 +5913,22 @@ export async function gameRoutes(app: FastifyInstance) {
     const chat = await chats.getById(req.params.chatId);
     if (!chat) throw new Error("Chat not found");
 
-    const meta = parseMeta(chat.metadata);
-    const setupConfig = (meta.gameSetupConfig as GameSetupConfig | null) ?? null;
     const enableCustomWidgets = widgets.length > 0;
-    await chats.updateMetadata(req.params.chatId, {
-      ...meta,
-      gameWidgetState: widgets,
-      enableCustomWidgets,
-      ...(setupConfig
-        ? {
-            gameSetupConfig: {
-              ...setupConfig,
-              enableCustomWidgets,
-              customHudWidgets: widgets.length > 0 ? widgets : undefined,
-            },
-          }
-        : {}),
+    await chats.patchMetadata(req.params.chatId, (freshMeta) => {
+      const setupConfig = (freshMeta.gameSetupConfig as GameSetupConfig | null) ?? null;
+      return {
+        gameWidgetState: widgets,
+        enableCustomWidgets,
+        ...(setupConfig
+          ? {
+              gameSetupConfig: {
+                ...setupConfig,
+                enableCustomWidgets,
+                customHudWidgets: widgets.length > 0 ? widgets : undefined,
+              },
+            }
+          : {}),
+      };
     });
 
     return { ok: true };
@@ -7730,10 +7726,10 @@ export async function gameRoutes(app: FastifyInstance) {
 
     // Restore chat metadata fields from checkpoint
     const chat = await chats.getById(input.chatId);
-    if (chat) {
-      const meta = parseMeta(chat.metadata);
-      if (cp.gameState) meta.gameActiveState = cp.gameState as GameActiveState;
-      await chats.updateMetadata(input.chatId, meta);
+    if (chat && cp.gameState) {
+      await chats.patchMetadata(input.chatId, () => ({
+        gameActiveState: cp.gameState as GameActiveState,
+      }));
     }
 
     return { ok: true, messageId: restoreMsg.id };

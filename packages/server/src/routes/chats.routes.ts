@@ -626,22 +626,21 @@ export async function chatsRoutes(app: FastifyInstance) {
 
   // Update chat summaries (entry-level merge for day/week summaries).
   // Dedicated from generic metadata PATCH so concurrent user edits don't overwrite
-  // the entire daySummaries/weekSummaries maps — we re-read fresh metadata here and
-  // merge per-entry so in-flight generation writes can't clobber user edits on other keys.
+  // the entire daySummaries/weekSummaries maps — patchMetadata serializes the
+  // read-modify-write per chat and merges per-entry onto fresh metadata, so a
+  // queued in-flight generation write can't interleave between the read and write
+  // and clobber user edits on other keys.
   app.patch<{ Params: { id: string } }>("/:id/summaries", async (req, reply) => {
     const parsed = summariesPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: "Invalid summaries payload", issues: parsed.error.issues });
     }
-    const fresh = await storage.getById(req.params.id);
-    if (!fresh) return reply.status(404).send({ error: "Chat not found" });
-    const existing = typeof fresh.metadata === "string" ? JSON.parse(fresh.metadata) : (fresh.metadata ?? {});
-    const merged = {
-      ...existing,
-      daySummaries: { ...(existing.daySummaries ?? {}), ...(parsed.data.daySummaries ?? {}) },
-      weekSummaries: { ...(existing.weekSummaries ?? {}), ...(parsed.data.weekSummaries ?? {}) },
-    };
-    return storage.updateMetadata(req.params.id, merged);
+    const updated = await storage.patchMetadata(req.params.id, (current) => ({
+      daySummaries: { ...((current.daySummaries as Record<string, unknown>) ?? {}), ...(parsed.data.daySummaries ?? {}) },
+      weekSummaries: { ...((current.weekSummaries as Record<string, unknown>) ?? {}), ...(parsed.data.weekSummaries ?? {}) },
+    }));
+    if (!updated) return reply.status(404).send({ error: "Chat not found" });
+    return updated;
   });
 
   // Update rolling summary entries without replacing unrelated chat metadata.
