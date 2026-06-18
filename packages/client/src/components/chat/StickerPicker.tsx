@@ -232,6 +232,19 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
 
   const content = (
     <>
+      {(globalList.length > 0 || sourceGroups.length > 0) && (
+        <div className="border-b border-foreground/10 px-3 py-2">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search stickers..."
+            className="w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs outline-none ring-1 ring-foreground/10 transition-shadow placeholder:text-foreground/35 focus:ring-foreground/20"
+            autoFocus={!embedded}
+          />
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-2 border-b border-foreground/10 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <button
@@ -283,19 +296,6 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
           {editing ? "Done" : "Edit"}
         </button>
       </div>
-
-      {(globalList.length > 0 || sourceGroups.length > 0) && (
-        <div className="border-b border-foreground/10 px-3 py-2">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search stickers..."
-            className="w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs outline-none ring-1 ring-foreground/10 transition-shadow placeholder:text-foreground/35 focus:ring-foreground/20"
-            autoFocus={!embedded}
-          />
-        </div>
-      )}
 
       {error && <p className="px-3 py-1.5 text-[0.6875rem] text-red-400">{error}</p>}
 
