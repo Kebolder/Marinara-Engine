@@ -1165,28 +1165,51 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
   }, [open, onClose]);
 
   // Position state for portal
-  const [pos, setPos] = useState<{ bottom: number; right?: number; left?: number }>({ bottom: 0 });
+  const [pos, setPos] = useState<{
+    top?: number;
+    bottom?: number;
+    right?: number;
+    left?: number;
+    maxHeight?: number;
+  }>({});
 
   useLayoutEffect(() => {
     if (!open || !anchorRef?.current) return;
     const btnRect = anchorRef.current.getBoundingClientRect();
-    const barRect = containerRef?.current?.getBoundingClientRect();
     const pad = 8;
     const pickerWidth = 336; // 21rem
-
-    // Vertical: pin bottom edge above the input bar's top edge
-    const refTop = barRect ? barRect.top : btnRect.top;
-    const bottom = window.innerHeight - refTop + pad;
-    // Horizontal: on small screens center it, on larger screens align right edge to button
+    const pickerHeight = 352; // 22rem
     const vw = window.innerWidth;
-    if (vw < 480) {
-      // Center horizontally on mobile
-      const left = Math.max(8, (vw - Math.min(pickerWidth, vw - 16)) / 2);
-      setPos({ bottom, left });
-    } else {
-      const right = Math.max(8, window.innerWidth - btnRect.right);
-      setPos({ bottom, right });
+    const vh = window.innerHeight;
+
+    // Composer mode (anchored to an input bar): pin the bottom edge above the bar's
+    // top and grow upward. The bar sits at the bottom of the screen, so this fits.
+    if (containerRef?.current) {
+      const barRect = containerRef.current.getBoundingClientRect();
+      const bottom = vh - barRect.top + pad;
+      if (vw < 480) {
+        // Center horizontally on mobile
+        const left = Math.max(pad, (vw - Math.min(pickerWidth, vw - 2 * pad)) / 2);
+        setPos({ bottom, left });
+      } else {
+        const right = Math.max(pad, vw - btnRect.right);
+        setPos({ bottom, right });
+      }
+      return;
     }
+
+    // Anchored mode (e.g. a message's reaction button, which can sit anywhere on
+    // screen): open BELOW the anchor; flip above only when there isn't room below;
+    // and clamp to the viewport so the panel never crosses an edge.
+    const maxHeight = Math.min(pickerHeight, vh - 2 * pad);
+    const spaceBelow = vh - btnRect.bottom;
+    const openBelow = spaceBelow >= maxHeight + pad || spaceBelow >= btnRect.top;
+    let top = openBelow ? btnRect.bottom + pad : btnRect.top - pad - maxHeight;
+    top = Math.max(pad, Math.min(top, vh - maxHeight - pad));
+    // Align the panel's right edge to the button, then clamp into view.
+    let left = btnRect.right - pickerWidth;
+    left = Math.max(pad, Math.min(left, vw - pickerWidth - pad));
+    setPos({ top, left, maxHeight });
   }, [open, anchorRef, containerRef]);
 
   const handleSelect = useCallback(
@@ -1300,9 +1323,11 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
       ref={panelRef}
       className="fixed z-[9999] flex h-[22rem] w-[21rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl"
       style={{
-        bottom: pos.bottom,
+        ...(pos.top != null ? { top: pos.top } : {}),
+        ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
         ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.left != null ? { left: pos.left } : {}),
+        ...(pos.maxHeight != null ? { maxHeight: pos.maxHeight } : {}),
       }}
     >
       {content}

@@ -113,6 +113,7 @@ import {
   type HapticCommand,
   type SpotifyCommand,
   type YouTubeCommand,
+  type ReactCommand,
   type CreatePersonaCommand,
   type CreateCharacterCommand,
   type UpdateCharacterCommand,
@@ -161,7 +162,12 @@ import { extractFileText, getSourceFilePath } from "./knowledge-sources.routes.j
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../db/schema/index.js";
 import { chats as chatsTable } from "../db/schema/index.js";
 import { eq } from "drizzle-orm";
-import { PROFESSOR_MARI_ID, normalizeCustomEmojiSelection, type CustomEmojiSelectionPrefs } from "@marinara-engine/shared";
+import {
+  PROFESSOR_MARI_ID,
+  normalizeCustomEmojiSelection,
+  type CustomEmojiSelectionPrefs,
+  type MessageReaction,
+} from "@marinara-engine/shared";
 import { chunkAndEmbedMessages, embedMemoryRecallTexts } from "../services/memory-recall.js";
 import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { postToDiscordWebhook } from "../services/discord-webhook.js";
@@ -974,6 +980,66 @@ function buildCustomStickerAdvertisement(
   }
   if (lines.length === 0) return null;
   return `${lead}\nAvailable stickers (send by writing sticker:name:):\n${lines.join("\n")}`;
+}
+
+/**
+ * Build a compact reaction note for a message's prompt content so the responding
+ * character perceives who reacted to it and with what. Reactions live on
+ * `message.extra.reactions` (one `{ emoji, by[] }` entry per emoji); `emoji` is a
+ * unicode emoji or a custom-emoji token (`:name:`, already advertised separately).
+ * The note is appended to the message content (like the `[Sent a photo]` marker)
+ * and is deliberately not timestamp-shaped, so the conversation timestamp stripper
+ * leaves it intact. `resolveReactorName` maps a reactor id ("user" or a character
+ * id) to a display name. Returns "" when there is nothing to annotate.
+ */
+function buildReactionAnnotation(
+  reactions: unknown,
+  resolveReactorName: (reactorId: string) => string,
+): string {
+  if (!Array.isArray(reactions) || reactions.length === 0) return "";
+  const parts: string[] = [];
+  for (const entry of reactions as Array<{ emoji?: unknown; by?: unknown }>) {
+    const emoji = typeof entry.emoji === "string" ? entry.emoji : null;
+    const reactors = Array.isArray(entry.by)
+      ? entry.by.filter((id): id is string => typeof id === "string")
+      : [];
+    if (!emoji || reactors.length === 0) continue;
+    const names = reactors.map(resolveReactorName);
+    const who =
+      names.length === 1
+        ? names[0]!
+        : names.length === 2
+          ? `${names[0]} and ${names[1]}`
+          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    parts.push(`${who} reacted with ${emoji}`);
+  }
+  return parts.length === 0 ? "" : `\n[${parts.join("; ")}]`;
+}
+
+/**
+ * Add a reactor to a message's reactions (add-only, idempotent — a no-op if the
+ * reactor already reacted with this emoji). Applies a character's `[react:]`
+ * directive server-side. `imageUrl` is stored for a custom (`:name:`) reaction so
+ * the chip renders without re-resolving the gallery. Pure — returns a new array.
+ */
+function addMessageReactor(
+  reactions: unknown,
+  emoji: string,
+  reactor: string,
+  imageUrl: string | null,
+): MessageReaction[] {
+  const current = Array.isArray(reactions) ? (reactions as MessageReaction[]) : [];
+  const index = current.findIndex((r) => r.emoji === emoji);
+  if (index === -1) {
+    const entry: MessageReaction = { emoji, by: [reactor] };
+    if (imageUrl) entry.imageUrl = imageUrl;
+    return [...current, entry];
+  }
+  const entry = current[index]!;
+  if (entry.by.includes(reactor)) return current;
+  const next = [...current];
+  next[index] = { ...entry, by: [...entry.by, reactor], ...(imageUrl && !entry.imageUrl ? { imageUrl } : {}) };
+  return next;
 }
 
 export async function generateRoutes(app: FastifyInstance) {
@@ -2092,6 +2158,21 @@ export async function generateRoutes(app: FastifyInstance) {
             if (convoCharInfo[ci]) charIdToName.set(characterIds[ci]!, convoCharInfo[ci]!.name);
           }
 
+          // Annotate each message with its reactions so the responding character
+          // perceives who reacted and with what. finalMessages[i] is index-aligned
+          // with chatMessages[i] here (same invariant the bucket loop below relies
+          // on); the note rides on the content through the formatting that follows.
+          // "user" is the human reactor (matches the client USER_REACTOR sentinel);
+          // any other id is a character.
+          const reactorDisplayName = (reactorId: string): string =>
+            reactorId === "user" ? personaName : (charIdToName.get(reactorId) ?? "a character");
+          for (let i = 0; i < finalMessages.length; i++) {
+            const raw = chatMessages[i];
+            if (!raw) continue;
+            const note = buildReactionAnnotation(parseExtra(raw.extra).reactions, reactorDisplayName);
+            if (note) finalMessages[i]!.content += note;
+          }
+
           // Separate into past-day groups and today's messages, preserving order
           type BucketMsg = { role: string; content: string; author: string; ts: Date };
           type Bucket = { date: string; msgs: BucketMsg[] };
@@ -2574,6 +2655,14 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
+          // ── React capability ──
+          // Tell the character it can react to the user's latest message. Standard
+          // emojis always work; any custom emojis are advertised in the shared
+          // conversation asset context below. Whether
+          // to react — and how warmly or dryly — is emergent from personality, not
+          // dictated here.
+          conversationSystemPrompt +=
+            '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
           // ── Professor Mari: inject assistant knowledge & commands ──
           const isMariChat = characterIds.includes(PROFESSOR_MARI_ID);
           if (isMariChat) {
@@ -9048,6 +9137,42 @@ export async function generateRoutes(app: FastifyInstance) {
                     },
                   });
                   logger.info('[youtube/conversation] Requested "%s" for chat %s', youtubeCmd.query, input.chatId);
+                }
+
+                if (command.type === "react") {
+                  const reactCmd = command as ReactCommand;
+                  if (chatMode !== "conversation") {
+                    logger.debug("[react/conversation] Ignored react command outside conversation mode");
+                    continue;
+                  }
+                  if (characterId && reactCmd.emoji) {
+                    // React to the user's most recent message — the turn being answered.
+                    const targetId = [...chatMessages].reverse().find((m: any) => m.role === "user")?.id as
+                      | string
+                      | undefined;
+                    if (targetId) {
+                      // Resolve a custom-emoji (:name:) image so the chip renders without
+                      // re-resolving the gallery on the client (same URL form the picker uses).
+                      let imageUrl: string | null = null;
+                      const customName = reactCmd.emoji.match(/^:([a-zA-Z0-9_]+):$/)?.[1];
+                      if (customName) {
+                        const row = await customEmojisStore.getByName(customName);
+                        if (row?.filePath) imageUrl = `/api/custom-emojis/file/${encodeURIComponent(row.filePath)}`;
+                      }
+                      const targetMsg = await chats.getMessage(targetId);
+                      if (targetMsg) {
+                        const ex = parseExtra(targetMsg.extra);
+                        const reactions = addMessageReactor(ex.reactions, reactCmd.emoji, characterId, imageUrl);
+                        await chats.updateMessageExtra(targetId, { reactions });
+                        logger.info(
+                          "[react/conversation] %s reacted with %s on message %s",
+                          characterId,
+                          reactCmd.emoji,
+                          targetId,
+                        );
+                      }
+                    }
+                  }
                 }
 
                 if (command.type === "dm") {

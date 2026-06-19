@@ -45,6 +45,7 @@ import { createRegexScriptsStorage } from "../services/storage/regex-scripts.sto
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { generateMissingConversationSummaries } from "../services/conversation/auto-summary.service.js";
+import { recordUserReaction } from "../services/conversation/autonomous.service.js";
 import { rebuildMemoryChunks } from "../services/memory-recall.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
 import { chatSummaryFingerprintMatches, fingerprintChatSummary } from "../services/prompt/chat-summary-fingerprint.js";
@@ -1311,6 +1312,23 @@ export async function chatsRoutes(app: FastifyInstance) {
       const partial = req.body as Record<string, unknown>;
       const updated = await storage.updateMessageExtra(req.params.messageId, partial);
       if (!updated) return reply.status(404).send({ error: "Message not found" });
+      // A lone user reaction (no text after it) is a valid turn: feed it to the
+      // autonomous-messaging cadence so a character may notice and respond,
+      // time-gated. Only when this update leaves the user with a reaction here
+      // (so removing one's last reaction doesn't count as fresh activity).
+      if (Object.prototype.hasOwnProperty.call(partial, "reactions")) {
+        const next = partial.reactions;
+        const userReacted =
+          Array.isArray(next) &&
+          next.some(
+            (r) =>
+              !!r &&
+              typeof r === "object" &&
+              Array.isArray((r as { by?: unknown }).by) &&
+              (r as { by: unknown[] }).by.includes("user"),
+          );
+        if (userReacted) recordUserReaction(req.params.chatId);
+      }
       if (Object.prototype.hasOwnProperty.call(partial, "hiddenFromAI")) {
         // hiddenFromAI is a message-level prompt-context control, so keep it
         // stable across swipe changes instead of binding it to one swipe.

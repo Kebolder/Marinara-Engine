@@ -13,6 +13,7 @@
 // - [scene: scenario="...", background="...", plan="..."] (initiate a mini-roleplay scene)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
+// - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
 // - [haptic: action="vibrate", intensity=0.5, duration=3] (haptic device feedback)
 // - <influence>text</influence> (OOC influence for connected roleplay, one-shot)
 // - <note>text</note> (durable note for connected roleplay, persists until cleared)
@@ -116,6 +117,12 @@ export interface YouTubeCommand {
   type: "youtube";
   /** YouTube search query to resolve on the client player */
   query: string;
+}
+
+export interface ReactCommand {
+  type: "react";
+  /** The reaction token: a unicode emoji (e.g. "😂") or a custom-emoji ref `:name:`. */
+  emoji: string;
 }
 
 // ── Assistant commands (Professor Mari) ──
@@ -317,6 +324,7 @@ export type CharacterCommand =
   | HapticCommand
   | SpotifyCommand
   | YouTubeCommand
+  | ReactCommand
   | AssistantCommand;
 
 // Param block matcher: any char that isn't `"` or `]`, OR a complete
@@ -336,6 +344,9 @@ const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+// React to the user's latest message. Accepts [react: emoji="😂"], [react: "😂"], or
+// [react: 😂] — and likewise for a custom emoji ref :name:.
+const REACT_RE = /\[react:\s*(?:emoji="([^"\]]+)"|"([^"\]]+)"|([^\]\r\n"]+))\]/gi;
 const DIRECT_MESSAGE_RE = new RegExp(`\\[dm:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const INFLUENCE_RE = /<influence>([\s\S]*?)<\/influence>/gi;
 const NOTE_RE = /<note>([\s\S]*?)<\/note>/gi;
@@ -898,6 +909,12 @@ export function parseCharacterCommands(content: string): {
     }
   }
 
+  // Parse reaction commands — react to the user's latest message with an emoji
+  for (const match of content.matchAll(REACT_RE)) {
+    const emoji = (match[1] ?? match[2] ?? match[3])?.trim();
+    if (emoji) commands.push({ type: "react", emoji });
+  }
+
   // Parse assistant commands (Professor Mari)
   for (const match of content.matchAll(CREATE_PERSONA_RE)) {
     const params = match[1]!;
@@ -1026,6 +1043,7 @@ export function parseCharacterCommands(content: string): {
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")
+    .replace(REACT_RE, "")
     .replace(INFLUENCE_RE, "")
     .replace(NOTE_RE, "")
     .replace(CREATE_PERSONA_RE, "")

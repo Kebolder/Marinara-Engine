@@ -136,6 +136,8 @@ export interface MessageRenderContext {
   onDelete?: (id: string) => void;
   onShowGenerationReplay: () => void;
   onShowThinking: () => void;
+  // reactions — toggle the user's reaction on this message (chip row rendered by the shell)
+  onPickReaction?: (emoji: string, imageUrl: string | null) => void;
   // style
   messageTextStyle: CSSProperties;
   // bubble-specific (ignored by Line/Grouped)

@@ -487,6 +487,16 @@ export interface MessageAttachment {
   galleryId?: string;
 }
 
+/** A reaction on a Conversation message: an emoji token + who reacted. */
+export interface MessageReaction {
+  /** The reaction token: a unicode emoji (e.g. "😂") or a custom-emoji ref ":name:". */
+  emoji: string;
+  /** Resolved image URL for a custom-emoji reaction (snapshot at react time); null/absent for unicode. */
+  imageUrl?: string | null;
+  /** Who reacted: the "user" sentinel for the human, or character ids for bots. */
+  by: string[];
+}
+
 /** Additional data attached to a message. */
 export interface MessageExtra {
   /** Display-formatted text (may differ from raw content) */
@@ -499,6 +509,8 @@ export interface MessageExtra {
   generationInfo: GenerationInfo | null;
   /** User-uploaded or generated attachments associated with this message. */
   attachments?: MessageAttachment[] | null;
+  /** Conversation-mode reactions on this message (emoji/custom-emoji + who reacted). */
+  reactions?: MessageReaction[] | null;
   /** When true, this message marks the "new start" of the conversation — all earlier messages are excluded from context */
   isConversationStart?: boolean;
   /** Model's reasoning/thinking content (if available) */

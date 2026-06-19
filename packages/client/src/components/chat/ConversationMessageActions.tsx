@@ -17,6 +17,7 @@ import {
 import type { MessageExtra } from "@marinara-engine/shared";
 import { cn } from "../../lib/utils";
 import { MsgAction } from "./ConversationMessageShared";
+import { ReactionAddButton } from "./ReactionAddButton";
 
 export interface ConversationMessageActionsProps {
   // Positioning
@@ -47,6 +48,8 @@ export interface ConversationMessageActionsProps {
   onDelete?: () => void;
   onShowGenerationReplay: () => void;
   onShowThinking: () => void;
+  /** Toggle the user's reaction with the picked emoji; omit to hide the add-reaction button. */
+  onPickReaction?: (emoji: string, imageUrl: string | null) => void;
 }
 
 export function ConversationMessageActions({
@@ -73,6 +76,7 @@ export function ConversationMessageActions({
   onDelete,
   onShowGenerationReplay,
   onShowThinking,
+  onPickReaction,
 }: ConversationMessageActionsProps) {
   const visible = showActions || forceShowActions;
   const tabIdx = visible ? undefined : -1;
@@ -88,6 +92,7 @@ export function ConversationMessageActions({
       aria-hidden={!visible}
     >
       <MsgAction icon={copied ? "✓" : <Copy size="0.75rem" />} onClick={onCopy} title="Copy" tabIndex={tabIdx} />
+      {onPickReaction && <ReactionAddButton onPick={onPickReaction} tabIndex={tabIdx} />}
       <MsgAction
         icon={<Languages size="0.75rem" />}
         onClick={onTranslate}

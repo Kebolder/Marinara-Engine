@@ -7,7 +7,7 @@ import { useState, useCallback, useRef, useEffect, memo, useMemo, type CSSProper
 import { createPortal } from "react-dom";
 import { Brain, Trash2, X } from "lucide-react";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import { formatTextQuotes, type Message } from "@marinara-engine/shared";
+import { formatTextQuotes, type Message, type MessageReaction } from "@marinara-engine/shared";
 import { toast } from "sonner";
 import { useUIStore, type ConversationMessageStyle } from "../../stores/ui.store";
 import { cn, copyToClipboard, getAvatarCropStyle, parseAvatarCropJson } from "../../lib/utils";
@@ -30,6 +30,8 @@ import { ConversationMessageActions } from "./ConversationMessageActions";
 import { ConversationMessageGrouped } from "./ConversationMessageGrouped";
 import { ConversationMessageBubble } from "./ConversationMessageBubble";
 import { ConversationMessageLine } from "./ConversationMessageLine";
+import { MessageReactions } from "./MessageReactions";
+import { toggleReaction, USER_REACTOR } from "../../lib/reactions";
 
 const EMPTY_CUSTOM_EMOJI_MAP = new Map<string, string>();
 const EMPTY_CUSTOM_STICKER_MAP = new Map<string, string>();
@@ -160,6 +162,10 @@ export const ConversationMessage = memo(function ConversationMessage({
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
   const canRegenerate = !isUser || generationReplay !== null;
   const thinking = extra?.thinking as string | null | undefined;
+  const reactions = useMemo<MessageReaction[]>(
+    () => (Array.isArray(extra.reactions) ? extra.reactions : []),
+    [extra.reactions],
+  );
 
   // ── Character / persona resolution ──
   const scopedCharacterMap = useMemo(() => {
@@ -291,6 +297,46 @@ export const ConversationMessage = memo(function ConversationMessage({
       }
     },
     [extra.attachments, message.chatId, message.id, qc],
+  );
+
+  // ── Reactions ──
+  // Toggle the human's reaction on this message; optimistic, then PATCH extra
+  // (mirrors handleRemoveAttachment). Character reactions are applied server-side.
+  const handleToggleReaction = useCallback(
+    async (emoji: string, imageUrl: string | null) => {
+      const next = toggleReaction(reactions, emoji, USER_REACTOR, imageUrl);
+      const msgKey = chatKeys.messages(message.chatId);
+      const previous = qc.getQueryData<InfiniteData<Message[]>>(msgKey);
+      qc.setQueryData<InfiniteData<Message[]>>(msgKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          pages: old.pages.map((page) =>
+            page.map((m) => {
+              if (m.id !== message.id) return m;
+              const ex = typeof m.extra === "string" ? JSON.parse(m.extra) : (m.extra ?? {});
+              return { ...m, extra: { ...ex, reactions: next } } as Message;
+            }),
+          ),
+        };
+      });
+      try {
+        await api.patch(`/chats/${message.chatId}/messages/${message.id}/extra`, { reactions: next });
+      } catch (err) {
+        qc.setQueryData(msgKey, previous);
+        toast.error(err instanceof Error ? err.message : "Failed to update reaction.");
+      } finally {
+        await qc.invalidateQueries({ queryKey: msgKey });
+      }
+    },
+    [reactions, message.chatId, message.id, qc],
+  );
+
+  // Resolve a reactor id to a display name for the chip tooltips.
+  const resolveReactorName = useCallback(
+    (reactorId: string) =>
+      reactorId === USER_REACTOR ? "You" : (scopedCharacterMap?.get(reactorId)?.name ?? "Someone"),
+    [scopedCharacterMap],
   );
 
   // ── Speaker-segment parsing (for grouped / group-in-bubble) ──
@@ -589,12 +635,29 @@ export const ConversationMessage = memo(function ConversationMessage({
     onDelete,
     onShowGenerationReplay: () => setShowGenerationReplay(true),
     onShowThinking: () => setShowThinking(true),
+    onPickReaction: handleToggleReaction,
     messageTextStyle,
     isBubbleStyle,
     bubbleGroupPosition,
     bubbleCornerClass,
     shouldHideUserAvatar,
   };
+
+  // ── Reaction chip row ──
+  // Rendered by the shell as a sibling of the message row, OUTSIDE the
+  // [data-card-css] container, so a character's bubble theme can't restyle it.
+  // Indented to sit under the message body; right-aligned for user bubbles.
+  const reactionRow =
+    reactions.length > 0 && !isHiddenCollapsed ? (
+      <div
+        className={cn(
+          "mari-message-reactions-row pb-1",
+          isBubbleStyle && isUser ? "flex justify-end px-4" : "pl-[4.5rem] pr-4",
+        )}
+      >
+        <MessageReactions reactions={reactions} resolveReactorName={resolveReactorName} onToggle={handleToggleReaction} />
+      </div>
+    ) : null;
 
   // ── Shared modals (portals, rendered outside the layout) ──
   const modals = (
@@ -690,6 +753,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     return (
       <>
         <ConversationMessageGrouped ctx={ctx} msgRef={msgRef} />
+        {reactionRow}
         {modals}
       </>
     );
@@ -749,9 +813,11 @@ export const ConversationMessage = memo(function ConversationMessage({
             onDelete={onDelete ? () => onDelete(message.id) : undefined}
             onShowGenerationReplay={() => setShowGenerationReplay(true)}
             onShowThinking={() => setShowThinking(true)}
+            onPickReaction={handleToggleReaction}
           />
         )}
       </div>
+      {reactionRow}
       {modals}
     </>
   );
