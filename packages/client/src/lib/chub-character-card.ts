@@ -27,7 +27,17 @@ function hasCharacterBookEntries(value: unknown): boolean {
 }
 
 function setStringField(target: Record<string, unknown>, field: string, value: string | undefined) {
-  if (value !== undefined) target[field] = value;
+  if (value !== undefined && value.trim()) target[field] = value;
+}
+
+function hasStringField(target: Record<string, unknown>, field: string) {
+  const value = target[field];
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function hasStringArrayField(target: Record<string, unknown>, field: string) {
+  const value = target[field];
+  return Array.isArray(value) && value.some((item) => typeof item === "string" && item.trim().length > 0);
 }
 
 function getCharacterDataTarget(raw: Record<string, unknown>) {
@@ -62,10 +72,12 @@ export function mergeChubDetailIntoCharacterJson(
   setStringField(target, "post_history_instructions", detail.postHistoryInstructions);
   setStringField(target, "character_version", detail.characterVersion);
 
-  if (summary.name) target.name = summary.name;
-  if (summary.creator !== undefined) target.creator = summary.creator;
-  if (summary.tags) target.tags = summary.tags;
-  if (detail.alternateGreetings) target.alternate_greetings = detail.alternateGreetings;
+  if (!hasStringField(target, "name") && summary.name?.trim()) target.name = summary.name;
+  if (!hasStringField(target, "creator") && summary.creator?.trim()) target.creator = summary.creator;
+  if (!hasStringArrayField(target, "tags") && summary.tags && summary.tags.length > 0) target.tags = summary.tags;
+  if (detail.alternateGreetings && detail.alternateGreetings.length > 0) {
+    target.alternate_greetings = detail.alternateGreetings;
+  }
 
   if (detail.extensions) {
     const currentExtensions =

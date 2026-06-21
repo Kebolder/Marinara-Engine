@@ -185,11 +185,13 @@ function attachEmbeddedLorebookToCharacterJson(raw: Record<string, unknown>, emb
 }
 
 function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function optionalStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String) : [];
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.map(String).filter((item) => item.trim().length > 0);
+  return values.length > 0 ? values : undefined;
 }
 
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {
@@ -696,11 +698,15 @@ const jannyProvider: ProviderConfig = {
         scenario: (char.scenario as string) || undefined,
         firstMessage: (char.firstMessage as string) || undefined,
         exampleDialogs: (char.exampleDialogs as string) || undefined,
+        alternateGreetings: optionalStringArray(char.alternateGreetings ?? char.alternate_greetings),
         creatorNotes: char.description
           ? typeof char.description === "string"
             ? char.description.replace(/<[^>]*>/g, "").trim()
             : undefined
           : undefined,
+        systemPrompt: optionalString(char.systemPrompt ?? char.system_prompt),
+        postHistoryInstructions: optionalString(char.postHistoryInstructions ?? char.post_history_instructions),
+        characterVersion: optionalString(char.characterVersion ?? char.character_version),
       };
     };
 
@@ -934,6 +940,16 @@ const pygmalionProvider: ProviderConfig = {
       firstMessage: p.greeting || undefined,
       exampleDialogs: p.mesExample || undefined,
       creatorNotes: p.characterNotes || undefined,
+      systemPrompt: optionalString(p.systemPrompt ?? p.system_prompt ?? char.systemPrompt ?? char.system_prompt),
+      postHistoryInstructions: optionalString(
+        p.postHistoryInstructions ??
+          p.post_history_instructions ??
+          char.postHistoryInstructions ??
+          char.post_history_instructions,
+      ),
+      characterVersion: optionalString(
+        p.characterVersion ?? p.character_version ?? char.characterVersion ?? char.character_version,
+      ),
       alternateGreetings: Array.isArray(p.alternateGreetings) ? p.alternateGreetings.filter(Boolean) : [],
     };
   },
@@ -1040,6 +1056,9 @@ const wyvernProvider: ProviderConfig = {
       firstMessage: c.first_mes || undefined,
       exampleDialogs: c.mes_example || undefined,
       creatorNotes: c.creator_notes || undefined,
+      systemPrompt: optionalString(c.systemPrompt ?? c.system_prompt),
+      postHistoryInstructions: optionalString(c.postHistoryInstructions ?? c.post_history_instructions),
+      characterVersion: optionalString(c.characterVersion ?? c.character_version),
       alternateGreetings: Array.isArray(c.alternate_greetings) ? c.alternate_greetings.filter(Boolean) : [],
       hasLorebook: !!(c.lorebooks?.length > 0),
     };
@@ -1248,6 +1267,9 @@ const datacatProvider: ProviderConfig = {
             firstMessage: d.first_mes || undefined,
             exampleDialogs: d.mes_example || undefined,
             creatorNotes: d.creator_notes || undefined,
+            systemPrompt: optionalString(d.systemPrompt ?? d.system_prompt),
+            postHistoryInstructions: optionalString(d.postHistoryInstructions ?? d.post_history_instructions),
+            characterVersion: optionalString(d.characterVersion ?? d.character_version),
             alternateGreetings: Array.isArray(d.alternate_greetings) ? d.alternate_greetings.filter(Boolean) : [],
           };
         }
@@ -1268,6 +1290,9 @@ const datacatProvider: ProviderConfig = {
         scenario: c.scenario || undefined,
         firstMessage: c.first_message || undefined,
         creatorNotes: plainDesc || undefined,
+        systemPrompt: optionalString(c.systemPrompt ?? c.system_prompt),
+        postHistoryInstructions: optionalString(c.postHistoryInstructions ?? c.post_history_instructions),
+        characterVersion: optionalString(c.characterVersion ?? c.character_version),
       };
     } catch {
       return null;
@@ -1589,6 +1614,9 @@ export function BotBrowserView() {
           first_mes: cardDetail?.firstMessage || "",
           mes_example: cardDetail?.exampleDialogs || "",
           creator_notes: cardDetail?.creatorNotes || "",
+          system_prompt: cardDetail?.systemPrompt || "",
+          post_history_instructions: cardDetail?.postHistoryInstructions || "",
+          character_version: cardDetail?.characterVersion || "",
           tags: card.tags,
           creator: card.creator,
           alternate_greetings: cardDetail?.alternateGreetings || [],
@@ -2730,6 +2758,9 @@ function DetailView({
         first_mes: d?.firstMessage || "",
         mes_example: d?.exampleDialogs || "",
         creator_notes: d?.creatorNotes || "",
+        system_prompt: d?.systemPrompt || "",
+        post_history_instructions: d?.postHistoryInstructions || "",
+        character_version: d?.characterVersion || "",
         tags: card.tags || [],
         creator: card.creator || "",
         alternate_greetings: d?.alternateGreetings || [],
@@ -2986,11 +3017,11 @@ async function buildCharacterCardPng(avatarUrl: string, charData: Record<string,
       first_mes: charData.first_mes || "",
       mes_example: charData.mes_example || "",
       creator_notes: charData.creator_notes || "",
-      system_prompt: "",
-      post_history_instructions: "",
+      system_prompt: charData.system_prompt || "",
+      post_history_instructions: charData.post_history_instructions || "",
       tags: charData.tags || [],
       creator: charData.creator || "",
-      character_version: "",
+      character_version: charData.character_version || "",
       alternate_greetings: charData.alternate_greetings || [],
       extensions: charData.extensions || {},
     },
