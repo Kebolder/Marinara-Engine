@@ -3602,7 +3602,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         const builtInAgentTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
         const userMessagesSinceLastAgentRun = async (agentType: string) => {
-          const lastRun = await agentsStore.getLastRunByType(agentType, input.chatId);
+          const lastRun = await agentsStore.getLastSuccessfulRunByType(agentType, input.chatId);
           if (!lastRun) return Number.POSITIVE_INFINITY;
 
           const lastRunIdx = allChatMessages.findIndex((message: any) => message.id === lastRun.messageId);
