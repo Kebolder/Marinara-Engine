@@ -47,6 +47,7 @@ interface STWorldInfoEntry {
   delay?: number | null;
   ephemeral?: number | null;
   vectorized?: boolean;
+  excludeFromVectorization?: boolean;
   regex?: boolean;
   useRegex?: boolean;
   preventRecursion?: boolean;
@@ -430,21 +431,16 @@ export async function importSTLorebook(
     const entryUsesRegex = Boolean(entry.useRegex ?? entry.regex ?? false);
     const resolvedUseRegex =
       entryUsesRegex || hasSlashDelimitedRegex(rawResolvedKeys) || hasSlashDelimitedRegex(rawResolvedSecondaryKeys);
-    const vectorizedOnly = entry.vectorized === true;
-    const resolvedKeys = vectorizedOnly
-      ? []
-      : normalizeRegexKeys(rawResolvedKeys, {
-          useRegex: resolvedUseRegex,
-          entryUsesRegex,
-          matchWholeWords: resolvedMatchWholeWords,
-        });
-    const resolvedSecondaryKeys = vectorizedOnly
-      ? []
-      : normalizeRegexKeys(rawResolvedSecondaryKeys, {
-          useRegex: resolvedUseRegex,
-          entryUsesRegex,
-          matchWholeWords: resolvedMatchWholeWords,
-        });
+    const resolvedKeys = normalizeRegexKeys(rawResolvedKeys, {
+      useRegex: resolvedUseRegex,
+      entryUsesRegex,
+      matchWholeWords: resolvedMatchWholeWords,
+    });
+    const resolvedSecondaryKeys = normalizeRegexKeys(rawResolvedSecondaryKeys, {
+      useRegex: resolvedUseRegex,
+      entryUsesRegex,
+      matchWholeWords: resolvedMatchWholeWords,
+    });
     const sanitizedContent = normalizeString(entry.content);
     const sanitizedDescription = normalizeString(entry.description);
 
@@ -482,6 +478,7 @@ export async function importSTLorebook(
       preventRecursion: Boolean(entry.preventRecursion ?? false),
       excludeRecursion: Boolean(entry.excludeRecursion ?? false),
       delayUntilRecursion: Boolean(entry.delayUntilRecursion ?? false),
+      excludeFromVectorization: entry.vectorized === false ? true : entry.excludeFromVectorization === true,
       locked: Boolean(entry.locked ?? false),
     };
 

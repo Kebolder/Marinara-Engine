@@ -165,9 +165,11 @@ function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Arr
       cooldown: entry.cooldown ?? null,
       delay: entry.delay ?? null,
       useRegex: entry.useRegex === true,
+      regex: entry.useRegex === true,
       preventRecursion: entry.preventRecursion === true,
       excludeRecursion: entry.excludeRecursion === true,
       delayUntilRecursion: entry.delayUntilRecursion === true,
+      vectorized: entry.excludeFromVectorization !== true,
     };
   });
 
