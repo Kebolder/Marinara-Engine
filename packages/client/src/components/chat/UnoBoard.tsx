@@ -38,6 +38,22 @@ function cardGlyph(card: UnoCard): string {
   return VALUE_LABEL[card.value] ?? card.value;
 }
 
+// Spoken card names for screen readers (the glyphs above aren't announced well).
+const VALUE_NAME: Record<string, string> = {
+  skip: "Skip",
+  reverse: "Reverse",
+  draw2: "Draw Two",
+  wild: "Wild",
+  wild4: "Wild Draw Four",
+};
+
+function cardName(card: UnoCard): string {
+  const value = VALUE_NAME[card.value] ?? card.value;
+  if (card.color === "wild") return value;
+  const color = card.color.charAt(0).toUpperCase() + card.color.slice(1);
+  return `${color} ${value}`;
+}
+
 function cardFill(card: UnoCard): string {
   return card.color === "wild" ? WILD_GRADIENT : CARD_FILL[card.color as UnoColor];
 }
@@ -169,6 +185,7 @@ export function UnoBoard({ chatId }: Props) {
             }}
             className="rounded p-1 text-[var(--muted-foreground)] hover:bg-[var(--muted)] active:scale-90"
             title="End game"
+            aria-label="End game"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -265,6 +282,7 @@ export function UnoBoard({ chatId }: Props) {
                       : "cursor-default opacity-45 saturate-50"
                   }`}
                   title={actionable ? "Play" : ""}
+                  aria-label={`${cardName(entry.card)}${actionable ? ", playable" : ""}`}
                 >
                   <CardFace card={entry.card} />
                 </button>
@@ -322,6 +340,7 @@ export function UnoBoard({ chatId }: Props) {
                   className="h-6 w-6 rounded-full ring-1 ring-black/20 transition-transform hover:scale-110"
                   style={{ background: CARD_FILL[color] }}
                   title={color}
+                  aria-label={`Choose ${color}`}
                 />
               ))}
             </>
@@ -352,6 +371,7 @@ export function UnoBoard({ chatId }: Props) {
             type="button"
             onClick={() => setPending(null)}
             className="ml-auto text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            aria-label="Close chooser"
           >
             <X className="h-3.5 w-3.5" />
           </button>

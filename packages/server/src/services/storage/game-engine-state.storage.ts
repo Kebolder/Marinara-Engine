@@ -112,17 +112,19 @@ export function createGameEngineStateStorage(db: DB) {
 
     /** Create a snapshot, replacing any prior one for the same (message, swipe). */
     async create(input: CreateGameEngineStateInput) {
-      if (input.messageId) {
-        await db
-          .delete(gameEngineState)
-          .where(
-            and(
-              eq(gameEngineState.messageId, input.messageId),
-              eq(gameEngineState.swipeIndex, input.swipeIndex),
-              eq(gameEngineState.chatId, input.chatId),
-            ),
-          );
-      }
+      // Dedupe unconditionally — including the empty-message live anchor
+      // (messageId === ""). Otherwise repeated live-row writes (e.g. the
+      // bot-turn persistence-failure fallback, which re-creates with
+      // messageId "") accumulate rows for (chatId, "", swipeIndex) unbounded.
+      await db
+        .delete(gameEngineState)
+        .where(
+          and(
+            eq(gameEngineState.messageId, input.messageId),
+            eq(gameEngineState.swipeIndex, input.swipeIndex),
+            eq(gameEngineState.chatId, input.chatId),
+          ),
+        );
       const id = newId();
       await db.insert(gameEngineState).values({
         id,
