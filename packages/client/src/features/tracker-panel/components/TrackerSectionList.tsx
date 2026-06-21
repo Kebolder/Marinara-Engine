@@ -90,12 +90,17 @@ export function TrackerSectionList({
     gameStateRefreshing,
   });
 
-  const playerStats = currentGameState.playerStats ?? null;
-  const personaStats = currentGameState.personaStats ?? [];
-  const presentCharacters = currentGameState.presentCharacters ?? [];
-  const inventory = playerStats?.inventory ?? [];
-  const quests = playerStats?.activeQuests ?? [];
-  const customFields = playerStats?.customTrackerFields ?? [];
+  const playerStats =
+    currentGameState.playerStats &&
+    typeof currentGameState.playerStats === "object" &&
+    !Array.isArray(currentGameState.playerStats)
+      ? currentGameState.playerStats
+      : null;
+  const personaStats = Array.isArray(currentGameState.personaStats) ? currentGameState.personaStats : [];
+  const presentCharacters = Array.isArray(currentGameState.presentCharacters) ? currentGameState.presentCharacters : [];
+  const inventory = Array.isArray(playerStats?.inventory) ? playerStats.inventory : [];
+  const quests = Array.isArray(playerStats?.activeQuests) ? playerStats.activeQuests : [];
+  const customFields = Array.isArray(playerStats?.customTrackerFields) ? playerStats.customTrackerFields : [];
   const {
     addCharacter,
     addInventoryItem,

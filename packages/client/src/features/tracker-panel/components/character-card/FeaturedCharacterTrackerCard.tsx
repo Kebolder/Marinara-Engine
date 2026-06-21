@@ -115,7 +115,7 @@ export function FeaturedCharacterTrackerCard({
   const thoughtControlRef = useRef<HTMLButtonElement | null>(null);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
   const customFields = Object.entries(character.customFields ?? {});
-  const characterStats = character.stats ?? [];
+  const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasEditableStatAdd = !!onUpdate && addMode;
   const featuredStatColumnHeightRem =
     trackerPanelSizeProfile === "expanded"

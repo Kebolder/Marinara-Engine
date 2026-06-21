@@ -232,7 +232,7 @@ export function parseTemperatureValue(temperature: string | null | undefined) {
   const match = (temperature ?? "").match(/-?\d+(\.\d+)?/);
   if (!match) return null;
   const numeric = parseFloat(match[0]!);
-  if (/°?\s*f/i.test(temperature ?? "")) return (numeric - 32) * (5 / 9);
+  if (/-?\d+(?:\.\d+)?\s*°?\s*f(?:ahrenheit)?\b/i.test(temperature ?? "")) return (numeric - 32) * (5 / 9);
   return numeric;
 }
 

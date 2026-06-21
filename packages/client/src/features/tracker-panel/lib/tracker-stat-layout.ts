@@ -48,7 +48,14 @@ export function getTrackerStatDisplayScale(
   return statCount + (includeAdd ? 1 : 0) <= 4 ? "spacious" : "roomy";
 }
 
+export function coerceStatNumber(value: unknown, fallback = 0) {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 export function getStatPercent(stat: CharacterStat) {
-  if (!Number.isFinite(stat.max) || stat.max <= 0) return 0;
-  return Math.max(0, Math.min(100, (stat.value / stat.max) * 100));
+  const max = coerceStatNumber(stat.max);
+  if (max <= 0) return 0;
+  const value = coerceStatNumber(stat.value);
+  return Math.max(0, Math.min(100, (value / max) * 100));
 }

@@ -3,6 +3,7 @@ import { Pencil, Plus } from "lucide-react";
 import { cn } from "../../../../lib/utils";
 import { TRACKER_TEXT_MICRO } from "../../lib/tracker-panel.constants";
 import { getNumberValueWidth } from "../../lib/tracker-display";
+import { coerceStatNumber } from "../../lib/tracker-stat-layout";
 
 export function FittedText({
   children,
@@ -313,7 +314,8 @@ export function InlineNumber({
   lockMode?: boolean;
   onToggleLock?: () => void;
 }) {
-  const width = getNumberValueWidth(value);
+  const numericValue = coerceStatNumber(value);
+  const width = getNumberValueWidth(numericValue);
 
   if (lockMode && onToggleLock) {
     return (
@@ -333,7 +335,7 @@ export function InlineNumber({
           "[@media(pointer:coarse)]:min-h-[1.75rem]",
         )}
       >
-        <span>{Number.isFinite(value) ? value : 0}</span>
+        <span>{numericValue}</span>
       </button>
     );
   }
@@ -341,7 +343,7 @@ export function InlineNumber({
   return (
     <input
       type="number"
-      value={Number.isFinite(value) ? value : 0}
+      value={numericValue}
       onChange={(event) => {
         const numeric = Number(event.target.value);
         const next = Number.isFinite(numeric) ? numeric : 0;

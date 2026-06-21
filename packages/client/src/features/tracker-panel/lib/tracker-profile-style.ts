@@ -325,9 +325,10 @@ export function getCharacterAmbienceStyle(
   character: PresentCharacter,
   profileColors?: TrackerProfileColors | null,
 ): CSSProperties {
+  const stats = Array.isArray(character.stats) ? character.stats : [];
   const palette = getTrackerProfilePalette(
     profileColors,
-    getSolidCssColor(character.stats?.find((stat) => stat.color)?.color) ?? DEFAULT_TRACKER_CARD_ACCENT,
+    getSolidCssColor(stats.find((stat) => stat.color)?.color) ?? DEFAULT_TRACKER_CARD_ACCENT,
   );
   const finish = getTrackerCardSkinFinish(palette.finish);
   const surfaceOpacity = palette.hasSurfacePaint ? palette.opacity.boxColorOpacity : 0;

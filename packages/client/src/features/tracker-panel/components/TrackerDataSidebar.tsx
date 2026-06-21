@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from "react";
+import { Component, useCallback, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { normalizeTrackerFieldLocksForState, toggleTrackerFieldLock } from "@marinara-engine/shared";
 import { TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR, useUIStore } from "../../../stores/ui.store";
 import { useChatStore } from "../../../stores/chat.store";
@@ -17,6 +17,34 @@ import { TrackerLockProvider } from "./TrackerLockContext";
 const TRACKER_PANEL_NEUTRAL_VARS =
   "[--accent:rgb(39_39_42)] [--accent-foreground:rgb(244_244_245)] [--background:rgb(18_18_21)] [--border:rgb(63_63_70)] [--card:rgb(24_24_27)] [--foreground:rgb(244_244_245)] [--input:rgb(63_63_70)] [--muted:rgb(39_39_42)] [--muted-foreground:rgb(161_161_170)] [--popover:rgb(24_24_27)] [--popover-foreground:rgb(244_244_245)] [--primary:rgb(212_212_216)] [--primary-foreground:rgb(18_18_21)] [--ring:rgb(161_161_170)] [--secondary:rgb(39_39_42)] [--tracker-panel-card-background:color-mix(in_srgb,var(--background)_22%,transparent)] [--tracker-panel-section-background:color-mix(in_srgb,var(--card)_6%,transparent)]";
 type TrackerPanelSurfaceStyle = CSSProperties & Record<`--${string}`, string>;
+
+class TrackerPanelErrorBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("[TrackerPanel]", error, info);
+  }
+
+  componentDidUpdate(previousProps: Readonly<{ children: ReactNode; resetKey: string }>) {
+    if (this.state.hasError && previousProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <EmptySection>Tracker data could not be rendered.</EmptySection>;
+    }
+    return this.props.children;
+  }
+}
 
 export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolean } = {}) {
   const activeChatId = useChatStore((s) => s.activeChatId);
@@ -122,34 +150,36 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
 
         <div className={cn("relative z-10", fillHeight && "min-h-0 flex-1 overflow-y-auto")}>
           {showTrackerSections ? (
-            <TrackerSectionList
-              activeChatId={activeChatId}
-              activePersona={activePersona}
-              autoGenerateCharacterAvatars={autoGenerateCharacterAvatars}
-              characterSpriteLookup={characterSpriteLookup}
-              characterTrackerConfig={characterTrackerConfig}
-              characterTrackerSettings={characterTrackerSettings}
-              currentGameState={currentGameState}
-              enabledAgentTypes={enabledAgentTypes}
-              expressionSpritesEnabled={expressionSpritesEnabled}
-              featuredCharacterCardKeys={featuredCharacterCardKeys}
-              flushPatch={flushPatch}
-              gameStateRefreshing={gameStateRefreshing}
-              orderedTrackerSections={orderedTrackerSections}
-              patchField={patchField}
-              patchPlayerStats={patchPlayerStats}
-              resolveSpriteCharacterId={resolveSpriteCharacterId}
-              spriteExpressions={spriteExpressions}
-              trackerPanelCollapsedSections={trackerPanelCollapsedSections}
-              trackerPanelSide={trackerPanelSide}
-              trackerPanelSizeProfile={trackerPanelSizeProfile}
-              trackerPanelThoughtBubbleDisplay={trackerPanelThoughtBubbleDisplay}
-              trackerPanelDockedThoughtsAlwaysVisible={trackerPanelDockedThoughtsAlwaysVisible}
-              trackerTemperatureUnit={trackerTemperatureUnit}
-              toggleTrackerPanelSectionCollapsed={toggleTrackerPanelSectionCollapsed}
-              deleteMode={deleteMode}
-              addMode={addMode}
-            />
+            <TrackerPanelErrorBoundary resetKey={`${activeChatId}:${currentGameState.id}:${currentGameState.createdAt}`}>
+              <TrackerSectionList
+                activeChatId={activeChatId}
+                activePersona={activePersona}
+                autoGenerateCharacterAvatars={autoGenerateCharacterAvatars}
+                characterSpriteLookup={characterSpriteLookup}
+                characterTrackerConfig={characterTrackerConfig}
+                characterTrackerSettings={characterTrackerSettings}
+                currentGameState={currentGameState}
+                enabledAgentTypes={enabledAgentTypes}
+                expressionSpritesEnabled={expressionSpritesEnabled}
+                featuredCharacterCardKeys={featuredCharacterCardKeys}
+                flushPatch={flushPatch}
+                gameStateRefreshing={gameStateRefreshing}
+                orderedTrackerSections={orderedTrackerSections}
+                patchField={patchField}
+                patchPlayerStats={patchPlayerStats}
+                resolveSpriteCharacterId={resolveSpriteCharacterId}
+                spriteExpressions={spriteExpressions}
+                trackerPanelCollapsedSections={trackerPanelCollapsedSections}
+                trackerPanelSide={trackerPanelSide}
+                trackerPanelSizeProfile={trackerPanelSizeProfile}
+                trackerPanelThoughtBubbleDisplay={trackerPanelThoughtBubbleDisplay}
+                trackerPanelDockedThoughtsAlwaysVisible={trackerPanelDockedThoughtsAlwaysVisible}
+                trackerTemperatureUnit={trackerTemperatureUnit}
+                toggleTrackerPanelSectionCollapsed={toggleTrackerPanelSectionCollapsed}
+                deleteMode={deleteMode}
+                addMode={addMode}
+              />
+            </TrackerPanelErrorBoundary>
           ) : null}
 
           {!activeChatId ? (

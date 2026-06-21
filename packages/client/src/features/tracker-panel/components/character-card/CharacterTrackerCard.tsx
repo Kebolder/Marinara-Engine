@@ -190,7 +190,7 @@ export function CharacterTrackerCard({
   }
 
   const customFields = Object.entries(character.customFields ?? {});
-  const characterStats = character.stats ?? [];
+  const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasDeleteAction = !!onRemove && deleteMode;
   const avatarMedia = characterPicture ?? character.avatarPath ?? null;
   const compactAvatarUpload = characterPicture ? undefined : onUploadAvatar;

@@ -37,6 +37,7 @@ import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { useAgentConfigs, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { ROLEPLAY_POPOVER_HEADER, ROLEPLAY_POPOVER_TITLE } from "./roleplay-popover-styles";
+import { coerceStatNumber, getStatPercent } from "../../features/tracker-panel/lib/tracker-stat-layout";
 import type {
   CharacterStat,
   CustomTrackerField,
@@ -501,7 +502,7 @@ export function CombinedPlayerPanel({
                       onToggleLock={thoughtsLock.onToggle}
                     />
                   </div>
-                  {char.stats?.length > 0 && (
+                  {Array.isArray(char.stats) && char.stats.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                       {char.stats.map((stat, statIndex) => {
                         const valueLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "value", statIndex));
@@ -511,12 +512,12 @@ export function CombinedPlayerPanel({
                             key={stat.name}
                             stat={stat}
                             onUpdateValue={(value) => {
-                              const next = [...(char.stats ?? [])];
+                              const next = Array.isArray(char.stats) ? [...char.stats] : [];
                               next[statIndex] = { ...next[statIndex]!, value };
                               updateCharacter(idx, { ...char, stats: next });
                             }}
                             onUpdateMax={(value) => {
-                              const next = [...(char.stats ?? [])];
+                              const next = Array.isArray(char.stats) ? [...char.stats] : [];
                               next[statIndex] = { ...next[statIndex]!, max: value };
                               updateCharacter(idx, { ...char, stats: next });
                             }}
@@ -1021,7 +1022,7 @@ export function CharactersPanel({
                 onToggleLock={thoughtsLock.onToggle}
               />
             </div>
-            {char.stats?.length > 0 && (
+            {Array.isArray(char.stats) && char.stats.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                 {char.stats.map((stat, statIndex) => {
                   const valueLock = lockFor(characterStatTrackerLockKey(char, idx, stat, "value", statIndex));
@@ -1031,12 +1032,12 @@ export function CharactersPanel({
                       key={stat.name}
                       stat={stat}
                       onUpdateValue={(value) => {
-                        const next = [...(char.stats ?? [])];
+                        const next = Array.isArray(char.stats) ? [...char.stats] : [];
                         next[statIndex] = { ...next[statIndex]!, value };
                         updateCharacter(idx, { ...char, stats: next });
                       }}
                       onUpdateMax={(value) => {
-                        const next = [...(char.stats ?? [])];
+                        const next = Array.isArray(char.stats) ? [...char.stats] : [];
                         next[statIndex] = { ...next[statIndex]!, max: value };
                         updateCharacter(idx, { ...char, stats: next });
                       }}
@@ -1809,7 +1810,9 @@ function StatBarEditable({
   onToggleMaxLock?: () => void;
 }) {
   const { lockMode } = useTrackerLockContext();
-  const pct = stat.max > 0 ? Math.min(100, Math.max(0, (stat.value / stat.max) * 100)) : 0;
+  const pct = getStatPercent(stat);
+  const value = coerceStatNumber(stat.value);
+  const max = coerceStatNumber(stat.max);
   const removeButton = onRemove ? (
     <button
       type="button"
@@ -1845,7 +1848,7 @@ function StatBarEditable({
         <div className="group/field flex items-center gap-0.5 shrink-0 text-[0.5625rem] text-[var(--muted-foreground)]/60">
           <input
             type="number"
-            value={stat.value}
+            value={value}
             onChange={(e) => onUpdateValue(Number(e.target.value))}
             className={cn(
               "w-12 rounded bg-transparent text-right outline-none text-[var(--foreground)]/80 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
@@ -1856,7 +1859,7 @@ function StatBarEditable({
           <span>/</span>
           <input
             type="number"
-            value={stat.max}
+            value={max}
             onChange={(e) => onUpdateMax(Number(e.target.value))}
             className={cn(
               "w-12 rounded bg-transparent outline-none text-[var(--foreground)]/80 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
