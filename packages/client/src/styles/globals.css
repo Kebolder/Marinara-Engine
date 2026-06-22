@@ -890,7 +890,7 @@
 
 .mari-topbar .mari-topbar-accent-icon {
   color: var(--marinara-chat-chrome-button-text-active);
-  stroke: currentColor;
+  stroke: currentcolor;
 }
 
 .mari-topbar-chat-gradient-underline {
@@ -1191,8 +1191,10 @@
   background: var(--marinara-chat-chrome-surface-bg-hover);
 }
 
-[data-marinara-chat-chrome-accent-mode="gradient"] .mari-chrome-control--selected:not(.mari-chat-mode-action),
-[data-marinara-chat-chrome-accent-mode="gradient"] .mari-chrome-control[aria-pressed="true"]:not(.mari-chat-mode-action) {
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control--selected:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button),
+[data-marinara-chat-chrome-accent-mode="gradient"]
+  .mari-chrome-control[aria-pressed="true"]:not(.mari-chrome-control--danger):not(.mari-chat-mode-action):not(.mari-panel-gradient-button) {
   border-color: var(--marinara-chat-chrome-button-border-active);
   background: var(--marinara-chat-chrome-surface-bg-active);
   color: var(--marinara-chat-chrome-button-text-active);
