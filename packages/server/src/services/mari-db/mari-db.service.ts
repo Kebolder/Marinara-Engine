@@ -416,6 +416,23 @@ function tryParseJsonColumn(row: Row, key: string): unknown {
   }
 }
 
+function parseRequiredJsonObjectInput(rawJson: string, label: string): Row {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson) as unknown;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`${label} is not valid JSON: ${reason}`);
+  }
+  if (Array.isArray(parsed)) {
+    throw new Error(
+      `${label} must be one JSON object, not an array. Do not pass tables/characters.json; use a temp file containing one CharacterData object, or use mari db for raw row/table edits.`,
+    );
+  }
+  if (!isRecord(parsed)) throw new Error(`${label} must be a JSON object.`);
+  return parsed;
+}
+
 function toBooleanText(value: unknown): unknown {
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number" && (value === 0 || value === 1)) return value === 1 ? "true" : "false";
@@ -640,9 +657,7 @@ async function parseJsonInput(flags: Map<string, string | boolean>, cwd?: string
   if (raw && file) throw new Error("Use only one of --json or --json-file");
   if (!raw && !file) throw new Error("Missing --json '<json>' or --json-file <path>");
   const jsonText = file ? await readFile(resolve(cwd ? resolve(cwd) : process.cwd(), file), "utf8") : raw!;
-  const parsed = JSON.parse(jsonText) as unknown;
-  if (!isRecord(parsed)) throw new Error("JSON input must be a JSON object");
-  return parsed;
+  return parseRequiredJsonObjectInput(jsonText, "JSON input");
 }
 
 async function parseCssInput(flags: Map<string, string | boolean>, cwd?: string): Promise<string> {
@@ -720,15 +735,102 @@ function summarizeChatRow(row: Row): Row {
   };
 }
 
+const CHARACTER_DATA_HINT_KEYS = new Set([
+  "name",
+  "description",
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "creator_notes",
+  "system_prompt",
+  "post_history_instructions",
+  "tags",
+  "creator",
+  "character_version",
+  "alternate_greetings",
+  "extensions",
+  "character_book",
+]);
+
+function hasOwnKey(value: Row, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function looksLikeCharacterData(value: Row): boolean {
+  return Array.from(CHARACTER_DATA_HINT_KEYS).some((key) => hasOwnKey(value, key));
+}
+
+function looksLikeCharacterRowInput(value: Row): boolean {
+  return isRecord(value.data) || (typeof value.data === "string" && ["id", "comment", "avatarPath", "spriteFolderPath", "createdAt", "updatedAt"].some((key) => hasOwnKey(value, key)));
+}
+
 function normalizeCharacterDataBase(base: Record<string, unknown>): Record<string, unknown> {
+  const parsedData = typeof base.data === "string" && looksLikeCharacterRowInput(base) ? parseJsonMaybe(base.data) : null;
   const source =
-    isRecord(base.data) && (typeof base.spec === "string" || typeof base.spec_version === "string")
+    isRecord(base.data) &&
+    (typeof base.spec === "string" ||
+      typeof base.spec_version === "string" ||
+      looksLikeCharacterRowInput(base) ||
+      !looksLikeCharacterData(base))
       ? (base.data as Record<string, unknown>)
-      : base;
+      : isRecord(parsedData)
+        ? parsedData
+        : base;
   const data = { ...source };
   delete data.spec;
   delete data.spec_version;
+  for (const key of Object.keys(data)) {
+    if (/^\d+$/.test(key)) delete data[key];
+  }
   return data;
+}
+
+function parseCharacterDataJsonInput(rawJson: string, label: string): Row {
+  const data = normalizeCharacterDataBase(parseRequiredJsonObjectInput(rawJson, label));
+  if (!looksLikeCharacterData(data)) {
+    throw new Error(
+      `${label} must contain a CharacterData card object, such as {"name":"...","description":"..."}. Do not pass a raw table export or tables/characters.json to mari characters.`,
+    );
+  }
+  return data;
+}
+
+function addUnknownColumnIssues(meta: TableMeta, row: Row, id: unknown, issues: MariDbValidationIssue[]) {
+  const unknownKeys = Object.keys(row).filter((key) => !meta.byKey.has(key));
+  if (unknownKeys.length === 0) return;
+  const issueId = id == null ? null : String(id);
+  const hint = meta.name === "characters" && unknownKeys.some((key) => key === "appearance" || key === "backstory")
+    ? " Use mari characters update --appearance/--backstory, or patch data.extensions.appearance/backstory."
+    : " Check `mari db schema <table>` and nest JSON-column edits under the JSON column name.";
+  issues.push({
+    level: "error",
+    table: meta.name,
+    id: issueId,
+    message: `Unknown column(s): ${unknownKeys.slice(0, 8).join(", ")}.${hint}`,
+  });
+}
+
+function addCharacterDataShapeIssues(tableName: string, row: Row, id: unknown, issues: MariDbValidationIssue[]) {
+  if (tableName !== "characters") return;
+  const card = tryParseJsonColumn(row, "data");
+  const issueId = id == null ? null : String(id);
+  if (!isRecord(card)) {
+    issues.push({ level: "error", table: tableName, id: issueId, message: "Character data does not look like a CharacterData card" });
+    return;
+  }
+  if (typeof card.name !== "string") {
+    issues.push({ level: "error", table: tableName, id: issueId, message: "Character data does not look like a CharacterData card" });
+  }
+  const numericKeys = Object.keys(card).filter((key) => /^\d+$/.test(key));
+  if (numericKeys.length > 0) {
+    issues.push({
+      level: "error",
+      table: tableName,
+      id: issueId,
+      message: `Character data contains numeric keys (${numericKeys.slice(0, 5).join(", ")}) from a table-array merge; repair it with a single CharacterData object, not tables/characters.json.`,
+    });
+  }
 }
 
 function buildMinimalCharacterData(
@@ -892,6 +994,12 @@ export class MariDbService {
     }
   }
 
+  async clearHistory(): Promise<void> {
+    this.history = [];
+    await mkdir(this.journalDir(), { recursive: true });
+    await writeFile(this.historyPath(), "", "utf8");
+  }
+
   async approveAndWait(id: string, timeoutMs = 15_000): Promise<{ approval: MariDbPendingApproval; history: MariDbHistoryEntry | null; completed: boolean } | null> {
     const record = this.pending.get(id);
     if (!record) return null;
@@ -967,16 +1075,7 @@ export class MariDbService {
             issues.push({ level: "error", table: tableName, id: id == null ? null : String(id), message: `Column ${key} is not valid JSON` });
           }
         }
-        if (tableName === "characters" && typeof row.data === "string") {
-          try {
-            const card = JSON.parse(row.data) as { name?: unknown };
-            if (!isRecord(card) || typeof card.name !== "string") {
-              issues.push({ level: "error", table: tableName, id: String(id), message: "Character data does not look like a CharacterData card" });
-            }
-          } catch {
-            // JSON-column check already reports this.
-          }
-        }
+        addCharacterDataShapeIssues(tableName, row, id, issues);
         if (tableName === "agent_configs") {
           this.validateAgentConfigRow(row, id, issues);
         }
@@ -1363,7 +1462,7 @@ export class MariDbService {
               "       or: mari characters create --json '<data_json>' [--json-file <path>] [--apply]",
           );
         }
-        const baseData = rawJson ? ((JSON.parse(rawJson) as Record<string, unknown>) ?? {}) : {};
+        const baseData = rawJson ? parseCharacterDataJsonInput(rawJson, "Character create JSON") : {};
         const charName = name ?? (typeof baseData.name === "string" ? baseData.name.trim() : "");
         if (!charName) throw new Error("Character name is required (--name or name field in --json)");
         const charData = buildMinimalCharacterData(charName, baseData, flags);
@@ -1393,9 +1492,10 @@ export class MariDbService {
         if (!id) throw new Error("Usage: mari characters update <id> [--name <name>] [--description <text>] [--personality <text>] [--apply]");
         const existing = await this.getRawById(getMeta("characters"), id);
         if (!existing) throw new Error(`Character ${id} not found`);
-        const existingData = (tryParseJsonColumn(existing, "data") as Record<string, unknown>) ?? {};
+        const existingDataRaw = tryParseJsonColumn(existing, "data");
+        const existingData = isRecord(existingDataRaw) ? existingDataRaw : {};
         const rawJson = await resolveJsonInput(flags, context.cwd);
-        const patchData = rawJson ? ((JSON.parse(rawJson) as Record<string, unknown>) ?? {}) : {};
+        const patchData = rawJson ? parseCharacterDataJsonInput(rawJson, "Character update JSON") : {};
         const updatedData = buildMinimalCharacterData(
           flagString(flags, "name")?.trim() ?? (typeof existingData.name === "string" ? existingData.name : ""),
           { ...existingData, ...patchData },
@@ -2521,6 +2621,7 @@ export class MariDbService {
       if (change.action === "delete") continue;
       const meta = getMeta(change.table);
       const row = change.afterRaw ?? {};
+      addUnknownColumnIssues(meta, row, change.id, issues);
       const pk = getPrimary(meta);
       if (typeof row[pk] !== "string" || String(row[pk]).trim().length === 0) {
         issues.push({ level: "error", table: change.table, id: change.id, message: `Missing primary key ${pk}` });
@@ -2540,6 +2641,7 @@ export class MariDbService {
           issues.push({ level: "error", table: change.table, id: change.id, message: `Column ${key} is not valid JSON` });
         }
       }
+      addCharacterDataShapeIssues(change.table, row, change.id, issues);
     }
 
     const parentRowsByTable = new Map<string, Row[]>();

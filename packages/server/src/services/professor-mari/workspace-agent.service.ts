@@ -1,43 +1,17 @@
 // ──────────────────────────────────────────────
-// Professor Mari Pi workspace runtime
+// Professor Mari native command workspace runtime
 // ──────────────────────────────────────────────
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import {
-  AuthStorage,
-  createAgentSession,
-  createBashTool,
-  DefaultResourceLoader,
-  ModelRegistry,
-  SessionManager,
-  SettingsManager,
-  type BashOperations,
-  type AgentSession,
-  type AgentSessionEvent,
-} from "@earendil-works/pi-coding-agent";
-import {
-  createAssistantMessageEventStream,
-  type AssistantMessage,
-  type AssistantMessageEventStream,
-  type Context,
-  type ImageContent,
-  type Message as PiMessage,
-  type Model,
-  type SimpleStreamOptions,
-  type TextContent,
-  type ToolCall,
-} from "@earendil-works/pi-ai";
 import type {
   BaseLLMProvider,
   ChatCompletionResult,
   ChatMessage,
   ChatOptions,
-  LLMToolCall,
-  LLMToolDefinition,
   LLMUsage,
 } from "../llm/base-provider.js";
 import { createLLMProvider } from "../llm/provider-registry.js";
@@ -61,6 +35,7 @@ import {
   type APIProvider,
 } from "@marinara-engine/shared";
 import type {
+  MariDbCommandResult,
   MariWorkspaceConnectionSummary,
   MariWorkspacePromptEvent,
   MariWorkspaceStatus,
@@ -89,13 +64,156 @@ type WorkspaceConnection = Pick<
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
+type WorkspaceCommandCall = {
+  id: string;
+  name: MariWorkspaceToolName;
+  arguments: Record<string, unknown>;
+  raw?: string;
+};
+type WorkspaceCommandResult = {
+  id: string;
+  name: MariWorkspaceToolName;
+  input: Record<string, unknown>;
+  output: string;
+  success: boolean;
+};
+
+type WorkspaceToolDefinition = {
+  name: MariWorkspaceToolName;
+  description: string;
+  parameters: Record<string, unknown>;
+};
+
+type JsonPayloadMatch = {
+  payload: Record<string, unknown>;
+  raw: string;
+  start: number;
+  end: number;
+};
+
+type AssistantWorkspaceAction = {
+  visibleText: string;
+  commands: WorkspaceCommandCall[];
+  assistantHistoryContent: string;
+};
 
 const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", "edit", "write", "bash"];
-const MARINARA_PROVIDER = "marinara";
-const MARINARA_MODEL = "current-connection";
-const MARINARA_API = "marinara-chat";
 const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
+const MAX_COMMAND_ROUNDS = 12;
+const MAX_HISTORY_MESSAGES = 40;
+const MAX_PARALLEL_READONLY_COMMANDS = 4;
+const RECENT_WORKSPACE_CONTINUITY_LIMIT = 4;
+const COMMAND_OUTPUT_LIMIT = 32_000;
+const COMMAND_FILE_READ_LIMIT = 256_000;
+const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
+const MAX_BASH_TIMEOUT_SECONDS = 300;
+const MAX_WALK_ENTRIES = 12_000;
+const SKIPPED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".pnpm-store",
+  ".turbo",
+  ".cache",
+  "dist",
+  "build",
+  "coverage",
+  ".gradle",
+]);
+
+const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
+  {
+    name: "read",
+    description: "Read a text file from the workspace with optional 1-indexed line offset and line limit.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        offset: { type: "integer", minimum: 1 },
+        limit: { type: "integer", minimum: 1 },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "grep",
+    description: "Search workspace text files for a regex or literal pattern.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string" },
+        path: { type: "string" },
+        glob: { type: "string" },
+        ignoreCase: { type: "boolean" },
+        literal: { type: "boolean" },
+        context: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1 },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "find",
+    description: "Find workspace files by glob-style pattern.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string" },
+        path: { type: "string" },
+        limit: { type: "integer", minimum: 1 },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "ls",
+    description: "List a workspace directory.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        limit: { type: "integer", minimum: 1 },
+      },
+    },
+  },
+  {
+    name: "edit",
+    description: "Edit a single text file using exact, unique oldText/newText replacements.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { oldText: { type: "string" }, newText: { type: "string" } },
+            required: ["oldText", "newText"],
+          },
+        },
+      },
+      required: ["path", "edits"],
+    },
+  },
+  {
+    name: "write",
+    description: "Create or overwrite a workspace text file. Parent directories are created automatically.",
+    parameters: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string" } },
+      required: ["path", "content"],
+    },
+  },
+  {
+    name: "bash",
+    description: "Run a simple portable shell command in the workspace. Prefer mari commands over raw storage edits.",
+    parameters: {
+      type: "object",
+      properties: { command: { type: "string" }, timeout: { type: "integer", minimum: 1, maximum: 300 } },
+      required: ["command"],
+    },
+  },
+];
 
 function getPathEnvKey(env: NodeJS.ProcessEnv) {
   return Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
@@ -133,66 +251,6 @@ function killWindowsProcessTree(pid: number | undefined) {
   child.on("error", () => undefined);
 }
 
-function createWindowsCmdOperations(): BashOperations {
-  return {
-    exec: (command, cwd, options) =>
-      new Promise<{ exitCode: number | null }>((resolveExec, rejectExec) => {
-        const shell = process.env.ComSpec || "cmd.exe";
-        const child = spawn(shell, ["/d", "/s", "/c", command], {
-          cwd,
-          env: options.env,
-          windowsHide: true,
-        });
-        let settled = false;
-        let aborted = false;
-        let timedOut = false;
-        let timeoutHandle: NodeJS.Timeout | undefined;
-
-        const finish = (callback: () => void) => {
-          if (settled) return;
-          settled = true;
-          if (timeoutHandle) clearTimeout(timeoutHandle);
-          options.signal?.removeEventListener("abort", abortHandler);
-          callback();
-        };
-        const stopChild = () => {
-          killWindowsProcessTree(child.pid);
-          child.kill();
-        };
-        const abortHandler = () => {
-          aborted = true;
-          stopChild();
-        };
-
-        if (options.timeout && options.timeout > 0) {
-          timeoutHandle = setTimeout(() => {
-            timedOut = true;
-            stopChild();
-          }, options.timeout * 1000);
-        }
-        if (options.signal?.aborted) abortHandler();
-        else options.signal?.addEventListener("abort", abortHandler, { once: true });
-
-        child.stdout?.on("data", options.onData);
-        child.stderr?.on("data", options.onData);
-        child.on("error", (err) => finish(() => rejectExec(err)));
-        child.on("close", (exitCode) =>
-          finish(() => {
-            if (aborted) {
-              rejectExec(new Error("aborted"));
-              return;
-            }
-            if (timedOut) {
-              rejectExec(new Error(`timeout:${options.timeout ?? 0}`));
-              return;
-            }
-            resolveExec({ exitCode });
-          }),
-        );
-      }),
-  };
-}
-
 const WINDOWS_POSIX_COMMAND_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
   { label: "here-documents", pattern: /<<\s*['"]?[A-Za-z_]/ },
   { label: "command substitution", pattern: /\$\(|`[^`]+`/ },
@@ -223,27 +281,24 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
 Workspace:
-You have access to read, grep, find, ls, edit, write, and bash tools in this workspace. These are private workspace tools. Never answer by dumping a bash command, \`mari ...\` command, or instructions for the user to run unless the user explicitly asks for the command. If app data or files need inspection, call the tool yourself, then summarize what you found.
+You can inspect and modify this local Marinara Engine workspace through hidden commands. The user never sees command syntax; Marinara strips it, executes it, then shows the resulting timeline. Use commands to gather evidence before claiming something is fixed or changed.
 
-Despite the tool name, bash commands must be portable because some users run Marinara on Windows or minimal mobile shells. Use bash only as a private tool for simple commands such as \`mari db ...\`, \`mari code ...\`, or \`pnpm ...\`. Use read/grep/find/ls/edit/write for file work.
+Live app data is best handled through Marinara-aware commands. Use the narrow helper first when it exists, because helpers know user-facing fields and nested storage shapes. Use \`mari db\` for generic/raw tables only after checking \`mari db schema <table>\` and nesting JSON-column edits under the actual JSON column name.
 
-Live app data is best handled through Marinara-aware commands. \`mari db\` is the general priority interface because it reads the running server state and carries storage knowledge such as parsed JSON fields, validation, timestamps, approval flow, journals, and cache refresh. Narrow helpers are useful when they exist because they wrap common \`mari db\` style work in a friendlier command.
-
-Always prioritize db commands over writing raw files to the codebase. If you need to write raw files, think why you must and whether there is a CLI command to help you.
+Always prioritize Mari CLI commands over writing raw files to the codebase. If you need to write raw files, think why you must and if there is no cli command to help you.
 
 Portable shell rules:
-- Do not output standalone shell commands as the final answer. If a command is needed, call the bash tool.
 - Do not use heredocs, command substitution, inline \`cat > file\`, \`sed -i\`, \`awk\`, \`xargs\`, \`rm\`, \`cp\`, \`mv\`, or POSIX-only environment syntax in bash commands.
-- Do not build JSON/CSS/script payloads with shell quoting. Use the write tool to create a temporary file, then pass it to \`mari db ... --json-file "<path>"\`, \`mari themes ... --css-file "<path>"\`, or the relevant \`mari\` file flag.
-- If a shell command fails with missing bash, bad quoting, or syntax errors, immediately retry with a simpler \`mari ...\` command or the dedicated read/grep/find/ls/edit/write tools.
+- Do not build JSON/CSS/script payloads with shell quoting. Use the write command to create a temporary file, then pass a relative path with no spaces, such as \`--json-file ./tmp/payload.json\`, \`--css-file ./tmp/theme.css\`, or the relevant \`mari\` file flag.
+- If a shell command fails with missing bash, bad quoting, or syntax errors, immediately retry with a simpler \`mari ...\` command or the dedicated read/grep/find/ls/edit/write commands.
 
 Command families:
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
 - \`mari themes\`: synced custom themes and active theme state. Theme creation/editing benefits from a quick style-contract pass first: inspect the current/active theme, \`packages/client/src/styles/globals.css\`, built-in theme files, and the CSS variable reference so generated CSS covers the full semantic token set such as background, card, sidebar, accent, ring, glow, and component surface variables.
 - \`mari images\`: image-generation connections, HITL image prompt previews, generated/edited preview assets, and assignment/deletion for avatars, personas, lorebooks, sprites, backgrounds, and galleries.
 - \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads. Use \`mari wiki --help\` to find wikis, search pages, read summaries/source/sections, list categories, and search within a page.
-- \`mari characters\`: list, get, search, create, update, delete. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--first-mes\`, \`--creator-notes\`, \`--comment\`; \`--backstory\` and \`--appearance\` write to \`extensions.backstory\`/\`extensions.appearance\`. Or pass \`--json\` or \`--json-file\` for the full data blob. Use \`--apply\` to save.
-- \`mari personas\`: list, active, get, search, create, update, delete. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--backstory\`, \`--appearance\`. Use \`--apply\` to save.
+- \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--first-mes\`, \`--creator-notes\`, \`--comment\`; \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`. Or pass \`--json\` or \`--json-file\` for one CharacterData blob. Use \`--apply\` to save.
+- \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits. Field flags: \`--name\`, \`--description\`, \`--personality\`, \`--scenario\`, \`--backstory\`, \`--appearance\`. Use \`--apply\` to save.
 - \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, link-character, unlink-character, delete. \`add-entry <lorebook-id> --name <name> --keys <k1,k2> --content <text>\`. \`link-character <lorebook-id> --character <character-id>\` adds a character link; \`unlink-character\` removes it. Use \`--apply\` to save.
 - \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
 - \`mari chats\`: read-only. list (newest first), get (with message count), messages \`<chat-id> [--tail]\`, search.
@@ -255,17 +310,55 @@ Built-in help is the source of truth for exact helper syntax. Use \`mari --help\
 Raw DB row contracts to remember when a narrow helper is unavailable:
 - \`agent_configs.phase\` must be one of \`pre_generation\`, \`parallel\`, or \`post_processing\`. Agents do not have a global enabled/disabled state; a chat controls whether an agent runs by adding or removing that agent from its active agent list.
 - Raw text booleans such as \`custom_tools.enabled\` are stored as \`"true"\` or \`"false"\`. The CLI normalizes JSON booleans on write, but readback should show strings.
-- Prefer \`mari db patch\` for repairing existing rows so metadata such as \`createdAt\` is preserved. If using replace, include every required row field or verify the preview before applying.
+- Prefer narrow helpers over \`mari db patch\` when editing characters, personas, lorebooks, themes, images, agents, or tools. Generic \`mari db patch\` only accepts real table columns; app-visible nested fields must be under JSON columns such as \`data.extensions.appearance\`, not top-level \`appearance\`. Unknown raw columns are blocked.
 
-Workspace files are useful for learning how Marinara works, answering source-code questions, or finding content you cannot find with DB CLI commands. Do not inspect source files instead of live app data when the user asks about characters, chats, agents, tools, extensions, presets, lorebooks, or other saved app content.
+Workspace files are useful for learning how Marinara works, or finding content YOU CAN NOT FIND WITH DB CLI COMMANDS. USE THOSE FIRST.
 
-Completion claims need tool evidence. Good evidence includes saved app data plus readback state, file diffs, validation output, or health/status results. Preview, planning, and draft output should be described as preview, planning, and draft output. Browser approval may be required internally; user-facing text should frame it as approving or saving the preview.
+Completion claims need command evidence. Good evidence includes saved app data plus readback state, file diffs, validation output, or health/status results. Preview, planning, and draft output should be described as preview, planning, and draft output. Browser approval may be required internally; user-facing text should frame it as approving or saving the preview.
 
 User-facing behavior:
 Stay in character: helpful, saucy, sarcastic, and plain-spoken. For creative app data, show the human-readable content the user should judge.
 Raw JSON belongs in chat when the user asks for it.
 Ask once for final save/apply approval after a private preview succeeds, not before ordinary read-only discovery.
 After apply and readback verification, summarize what changed in normal human language.`;
+
+function workspaceCommandProtocolPrompt() {
+  const toolDocs = WORKSPACE_TOOL_DEFINITIONS.map(
+    (tool) => `- ${tool.name}: ${tool.description}\n  JSON arguments: ${JSON.stringify(tool.parameters)}`,
+  ).join("\n");
+  return `<workspace_command_protocol>
+Marinara gives Professor Mari two channels in one assistant turn: visible speech and hidden workspace actions. This is provider-agnostic like Conversation/Game command mode, but native tool calls may also be used when the provider supports them.
+
+Preferred action frame when tools are needed:
+{"say":"optional short user-visible progress note, or empty string for silent work","tool_calls":[{"name":"read","arguments":{"path":"README.md","offset":1,"limit":80}},{"name":"grep","arguments":{"pattern":"Professor Mari","path":"packages","glob":"*.ts","limit":20}}]}
+
+Use this frame to be fluid:
+- Set \`say\` to \`""\` for routine inspection, verification, and file reads. Silent tool use is normal and preferred.
+- Put several independent read-only calls in the same \`tool_calls\` array. Marinara can run read/grep/find/ls in parallel.
+- Use a short \`say\` only when it helps the user understand progress, a decision, an error, or an approval/save boundary.
+- After tool results, either issue the next action frame, speak to the user, or do both. This lets you talk between tool batches without narrating every tiny step.
+- If the user says \`go ahead\`, \`yes\`, \`apply it\`, or similar, treat it as approval to continue the previously discussed plan. Use hidden continuity/tool evidence; do not restart discovery unless the evidence is missing or stale.
+
+Legacy hidden command blocks are still accepted when a model cannot reliably emit JSON frames:
+<read>{"path":"README.md","offset":1,"limit":80}</read>
+<grep>{"pattern":"Professor Mari","path":"packages","glob":"*.ts","limit":20}</grep>
+<find>{"pattern":"**/*.ts","path":"packages/server/src","limit":50}</find>
+<ls>{"path":"packages/server/src","limit":100}</ls>
+<edit>{"path":"file.ts","edits":[{"oldText":"exact unique text","newText":"replacement text"}]}</edit>
+<write>{"path":"tmp/payload.json","content":"{\n  \"ok\": true\n}"}</write>
+<bash>{"command":"mari db tables","timeout":60}</bash>
+
+Rules:
+- Hidden commands/action frames are stripped from visible chat. Never expose command syntax unless the user explicitly asks.
+- Use commands iteratively: inspect, act, verify, then answer.
+- Use read/grep/find/ls/edit/write for files. Use bash mostly for simple \`mari ...\`, \`pnpm ...\`, or health/check commands.
+- For writes to live app data, prefer \`mari ...\` commands. \`--apply\` may wait for browser approval.
+- If no command is needed, answer normally in plain text. You may also return {"say":"final answer"}.
+
+Available command schemas:
+${toolDocs}
+</workspace_command_protocol>`;
+}
 
 function bool(value: unknown): boolean {
   return value === true || value === "true" || value === "1";
@@ -287,33 +380,22 @@ function parseJsonObject(value: unknown): Record<string, unknown> | null {
   }
 }
 
-function recordProperty(value: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> | null {
-  const raw = value?.[key];
-  return isRecord(raw) ? raw : null;
+function parseExtra(value: unknown): Record<string, unknown> {
+  return parseJsonObject(value) ?? {};
 }
 
-function parseLooseJsonObject(value: unknown): Record<string, unknown> | null {
-  const strict = parseJsonObject(value);
-  if (strict) return strict;
-  if (typeof value !== "string") return null;
+type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
 
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-  const normalized = trimmed
-    .replace(/([{,]\s*)([A-Za-z_][\w.-]*)(\s*:)/g, '$1"$2"$3')
-    .replace(/:\s*'([^']*)'/g, (_, inner: string) => `: ${JSON.stringify(inner)}`)
-    .replace(/,\s*}/g, "}");
-
-  try {
-    const parsed = JSON.parse(normalized) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+function compactTraceText(value: string, limit = 2400): string {
+  const trimmed = value.trimEnd();
+  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
 }
 
-function stringifyEventPayload(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
+function compactOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): string {
+  return value.length > limit ? `${value.slice(0, limit)}\n… output truncated at ${limit} characters …` : value;
+}
+
+function stringifyOutput(value: unknown): string {
   if (typeof value === "string") return value;
   try {
     return JSON.stringify(value, null, 2);
@@ -322,11 +404,39 @@ function stringifyEventPayload(value: unknown): string | undefined {
   }
 }
 
-type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
-
-function compactTraceText(value: string, limit = 2400): string {
-  const trimmed = value.trimEnd();
-  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
+function compactMutationResult(result: MariDbCommandResult): MariDbCommandResult | Record<string, unknown> {
+  if (!isRecord(result) || !isRecord(result.summary)) return result;
+  const summary = result.summary as Record<string, unknown>;
+  const preview = Array.isArray(summary.preview) ? summary.preview : [];
+  const saved = result.mode === "apply" && result.ok === true;
+  return {
+    ok: result.ok,
+    mode: result.mode,
+    saved,
+    status: result.mode === "dry-run" ? "dry_run_only" : saved ? "applied" : result.ok === false ? "failed" : "ok",
+    message:
+      result.mode === "dry-run"
+        ? "Preview only: no changes were saved. Re-run the same command with --apply after user approval to persist it."
+        : saved
+          ? "Applied and saved. Verify the resulting state with a read command before claiming user-visible success."
+          : undefined,
+    command: typeof result.command === "string" ? compactTraceText(result.command, 500) : result.command,
+    summary: {
+      matchedRows: summary.matchedRows,
+      affectedRows: summary.affectedRows,
+      insertedRows: summary.insertedRows,
+      updatedRows: summary.updatedRows,
+      replacedRows: summary.replacedRows,
+      deletedRows: summary.deletedRows,
+      affectedTables: summary.affectedTables,
+      preview: preview.slice(0, 5),
+      truncated: summary.truncated === true || preview.length > 5,
+    },
+    validation: result.validation,
+    approval: result.approval,
+    journalPath: result.journalPath,
+    error: result.error,
+  };
 }
 
 function compactTraceValue(value: unknown, limit = 2000, depth = 0): unknown {
@@ -424,452 +534,13 @@ function sanitizeTraceForStorage(trace: MariWorkspaceTraceItem[]): MariWorkspace
     .filter((item): item is MariWorkspaceTraceItem => item !== null);
 }
 
-function getLastAssistantMessage(session: AgentSession, startIndex = 0): Record<string, unknown> | null {
-  const messages = session.messages.slice(startIndex);
-  for (const message of [...messages].reverse()) {
-    if (isRecord(message) && message.role === "assistant") return message;
-  }
-  return null;
-}
-
-function extractAssistantText(message: Record<string, unknown> | null): string {
-  if (!message || !Array.isArray(message.content)) return "";
-  return message.content
-    .map((block) => (isRecord(block) && block.type === "text" && typeof block.text === "string" ? block.text : ""))
-    .join("");
-}
-
-function extractAssistantThinking(message: Record<string, unknown> | null): string {
-  if (!message || !Array.isArray(message.content)) return "";
-  return message.content
-    .map((block) =>
-      isRecord(block) && block.type === "thinking" && typeof block.thinking === "string" ? block.thinking : "",
-    )
-    .join("");
-}
-
-function extractAssistantError(message: Record<string, unknown> | null): string | null {
-  if (!message) return null;
-  if (message.stopReason !== "error" && message.stopReason !== "aborted") return null;
-  return typeof message.errorMessage === "string" && message.errorMessage.trim()
-    ? message.errorMessage
-    : `Professor Mari workspace ${message.stopReason}.`;
-}
-
-function flattenContent(content: PiMessage["content"]): { text: string; images?: string[] } {
-  if (typeof content === "string") return { text: content };
-  if (!Array.isArray(content)) return { text: "" };
-  const text: string[] = [];
-  const images: string[] = [];
-  for (const item of content) {
-    if (item.type === "text") text.push((item as TextContent).text);
-    if (item.type === "image") {
-      const image = item as ImageContent;
-      images.push(`data:${image.mimeType};base64,${image.data}`);
-    }
-  }
-  return { text: text.join("\n"), images: images.length > 0 ? images : undefined };
-}
-
-function convertMessages(context: Context): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  if (context.systemPrompt?.trim()) {
-    messages.push({ role: "system", content: context.systemPrompt, contextKind: "prompt" });
-  }
-  for (const message of context.messages) {
-    if (message.role === "user") {
-      const content = flattenContent(message.content);
-      messages.push({ role: "user", content: content.text || " ", images: content.images, contextKind: "history" });
-    } else if (message.role === "toolResult") {
-      const content = flattenContent(message.content);
-      messages.push({
-        role: "tool",
-        content: content.text || " ",
-        tool_call_id: message.toolCallId,
-        contextKind: "history",
-      });
-    } else if (message.role === "assistant") {
-      const text: string[] = [];
-      const toolCalls = [] as ChatMessage["tool_calls"];
-      for (const block of message.content) {
-        if (block.type === "text") text.push(block.text);
-        if (block.type === "thinking") continue;
-        if (block.type === "toolCall") {
-          const call = block as ToolCall;
-          toolCalls?.push({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: JSON.stringify(call.arguments ?? {}) },
-          });
-        }
-      }
-      messages.push({
-        role: "assistant",
-        content: text.join("\n"),
-        ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        contextKind: "history",
-      });
-    }
-  }
-  return messages;
-}
-
-function convertTools(context: Context): LLMToolDefinition[] | undefined {
-  if (!context.tools?.length) return undefined;
-  return context.tools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters as unknown as Record<string, unknown>,
-    },
-  }));
+function normalizeCatalogProvider(provider: string): APIProvider | null {
+  const normalized = provider.replace(/-/g, "_");
+  return normalized in MODEL_LISTS ? (normalized as APIProvider) : null;
 }
 
 function isLocalSidecarConnection(connection: WorkspaceConnection): boolean {
   return connection.isLocalSidecar === true || connection.id === LOCAL_SIDECAR_CONNECTION_ID;
-}
-
-function parseToolArgumentsValue(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value;
-  if (typeof value === "string") return parseLooseJsonObject(value) ?? {};
-  return {};
-}
-
-function isPrivateNetworkBaseUrl(baseUrl: unknown): boolean {
-  if (typeof baseUrl !== "string" || !baseUrl.trim()) return false;
-  try {
-    const raw = baseUrl.trim();
-    const { hostname } = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
-    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (
-      host === "localhost" ||
-      host === "0.0.0.0" ||
-      host === "::1" ||
-      host === "host.docker.internal" ||
-      host.endsWith(".local")
-    ) {
-      return true;
-    }
-    const parts = host.split(".").map((part) => Number(part));
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-    const [a, b] = parts as [number, number, number, number];
-    return (
-      a === 10 ||
-      a === 127 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 169 && b === 254) ||
-      (a === 192 && b === 168)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shouldUseJsonToolProtocol(connection: WorkspaceConnection): boolean {
-  return isLocalSidecarConnection(connection) || bool(connection.treatAsLocalEndpoint) || isPrivateNetworkBaseUrl(connection.baseUrl);
-}
-
-function jsonToolProtocolInstruction(tools: LLMToolDefinition[]): string {
-  const toolList = tools
-    .map((tool) => {
-      const parameters = JSON.stringify(tool.function.parameters ?? {}, null, 2);
-      return `- ${tool.function.name}: ${tool.function.description || "Workspace tool"}\n  parameters: ${parameters}`;
-    })
-    .join("\n");
-
-  return `Professor Mari workspace tool protocol:
-If you need a workspace tool, respond with only JSON in this shape:
-{"tool_calls":[{"name":"tool_name","arguments":{}}]}
-You may include multiple tool_calls when they are independent. Do not wrap the JSON in markdown. Do not add prose around tool_calls.
-Never use XML tags, <tool_code>, <|tool_call>, call:tool_name{...}, or raw shell text for tool calls. The only valid tool-call response is the JSON object above.
-There is no tool named mari_db. For Marinara app data, call the bash tool with a portable command such as {"tool_calls":[{"name":"bash","arguments":{"command":"mari characters list"}}]}.
-For app-data lookup or edits, call a workspace tool yourself. Do not answer with only a bash command or \`mari ...\` command text.
-If the user asks you to create, read, list, search, update, or delete Marinara app data, your first response must call a tool. Never answer with only "give me a sec", "I'll check", or another promise to do the work later.
-If no tool is needed, answer normally in plain text.
-
-Available tools:
-${toolList}`;
-}
-
-function getLastUserText(messages: ChatMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role === "user" && message.content.trim()) return message.content;
-  }
-  return "";
-}
-
-function needsWorkspaceToolForRequest(text: string): boolean {
-  if (!text.trim()) return false;
-  const action =
-    /\b(create|make|add|write|update|edit|delete|remove|read|show|list|search|find|fetch|open|inspect|check|look\s+up|load)\b/i;
-  const target =
-    /\b(character|card|persona|lore\s*book|lorebook|entry|preset|chat|agent|tool|extension|setting|connection|image|avatar|sprite|file|code|workspace|database|db)\b/i;
-  return action.test(text) && target.test(text);
-}
-
-function isPromiseOnlyToolResponse(content: string): boolean {
-  const trimmed = content.trim();
-  if (!trimmed) return false;
-  if (trimmed.length > 500) return false;
-  return [
-    /\b(give|gimme)\s+me\s+(?:a\s+)?(?:sec|second|moment|minute)\b/i,
-    /\b(?:one|just)\s+(?:sec|second|moment|minute)\b/i,
-    /\b(?:let\s+me|i['’]?ll|i\s+will|i\s+can|i['’]?m\s+going\s+to|i\s+am\s+going\s+to)\b[\s\S]{0,120}\b(?:check|look|read|create|make|add|update|edit|fetch|inspect|handle|take\s+care|do\s+that)\b/i,
-    /\b(?:working\s+on\s+it|on\s+it|i['’]?m\s+on\s+it|i\s+am\s+on\s+it)\b/i,
-  ].some((pattern) => pattern.test(trimmed));
-}
-
-function withToolPromiseRetryInstruction(messages: ChatMessage[], previousContent: string): ChatMessage[] {
-  const lastUserText = getLastUserText(messages);
-  const retryMessage: ChatMessage = {
-    role: "system",
-    contextKind: "prompt",
-    content: [
-      "The previous assistant response promised workspace or Marinara app-data work but did not call a tool.",
-      "Retry the current request now. If the request needs app data or workspace changes, call the appropriate tool as JSON tool_calls.",
-      "Do not repeat a promise-only answer. If the work is impossible, explain the blocker plainly.",
-      lastUserText ? `Current user request: ${lastUserText.slice(0, 1000)}` : "",
-      previousContent ? `Previous assistant response: ${previousContent.slice(0, 500)}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  };
-  const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
-  return firstNonSystemIndex === -1
-    ? [retryMessage, ...messages]
-    : [...messages.slice(0, firstNonSystemIndex), retryMessage, ...messages.slice(firstNonSystemIndex)];
-}
-
-function extractJsonToolPayload(content: string): Record<string, unknown> | null {
-  const trimmed = content.trim();
-  if (!trimmed) return null;
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
-  const objectStart = trimmed.indexOf("{");
-  const objectEnd = trimmed.lastIndexOf("}");
-  const candidates = [
-    trimmed,
-    fenced,
-    objectStart >= 0 && objectEnd > objectStart ? trimmed.slice(objectStart, objectEnd + 1) : null,
-  ].filter((candidate): candidate is string => !!candidate);
-
-  for (const candidate of candidates) {
-    const parsed = parseLooseJsonObject(candidate);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-function rawJsonToolCalls(payload: Record<string, unknown>): unknown[] {
-  const plural = payload.tool_calls ?? payload.toolCalls ?? payload.calls;
-  if (Array.isArray(plural)) return plural;
-  const single = payload.tool_call ?? payload.toolCall;
-  if (single !== undefined) return [single];
-  if (typeof payload.name === "string") return [payload];
-  if (typeof payload.command === "string") return [{ name: "mari_db", arguments: payload }];
-  return [];
-}
-
-function makeRecoveredToolCall(name: string, args: Record<string, unknown>, index: number): LLMToolCall {
-  return {
-    id: `mari_recovered_tool_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
-    type: "function",
-    function: { name, arguments: JSON.stringify(args) },
-  };
-}
-
-function normalizeMariCliCommand(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const command = value
-    .trim()
-    .replace(/^```(?:bash|shell|sh|cmd|powershell)?\s*([\s\S]*?)\s*```$/i, "$1")
-    .replace(/^`([\s\S]*)`$/, "$1")
-    .replace(/^\$+\s*/, "")
-    .trim();
-  if (!command || command.length > 800 || /[\r\n]/.test(command) || /[;&|`$<>]/.test(command)) return null;
-  if (/^mari(?:\s|$)/i.test(command)) return command;
-  if (
-    /^(?:db|characters|personas|lorebooks|chats|presets|images|themes|wiki|extensions|agents|tools|code)(?:\s|$)/i.test(
-      command,
-    )
-  ) {
-    return `mari ${command}`;
-  }
-  return null;
-}
-
-function toolCallFromRaw(
-  raw: unknown,
-  index: number,
-  knownTools: Set<string>,
-  hasBashTool: boolean,
-): LLMToolCall | null {
-  if (!isRecord(raw) || typeof raw.name !== "string") return null;
-  const args = parseToolArgumentsValue(raw.arguments ?? raw.args ?? raw.input ?? {});
-  if (knownTools.has(raw.name)) {
-    const id =
-      typeof raw.id === "string" && raw.id.trim()
-        ? raw.id.trim()
-        : `mari_json_tool_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
-    return {
-      id,
-      type: "function",
-      function: { name: raw.name, arguments: JSON.stringify(args) },
-    };
-  }
-
-  const normalizedName = raw.name.trim().toLowerCase().replace(/[-.]/g, "_");
-  if (!hasBashTool || !["mari", "mari_cli", "mari_command", "mari_db"].includes(normalizedName)) return null;
-
-  const command = normalizeMariCliCommand(
-    args.command ?? args.cmd ?? args.query ?? args.input ?? args.text ?? raw.command ?? raw.content,
-  );
-  return command ? makeRecoveredToolCall("bash", { command }, index) : null;
-}
-
-function parsePseudoToolSnippet(snippet: string, index: number): Record<string, unknown> | null {
-  const trimmed = snippet.trim();
-  if (!trimmed) return null;
-  const jsonPayload = parseLooseJsonObject(trimmed);
-  if (jsonPayload) {
-    return typeof jsonPayload.name === "string" ? jsonPayload : { name: "mari_db", arguments: jsonPayload };
-  }
-
-  const callMatch = trimmed.match(/^(?:call\s*:\s*)?([A-Za-z_][\w.-]*)\s*(\{[\s\S]*\})\s*$/);
-  if (callMatch) {
-    return {
-      name: callMatch[1],
-      arguments: parseLooseJsonObject(callMatch[2]) ?? {},
-    };
-  }
-
-  const command = normalizeMariCliCommand(trimmed);
-  return command ? { name: "mari_db", arguments: { command }, id: `mari_pseudo_${index}` } : null;
-}
-
-function extractTaggedToolSnippets(content: string): string[] {
-  const snippets: string[] = [];
-  const patterns = [
-    /<\|tool_call\|?>([\s\S]*?)(?:<tool_call\|>|<\|\/tool_call\|>|<\/tool_call>|$)/gi,
-    /<tool_call>([\s\S]*?)(?:<\/tool_call>|<\/arg_value>|$)/gi,
-    /<tool_code>([\s\S]*?)<\/tool_code>/gi,
-  ];
-  for (const pattern of patterns) {
-    for (const match of content.matchAll(pattern)) {
-      const snippet = match[1]?.trim();
-      if (snippet) snippets.push(snippet);
-    }
-  }
-  if (snippets.length === 0) {
-    const trimmed = content.trim();
-    if (/^(?:call\s*:\s*)?[A-Za-z_][\w.-]*\s*\{[\s\S]*\}$/.test(trimmed)) snippets.push(trimmed);
-  }
-  return snippets;
-}
-
-function parseJsonToolProtocolCalls(content: string, tools: LLMToolDefinition[]): LLMToolCall[] {
-  const payload = extractJsonToolPayload(content);
-  const knownTools = new Set(tools.map((tool) => tool.function.name));
-  const hasBashTool = knownTools.has("bash");
-  const calls: LLMToolCall[] = [];
-  if (payload) {
-    rawJsonToolCalls(payload).forEach((raw, index) => {
-      const call = toolCallFromRaw(raw, index, knownTools, hasBashTool);
-      if (call) calls.push(call);
-    });
-  }
-  if (calls.length > 0) return calls;
-
-  extractTaggedToolSnippets(content).forEach((snippet, index) => {
-    const raw = parsePseudoToolSnippet(snippet, index);
-    const call = toolCallFromRaw(raw, index, knownTools, hasBashTool);
-    if (call) calls.push(call);
-  });
-  return calls;
-}
-
-function extractBareMariCommand(content: string): string | null {
-  const trimmed = content.trim();
-  if (!trimmed || trimmed.length > 800) return null;
-  const fenced = trimmed.match(/^```(?:bash|shell|sh|cmd|powershell)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
-  const candidate = (fenced ?? trimmed.replace(/^`([\s\S]*)`$/, "$1")).trim();
-  const lines = candidate
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
-  if (lines.length !== 1) return null;
-  const command = lines[0]!.replace(/^\$+\s*/, "").trim();
-  if (!/^mari(?:\s|$)/i.test(command)) return null;
-  if (/[;&|`$<>]/.test(command)) return null;
-  return command;
-}
-
-function parseBareMariCommandToolCall(content: string, tools: LLMToolDefinition[]): LLMToolCall[] {
-  if (!tools.some((tool) => tool.function.name === "bash")) return [];
-  const command = extractBareMariCommand(content);
-  if (!command) return [];
-  return [
-    {
-      id: `mari_bare_command_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      type: "function",
-      function: {
-        name: "bash",
-        arguments: JSON.stringify({ command }),
-      },
-    },
-  ];
-}
-
-async function runJsonToolProtocol(
-  provider: BaseLLMProvider,
-  messages: ChatMessage[],
-  baseOptions: ChatOptions,
-  tools: LLMToolDefinition[],
-): Promise<ChatCompletionResult> {
-  const protocolMessage: ChatMessage = {
-    role: "system",
-    content: jsonToolProtocolInstruction(tools),
-    contextKind: "prompt",
-  };
-  const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
-  const fallbackMessages =
-    firstNonSystemIndex === -1
-      ? [protocolMessage, ...messages]
-      : [...messages.slice(0, firstNonSystemIndex), protocolMessage, ...messages.slice(firstNonSystemIndex)];
-  const result = await provider.chatComplete(fallbackMessages, { ...baseOptions, stream: false });
-  const toolCalls = parseJsonToolProtocolCalls(result.content ?? "", tools);
-  const fallbackToolCalls = toolCalls.length > 0 ? toolCalls : parseBareMariCommandToolCall(result.content ?? "", tools);
-  if (fallbackToolCalls.length === 0) return result;
-  return { ...result, content: null, toolCalls: fallbackToolCalls, finishReason: "tool_calls" };
-}
-
-function emptyUsage(): AssistantMessage["usage"] {
-  return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-}
-
-function mapUsage(usage: LLMUsage | undefined): AssistantMessage["usage"] {
-  if (!usage) return emptyUsage();
-  return {
-    input: usage.promptTokens,
-    output: usage.completionTokens,
-    cacheRead: usage.cachedPromptTokens ?? 0,
-    cacheWrite: usage.cacheWritePromptTokens ?? 0,
-    totalTokens: usage.totalTokens,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-}
-
-function normalizeCatalogProvider(provider: string): APIProvider | null {
-  const normalized = provider.replace(/-/g, "_");
-  return normalized in MODEL_LISTS ? (normalized as APIProvider) : null;
 }
 
 function resolveMariMaxOutputTokens(connection: WorkspaceConnection) {
@@ -886,24 +557,6 @@ function resolveMariMaxOutputTokens(connection: WorkspaceConnection) {
 function isLengthFinishReason(reason: string | undefined | null) {
   const normalized = String(reason ?? "").toLowerCase();
   return normalized === "length" || normalized === "max_tokens" || normalized === "max_output_tokens";
-}
-
-function createPiModel(connection: WorkspaceConnection): Model<string> {
-  const maxContext =
-    Number.isFinite(connection.maxContext) && connection.maxContext > 0 ? connection.maxContext : 128000;
-  const maxTokens = resolveMariMaxOutputTokens(connection);
-  return {
-    id: MARINARA_MODEL,
-    name: `${connection.name || "Marinara Connection"} / ${connection.model || "model"}`,
-    api: MARINARA_API,
-    provider: MARINARA_PROVIDER,
-    baseUrl: "marinara://current-connection",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: maxContext,
-    maxTokens,
-  };
 }
 
 function connectionSummary(connection: WorkspaceConnection | null): MariWorkspaceConnectionSummary | null {
@@ -929,31 +582,529 @@ function createProviderForConnection(connection: WorkspaceConnection): BaseLLMPr
   );
 }
 
-function connectionSessionKey(connection: WorkspaceConnection): string {
-  if (!isLocalSidecarConnection(connection)) return connection.id;
-  return [
-    connection.id,
-    sidecarModelService.getConfiguredModelRef() ?? "none",
-    sidecarModelService.getResolvedBackend(),
-    sidecarModelService.getConfig().contextSize,
-    sidecarModelService.getConfig().maxTokens,
-  ].join(":");
+function parseToolArgumentsValue(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (typeof value === "string") return parseJsonObject(value) ?? {};
+  return {};
+}
+
+function isWorkspaceToolName(value: string): value is MariWorkspaceToolName {
+  return (WORKSPACE_TOOLS as string[]).includes(value);
+}
+
+function newToolCallId(name: string, index: number) {
+  return `mari_cmd_${name}_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function hasActionPayload(payload: Record<string, unknown>): boolean {
+  return (
+    rawJsonToolCalls(payload).length > 0 ||
+    ["say", "message", "response", "final", "answer"].some((key) => typeof payload[key] === "string")
+  );
+}
+
+function tryParseJsonPayload(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function findJsonPayloadMatch(content: string): JsonPayloadMatch | null {
+  const fencedRe = /```(?:json)?\s*([\s\S]*?)```/gi;
+  for (const match of content.matchAll(fencedRe)) {
+    const rawJson = match[1]?.trim();
+    if (!rawJson) continue;
+    const payload = tryParseJsonPayload(rawJson);
+    if (!payload || !hasActionPayload(payload)) continue;
+    const start = match.index ?? 0;
+    return { payload, raw: match[0], start, end: start + match[0].length };
+  }
+
+  for (let start = 0; start < content.length; start += 1) {
+    if (content[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < content.length; index += 1) {
+      const char = content[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth !== 0) continue;
+        const raw = content.slice(start, index + 1);
+        const payload = tryParseJsonPayload(raw);
+        if (payload && hasActionPayload(payload)) return { payload, raw, start, end: index + 1 };
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+function rawJsonToolCalls(payload: Record<string, unknown>): unknown[] {
+  const plural = payload.tool_calls ?? payload.toolCalls ?? payload.commands ?? payload.calls;
+  if (Array.isArray(plural)) return plural;
+  const single = payload.tool_call ?? payload.toolCall ?? payload.command;
+  if (single !== undefined) return [single];
+  if (typeof payload.name === "string") return [payload];
+  return [];
+}
+
+function parseJsonCommandCallsFromPayload(payload: Record<string, unknown>): WorkspaceCommandCall[] {
+  const calls: WorkspaceCommandCall[] = [];
+  rawJsonToolCalls(payload).forEach((raw, index) => {
+    if (!isRecord(raw) || typeof raw.name !== "string" || !isWorkspaceToolName(raw.name)) return;
+    const args = parseToolArgumentsValue(raw.arguments ?? raw.args ?? raw.input ?? {});
+    const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : newToolCallId(raw.name, index);
+    calls.push({ id, name: raw.name, arguments: args });
+  });
+  return calls;
+}
+
+function jsonPayloadVisibleText(payload: Record<string, unknown>): string {
+  for (const key of ["say", "message", "response", "final", "answer"]) {
+    const value = payload[key];
+    if (typeof value === "string") return value.trim();
+  }
+  return "";
+}
+
+const COMMAND_BLOCK_RE = /<(read|grep|find|ls|edit|write|bash)>\s*([\s\S]*?)\s*<\/\1>/gi;
+
+function parseXmlCommandCalls(content: string): WorkspaceCommandCall[] {
+  const calls: WorkspaceCommandCall[] = [];
+  for (const [index, match] of [...content.matchAll(COMMAND_BLOCK_RE)].entries()) {
+    const name = match[1];
+    if (!name || !isWorkspaceToolName(name)) continue;
+    const rawBody = match[2]?.trim() ?? "{}";
+    let args = parseJsonObject(rawBody) ?? {};
+    if (name === "bash" && !args.command && rawBody && !rawBody.startsWith("{")) args = { command: rawBody };
+    calls.push({ id: newToolCallId(name, index), name, arguments: args, raw: match[0] });
+  }
+  return calls;
+}
+
+function parseQuotedParam(params: string, key: string): string | undefined {
+  const match = params.match(new RegExp(`${key}\\s*=\\s*"((?:\\\\.|[^"])*)"`, "i"));
+  if (!match) return undefined;
+  return (match[1] ?? "").replace(/\\(["\\nrt])/g, (_raw, escaped: string) => {
+    if (escaped === "n") return "\n";
+    if (escaped === "r") return "\r";
+    if (escaped === "t") return "\t";
+    return escaped;
+  });
+}
+
+function parseBracketCommandCalls(content: string): WorkspaceCommandCall[] {
+  const calls: WorkspaceCommandCall[] = [];
+  const re = /\[(read|grep|find|ls|bash):\s*([^\]\r\n]+)\]/gi;
+  for (const [index, match] of [...content.matchAll(re)].entries()) {
+    const name = match[1];
+    if (!name || !isWorkspaceToolName(name)) continue;
+    const params = match[2] ?? "";
+    const args: Record<string, unknown> = {};
+    for (const key of ["path", "pattern", "glob", "command"]) {
+      const value = parseQuotedParam(params, key);
+      if (value !== undefined) args[key] = value;
+    }
+    for (const key of ["offset", "limit", "context", "timeout"]) {
+      const numberMatch = params.match(new RegExp(`${key}=(-?[0-9]+)`, "i"));
+      if (numberMatch) args[key] = Number.parseInt(numberMatch[1] ?? "", 10);
+    }
+    if (Object.keys(args).length > 0) calls.push({ id: newToolCallId(name, index), name, arguments: args, raw: match[0] });
+  }
+  return calls;
+}
+
+function dedupeWorkspaceCommandCalls(calls: WorkspaceCommandCall[]): WorkspaceCommandCall[] {
+  const seen = new Set<string>();
+  return calls.filter((call) => {
+    const key = `${call.name}:${JSON.stringify(call.arguments)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function removeJsonActionFrame(content: string): { content: string; match: JsonPayloadMatch | null } {
+  const match = findJsonPayloadMatch(content);
+  if (!match) return { content, match: null };
+  return { content: `${content.slice(0, match.start)}${content.slice(match.end)}`, match };
+}
+
+function stripWorkspaceCommands(content: string): string {
+  if (!content.trim()) return "";
+  const withoutJson = removeJsonActionFrame(content).content;
+  return withoutJson
+    .replace(COMMAND_BLOCK_RE, "")
+    .replace(/\[(read|grep|find|ls|bash):\s*[^\]\r\n]+\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseAssistantWorkspaceAction(content: string): AssistantWorkspaceAction {
+  const { content: contentWithoutJson, match } = removeJsonActionFrame(content);
+  const jsonCommands = match ? parseJsonCommandCallsFromPayload(match.payload) : [];
+  const inlineVisibleText = stripWorkspaceCommands(contentWithoutJson);
+  const frameVisibleText = match ? jsonPayloadVisibleText(match.payload) : "";
+  const visibleText = [inlineVisibleText, frameVisibleText].filter(Boolean).join("\n\n").trim();
+  const commands = dedupeWorkspaceCommandCalls([
+    ...parseXmlCommandCalls(contentWithoutJson),
+    ...jsonCommands,
+    ...parseBracketCommandCalls(contentWithoutJson),
+  ]);
+  return {
+    visibleText,
+    commands,
+    assistantHistoryContent: visibleText || stripWorkspaceCommands(content) || " ",
+  };
+}
+
+function roleForMessage(row: { role: string }): "system" | "user" | "assistant" {
+  if (row.role === "assistant") return "assistant";
+  if (row.role === "system" || row.role === "narrator") return "system";
+  return "user";
+}
+
+function escapeWorkspaceXml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function formatCommandResultForPrompt(results: WorkspaceCommandResult[]): string {
+  const blocks = results.map((result) => {
+    const input = escapeWorkspaceXml(JSON.stringify(result.input, null, 2));
+    const output = escapeWorkspaceXml(result.output);
+    return `<workspace_command_result name="${result.name}" success="${result.success ? "true" : "false"}">
+<input>
+${input}
+</input>
+<output>
+${output}
+</output>
+</workspace_command_result>`;
+  });
+  return `Marinara executed Professor Mari's hidden workspace command${results.length === 1 ? "" : "s"}. Use these results to decide the next command or final answer.\n\n${blocks.join("\n\n")}`;
+}
+
+function formatContinuityResult(result: WorkspaceCommandResult, index: number): string {
+  const input = JSON.stringify(compactTraceValue(result.input, 600));
+  const output = compactTraceText(result.output, 1000);
+  return `${index + 1}. ${result.name} ${result.success ? "succeeded" : "failed"} input=${input}\n${output}`;
+}
+
+function buildWorkspaceContinuitySnapshot(args: {
+  userText: string;
+  assistantText: string;
+  commandResults: WorkspaceCommandResult[];
+}): string | null {
+  const sections: string[] = [];
+  if (args.userText.trim()) sections.push(`User request: ${compactTraceText(args.userText, 900)}`);
+  if (args.assistantText.trim()) sections.push(`Visible assistant response/plan: ${compactTraceText(args.assistantText, 1400)}`);
+  if (args.commandResults.length > 0) {
+    sections.push(
+      `Hidden workspace evidence/results:\n${args.commandResults
+        .slice(-12)
+        .map((result, index) => formatContinuityResult(result, index))
+        .join("\n\n")}`,
+    );
+  }
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function summarizeStoredTimeline(timeline: unknown): string | null {
+  if (!Array.isArray(timeline) || timeline.length === 0) return null;
+  const lines: string[] = [];
+  for (const item of timeline.slice(-16)) {
+    if (!isRecord(item)) continue;
+    if (item.type === "tool" && isRecord(item.tool)) {
+      const name = typeof item.tool.name === "string" ? item.tool.name : "tool";
+      const status = typeof item.tool.status === "string" ? item.tool.status : "unknown";
+      const input = item.tool.input === undefined ? "" : ` input=${JSON.stringify(compactTraceValue(item.tool.input, 480))}`;
+      const output = typeof item.tool.output === "string" ? `\n${compactTraceText(item.tool.output, 800)}` : "";
+      lines.push(`- ${name} ${status}${input}${output}`);
+    } else if ((item.type === "status" || item.type === "text") && typeof item.content === "string") {
+      lines.push(`- ${item.type}: ${compactTraceText(item.content, 500)}`);
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function workspaceContinuityFromExtra(extra: Record<string, unknown>): string | null {
+  if (typeof extra.mariWorkspaceContinuity === "string" && extra.mariWorkspaceContinuity.trim()) {
+    return compactTraceText(extra.mariWorkspaceContinuity, 5000);
+  }
+  return summarizeStoredTimeline(extra.mariWorkspaceTimeline);
+}
+
+function buildRecentWorkspaceContinuityPrompt(rows: Array<{ role: string; content: string; extra?: unknown }>): string | null {
+  const entries = rows
+    .filter((row) => row.role === "assistant")
+    .map((row) => {
+      const extra = parseExtra(row.extra);
+      const continuity = workspaceContinuityFromExtra(extra);
+      if (!continuity) return null;
+      return `<previous_workspace_turn>\n${continuity}\n</previous_workspace_turn>`;
+    })
+    .filter((entry): entry is string => !!entry)
+    .slice(-RECENT_WORKSPACE_CONTINUITY_LIMIT);
+  if (entries.length === 0) return null;
+  return `<workspace_continuity>
+Recent hidden workspace evidence and plans are below. Use this to continue fluidly across short confirmations such as "go ahead" or "yes". Do not repeat completed discovery unless needed.
+
+${entries.join("\n\n")}
+</workspace_continuity>`;
+}
+
+function chunkText(value: string, chunkSize = 1200): string[] {
+  const chunks: string[] = [];
+  for (let index = 0; index < value.length; index += chunkSize) chunks.push(value.slice(index, index + chunkSize));
+  return chunks;
+}
+
+function mapUsage(usage: LLMUsage | undefined): { promptTokens: number; completionTokens: number; totalTokens: number } {
+  if (!usage) return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  return {
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+  };
+}
+
+function normalizeSlashPath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function globToRegExp(glob: string): RegExp {
+  const normalized = normalizeSlashPath(glob || "**/*");
+  let source = "";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const char = normalized[index];
+    const next = normalized[index + 1];
+    if (char === "*" && next === "*") {
+      source += ".*";
+      index += 1;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else if (char === "?") {
+      source += "[^/]";
+    } else {
+      source += String(char).replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${source}$`, "i");
+}
+
+function numberArg(args: Record<string, unknown>, key: string, fallback: number, min: number, max: number): number {
+  const raw = args[key];
+  const parsed = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function stringArg(args: Record<string, unknown>, key: string, fallback = ""): string {
+  const raw = args[key];
+  return typeof raw === "string" ? raw : fallback;
+}
+
+function booleanArg(args: Record<string, unknown>, key: string, fallback = false): boolean {
+  const raw = args[key];
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") return raw === "true" || raw === "1";
+  return fallback;
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const normalizedParent = process.platform === "win32" ? parent.toLowerCase() : parent;
+  const normalizedChild = process.platform === "win32" ? child.toLowerCase() : child;
+  return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}${process.platform === "win32" ? "\\" : "/"}`);
+}
+
+function isReadOnlyWorkspaceCommand(command: WorkspaceCommandCall): boolean {
+  return command.name === "read" || command.name === "grep" || command.name === "find" || command.name === "ls";
+}
+
+function visibleTextRequestsUserApproval(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+  return (
+    /\b(say|reply|tell me)\b.{0,40}\b(apply it|apply|approve|approved|go ahead|yes|save it)\b/.test(normalized) ||
+    /\b(do you want me|should i|want me to)\b.{0,80}\b(apply|save|edit|update|patch|change|write)\b/.test(normalized) ||
+    /\b(need|waiting for|wait for)\b.{0,40}\b(approval|confirmation|permission)\b/.test(normalized) ||
+    /\bready to\b.{0,30}\b(apply|save|patch|update)\b/.test(normalized)
+  );
+}
+
+function bashLooksMutating(command: string): boolean {
+  const normalized = command.toLowerCase();
+  return (
+    /\b--apply\b/.test(normalized) ||
+    /\bmari\s+db\s+(insert|patch|replace|delete|transform)\b/.test(normalized) ||
+    /\bmari\s+(characters?|personas?|lorebooks?)\s+(create|update|delete|add-entry|link-character|unlink-character)\b/.test(normalized) ||
+    /\bmari\s+themes\s+(create|update|set-active)\b/.test(normalized) ||
+    /\bmari\s+images\s+(generate|edit|assign|delete)\b/.test(normalized)
+  );
+}
+
+function isMutatingWorkspaceCommand(command: WorkspaceCommandCall): boolean {
+  if (command.name === "edit" || command.name === "write") return true;
+  if (command.name !== "bash") return false;
+  const rawCommand = command.arguments.command;
+  return typeof rawCommand === "string" && bashLooksMutating(rawCommand);
+}
+
+function workspaceCommandValidationIssue(command: WorkspaceCommandCall): string | null {
+  const args = command.arguments;
+  const requireString = (key: string) => {
+    const value = args[key];
+    return typeof value === "string" && value.trim() ? null : `${command.name} requires a non-empty ${key} string`;
+  };
+
+  switch (command.name) {
+    case "read":
+      return requireString("path");
+    case "grep":
+      return requireString("pattern");
+    case "find":
+      return requireString("pattern");
+    case "edit": {
+      const pathIssue = requireString("path");
+      if (pathIssue) return pathIssue;
+      return Array.isArray(args.edits) && args.edits.length > 0 ? null : "edit requires a non-empty edits array";
+    }
+    case "write":
+      return requireString("path") ?? (typeof args.content === "string" ? null : "write requires a content string");
+    case "bash":
+      return requireString("command");
+    case "ls":
+      return null;
+    default:
+      return `Unsupported workspace command: ${(command as WorkspaceCommandCall).name}`;
+  }
+}
+
+const DIRECT_MARI_PATH_FLAGS = new Set([
+  "--json-file",
+  "--file",
+  "--css-file",
+  "--image",
+  "--image-file",
+  "--avatar-file",
+  "--path",
+]);
+
+function shellLikeSplit(command: string): string[] | null {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (const char of command) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else current += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (quote || escaped) return null;
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function commandHasShellOperators(command: string): boolean {
+  return /(^|\s)(?:&&|\|\||[|;<>])/.test(command);
+}
+
+function normalizeMariPathFlagArgs(argv: string[], cwd: string): string[] {
+  const out: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index]!;
+    out.push(token);
+    const equalsIndex = token.indexOf("=");
+    const inlineFlag = equalsIndex > 0 ? token.slice(0, equalsIndex) : null;
+    const inlineValue = equalsIndex > 0 ? token.slice(equalsIndex + 1) : null;
+    if (inlineFlag && inlineValue !== null && DIRECT_MARI_PATH_FLAGS.has(inlineFlag)) {
+      const candidates = [inlineValue];
+      let consumed = 0;
+      for (let cursor = index + 1; cursor < argv.length && !argv[cursor]!.startsWith("--"); cursor += 1) {
+        candidates.push(argv[cursor]!);
+        const joined = candidates.join(" ");
+        if (existsSync(resolve(cwd, joined))) consumed = cursor - index;
+      }
+      if (consumed > 0) {
+        out[out.length - 1] = `${inlineFlag}=${candidates.slice(0, consumed + 1).join(" ")}`;
+        index += consumed;
+      }
+      continue;
+    }
+    if (!DIRECT_MARI_PATH_FLAGS.has(token) || index + 1 >= argv.length) continue;
+    const candidates: string[] = [];
+    let consumed = 0;
+    for (let cursor = index + 1; cursor < argv.length && !argv[cursor]!.startsWith("--"); cursor += 1) {
+      candidates.push(argv[cursor]!);
+      const joined = candidates.join(" ");
+      if (existsSync(resolve(cwd, joined))) consumed = cursor - index;
+    }
+    if (consumed > 0) {
+      out.push(candidates.slice(0, consumed).join(" "));
+      index += consumed;
+    }
+  }
+  return out;
+}
+
+function parseDirectMariArgv(command: string, cwd: string): string[] | null {
+  const trimmed = command.trim();
+  if (!/^mari(?:\s|$)/.test(trimmed) || commandHasShellOperators(trimmed)) return null;
+  const tokens = shellLikeSplit(trimmed);
+  if (!tokens || tokens[0] !== "mari") return null;
+  return normalizeMariPathFlagArgs(tokens.slice(1), cwd);
 }
 
 export class ProfessorMariWorkspaceService {
   private enabled = true;
-  private session: AgentSession | null = null;
-  private sessionConnectionId: string | null = null;
   private workspaceRoot = getMonorepoRoot();
   private lastError: string | null = null;
-  private createFreshSessionOnNextEnsure = false;
+  private active = false;
+  private abortController: AbortController | null = null;
 
   constructor(private readonly app: FastifyInstance) {}
 
   setEnabled(enabled: boolean, workspaceRoot?: string | null) {
     this.enabled = enabled;
     if (workspaceRoot?.trim()) this.workspaceRoot = resolve(workspaceRoot);
-    if (!enabled) void this.disposeSession();
+    if (!enabled) void this.abort();
   }
 
   async status(connectionId?: string | null): Promise<MariWorkspaceStatus> {
@@ -969,7 +1120,7 @@ export class ProfessorMariWorkspaceService {
       });
     return {
       enabled: this.enabled,
-      piAvailable: true,
+      piAvailable: false,
       workspace: this.workspaceRoot,
       dataDir: DATA_DIR,
       tools: WORKSPACE_TOOLS,
@@ -977,7 +1128,7 @@ export class ProfessorMariWorkspaceService {
       connection: connectionSummary(connection),
       skills: skillsResponse.skills.map(({ content: _content, ...summary }) => summary),
       skillDiagnostics: skillsResponse.diagnostics,
-      active: Boolean(this.session?.isStreaming),
+      active: this.active,
       pendingApprovals: getMariDbService(this.app.db).getPendingApprovals(),
       history: await getMariDbService(this.app.db).getHistory(),
       error: this.lastError,
@@ -985,164 +1136,129 @@ export class ProfessorMariWorkspaceService {
   }
 
   async abort() {
-    await this.session?.abort();
+    this.abortController?.abort();
+    this.abortController = null;
+    this.active = false;
   }
 
-  async reset(options: { clearHistory?: boolean } = {}) {
-    await this.session
-      ?.abort()
-      .catch((err) => logger.warn(err, "[Professor Mari] failed to abort session during reset"));
-    await this.disposeSession();
-    if (options.clearHistory) this.createFreshSessionOnNextEnsure = true;
+  async reset(options?: { clearHistory?: boolean }) {
+    await this.abort();
     this.lastError = null;
+    if (options?.clearHistory === true) await getMariDbService(this.app.db).clearHistory();
   }
 
   async prompt(args: { chatId: string; text: string; connectionId?: string | null; onEvent: PromptEventSink }) {
+    if (!this.enabled) throw new Error("Professor Mari workspace mode is disabled.");
     const chatStorage = createChatsStorage(this.app.db);
     await chatStorage.createMessage({ chatId: args.chatId, role: "user", characterId: null, content: args.text });
 
     const connection = await this.resolveConnection(args.connectionId);
     if (!connection) throw new Error("Set up a language connection before using Professor Mari workspace mode.");
-    const session = await this.ensureSession(connection);
 
+    const controller = new AbortController();
+    this.abortController?.abort();
+    this.abortController = controller;
+    this.active = true;
+
+    const workspaceTrace: MariWorkspaceTraceItem[] = [];
     let assistantText = "";
     let thinkingText = "";
-    const workspaceTrace: MariWorkspaceTraceItem[] = [];
-    const messageCountBeforePrompt = session.messages.length;
-    const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-      const raw = event as unknown as Record<string, any>;
-      if (event.type === "message_update") {
-        const update = raw.assistantMessageEvent;
-        if (update?.type === "text_delta" && typeof update.delta === "string") {
-          assistantText += update.delta;
-          appendTraceText(workspaceTrace, update.delta);
-          args.onEvent({ type: "token", data: update.delta });
-        }
-        if (update?.type === "thinking_delta" && typeof update.delta === "string") {
-          thinkingText += update.delta;
-          appendTraceThinking(workspaceTrace, update.delta);
-          args.onEvent({ type: "thinking", data: update.delta });
-        }
-      } else if (event.type === "tool_execution_start") {
-        const id = typeof raw.toolCallId === "string" && raw.toolCallId ? raw.toolCallId : `tool-${Date.now()}`;
-        const name = typeof raw.toolName === "string" && raw.toolName ? raw.toolName : "tool";
-        const input = raw.args ?? raw.input;
-        upsertTraceTool(workspaceTrace, { id, name, status: "running", input, output: null, updatedAt: Date.now() });
-        args.onEvent({
-          type: "tool_start",
-          data: { id, name, input },
-        });
-      } else if (event.type === "tool_execution_update") {
-        const id = typeof raw.toolCallId === "string" && raw.toolCallId ? raw.toolCallId : `tool-${Date.now()}`;
-        const name = typeof raw.toolName === "string" && raw.toolName ? raw.toolName : "tool";
-        const output = stringifyEventPayload(raw.partialResult ?? raw.output ?? raw.delta);
-        upsertTraceTool(workspaceTrace, { id, name, status: "running", output, updatedAt: Date.now() });
-        args.onEvent({
-          type: "tool_update",
-          data: {
-            id,
-            name,
-            output,
-          },
-        });
-      } else if (event.type === "tool_execution_end") {
-        const id = typeof raw.toolCallId === "string" && raw.toolCallId ? raw.toolCallId : `tool-${Date.now()}`;
-        const name = typeof raw.toolName === "string" && raw.toolName ? raw.toolName : "tool";
-        const isError = raw.isError === true;
-        const output = stringifyEventPayload(raw.result ?? raw.output);
-        upsertTraceTool(workspaceTrace, {
-          id,
-          name,
-          status: isError ? "error" : "done",
-          output,
-          updatedAt: Date.now(),
-        });
-        args.onEvent({
-          type: "tool_end",
-          data: {
-            id,
-            name,
-            isError,
-            output,
-          },
-        });
-      } else if (event.type === "compaction_start") {
-        const content =
-          raw.reason === "manual"
-            ? "Compacting workspace history..."
-            : "Compacting older workspace history so Mari can keep going...";
-        appendTraceStatus(workspaceTrace, content);
-        args.onEvent({
-          type: "status",
-          data: { content, kind: "compaction_start", reason: typeof raw.reason === "string" ? raw.reason : undefined },
-        });
-      } else if (event.type === "compaction_end") {
-        const error = typeof raw.errorMessage === "string" && raw.errorMessage.trim() ? raw.errorMessage.trim() : null;
-        const aborted = raw.aborted === true;
-        const content = error
-          ? `History compaction failed: ${error}`
-          : aborted
-            ? "History compaction was cancelled."
-            : "Older workspace history compacted.";
-        appendTraceStatus(workspaceTrace, content);
-        args.onEvent({
-          type: "status",
-          data: {
-            content,
-            kind: "compaction_end",
-            level: error ? "error" : aborted ? "warning" : "info",
-            reason: typeof raw.reason === "string" ? raw.reason : undefined,
-          },
-        });
-      } else if (event.type === "auto_retry_start") {
-        const content = `Retrying model call after a streaming error (${raw.attempt}/${raw.maxAttempts})...`;
-        appendTraceStatus(workspaceTrace, content);
-        args.onEvent({ type: "status", data: { content, kind: "retry", level: "warning" } });
-      }
-    });
+    let totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     try {
-      await session.prompt(args.text, { source: "rpc" });
-      const lastAssistant = getLastAssistantMessage(session, messageCountBeforePrompt);
-      const finalText = extractAssistantText(lastAssistant) || session.getLastAssistantText() || "";
-      const finalThinking = extractAssistantThinking(lastAssistant);
-      const finalError = extractAssistantError(lastAssistant);
-      const finalStopReason = typeof lastAssistant?.stopReason === "string" ? lastAssistant.stopReason : null;
-      if (isLengthFinishReason(finalStopReason)) {
-        const content = "Mari hit the model output limit. Ask her to continue and she can pick up from here.";
-        appendTraceStatus(workspaceTrace, content);
-        args.onEvent({ type: "status", data: { content, kind: "output_limit", level: "warning" } });
-      }
+      await this.ensureMariCliShim();
+      const provider = createProviderForConnection(connection);
+      const messages = await this.buildPromptMessages(args.chatId, connection);
+      const baseOptions = this.baseChatOptions(connection, controller.signal, (delta) => {
+        thinkingText += delta;
+        appendTraceThinking(workspaceTrace, delta);
+        args.onEvent({ type: "thinking", data: delta });
+      });
+      const commandResultsForContinuity: WorkspaceCommandResult[] = [];
 
-      if (finalText && finalText !== assistantText) {
-        const missingText = finalText.startsWith(assistantText)
-          ? finalText.slice(assistantText.length)
-          : assistantText
-            ? ""
-            : finalText;
-        if (missingText) {
-          assistantText += missingText;
-          appendTraceText(workspaceTrace, missingText);
-          args.onEvent({ type: "token", data: missingText });
+      for (let round = 0; round < MAX_COMMAND_ROUNDS; round += 1) {
+        if (controller.signal.aborted) throw new Error("aborted");
+        const result = await this.chatCompleteWorkspace(provider, messages, baseOptions);
+        const usage = mapUsage(result.usage);
+        totalUsage = {
+          promptTokens: totalUsage.promptTokens + usage.promptTokens,
+          completionTokens: totalUsage.completionTokens + usage.completionTokens,
+          totalTokens: totalUsage.totalTokens + usage.totalTokens,
+        };
+
+        const rawContent = result.content ?? "";
+        const parsedAction = parseAssistantWorkspaceAction(rawContent);
+        const shouldDeferMutations =
+          parsedAction.visibleText &&
+          visibleTextRequestsUserApproval(parsedAction.visibleText) &&
+          parsedAction.commands.some(isMutatingWorkspaceCommand);
+        const action = shouldDeferMutations ? { ...parsedAction, commands: [] } : parsedAction;
+        if (shouldDeferMutations) {
+          const content =
+            "Deferred hidden mutating workspace commands because the assistant asked the user for approval in the same turn.";
+          appendTraceStatus(workspaceTrace, content);
+          args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+        }
+        if (action.visibleText) {
+          assistantText = appendVisibleText(assistantText, action.visibleText);
+          appendTraceText(workspaceTrace, `${action.visibleText}\n`);
+          for (const chunk of chunkText(`${action.visibleText}\n`)) args.onEvent({ type: "token", data: chunk });
+        }
+
+        messages.push({ role: "assistant", content: action.assistantHistoryContent });
+
+        if (action.commands.length === 0) {
+          if (isLengthFinishReason(result.finishReason)) {
+            const content = "Mari hit the model output limit. Ask her to continue and she can pick up from here.";
+            appendTraceStatus(workspaceTrace, content);
+            args.onEvent({ type: "status", data: { content, kind: "output_limit", level: "warning" } });
+          }
+          break;
+        }
+
+        const commandResults = await this.executeWorkspaceCommandBatch(
+          action.commands,
+          controller.signal,
+          workspaceTrace,
+          args.onEvent,
+        );
+        commandResultsForContinuity.push(...commandResults);
+        messages.push({ role: "user", content: formatCommandResultForPrompt(commandResults), contextKind: "history" });
+
+        if (round === MAX_COMMAND_ROUNDS - 1) {
+          const content = "Command round limit reached; asking Professor Mari to summarize with the evidence she has.";
+          appendTraceStatus(workspaceTrace, content);
+          args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+          messages.push({
+            role: "user",
+            content:
+              "You reached the workspace command round limit. Do not issue more commands. Summarize what you learned or what remains blocked.",
+          });
+          const finalResult = await this.chatCompleteWorkspace(provider, messages, baseOptions);
+          const finalUsage = mapUsage(finalResult.usage);
+          totalUsage = {
+            promptTokens: totalUsage.promptTokens + finalUsage.promptTokens,
+            completionTokens: totalUsage.completionTokens + finalUsage.completionTokens,
+            totalTokens: totalUsage.totalTokens + finalUsage.totalTokens,
+          };
+          const finalAction = parseAssistantWorkspaceAction(finalResult.content ?? "");
+          if (finalAction.visibleText) {
+            assistantText = appendVisibleText(assistantText, finalAction.visibleText);
+            appendTraceText(workspaceTrace, finalAction.visibleText);
+            for (const chunk of chunkText(finalAction.visibleText)) args.onEvent({ type: "token", data: chunk });
+          } else if (finalAction.commands.length > 0) {
+            const content =
+              "Professor Mari tried to run more workspace commands after the command limit, so I stopped the loop. Ask her to continue if you want her to keep working from the saved trace.";
+            assistantText = appendVisibleText(assistantText, content);
+            appendTraceStatus(workspaceTrace, content);
+            args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+            for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
+          }
         }
       }
-      if (finalThinking && finalThinking !== thinkingText) {
-        const missingThinking = finalThinking.startsWith(thinkingText)
-          ? finalThinking.slice(thinkingText.length)
-          : thinkingText
-            ? ""
-            : finalThinking;
-        if (missingThinking) {
-          thinkingText += missingThinking;
-          appendTraceThinking(workspaceTrace, missingThinking);
-          args.onEvent({ type: "thinking", data: missingThinking });
-        }
-      }
 
-      const persistedText = finalText.trim() ? finalText : assistantText;
-      if (finalError && !persistedText.trim()) throw new Error(finalError);
-
-      if (persistedText.trim()) {
+      const persistedText = assistantText.trim();
+      if (persistedText) {
         const message = await chatStorage.createMessage({
           chatId: args.chatId,
           role: "assistant",
@@ -1154,297 +1270,509 @@ export class ProfessorMariWorkspaceService {
           const storedTrace = sanitizeTraceForStorage(workspaceTrace);
           if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
           if (storedTrace.length > 0) extraUpdate.mariWorkspaceTimeline = storedTrace;
-          if (Object.keys(extraUpdate).length > 0) {
-            await chatStorage.updateMessageExtra(message.id, extraUpdate);
-            await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
-          }
+          const continuity = buildWorkspaceContinuitySnapshot({
+            userText: args.text,
+            assistantText: persistedText,
+            commandResults: commandResultsForContinuity,
+          });
+          if (continuity) extraUpdate.mariWorkspaceContinuity = continuity;
+          extraUpdate.generationInfo = { provider: connection.provider, model: connection.model, usage: totalUsage };
+          await chatStorage.updateMessageExtra(message.id, extraUpdate);
+          await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
         }
       }
       args.onEvent({ type: "metadata", data: { connection: connectionSummary(connection) ?? undefined } });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        const content = "Professor Mari workspace run was cancelled.";
+        appendTraceStatus(workspaceTrace, content);
+        args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+      } else {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        throw err;
+      }
     } finally {
-      unsubscribe();
+      if (this.abortController === controller) this.abortController = null;
+      this.active = false;
     }
   }
 
-  private async disposeSession() {
-    this.session?.dispose();
-    this.session = null;
-    this.sessionConnectionId = null;
+  private async buildPromptMessages(chatId: string, connection: WorkspaceConnection): Promise<ChatMessage[]> {
+    const chatStorage = createChatsStorage(this.app.db);
+    const history = (await chatStorage.listMessages(chatId)).slice(-MAX_HISTORY_MESSAGES);
+    const continuityPrompt = buildRecentWorkspaceContinuityPrompt(history);
+    const skillsPrompt = await this.buildSkillsPrompt();
+    const workspaceInfo = [
+      `<workspace_context>`,
+      `workspaceRoot: ${this.workspaceRoot}`,
+      `dataDir: ${DATA_DIR}`,
+      `serverUrl: ${getServerProtocol()}://127.0.0.1:${getPort()}`,
+      `connection: ${connection.name || connection.id} / ${connection.provider} / ${connection.model}`,
+      `currentTime: ${new Date().toISOString()}`,
+      `</workspace_context>`,
+    ].join("\n");
+    const messages: ChatMessage[] = [
+      { role: "system", content: MARI_SYSTEM_PROMPT, contextKind: "prompt" },
+      { role: "system", content: workspaceCommandProtocolPrompt(), contextKind: "prompt" },
+      { role: "system", content: workspaceInfo, contextKind: "prompt" },
+    ];
+    if (skillsPrompt) messages.push({ role: "system", content: skillsPrompt, contextKind: "prompt" });
+
+    for (const row of history) {
+      const extra = parseExtra(row.extra);
+      if (extra.hiddenFromAI === true) continue;
+      const content = typeof row.content === "string" ? row.content : String(row.content ?? "");
+      if (!content.trim()) continue;
+      messages.push({ role: roleForMessage(row), content, contextKind: "history" });
+    }
+    if (continuityPrompt) messages.push({ role: "system", content: continuityPrompt, contextKind: "injection" });
+    return messages;
   }
 
-  private async ensureSession(connection: WorkspaceConnection): Promise<AgentSession> {
-    const sessionKey = connectionSessionKey(connection);
-    if (this.session && this.sessionConnectionId === sessionKey) return this.session;
-    await this.disposeSession();
-    const mariCliBinDir = await this.ensureMariCliShim();
+  private async buildSkillsPrompt(): Promise<string | null> {
+    const response = await getProfessorMariWorkspaceSkillsService().list();
+    const enabled = response.skills.filter((skill) => skill.enabled && skill.content.trim());
+    const sections = enabled.map(
+      (skill) => `<skill name="${skill.name}" id="${skill.id}">
+Description: ${skill.description}
 
-    process.env.MARINARA_PI_API_KEY = RUNTIME_API_KEY;
-    process.env.MARI_WORKSPACE_SESSION_ID = SESSION_ID;
-    process.env.MARI_SERVER_URL = `${getServerProtocol()}://127.0.0.1:${getPort()}`;
-    process.env.DATA_DIR = DATA_DIR;
+${skill.content.trim()}
+</skill>`,
+    );
+    if (response.diagnostics.length > 0) {
+      sections.push(`<skill_diagnostics>
+${response.diagnostics.join("\n")}
+</skill_diagnostics>`);
+    }
+    if (sections.length === 0) return null;
+    return `<professor_mari_custom_skills>
+Use these user-defined skills when relevant.
 
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: true },
-      retry: { enabled: true, maxRetries: 2 },
-    } as any);
-    const authStorage = AuthStorage.create(join(DATA_DIR, ".mari-workspace", "pi-auth.json"));
-    authStorage.setRuntimeApiKey(MARINARA_PROVIDER, RUNTIME_API_KEY);
-    const modelRegistry = ModelRegistry.inMemory(authStorage);
-    const model = createPiModel(connection);
-    const skillResult = await getProfessorMariWorkspaceSkillsService().loadPiSkills();
-    const loader = new DefaultResourceLoader({
-      cwd: this.workspaceRoot,
-      agentDir: join(DATA_DIR, ".mari-workspace", "pi-agent"),
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      noContextFiles: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      systemPromptOverride: () => MARI_SYSTEM_PROMPT,
-      appendSystemPromptOverride: () => [],
-      agentsFilesOverride: () => ({ agentsFiles: [] }),
-      skillsOverride: () => skillResult,
-      extensionFactories: [
-        (pi: any) => {
-          const bashTool = createBashTool(this.workspaceRoot, {
-            ...(process.platform === "win32" ? { operations: createWindowsCmdOperations() } : {}),
-            spawnHook: ({ command, cwd, env }) => ({
-              command,
-              cwd,
-              env: this.withMariRuntimeEnv({ ...env }, mariCliBinDir),
-            }),
-          });
-          pi.registerTool({
-            ...bashTool,
-            description: `${bashTool.description}\nMarinara portability: use simple cross-platform commands as private tool calls. Prefer direct mari commands and the read/grep/find/ls/edit/write tools over bash-only syntax. Do not tell the user to run commands unless they explicitly ask. For JSON/CSS/script payloads, write a temp file first and pass it with --json-file, --css-file, or the relevant file flag.`,
-            promptSnippet:
-              "Run simple portable shell commands privately. Prefer mari commands and built-in file tools; avoid bash-only syntax.",
-            execute: async (id: string, params: any, signal: AbortSignal, onUpdate: any) => {
-              const command = typeof params?.command === "string" ? params.command : "";
-              const compatibilityIssue = windowsShellCompatibilityIssue(command);
-              if (compatibilityIssue) throw new Error(compatibilityIssue);
-              return bashTool.execute(id, params, signal, onUpdate);
-            },
-          });
-          pi.registerProvider(MARINARA_PROVIDER, {
-            name: "Marinara current connection",
-            baseUrl: "marinara://current-connection",
-            apiKey: "$MARINARA_PI_API_KEY",
-            api: MARINARA_API,
-            models: [model],
-            streamSimple: (_model: Model<string>, context: Context, options?: SimpleStreamOptions) =>
-              this.streamMarinara(connection.id, context, options),
-          });
-          pi.on("tool_call", async (event: any, ctx: any) => this.guardStorageToolCall(event, ctx));
-        },
-      ],
-    });
-    await loader.reload();
-
-    const sessionDir = join(DATA_DIR, ".mari-workspace", "pi-sessions");
-    const sessionManager = this.createFreshSessionOnNextEnsure
-      ? SessionManager.create(this.workspaceRoot, sessionDir)
-      : SessionManager.continueRecent(this.workspaceRoot, sessionDir);
-
-    const result = await createAgentSession({
-      cwd: this.workspaceRoot,
-      agentDir: join(DATA_DIR, ".mari-workspace", "pi-agent"),
-      model,
-      thinkingLevel: "off",
-      tools: WORKSPACE_TOOLS,
-      authStorage,
-      modelRegistry,
-      resourceLoader: loader,
-      sessionManager,
-      settingsManager,
-    });
-    this.session = result.session;
-    this.sessionConnectionId = sessionKey;
-    this.createFreshSessionOnNextEnsure = false;
-    this.lastError = result.modelFallbackMessage ?? null;
-    return result.session;
+${sections.join("\n\n")}
+</professor_mari_custom_skills>`;
   }
 
-  private streamMarinara(
-    connectionId: string,
-    context: Context,
-    options?: SimpleStreamOptions,
-  ): AssistantMessageEventStream {
-    const stream = createAssistantMessageEventStream();
-    void (async () => {
-      const connection = await this.resolveConnection(connectionId);
-      const output: AssistantMessage = {
-        role: "assistant",
-        content: [],
-        api: MARINARA_API,
-        provider: MARINARA_PROVIDER,
-        model: MARINARA_MODEL,
-        usage: emptyUsage(),
-        stopReason: "stop",
-        timestamp: Date.now(),
-      };
+  private baseChatOptions(
+    connection: WorkspaceConnection,
+    signal: AbortSignal,
+    onThinking: (delta: string) => void,
+  ): ChatOptions {
+    const defaultParameters = parseJsonObject(connection.defaultParameters);
+    return {
+      model: connection.model,
+      temperature: typeof defaultParameters?.temperature === "number" ? defaultParameters.temperature : 0.2,
+      maxTokens: resolveMariMaxOutputTokens(connection),
+      maxContext: connection.maxContext,
+      enableCaching: bool(connection.enableCaching),
+      cachingAtDepth: connection.cachingAtDepth ?? 5,
+      serviceTier: normalizeServiceTier(defaultParameters?.serviceTier),
+      openrouterProvider: connection.openrouterProvider,
+      customParameters: mergeCustomParameters(defaultParameters, null),
+      signal,
+      onThinking,
+    };
+  }
+
+  private async chatCompleteWorkspace(
+    provider: BaseLLMProvider,
+    messages: ChatMessage[],
+    baseOptions: ChatOptions,
+  ): Promise<ChatCompletionResult> {
+    return provider.chatComplete(messages, { ...baseOptions, stream: false });
+  }
+
+  private async executeWorkspaceCommandBatch(
+    commands: WorkspaceCommandCall[],
+    signal: AbortSignal,
+    trace: MariWorkspaceTraceItem[],
+    onEvent: PromptEventSink,
+  ): Promise<WorkspaceCommandResult[]> {
+    const results: WorkspaceCommandResult[] = [];
+    for (let index = 0; index < commands.length; ) {
+      const command = commands[index]!;
+      if (!isReadOnlyWorkspaceCommand(command)) {
+        results.push(await this.executeWorkspaceCommand(command, signal, trace, onEvent));
+        index += 1;
+        continue;
+      }
+      const group: WorkspaceCommandCall[] = [];
+      while (
+        index < commands.length &&
+        group.length < MAX_PARALLEL_READONLY_COMMANDS &&
+        isReadOnlyWorkspaceCommand(commands[index]!)
+      ) {
+        group.push(commands[index]!);
+        index += 1;
+      }
+      results.push(...(await Promise.all(group.map((entry) => this.executeWorkspaceCommand(entry, signal, trace, onEvent)))));
+    }
+    return results;
+  }
+
+  private async executeWorkspaceCommand(
+    command: WorkspaceCommandCall,
+    signal: AbortSignal,
+    trace: MariWorkspaceTraceItem[],
+    onEvent: PromptEventSink,
+  ): Promise<WorkspaceCommandResult> {
+    const input = command.arguments;
+    upsertTraceTool(trace, { id: command.id, name: command.name, status: "running", input, output: null, updatedAt: Date.now() });
+    onEvent({ type: "tool_start", data: { id: command.id, name: command.name, input } });
+    try {
+      const validationIssue = workspaceCommandValidationIssue(command);
+      if (validationIssue) throw new Error(validationIssue);
+      const output = await this.runWorkspaceCommand(command, signal);
+      const compacted = compactOutput(output);
+      upsertTraceTool(trace, { id: command.id, name: command.name, status: "done", output: compacted, updatedAt: Date.now() });
+      onEvent({ type: "tool_end", data: { id: command.id, name: command.name, isError: false, output: compacted } });
+      return { id: command.id, name: command.name, input, output: compacted, success: true };
+    } catch (err) {
+      const output = err instanceof Error ? err.message : String(err);
+      upsertTraceTool(trace, { id: command.id, name: command.name, status: "error", output, updatedAt: Date.now() });
+      onEvent({ type: "tool_end", data: { id: command.id, name: command.name, isError: true, output } });
+      return { id: command.id, name: command.name, input, output, success: false };
+    }
+  }
+
+  private async runWorkspaceCommand(command: WorkspaceCommandCall, signal: AbortSignal): Promise<string> {
+    switch (command.name) {
+      case "read":
+        return this.commandRead(command.arguments);
+      case "ls":
+        return this.commandLs(command.arguments);
+      case "find":
+        return this.commandFind(command.arguments);
+      case "grep":
+        return this.commandGrep(command.arguments);
+      case "write":
+        return this.commandWrite(command.arguments);
+      case "edit":
+        return this.commandEdit(command.arguments);
+      case "bash":
+        return this.commandBash(command.arguments, signal);
+      default:
+        return `Unknown workspace command: ${(command as WorkspaceCommandCall).name}`;
+    }
+  }
+
+  private resolveWorkspacePath(inputPath: string, options: { allowMissing?: boolean; forbidStorageMutation?: boolean } = {}) {
+    const rawPath = inputPath.trim() || ".";
+    const absolute = resolve(this.workspaceRoot, rawPath);
+    const workspaceRoot = resolve(this.workspaceRoot);
+    if (!isWithin(workspaceRoot, absolute)) {
+      throw new Error(`Path escapes the workspace: ${inputPath}`);
+    }
+    if (options.forbidStorageMutation) {
+      const storageRoot = resolve(getFileStorageDir());
+      if (isWithin(storageRoot, absolute)) {
+        throw new Error("DATA_DIR/storage is managed by Marinara. Use mari db for table edits instead of file writes.");
+      }
+    }
+    if (!options.allowMissing && !existsSync(absolute)) throw new Error(`Path not found: ${inputPath}`);
+    return absolute;
+  }
+
+  private displayPath(absolute: string) {
+    const rel = relative(this.workspaceRoot, absolute) || ".";
+    return normalizeSlashPath(rel);
+  }
+
+  private storageTableReadWarning(absolute: string): string | null {
+    const tablesRoot = resolve(getFileStorageDir(), "tables");
+    if (!isWithin(tablesRoot, absolute) || !absolute.endsWith(".json")) return null;
+    return [
+      "Warning: this is a raw file-backed storage table, not parsed app data.",
+      "JSON columns in this file are intentionally serialized strings.",
+      "Use mari db, mari characters get/search, mari personas, or mari lorebooks for parsed data, and never pass a storage table file to --json-file.",
+    ].join(" ");
+  }
+
+  private storageTableJsonFileIssue(command: string): string | null {
+    if (!/\bmari\b/i.test(command) || !/--(?:json-file|file)\b/i.test(command)) return null;
+    const normalized = normalizeSlashPath(command);
+    const tablesRoot = normalizeSlashPath(resolve(getFileStorageDir(), "tables"));
+    const tablesRel = normalizeSlashPath(relative(this.workspaceRoot, resolve(getFileStorageDir(), "tables")));
+    if (!normalized.includes("data/storage/tables/") && !normalized.includes(tablesRoot) && !normalized.includes(tablesRel)) {
+      return null;
+    }
+    return "Do not pass DATA_DIR/storage/tables/*.json to mari --json-file/--file. Those are full raw table exports; create a temp file containing one row/card payload instead.";
+  }
+
+  private async commandRead(args: Record<string, unknown>): Promise<string> {
+    const filePath = this.resolveWorkspacePath(stringArg(args, "path"));
+    const stats = await stat(filePath);
+    if (!stats.isFile()) throw new Error("read path must be a file");
+    if (stats.size > COMMAND_FILE_READ_LIMIT) {
+      return `File ${this.displayPath(filePath)} is ${stats.size} bytes; refusing to read more than ${COMMAND_FILE_READ_LIMIT} bytes. Use grep or a narrower file.`;
+    }
+    const text = await readFile(filePath, "utf8");
+    const lines = text.split(/\r?\n/);
+    const offset = numberArg(args, "offset", 1, 1, Math.max(1, lines.length));
+    const limit = numberArg(args, "limit", 2000, 1, 2000);
+    const selected = lines.slice(offset - 1, offset - 1 + limit);
+    const endLine = offset + selected.length - 1;
+    const truncated = endLine < lines.length;
+    return [
+      `File: ${this.displayPath(filePath)}`,
+      `Lines: ${offset}-${endLine} of ${lines.length}${truncated ? " (truncated)" : ""}`,
+      this.storageTableReadWarning(filePath),
+      "",
+      selected.map((line, index) => `${offset + index}: ${line}`).join("\n"),
+    ]
+      .filter((part): part is string => part !== null)
+      .join("\n");
+  }
+
+  private async commandLs(args: Record<string, unknown>): Promise<string> {
+    const dirPath = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const stats = await stat(dirPath);
+    if (!stats.isDirectory()) throw new Error("ls path must be a directory");
+    const limit = numberArg(args, "limit", 500, 1, 1000);
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const names = entries
+      .map((entry) => `${entry.name}${entry.isDirectory() ? "/" : ""}`)
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, limit);
+    const truncated = entries.length > names.length;
+    return [`Directory: ${this.displayPath(dirPath)}`, ...names, truncated ? `… ${entries.length - names.length} more` : ""]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private async walkFiles(root: string, limit = MAX_WALK_ENTRIES): Promise<string[]> {
+    const files: string[] = [];
+    const visit = async (dir: string) => {
+      if (files.length >= limit) return;
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (files.length >= limit) return;
+        if (entry.isDirectory() && SKIPPED_DIRS.has(entry.name)) continue;
+        const absolute = join(dir, entry.name);
+        if (entry.isDirectory()) await visit(absolute);
+        else if (entry.isFile()) files.push(absolute);
+      }
+    };
+    await visit(root);
+    return files;
+  }
+
+  private matchesGlob(absolute: string, glob: string): boolean {
+    const rel = normalizeSlashPath(relative(this.workspaceRoot, absolute));
+    const base = normalizeSlashPath(relative(dirname(absolute), absolute));
+    const pattern = glob || "**/*";
+    const patterns = pattern.startsWith("**/") ? [pattern, pattern.slice(3)] : [pattern];
+    return patterns.some((candidate) => {
+      const matcher = globToRegExp(candidate);
+      return matcher.test(rel) || matcher.test(base);
+    });
+  }
+
+  private async commandFind(args: Record<string, unknown>): Promise<string> {
+    const root = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const stats = await stat(root);
+    const pattern = stringArg(args, "pattern", "**/*");
+    const limit = numberArg(args, "limit", 1000, 1, 2000);
+    const files = stats.isFile() ? [root] : await this.walkFiles(root);
+    const matched = files.filter((file) => this.matchesGlob(file, pattern)).slice(0, limit);
+    return matched.length
+      ? matched.map((file) => this.displayPath(file)).join("\n")
+      : `No files matched ${pattern} under ${this.displayPath(root)}.`;
+  }
+
+  private async commandGrep(args: Record<string, unknown>): Promise<string> {
+    const root = this.resolveWorkspacePath(stringArg(args, "path", "."));
+    const stats = await stat(root);
+    const pattern = stringArg(args, "pattern");
+    if (!pattern) throw new Error("grep requires pattern");
+    const glob = stringArg(args, "glob", "**/*");
+    const limit = numberArg(args, "limit", 100, 1, 500);
+    const context = numberArg(args, "context", 0, 0, 20);
+    const ignoreCase = booleanArg(args, "ignoreCase");
+    const literal = booleanArg(args, "literal");
+    const matcher = literal ? null : new RegExp(pattern, ignoreCase ? "i" : "");
+    const literalNeedle = ignoreCase ? pattern.toLowerCase() : pattern;
+    const files = stats.isFile() ? [root] : (await this.walkFiles(root)).filter((file) => this.matchesGlob(file, glob));
+    const output: string[] = [];
+    for (const file of files) {
+      if (output.length >= limit) break;
+      const fileStats = await stat(file);
+      if (fileStats.size > 1_000_000) continue;
+      let text = "";
       try {
-        if (!connection) throw new Error("No Marinara language connection available.");
-        stream.push({ type: "start", partial: output });
-        const provider = createProviderForConnection(connection);
-        const defaultParameters = parseJsonObject(connection.defaultParameters);
-        const messages = convertMessages(context);
-        const tools = convertTools(context);
-        let contentIndex: number | null = null;
-        let sawTextDelta = false;
-        const ensureText = () => {
-          if (contentIndex !== null) return contentIndex;
-          output.content.push({ type: "text", text: "" });
-          contentIndex = output.content.length - 1;
-          stream.push({ type: "text_start", contentIndex, partial: output });
-          return contentIndex;
-        };
-        const pushTextDelta = (delta: string) => {
-          if (!delta) return;
-          const index = ensureText();
-          const block = output.content[index];
-          if (block?.type === "text") block.text += delta;
-          sawTextDelta = true;
-          stream.push({ type: "text_delta", contentIndex: index, delta, partial: output });
-        };
-        const pushThinkingDelta = (delta: string) => {
-          let thinkingIndex = output.content.findIndex((block) => block.type === "thinking");
-          if (thinkingIndex < 0) {
-            output.content.push({ type: "thinking", thinking: "" });
-            thinkingIndex = output.content.length - 1;
-            stream.push({ type: "thinking_start", contentIndex: thinkingIndex, partial: output });
-          }
-          const block = output.content[thinkingIndex];
-          if (block?.type === "thinking") block.thinking += delta;
-          stream.push({ type: "thinking_delta", contentIndex: thinkingIndex, delta, partial: output });
-        };
-        const finishText = () => {
-          if (contentIndex === null) return;
-          const block = output.content[contentIndex];
-          stream.push({
-            type: "text_end",
-            contentIndex,
-            content: block?.type === "text" ? block.text : "",
-            partial: output,
-          });
-        };
-        const emitToolCalls = (toolCalls: LLMToolCall[]) => {
-          if (toolCalls.length === 0) return;
-          output.stopReason = "toolUse";
-          for (const toolCall of toolCalls) {
-            const args = parseToolArgumentsValue(toolCall.function.arguments);
-            const block: ToolCall = {
-              type: "toolCall",
-              id: toolCall.id,
-              name: toolCall.function.name,
-              arguments: args,
-            };
-            output.content.push(block);
-            const index = output.content.length - 1;
-            stream.push({ type: "toolcall_start", contentIndex: index, partial: output });
-            stream.push({ type: "toolcall_delta", contentIndex: index, delta: JSON.stringify(args), partial: output });
-            stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
-          }
-        };
-        const baseOptions: ChatOptions = {
-          model: connection.model,
-          temperature: typeof defaultParameters?.temperature === "number" ? defaultParameters.temperature : 0.2,
-          maxTokens: resolveMariMaxOutputTokens(connection),
-          maxContext: connection.maxContext,
-          enableCaching: bool(connection.enableCaching),
-          cachingAtDepth: connection.cachingAtDepth ?? 5,
-          enableThinking: options?.reasoning !== undefined,
-          reasoningEffort:
-            options?.reasoning === "xhigh" ? "xhigh" : options?.reasoning === "minimal" ? "low" : options?.reasoning,
-          serviceTier: normalizeServiceTier(defaultParameters?.serviceTier),
-          openrouterProvider: connection.openrouterProvider,
-          customParameters: mergeCustomParameters({}, recordProperty(defaultParameters, "customParameters")),
-          signal: options?.signal,
-          onThinking: pushThinkingDelta,
-        };
-        const useJsonToolProtocol = Boolean(tools?.length && shouldUseJsonToolProtocol(connection));
-        let result =
-          tools?.length && useJsonToolProtocol
-            ? await runJsonToolProtocol(provider, messages, baseOptions, tools)
-            : tools?.length
-              ? await provider.chatComplete(messages, {
-                  ...baseOptions,
-                  stream: true,
-                  tools,
-                  onToken: pushTextDelta,
-                })
-              : await provider.chatComplete(messages, { ...baseOptions, stream: true, onToken: pushTextDelta });
-
-        let recoveredToolCalls =
-          tools?.length && result.toolCalls.length === 0 && result.content
-            ? parseJsonToolProtocolCalls(result.content, tools)
-            : [];
-        let resultToolCalls = result.toolCalls.length > 0 ? result.toolCalls : recoveredToolCalls;
-        if (
-          tools?.length &&
-          useJsonToolProtocol &&
-          resultToolCalls.length === 0 &&
-          result.content &&
-          needsWorkspaceToolForRequest(getLastUserText(messages)) &&
-          isPromiseOnlyToolResponse(result.content)
-        ) {
-          result = await runJsonToolProtocol(
-            provider,
-            withToolPromiseRetryInstruction(messages, result.content),
-            baseOptions,
-            tools,
-          );
-          recoveredToolCalls =
-            result.toolCalls.length === 0 && result.content ? parseJsonToolProtocolCalls(result.content, tools) : [];
-          resultToolCalls = result.toolCalls.length > 0 ? result.toolCalls : recoveredToolCalls;
-        }
-        if (result.content && !sawTextDelta && resultToolCalls.length === 0) pushTextDelta(result.content);
-        if (isLengthFinishReason(result.finishReason)) output.stopReason = "length";
-        finishText();
-        emitToolCalls(resultToolCalls);
-
-        output.usage = mapUsage(result.usage);
-        stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
-        stream.end();
-      } catch (err) {
-        output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-        output.errorMessage = err instanceof Error ? err.message : String(err);
-        stream.push({ type: "error", reason: output.stopReason, error: output });
-        stream.end();
+        text = await readFile(file, "utf8");
+      } catch {
+        continue;
       }
-    })();
-    return stream;
+      if (text.includes("\u0000")) continue;
+      const lines = text.split(/\r?\n/);
+      for (let index = 0; index < lines.length && output.length < limit; index += 1) {
+        const line = lines[index] ?? "";
+        const haystack = ignoreCase ? line.toLowerCase() : line;
+        const matched = literal ? haystack.includes(literalNeedle) : matcher!.test(line);
+        if (!matched) continue;
+        const start = Math.max(0, index - context);
+        const end = Math.min(lines.length - 1, index + context);
+        for (let lineIndex = start; lineIndex <= end && output.length < limit; lineIndex += 1) {
+          const marker = lineIndex === index ? ":" : "-";
+          output.push(`${this.displayPath(file)}${marker}${lineIndex + 1}: ${lines[lineIndex] ?? ""}`.slice(0, 1000));
+        }
+      }
+    }
+    return output.length ? output.join("\n") : `No matches for ${pattern}.`;
   }
 
-  private guardStorageToolCall(event: any, ctx: any) {
+  private async commandWrite(args: Record<string, unknown>): Promise<string> {
+    const filePath = this.resolveWorkspacePath(stringArg(args, "path"), { allowMissing: true, forbidStorageMutation: true });
+    const content = stringArg(args, "content");
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, content, "utf8");
+    return `Wrote ${Buffer.byteLength(content, "utf8")} bytes to ${this.displayPath(filePath)}.`;
+  }
+
+  private async commandEdit(args: Record<string, unknown>): Promise<string> {
+    const filePath = this.resolveWorkspacePath(stringArg(args, "path"), { forbidStorageMutation: true });
+    const edits = Array.isArray(args.edits) ? args.edits : [];
+    if (edits.length === 0) throw new Error("edit requires non-empty edits array");
+    const text = await readFile(filePath, "utf8");
+    const ranges: Array<{ start: number; end: number; oldText: string; newText: string }> = [];
+    for (const rawEdit of edits) {
+      if (!isRecord(rawEdit) || typeof rawEdit.oldText !== "string" || typeof rawEdit.newText !== "string") {
+        throw new Error("Each edit requires oldText and newText strings");
+      }
+      const start = text.indexOf(rawEdit.oldText);
+      if (start < 0) throw new Error(`oldText not found in ${this.displayPath(filePath)}`);
+      if (text.indexOf(rawEdit.oldText, start + rawEdit.oldText.length) >= 0) {
+        throw new Error(`oldText is not unique in ${this.displayPath(filePath)}`);
+      }
+      ranges.push({ start, end: start + rawEdit.oldText.length, oldText: rawEdit.oldText, newText: rawEdit.newText });
+    }
+    ranges.sort((a, b) => a.start - b.start);
+    for (let index = 1; index < ranges.length; index += 1) {
+      if (ranges[index]!.start < ranges[index - 1]!.end) throw new Error("edits overlap");
+    }
+    let next = "";
+    let cursor = 0;
+    for (const range of ranges) {
+      next += text.slice(cursor, range.start) + range.newText;
+      cursor = range.end;
+    }
+    next += text.slice(cursor);
+    await writeFile(filePath, next, "utf8");
+    return `Applied ${ranges.length} edit${ranges.length === 1 ? "" : "s"} to ${this.displayPath(filePath)}.`;
+  }
+
+  private storageMutationIssue(command: string): string | null {
     const storageRoot = resolve(getFileStorageDir());
-    const storageRootLower = storageRoot.toLowerCase();
-    const toolName = String(event.toolName ?? "");
-    if (toolName === "write" || toolName === "edit") {
-      const inputPath = typeof event.input?.path === "string" ? event.input.path : "";
-      const absolute = resolve(ctx.cwd ?? this.workspaceRoot, inputPath);
-      if (absolute.toLowerCase().startsWith(storageRootLower)) {
-        return {
-          block: true,
-          reason: `DATA_DIR/storage is managed by Marinara. Use mari db for table edits instead of ${toolName}.`,
-        };
-      }
-    }
-    if (toolName === "bash") {
-      const command = String(event.input?.command ?? "");
-      if (!command.includes("mari db") && !command.includes("mari storage tx") && command.includes(storageRoot)) {
-        const looksMutating = /\b(rm|mv|cp|truncate|tee|sed\s+-i|perl\s+-i|python|node|bash|sh)\b/.test(command);
-        if (looksMutating) {
-          return {
-            block: true,
-            reason:
-              "Shell command appears to mutate DATA_DIR/storage. Use mari db --apply so the browser user can approve the change.",
-          };
-        }
-      }
-    }
-    return undefined;
+    const normalizedCommand = normalizeSlashPath(command);
+    const storageMarkers = [
+      normalizeSlashPath(storageRoot),
+      normalizeSlashPath(relative(this.workspaceRoot, storageRoot)),
+      "data/storage",
+      "./data/storage",
+    ].filter(Boolean);
+    if (!storageMarkers.some((marker) => normalizedCommand.includes(marker))) return null;
+    if (command.includes("mari db") || command.includes("mari storage tx")) return null;
+    const looksMutating = /\b(rm|mv|cp|truncate|tee|sed\s+-i|perl\s+-i|python|node|bash|sh)\b/.test(command);
+    return looksMutating
+      ? "Shell command appears to mutate DATA_DIR/storage. Use mari db --apply so the browser user can approve the change."
+      : null;
+  }
+
+  private async commandBash(args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    const command = stringArg(args, "command");
+    if (!command.trim()) throw new Error("bash requires command");
+    const compatibilityIssue = windowsShellCompatibilityIssue(command);
+    if (compatibilityIssue) throw new Error(compatibilityIssue);
+    const storageIssue = this.storageMutationIssue(command);
+    if (storageIssue) throw new Error(storageIssue);
+    const storageTableJsonIssue = this.storageTableJsonFileIssue(command);
+    if (storageTableJsonIssue) throw new Error(storageTableJsonIssue);
+    const timeoutSeconds = numberArg(
+      args,
+      "timeout",
+      DEFAULT_BASH_TIMEOUT_SECONDS,
+      1,
+      MAX_BASH_TIMEOUT_SECONDS,
+    );
+    const mariCliBinDir = await this.ensureMariCliShim();
+    const env = this.withMariRuntimeEnv({ ...process.env }, mariCliBinDir);
+    const directMariArgv = parseDirectMariArgv(command, this.workspaceRoot);
+    if (directMariArgv) return this.commandMariDirect(command, directMariArgv);
+    return new Promise<string>((resolveRun, rejectRun) => {
+      const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "bash";
+      const shellArgs = process.platform === "win32" ? ["/d", "/s", "/c", command] : ["-lc", command];
+      const child = spawn(shell, shellArgs, { cwd: this.workspaceRoot, env, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let timedOut = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal.removeEventListener("abort", abortHandler);
+        callback();
+      };
+      const killChild = () => {
+        if (process.platform === "win32") killWindowsProcessTree(child.pid);
+        child.kill();
+      };
+      const abortHandler = () => {
+        killChild();
+        finish(() => rejectRun(new Error("aborted")));
+      };
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killChild();
+      }, timeoutSeconds * 1000);
+      timer.unref?.();
+      if (signal.aborted) abortHandler();
+      else signal.addEventListener("abort", abortHandler, { once: true });
+      child.stdout?.on("data", (chunk) => {
+        stdout += String(chunk);
+        if (stdout.length > COMMAND_OUTPUT_LIMIT) stdout = stdout.slice(0, COMMAND_OUTPUT_LIMIT);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk);
+        if (stderr.length > COMMAND_OUTPUT_LIMIT) stderr = stderr.slice(0, COMMAND_OUTPUT_LIMIT);
+      });
+      child.on("error", (err) => finish(() => rejectRun(err)));
+      child.on("close", (exitCode) =>
+        finish(() => {
+          const output = compactOutput([
+            `Command: ${command}`,
+            `Exit code: ${exitCode}${timedOut ? ` (timeout after ${timeoutSeconds}s)` : ""}`,
+            stdout ? `\nstdout:\n${stdout.trimEnd()}` : "",
+            stderr ? `\nstderr:\n${stderr.trimEnd()}` : "",
+          ].join("\n"));
+          if (timedOut || exitCode !== 0) rejectRun(new Error(output));
+          else resolveRun(output);
+        }),
+      );
+    });
+  }
+
+  private async commandMariDirect(command: string, argv: string[]): Promise<string> {
+    const result = await getMariDbService(this.app.db).executeCli({
+      argv,
+      command,
+      cwd: this.workspaceRoot,
+      sessionId: SESSION_ID,
+    });
+    const printable = isRecord(result) && "output" in result && !("summary" in result)
+      ? result.output
+      : compactMutationResult(result);
+    const output = compactOutput(
+      [
+        `Command: ${command}`,
+        `Exit code: ${result.ok === false ? 1 : 0} (direct mari runtime)`,
+        "",
+        "stdout:",
+        stringifyOutput(printable),
+      ].join("\n"),
+    );
+    if (result.ok === false) throw new Error(output);
+    return output;
   }
 
   private buildLocalSidecarConnection(): WorkspaceConnection {
@@ -1492,6 +1820,7 @@ export class ProfessorMariWorkspaceService {
   private withMariRuntimeEnv(env: NodeJS.ProcessEnv, mariCliBinDir: string) {
     env.MARI_WORKSPACE_SESSION_ID = SESSION_ID;
     env.MARI_SERVER_URL = `${getServerProtocol()}://127.0.0.1:${getPort()}`;
+    env.MARINARA_PI_API_KEY = RUNTIME_API_KEY;
     env.DATA_DIR = DATA_DIR;
     return prependPathEntry(env, mariCliBinDir);
   }
@@ -1535,8 +1864,8 @@ exit $LASTEXITCODE
 `;
     await Promise.all([
       writeFile(posixCliPath, posixScript, { mode: 0o755 }),
-      writeFile(cmdCliPath, cmdScript, { mode: 0o755 }),
-      writeFile(powershellCliPath, powershellScript, { mode: 0o755 }),
+      writeFile(cmdCliPath, cmdScript),
+      writeFile(powershellCliPath, powershellScript),
     ]);
     this.withMariRuntimeEnv(process.env, binDir);
     if (!existsSync(posixCliPath) || !existsSync(cmdCliPath) || !existsSync(powershellCliPath)) {
@@ -1544,6 +1873,12 @@ exit $LASTEXITCODE
     }
     return binDir;
   }
+}
+
+function appendVisibleText(current: string, next: string): string {
+  if (!current.trim()) return next.trimEnd();
+  if (!next.trim()) return current;
+  return `${current.trimEnd()}\n\n${next.trim()}`;
 }
 
 let singleton: ProfessorMariWorkspaceService | null = null;

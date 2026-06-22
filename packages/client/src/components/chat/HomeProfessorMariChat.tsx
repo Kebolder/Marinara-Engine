@@ -44,7 +44,6 @@ import {
 import { useConnections } from "../../hooks/use-connections";
 import { useTrackAchievement } from "../../hooks/use-achievements";
 import { chatKeys } from "../../hooks/use-chats";
-import { lorebookKeys } from "../../hooks/use-lorebooks";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import { api } from "../../lib/api-client";
 import { useChatStore } from "../../stores/chat.store";
@@ -99,18 +98,6 @@ type ProfessorMariConnectionOption = {
   provider?: string;
   isDefault?: boolean;
 };
-
-const LOREBOOK_WORKSPACE_TABLES = new Set([
-  "lorebooks",
-  "lorebook_entries",
-  "lorebook_folders",
-  "lorebook_character_links",
-  "lorebook_persona_links",
-]);
-
-function workspaceHistoryTouchesLorebooks(entry: MariDbHistoryEntry) {
-  return Object.keys(entry.affectedTables ?? {}).some((table) => LOREBOOK_WORKSPACE_TABLES.has(table));
-}
 
 function readStoredConnectionId() {
   try {
@@ -1505,7 +1492,7 @@ export function HomeProfessorMariChat({
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
-  const handledWorkspaceLorebookRefreshIdsRef = useRef<Set<string>>(new Set());
+  const handledWorkspaceRefreshIdsRef = useRef<Set<string>>(new Set());
   const workspaceStatusErrorToastShownRef = useRef(false);
 
   const hasActiveGeneration = useChatStore((state) => (chatId ? state.abortControllers.has(chatId) : false));
@@ -1585,36 +1572,37 @@ export function HomeProfessorMariChat({
     return status;
   }, [effectiveConnectionId]);
 
-  const invalidateLorebookWorkspaceData = useCallback(async () => {
-    await qc.invalidateQueries({ queryKey: lorebookKeys.all, refetchType: "all" });
-  }, [qc]);
-
   const invalidateWorkspaceData = useCallback(async () => {
-    await Promise.all([qc.invalidateQueries({ refetchType: "active" }), invalidateLorebookWorkspaceData()]);
-  }, [invalidateLorebookWorkspaceData, qc]);
+    await qc.invalidateQueries({ refetchType: "all" });
+  }, [qc]);
 
   useEffect(() => {
     void fetchSidecarStatus();
   }, [fetchSidecarStatus]);
 
   useEffect(() => {
-    const appliedLorebookChanges = (workspaceStatus?.history ?? []).filter((entry) => {
-      if (entry.status !== "approved") return false;
-      if (!workspaceHistoryTouchesLorebooks(entry)) return false;
-      return !handledWorkspaceLorebookRefreshIdsRef.current.has(entry.id);
-    });
-    if (appliedLorebookChanges.length === 0) return;
-    for (const entry of appliedLorebookChanges) {
-      handledWorkspaceLorebookRefreshIdsRef.current.add(entry.id);
+    const workspaceHistory = workspaceStatus?.history ?? [];
+    const visibleHistoryIds = new Set(workspaceHistory.map((entry) => entry.id));
+    for (const id of handledWorkspaceRefreshIdsRef.current) {
+      if (!visibleHistoryIds.has(id)) handledWorkspaceRefreshIdsRef.current.delete(id);
     }
-    void invalidateLorebookWorkspaceData().catch((error) => {
-      console.error("[Professor Mari] Failed to refresh lorebooks after workspace change", error);
-      toast.error("Professor Mari applied a workspace change, but lorebooks could not refresh.", {
+
+    const appliedChanges = workspaceHistory.filter((entry) => {
+      if (entry.status !== "approved") return false;
+      return !handledWorkspaceRefreshIdsRef.current.has(entry.id);
+    });
+    if (appliedChanges.length === 0) return;
+    for (const entry of appliedChanges) {
+      handledWorkspaceRefreshIdsRef.current.add(entry.id);
+    }
+    void invalidateWorkspaceData().catch((error) => {
+      console.error("[Professor Mari] Failed to refresh app data after workspace change", error);
+      toast.error("Professor Mari applied a workspace change, but app data could not refresh.", {
         description: describeProfessorMariError(error),
         duration: 12_000,
       });
     });
-  }, [invalidateLorebookWorkspaceData, workspaceStatus?.history]);
+  }, [invalidateWorkspaceData, workspaceStatus?.history]);
 
   useEffect(() => {
     if (connectionOptions.length === 0) {
