@@ -1424,7 +1424,7 @@ export function ChatSidebar() {
               <button
                 onClick={() => {
                   if (deleteTarget.groupId) {
-                    deleteChatGroup.mutate(deleteTarget.groupId);
+                    deleteChatGroup.mutate({ groupId: deleteTarget.groupId, force: true });
                     if (activeGroupId === deleteTarget.groupId) setActiveChatId(null);
                   }
                   setDeleteTarget(null);

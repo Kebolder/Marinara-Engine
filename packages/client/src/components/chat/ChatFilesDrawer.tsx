@@ -346,7 +346,7 @@ export function ChatFilesDrawer({ chat, open, onClose }: ChatFilesDrawerProps) {
               ) {
                 return;
               }
-              deleteChatGroup.mutate(groupId);
+              deleteChatGroup.mutate({ groupId, force: true });
               setActiveChatId(null);
               onClose();
             }}

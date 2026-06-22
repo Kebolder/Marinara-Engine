@@ -386,7 +386,7 @@ export function ChatBranchSelector({
                     ) {
                       return;
                     }
-                    deleteChatGroup.mutate(groupId);
+                    deleteChatGroup.mutate({ groupId, force: true });
                     setActiveChatId(null);
                     setOpen(false);
                   }}

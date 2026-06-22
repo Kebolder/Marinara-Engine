@@ -947,7 +947,20 @@ export async function chatsRoutes(app: FastifyInstance) {
   });
 
   // Delete all chats in a group (all branches)
-  app.delete<{ Params: { groupId: string } }>("/group/:groupId", async (req, reply) => {
+  app.delete<{ Params: { groupId: string }; Querystring: { force?: string } }>("/group/:groupId", async (req, reply) => {
+    const force = req.query.force === "true" || req.query.force === "1";
+    if (!force) {
+      const groupChats = await storage.listByGroup(req.params.groupId);
+      for (const chat of groupChats) {
+        const meta = parseExtra(chat.metadata) as Record<string, unknown>;
+        const hasGameId = typeof meta.gameId === "string" && meta.gameId.trim().length > 0;
+        if (chat.mode === "game" && (hasGameId || (await storage.hasGameDeletePayload(chat.id)))) {
+          return reply.status(409).send({
+            error: "Refusing to hard-delete a game campaign group without explicit confirmation.",
+          });
+        }
+      }
+    }
     await storage.removeGroup(req.params.groupId);
     return reply.status(204).send();
   });
