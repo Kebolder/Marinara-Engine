@@ -289,7 +289,8 @@ export class OpenAIProvider extends BaseLLMProvider {
       type: "function",
       function: {
         name,
-        arguments: OpenAIProvider.stringifyToolArguments(fn.arguments ?? raw.arguments ?? raw.args),
+        // "parameters" is used by some models instead of the OpenAI-standard "arguments"
+      arguments: OpenAIProvider.stringifyToolArguments(fn.arguments ?? fn.parameters ?? raw.arguments ?? raw.args ?? raw.parameters),
       },
     };
   }
@@ -864,7 +865,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!suppressModelParameters) {
       if (this.shouldSendStopSequences(options.model) && options.stop?.length) body.stop = options.stop;
-      if (options.tools?.length) body.tools = options.tools;
+      if (options.tools?.length && !options.forceTextualToolCalls) body.tools = options.tools;
       if (effectiveStream) body.stream_options = { include_usage: true };
 
       // o-series models never support temperature/topP; GPT-5.x only with effort=none
@@ -1109,7 +1110,7 @@ export class OpenAIProvider extends BaseLLMProvider {
 
     if (!suppressModelParameters) {
       if (this.shouldSendStopSequences(options.model) && options.stop?.length) body.stop = options.stop;
-      if (options.tools?.length) body.tools = options.tools;
+      if (options.tools?.length && !options.forceTextualToolCalls) body.tools = options.tools;
       if (useStream) body.stream_options = { include_usage: true };
 
       // o-series models never support temperature/topP; GPT-5.x only with effort=none
@@ -1347,9 +1348,13 @@ export class OpenAIProvider extends BaseLLMProvider {
                   ? fn.arguments
                   : typeof tc.arguments === "string"
                     ? tc.arguments
-                    : fn.arguments !== undefined || tc.arguments !== undefined
-                      ? OpenAIProvider.stringifyToolArguments(fn.arguments ?? tc.arguments)
-                      : "";
+                    : typeof fn.parameters === "string"
+                      ? fn.parameters
+                      : typeof tc.parameters === "string"
+                        ? tc.parameters
+                        : fn.arguments !== undefined || tc.arguments !== undefined || fn.parameters !== undefined || tc.parameters !== undefined
+                          ? OpenAIProvider.stringifyToolArguments(fn.arguments ?? tc.arguments ?? fn.parameters ?? tc.parameters)
+                          : "";
               const existing = toolCallsMap.get(index);
               if (!existing) {
                 toolCallsMap.set(index, {

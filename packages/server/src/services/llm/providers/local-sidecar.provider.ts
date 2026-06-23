@@ -42,9 +42,17 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     if (sidecarModelService.getResolvedBackend() === "llama_cpp" && !config.enableNativeToolCalls) {
       if (!warnedNativeToolCallsDisabled) {
         warnedNativeToolCallsDisabled = true;
-        logger.warn("[local-sidecar] Native tool calls are disabled; attempting textual tool-call fallback");
+        logger.warn(
+          "[local-sidecar] Native tool calls are disabled (no --jinja); tool definitions will not be sent to the API. " +
+            "Tool calls in the model response will be extracted via textual parsing only.",
+        );
       }
     }
+  }
+
+  private isTextualToolCallFallback(): boolean {
+    const config = sidecarModelService.getConfig();
+    return sidecarModelService.getResolvedBackend() === "llama_cpp" && !config.enableNativeToolCalls;
   }
 
   private applyRuntimeSettings(options: ChatOptions): ChatOptions {
@@ -81,9 +89,11 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     this.assertToolCallsAvailable(options);
     const delegate = await this.createDelegate();
     const runtimeOptions = this.applyBackendRequestConstraints(this.applyRuntimeSettings(options));
+    const forceTextual = this.isTextualToolCallFallback() && !!runtimeOptions.tools?.length;
     return yield* delegate.chat(messages, {
       ...runtimeOptions,
       model: this.getRequestModel(),
+      ...(forceTextual ? { forceTextualToolCalls: true } : {}),
     });
   }
 
@@ -91,9 +101,11 @@ export class LocalSidecarProvider extends BaseLLMProvider {
     this.assertToolCallsAvailable(options);
     const delegate = await this.createDelegate();
     const runtimeOptions = this.applyBackendRequestConstraints(this.applyRuntimeSettings(options));
+    const forceTextual = this.isTextualToolCallFallback() && !!runtimeOptions.tools?.length;
     return delegate.chatComplete(messages, {
       ...runtimeOptions,
       model: this.getRequestModel(),
+      ...(forceTextual ? { forceTextualToolCalls: true } : {}),
     });
   }
 

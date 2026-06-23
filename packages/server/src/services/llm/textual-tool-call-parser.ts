@@ -34,12 +34,28 @@ function parseJsonishObject(value: string): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * Gemma 4 uses <|"|>string value<|"|> as a string delimiter instead of "string value".
+ * Normalize these to standard double-quoted strings so JSON parsing can succeed.
+ */
+function normalizeGemma4Delimiters(content: string): string {
+  return content.replace(/<\|"\|>(.*?)<\|"\|>/gs, (_, inner: string) => JSON.stringify(inner));
+}
+
+function parseJsonishObjectWithGemmaDelimiters(value: string): Record<string, unknown> | null {
+  return parseJsonishObject(value) ?? (value.includes('<|"|>') ? parseJsonishObject(normalizeGemma4Delimiters(value)) : null);
+}
+
 function rawToolCalls(payload: Record<string, unknown>): unknown[] {
   const plural = payload.tool_calls ?? payload.toolCalls ?? payload.calls;
   if (Array.isArray(plural)) return plural;
   const single = payload.tool_call ?? payload.toolCall;
   if (single) return [single];
   if (typeof payload.name === "string" || typeof payload.tool === "string" || typeof payload.command === "string") {
+    return [payload];
+  }
+  // Handle {"type": "function", "function": {"name": "...", ...}} OpenAI-style wrapper
+  if (isRecord(payload.function) && typeof (payload.function as Record<string, unknown>).name === "string") {
     return [payload];
   }
   return [];
@@ -66,6 +82,12 @@ function parseTaggedSnippets(content: string): ParsedTaggedSnippet[] {
     },
     { re: /<tool_code>([\s\S]*?)<\/tool_code>/gi, allowCommandFallback: true, allowAnonymousJsonPayload: true },
     { re: /```(?:json)?\s*([\s\S]*?)\s*```/gi, allowCommandFallback: false, allowAnonymousJsonPayload: false },
+    // Meta Llama 3.1+ uses <|python_tag|> to delimit tool calls in content
+    {
+      re: /<\|python_tag\|>([\s\S]*?)(?:<\|eom_id\|>|<\|eot_id\|>|<\|end_header_id\|>|$)/gi,
+      allowCommandFallback: false,
+      allowAnonymousJsonPayload: false,
+    },
   ];
   for (const pattern of patterns) {
     for (const match of content.matchAll(pattern.re)) {
@@ -90,6 +112,10 @@ function snippetToPayload(snippet: string, options: Omit<ParsedTaggedSnippet, "t
   const jsonPayload = parseJsonishObject(snippet);
   if (jsonPayload) {
     if (typeof jsonPayload.name === "string" || typeof jsonPayload.tool === "string") return jsonPayload;
+    // Pass through {"type":"function","function":{...}} wrappers to toolCallFromRaw
+    if (isRecord(jsonPayload.function) && typeof (jsonPayload.function as Record<string, unknown>).name === "string") {
+      return jsonPayload;
+    }
     return options.allowAnonymousJsonPayload ? { name: "mari_db", arguments: jsonPayload } : null;
   }
   const callMatch = snippet.trim().match(/^(?:call\s*:\s*)?([A-Za-z_][\w.-]*)\s*(\{[\s\S]*\})\s*$/);
@@ -124,10 +150,16 @@ function toolCallFromRaw(
   hasBashTool: boolean,
 ): LLMToolCall | null {
   if (!isRecord(raw)) return null;
-  const nameValue = raw.name ?? raw.tool;
+  // Handle {"type":"function","function":{"name":"...","arguments":"..."}} OpenAI-style wrapper
+  const fnWrap = isRecord(raw.function) ? (raw.function as Record<string, unknown>) : null;
+  const nameValue = raw.name ?? raw.tool ?? fnWrap?.name;
   if (typeof nameValue !== "string") return null;
   const name = nameValue.trim();
-  const args = normalizeArguments(raw.arguments ?? raw.args ?? raw.input ?? {});
+  // "parameters" is used by many models (e.g. Llama 3.1, Gemma) instead of "arguments"
+  const args = normalizeArguments(
+    raw.arguments ?? raw.args ?? raw.input ?? raw.parameters ??
+    fnWrap?.arguments ?? fnWrap?.args ?? fnWrap?.parameters ?? {},
+  );
   if (knownTools.has(name)) {
     return {
       id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : toolCallId(index),
@@ -150,11 +182,13 @@ function toolCallFromRaw(
 
 export function parseTextualToolCalls(content: string | null | undefined, tools: LLMToolDefinition[] = []): LLMToolCall[] {
   if (!content || tools.length === 0) return [];
+
   const knownTools = new Set(tools.map((tool) => tool.function.name));
   const hasBashTool = knownTools.has("bash");
   const calls: LLMToolCall[] = [];
 
-  const wholePayload = parseJsonishObject(content);
+  // Try the whole content as a single JSON object
+  const wholePayload = parseJsonishObjectWithGemmaDelimiters(content);
   if (wholePayload) {
     rawToolCalls(wholePayload).forEach((raw, index) => {
       const call = toolCallFromRaw(raw, index, knownTools, hasBashTool);
@@ -163,8 +197,26 @@ export function parseTextualToolCalls(content: string | null | undefined, tools:
   }
   if (calls.length > 0) return calls;
 
+  // Try the whole content as a top-level JSON array of tool calls
+  const trimmed = content.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed.includes('<|"|>') ? normalizeGemma4Delimiters(trimmed) : trimmed);
+      if (Array.isArray(arr)) {
+        arr.forEach((raw, index) => {
+          const call = toolCallFromRaw(raw, index, knownTools, hasBashTool);
+          if (call) calls.push(call);
+        });
+      }
+    } catch {
+      /* not a valid JSON array */
+    }
+    if (calls.length > 0) return calls;
+  }
+
   parseTaggedSnippets(content).forEach((snippet, index) => {
-    const payload = snippetToPayload(snippet.text, {
+    const snippetText = snippet.text.includes('<|"|>') ? normalizeGemma4Delimiters(snippet.text) : snippet.text;
+    const payload = snippetToPayload(snippetText, {
       allowCommandFallback: snippet.allowCommandFallback,
       allowAnonymousJsonPayload: snippet.allowAnonymousJsonPayload,
     });

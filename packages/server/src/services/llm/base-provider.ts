@@ -134,6 +134,13 @@ export interface ChatOptions {
   customParameters?: Record<string, unknown>;
   /** Do not add inferred sampler/model parameters; max output tokens and customParameters still apply. */
   suppressModelParameters?: boolean;
+  /**
+   * Skip sending tools to the provider API and rely entirely on textual tool-call parsing.
+   * Set by the local-sidecar provider when native tool calls are disabled (no --jinja),
+   * because sending a tools array to a server started without Jinja templates produces
+   * garbled or ignored output. The tools array is still used for parsing the response.
+   */
+  forceTextualToolCalls?: boolean;
 }
 
 /** Token usage statistics returned by the model */
