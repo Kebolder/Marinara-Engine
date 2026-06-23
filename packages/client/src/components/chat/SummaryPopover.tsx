@@ -302,9 +302,8 @@ export function SummaryPopover({
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Per-chat metadata is the single source of truth (default off). The hide
-  // preference is owned per-chat and set via the toggle below — there is no global
-  // fallback, so one chat can never read or inherit another chat's setting.
+  // Per-chat preference, default off — no global fallback, so one chat never
+  // inherits another's setting.
   const hideSummarisedResolved = hideSummarisedMessages === true;
 
   const persistSummaryContextSize = useCallback(
