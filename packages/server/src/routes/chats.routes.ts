@@ -43,7 +43,6 @@ import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
-import { createDiscordBridgeStorage } from "../services/storage/discord-bridge.storage.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../services/storage/game-state.storage.js";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
@@ -404,7 +403,6 @@ function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undef
 
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
-  const discordBridgeStorage = createDiscordBridgeStorage(app.db);
 
   const clearConversationScheduleState = async (chat: Awaited<ReturnType<typeof storage.getById>>) => {
     if (!chat) return;
@@ -589,37 +587,6 @@ export async function chatsRoutes(app: FastifyInstance) {
       incoming.scheduleWeekStart = undefined;
     }
     return storage.patchMetadata(req.params.id, incoming);
-  });
-
-  // List active Discord bridge participants for this chat.
-  app.get<{ Params: { id: string } }>("/:id/participants", async (req, reply) => {
-    const chat = await storage.getById(req.params.id);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
-
-    const [participants, personas] = await Promise.all([
-      discordBridgeStorage.listActiveParticipants(req.params.id),
-      createCharactersStorage(app.db).listPersonas(),
-    ]);
-    const personaNames = new Map(personas.map((persona) => [persona.id, persona.name]));
-
-    return participants.map((participant) => ({
-      ...participant,
-      personaName: participant.personaId ? (personaNames.get(participant.personaId) ?? null) : null,
-    }));
-  });
-
-  // Deactivate a stale Discord bridge participant without deleting history.
-  app.delete<{ Params: { id: string; participantId: string } }>("/:id/participants/:participantId", async (req, reply) => {
-    const chat = await storage.getById(req.params.id);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
-
-    const participants = await discordBridgeStorage.listActiveParticipants(req.params.id);
-    if (!participants.some((participant) => participant.id === req.params.participantId)) {
-      return reply.status(404).send({ error: "Participant not found" });
-    }
-
-    await discordBridgeStorage.deactivateParticipant(req.params.participantId);
-    return { success: true };
   });
 
   // Mark a chat as having autonomous messages the user has not viewed yet.

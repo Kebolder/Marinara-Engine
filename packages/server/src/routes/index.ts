@@ -54,10 +54,12 @@ import { promptOverridesRoutes } from "./prompt-overrides.routes.js";
 import { csrfDiagnosticsRoutes } from "./csrf-diagnostics.routes.js";
 import { professorMariWorkspaceRoutes } from "./professor-mari-workspace.routes.js";
 import { discordBridgeRoutes } from "./discord-bridge.routes.js";
+import { chatParticipantsRoutes } from "./chat-participants.routes.js";
 import { chatEventsRoutes } from "./chat-events.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
+  await app.register(chatParticipantsRoutes, { prefix: "/api/chats" });
   await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(chatPresetsRoutes, { prefix: "/api/chat-presets" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });
