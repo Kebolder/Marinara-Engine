@@ -59,8 +59,8 @@ export interface ParticipantContextRequest {
   allPersonas: unknown[];
   /** The active bridge participant for this turn, if any (opaque to core). */
   activeParticipant: unknown;
-  /** The request's Discord bridge input, if any (opaque to core). */
-  bridgeInput: unknown;
+  /** True when this generation is a bridge-originated turn (forces participant lookup outside roleplay mode). */
+  bridgeActive: boolean;
 }
 
 /** Resolved participant context consumed at the core prompt-assembly sites. */
@@ -156,4 +156,86 @@ export async function resolvePreviewParticipantContext(
     return { speakerName: request.personaName };
   }
   return previewParticipantContextProvider(request);
+}
+
+// ── Bridge turn lifecycle ─────────────────────────
+//
+// A bridge turn wraps the request-scoped side effects an external chat bridge
+// (Discord) performs during one generation: resolving its binding + turn
+// persona up front, then upserting the participant / message mapping / snapshot
+// when the user message is saved. The factory returns null for non-bridge
+// generations, so core's hot path is a single nullable call.
+
+/** Inputs the factory needs to decide whether a generation is a bridge turn. */
+export interface BridgeTurnRequest {
+  /** The generation request input (carries any bridge sub-input). */
+  input: unknown;
+  /** The chat row. */
+  chat: unknown;
+  chatId: string;
+}
+
+/** Info about the just-saved user message, passed to the bridge turn. */
+export interface BridgeUserMessageInfo {
+  userMessageId: string;
+  content: string;
+  createdAt: string;
+  /** Resolved persona row used for the message's persona snapshot, or null. */
+  snapshotPersona: unknown;
+}
+
+/** What a bridge turn contributes back to core after the user message is saved. */
+export interface BridgeUserMessageContribution {
+  /** Extra fields to merge into the user message's `extra` (e.g. participantSnapshot). */
+  extra?: Record<string, unknown>;
+}
+
+/** Request-scoped handle for one bridge-originated generation. */
+export interface BridgeTurn {
+  /** Persona the bridge wants this turn to speak as, or null. */
+  turnPersonaId: string | null;
+  /** When set, core should reject the generation with this 400 message. */
+  error?: string;
+  /** Source label for realtime events emitted during this turn. */
+  readonly eventSource: "discord_bridge" | "engine";
+  /** The active bridge participant after the user message is saved (opaque to core). */
+  readonly activeParticipant: unknown;
+  /** Perform bridge side effects for the saved user message and contribute extra. */
+  onUserMessageSaved(info: BridgeUserMessageInfo): Promise<BridgeUserMessageContribution>;
+}
+
+type BridgeTurnFactory = (request: BridgeTurnRequest) => Promise<BridgeTurn | null>;
+
+let bridgeTurnFactory: BridgeTurnFactory | null = null;
+
+/** Register the bridge turn factory. */
+export function registerBridgeTurnFactory(factory: BridgeTurnFactory): void {
+  bridgeTurnFactory = factory;
+}
+
+/** Start a bridge turn, or null when there is no factory or this is not a bridge turn. */
+export async function startBridgeTurn(request: BridgeTurnRequest): Promise<BridgeTurn | null> {
+  if (!bridgeTurnFactory) return null;
+  return bridgeTurnFactory(request);
+}
+
+// ── Message author name ───────────────────────────
+//
+// Resolves the display author for a stored user message from its snapshots
+// (persona/participant). Default returns null so core falls back to the chat
+// persona name.
+
+type MessageAuthorNameResolver = (extra: Record<string, unknown> | null | undefined) => string | null;
+
+let messageAuthorNameResolver: MessageAuthorNameResolver | null = null;
+
+/** Register the message-author-name resolver. */
+export function registerMessageAuthorNameResolver(resolver: MessageAuthorNameResolver): void {
+  messageAuthorNameResolver = resolver;
+}
+
+/** Resolve a stored message's author name from its extra, or null when no resolver is registered. */
+export function resolveMessageAuthorName(extra: Record<string, unknown> | null | undefined): string | null {
+  if (!messageAuthorNameResolver) return null;
+  return messageAuthorNameResolver(extra);
 }

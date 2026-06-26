@@ -2,7 +2,6 @@
 // Routes: Generation (SSE Streaming with Tool Use + Agent Pipeline)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 import type { FastifyInstance } from "fastify";
-import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
@@ -44,7 +43,6 @@ import type {
   AgentPhase,
   ChatParticipantSnapshot,
   CharacterStat,
-  DiscordBridgeParticipant,
   GameState,
   HapticDeviceCommand,
   PlayerStats,
@@ -71,7 +69,6 @@ import { localEmbed, isLocalEmbedderAvailable } from "../services/local-embedder
 import { cosineSimilarity } from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
-import { createDiscordBridgeStorage } from "../services/storage/discord-bridge.storage.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
 import { filterRelevantLorebooks, processLorebooks, type LorebookScanResult } from "../services/lorebook/index.js";
 import {
@@ -88,7 +85,9 @@ import { textRewriteDropsProtectedMarkup } from "../services/generation/text-rew
 import {
   applyHistoryContentTransforms,
   renderParticipantPromptBlock,
+  resolveMessageAuthorName,
   resolveParticipantContext,
+  startBridgeTurn,
 } from "../services/generation/content-hooks.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { extractLeadingThinkingBlocks } from "../services/llm/inline-thinking.js";
@@ -106,10 +105,6 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
-import {
-  buildParticipantSnapshot,
-  participantSnapshotPersonaName,
-} from "../services/discord-bridge/participant-prompt-context.js";
 import { yieldToEventLoop, fitMessagesToContext, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
@@ -1250,10 +1245,6 @@ function buildPersonaGalleryEmojiUrl(personaId: string, filename: string): strin
   return `/api/characters/personas/${encodeURIComponent(personaId)}/gallery/file/${encodeURIComponent(filename)}`;
 }
 
-function contentHash(content: string) {
-  return createHash("sha256").update(content).digest("hex");
-}
-
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
 
@@ -1270,7 +1261,6 @@ export async function generateRoutes(app: FastifyInstance) {
   const customStickersStore = createCustomStickersStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const personaGallery = createPersonaGalleryStorage(app.db);
-  const bridgeStorage = createDiscordBridgeStorage(app.db);
 
   /**
    * In-memory cache for OpenAI Responses API encrypted reasoning items.
@@ -1371,27 +1361,12 @@ export async function generateRoutes(app: FastifyInstance) {
     const discordWebhookUrl = typeof earlyMeta.discordWebhookUrl === "string" ? earlyMeta.discordWebhookUrl : "";
     let pendingUserDiscordMsg = "";
     let currentTurnUserMessageId: string | null = null;
-    const discordBridgeInput = input.discordBridge;
-    let discordBridgeBinding: Awaited<ReturnType<typeof bridgeStorage.getThreadBindingById>> | null = null;
-    let activeDiscordParticipant: DiscordBridgeParticipant | null = null;
-    let discordTurnPersonaId: string | null = null;
-    if (discordBridgeInput) {
-      discordBridgeBinding = await bridgeStorage.getThreadBindingById(discordBridgeInput.bindingId);
-      if (!discordBridgeBinding || discordBridgeBinding.chatId !== input.chatId) {
-        releaseActiveGeneration();
-        return reply.status(400).send({ error: "Discord bridge binding does not match this chat" });
-      }
-      const boundPersonaId = (discordBridgeBinding.personaId as string | null) ?? (chat.personaId as string | null);
-      if (discordBridgeInput.discordUserId) {
-        const userPersona = await bridgeStorage.getUserPersona(
-          discordBridgeBinding.guildId,
-          discordBridgeInput.discordUserId,
-        );
-        discordTurnPersonaId = discordBridgeInput.personaId ?? userPersona?.personaId ?? boundPersonaId ?? null;
-      } else {
-        discordTurnPersonaId = discordBridgeInput.personaId ?? boundPersonaId ?? null;
-      }
+    const bridgeTurn = await startBridgeTurn({ input, chat, chatId: input.chatId });
+    if (bridgeTurn?.error) {
+      releaseActiveGeneration();
+      return reply.status(400).send({ error: bridgeTurn.error });
     }
+    const discordTurnPersonaId = bridgeTurn?.turnPersonaId ?? null;
 
     // Save user message â€” skip for impersonate (no real user message to save)
     if (!input.impersonate && (input.userMessage || input.attachments?.length)) {
@@ -1423,21 +1398,6 @@ export async function generateRoutes(app: FastifyInstance) {
         recordUserActivity(input.chatId);
       }
 
-      if (userMsg?.id && discordBridgeInput?.discordUserId && discordBridgeBinding) {
-        activeDiscordParticipant = await bridgeStorage.upsertDiscordParticipant({
-          chatId: input.chatId,
-          guildId: discordBridgeBinding.guildId,
-          discordUserId: discordBridgeInput.discordUserId,
-          discordDisplayName:
-            discordBridgeInput.discordDisplayName?.trim() || discordBridgeInput.discordUserId || "Discord User",
-          personaId: discordTurnPersonaId,
-          active: true,
-          hasSpoken: true,
-          lastMessageId: userMsg.id,
-          lastSpokeAt: userMsg.createdAt,
-        });
-      }
-
       // Store attachments in message extra if present
       if (input.attachments?.length && userMsg?.id) {
         await chats.updateMessageExtra(userMsg.id, { attachments: input.attachments }).catch(releaseActiveGenerationAndRethrow);
@@ -1466,35 +1426,29 @@ export async function generateRoutes(app: FastifyInstance) {
             boxColor: snapshotPersona.boxColor || null,
           };
         }
-        if (activeDiscordParticipant) {
-          messageExtra.participantSnapshot = buildParticipantSnapshot({
-            participant: activeDiscordParticipant,
-            persona: snapshotPersona ?? null,
-          });
+        if (bridgeTurn) {
+          const contribution = await bridgeTurn
+            .onUserMessageSaved({
+              userMessageId: userMsg.id,
+              content: input.userMessage ?? "",
+              createdAt: userMsg.createdAt,
+              snapshotPersona,
+            })
+            .catch(releaseActiveGenerationAndRethrow);
+          if (contribution.extra) Object.assign(messageExtra, contribution.extra);
         }
         if (Object.keys(messageExtra).length > 0) {
           await chats.updateMessageExtra(userMsg.id, messageExtra).catch(releaseActiveGenerationAndRethrow);
         }
       }
 
-      // Mirror user message to Discord (deferred â€” personaName resolved later)
       if (userMsg?.id) {
-        if (discordBridgeInput) {
-          await bridgeStorage.upsertMessageMapping({
-            bindingId: discordBridgeBinding!.id,
-            marinaraMessageId: userMsg.id,
-            discordMessageIds: [discordBridgeInput.discordMessageId],
-            role: "user",
-            direction: "discord_to_engine",
-            contentHash: contentHash(input.userMessage ?? ""),
-          });
-        }
         publishChatEvent(
           createChatRealtimeEvent({
             type: "chat_message_created",
             chatId: input.chatId,
             messageId: userMsg.id,
-            source: discordBridgeInput ? "discord_bridge" : "engine",
+            source: bridgeTurn?.eventSource ?? "engine",
           }),
         );
       }
@@ -1868,8 +1822,8 @@ export async function generateRoutes(app: FastifyInstance) {
         personaName,
         persona,
         allPersonas,
-        activeParticipant: activeDiscordParticipant,
-        bridgeInput: discordBridgeInput,
+        activeParticipant: bridgeTurn?.activeParticipant ?? null,
+        bridgeActive: !!bridgeTurn,
       });
       const participantSpeaker = participantContext.speakerName;
       const speakerPersona = participantContext.speakerPersona;
@@ -2707,10 +2661,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const rawExtra = parseExtra(raw?.extra);
             const author =
               msg.role === "user"
-                ? (participantSnapshotPersonaName({
-                    personaSnapshot: rawExtra.personaSnapshot,
-                    participantSnapshot: rawExtra.participantSnapshot,
-                  }) ?? personaName)
+                ? (resolveMessageAuthorName(rawExtra) ?? personaName)
                 : ((raw.characterId ? charIdToName.get(raw.characterId as string) : null) ??
                   convoCharNames[0] ??
                   "Character");
