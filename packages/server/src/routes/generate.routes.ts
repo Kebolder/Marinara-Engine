@@ -42,7 +42,6 @@ import type {
   AgentCallDebugEvent,
   AgentResult,
   AgentPhase,
-  APIProvider,
   ChatParticipantSnapshot,
   CharacterStat,
   DiscordBridgeParticipant,

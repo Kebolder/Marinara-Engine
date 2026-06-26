@@ -98,7 +98,7 @@ function toPersonaOption(persona: Awaited<ReturnType<CharactersStorage["getPerso
     boxColor: persona.boxColor ?? "",
     trackerCardColors: safeJson(persona.trackerCardColors, null),
     personaStats: safeJson(persona.personaStats, null),
-    altDescriptions: parseUnknownArray(persona.altDescriptions),
+    altDescriptions: parseUnknownArray((persona as Record<string, unknown>).altDescriptions),
     savedStatusOptions: parseStringArray(persona.savedStatusOptions),
   };
 }

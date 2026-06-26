@@ -760,7 +760,7 @@ const CHARACTER_TOP_LEVEL_TEXT_FIELDS = new Set<keyof CharacterData>([
 
 const CHARACTER_EXTENSION_TEXT_FIELDS = new Set(["backstory", "appearance"]);
 
-function isCharacterTopLevelTextField(field: string): field is keyof CharacterData {
+function isCharacterTopLevelTextField(field: string): field is keyof CharacterData & string {
   return CHARACTER_TOP_LEVEL_TEXT_FIELDS.has(field as keyof CharacterData);
 }
 
