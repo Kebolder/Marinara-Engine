@@ -85,7 +85,11 @@ import { resolveChatSummaryConnection } from "../services/chat-summary/connectio
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { textRewriteDropsProtectedMarkup } from "../services/generation/text-rewrite-safety.js";
-import { applyHistoryContentTransforms } from "../services/generation/content-hooks.js";
+import {
+  applyHistoryContentTransforms,
+  renderParticipantPromptBlock,
+  resolveParticipantContext,
+} from "../services/generation/content-hooks.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { extractLeadingThinkingBlocks } from "../services/llm/inline-thinking.js";
 import { resolveSpotifyCredentials, spotifyHasScope } from "../services/spotify/spotify.service.js";
@@ -103,15 +107,8 @@ import {
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
 import {
-  buildParticipantPromptEntries,
   buildParticipantSnapshot,
-  compactPersonaSummary,
-  formatParticipantPromptBlock,
-  formatParticipantsMacro,
   participantSnapshotPersonaName,
-  participantPersonaName,
-  participantSpeakerName,
-  type ParticipantPromptEntry,
 } from "../services/discord-bridge/participant-prompt-context.js";
 import { yieldToEventLoop, fitMessagesToContext, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
@@ -1865,22 +1862,18 @@ export async function generateRoutes(app: FastifyInstance) {
         };
       }
 
-      const participantRows =
-        discordBridgeInput || chatMode === "roleplay" ? await bridgeStorage.listActiveParticipants(input.chatId) : [];
-      const participantEntries: ParticipantPromptEntry[] = buildParticipantPromptEntries(participantRows, allPersonas);
-      const activeParticipantEntry =
-        activeDiscordParticipant || discordBridgeInput?.discordUserId
-          ? (participantEntries.find((entry) => entry.participant.id === activeDiscordParticipant?.id) ??
-            participantEntries.find(
-              (entry) =>
-                entry.participant.discordUserId &&
-                entry.participant.discordUserId === discordBridgeInput?.discordUserId,
-            ) ??
-            null)
-          : null;
-      const participantSpeaker = participantSpeakerName(activeParticipantEntry, personaName);
-      const speakerPersona = compactPersonaSummary(activeParticipantEntry?.persona ?? persona ?? null);
-      const participantsMacro = formatParticipantsMacro(participantEntries);
+      const participantContext = await resolveParticipantContext({
+        chatId: input.chatId,
+        chatMode,
+        personaName,
+        persona,
+        allPersonas,
+        activeParticipant: activeDiscordParticipant,
+        bridgeInput: discordBridgeInput,
+      });
+      const participantSpeaker = participantContext.speakerName;
+      const speakerPersona = participantContext.speakerPersona;
+      const participantsMacro = participantContext.participantsMacro;
 
       // Mirror user message to Discord now that personaName is resolved
       if (pendingUserDiscordMsg) {
@@ -4598,11 +4591,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        const participantPromptBlock = formatParticipantPromptBlock({
-          activeEntry: activeParticipantEntry,
-          entries: participantEntries,
-          wrapFormat,
-        });
+        const participantPromptBlock = renderParticipantPromptBlock(participantContext.promptBlockHandle, wrapFormat);
         if (participantPromptBlock) {
           const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
           const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
@@ -4732,25 +4721,8 @@ export async function generateRoutes(app: FastifyInstance) {
                     : {}),
                 }
               : null,
-          participants: participantEntries.map((entry) => ({
-            participantId: entry.participant.id,
-            source: entry.participant.source,
-            guildId: entry.participant.guildId,
-            discordUserId: entry.participant.discordUserId,
-            discordDisplayName: entry.participant.discordDisplayName,
-            personaId: entry.participant.personaId,
-            personaName: participantPersonaName(entry),
-            active: entry.participant.active,
-            hasSpoken: entry.participant.hasSpoken,
-            lastMessageId: entry.participant.lastMessageId,
-            lastSpokeAt: entry.participant.lastSpokeAt,
-          })),
-          activeParticipant: activeParticipantEntry
-            ? buildParticipantSnapshot({
-                participant: activeParticipantEntry.participant,
-                persona: activeParticipantEntry.persona,
-              })
-            : null,
+          participants: participantContext.agentParticipants,
+          activeParticipant: participantContext.agentActiveParticipant,
           memory: {},
           activatedLorebookEntries: null,
           writableLorebookIds: null,

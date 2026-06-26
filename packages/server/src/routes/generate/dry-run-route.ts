@@ -23,7 +23,6 @@ import { createPromptsStorage } from "../../services/storage/prompts.storage.js"
 import { createCharactersStorage } from "../../services/storage/characters.storage.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { createRegexScriptsStorage } from "../../services/storage/regex-scripts.storage.js";
-import { createDiscordBridgeStorage } from "../../services/storage/discord-bridge.storage.js";
 import { buildImpersonateInstruction } from "../../services/conversation/impersonate-prompt.js";
 import { processLorebooks } from "../../services/lorebook/index.js";
 import { resolveLorebookScopeExclusions } from "../../services/lorebook/game-lorebook-scope.js";
@@ -44,12 +43,9 @@ import {
 import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import {
-  buildParticipantPromptEntries,
-  compactPersonaSummary,
-  formatParticipantsMacro,
-  participantSpeakerName,
-} from "../../services/discord-bridge/participant-prompt-context.js";
-import { applyHistoryContentTransforms } from "../../services/generation/content-hooks.js";
+  applyHistoryContentTransforms,
+  resolvePreviewParticipantContext,
+} from "../../services/generation/content-hooks.js";
 import {
   yieldToEventLoop,
   fitMessagesToContext,
@@ -803,26 +799,17 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     } catch {
       /* non-critical */
     }
-    const bridgeStorage = createDiscordBridgeStorage(app.db);
-    const participantRows = await bridgeStorage.listActiveParticipants(chatId);
-    const participantEntries = buildParticipantPromptEntries(participantRows, allPersonas);
-    const latestParticipantSnapshot = [...chatMessages]
-      .reverse()
-      .map((message: any) => parseExtra(message.extra)?.participantSnapshot)
-      .find((snapshot): snapshot is Record<string, unknown> => !!snapshot && typeof snapshot === "object");
-    const activeParticipantEntry =
-      participantEntries.find((entry) => entry.participant.id === latestParticipantSnapshot?.participantId) ??
-      participantEntries.find(
-        (entry) =>
-          typeof latestParticipantSnapshot?.discordUserId === "string" &&
-          entry.participant.discordUserId === latestParticipantSnapshot.discordUserId,
-      ) ??
-      [...participantEntries].reverse().find((entry) => entry.participant.hasSpoken) ??
-      participantEntries[0] ??
-      null;
-    const participantSpeaker = participantSpeakerName(activeParticipantEntry, personaName);
-    const speakerPersona = compactPersonaSummary(activeParticipantEntry?.persona ?? persona ?? null);
-    const participantsMacro = formatParticipantsMacro(participantEntries);
+    const previewParticipants = await resolvePreviewParticipantContext({
+      chatId,
+      chatMode,
+      personaName,
+      persona,
+      allPersonas,
+      messages: chatMessages,
+    });
+    const participantSpeaker = previewParticipants.speakerName;
+    const speakerPersona = previewParticipants.speakerPersona;
+    const participantsMacro = previewParticipants.participantsMacro;
 
     const promptPresetCandidates = skipPreset
       ? []

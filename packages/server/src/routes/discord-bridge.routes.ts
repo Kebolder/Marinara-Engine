@@ -40,7 +40,7 @@ import { createChatRealtimeEvent, publishChatEvent } from "../services/chat-even
 const DISCORD_BRIDGE_ROLEPLAY_SETTINGS_KEY = "discordBridge.roleplaySettings";
 
 export async function discordBridgeRoutes(app: FastifyInstance) {
-  registerDiscordBridgeHooks();
+  registerDiscordBridgeHooks(app.db);
   const chatsStorage = createChatsStorage(app.db);
   const charactersStorage = createCharactersStorage(app.db);
   const appSettingsStorage = createAppSettingsStorage(app.db);
