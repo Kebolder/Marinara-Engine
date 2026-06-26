@@ -28,7 +28,6 @@ import type {
   ChatSummaryEntry,
   ConversationNote,
   ExportEnvelope,
-  DiscordBridgeParticipant,
   Message,
   MessageSwipe,
   DaySummaryEntry,
@@ -144,10 +143,6 @@ export interface ConversationSummaryBackfillResult {
   remainingMissingDayCount: number;
 }
 
-export type ChatParticipantView = DiscordBridgeParticipant & {
-  personaName: string | null;
-};
-
 async function resetClientAfterExpunge(qc: ReturnType<typeof useQueryClient>) {
   await clearBrowserRuntimeCaches();
   useChatStore.getState().reset();
@@ -227,28 +222,6 @@ export function useChatMessageCount(chatId: string | null) {
     queryFn: () => api.get<{ count: number }>(`/chats/${chatId}/message-count`),
     enabled: !!chatId,
     staleTime: 30_000,
-  });
-}
-
-export function useChatParticipants(chatId: string | null, enabled = true) {
-  return useQuery({
-    queryKey: chatKeys.participants(chatId ?? ""),
-    queryFn: () => api.get<ChatParticipantView[]>(`/chats/${chatId}/participants`),
-    enabled: !!chatId && enabled,
-    staleTime: 30_000,
-  });
-}
-
-export function useDeactivateChatParticipant(chatId: string | null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (participantId: string) => {
-      if (!chatId) throw new Error("Chat ID is required");
-      return api.delete<{ success: boolean }>(`/chats/${chatId}/participants/${participantId}`);
-    },
-    onSuccess: () => {
-      if (chatId) qc.invalidateQueries({ queryKey: chatKeys.participants(chatId) });
-    },
   });
 }
 

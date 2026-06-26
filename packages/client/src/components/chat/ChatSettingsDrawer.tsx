@@ -99,14 +99,16 @@ import {
   useRefreshChatMemories,
   useExportChatMemories,
   useImportChatMemories,
-  useChatParticipants,
-  useDeactivateChatParticipant,
   useChatNotes,
   useDeleteChatNote,
   useClearChatNotes,
   chatKeys,
-  type ChatParticipantView,
 } from "../../hooks/use-chats";
+import {
+  useChatParticipants,
+  useDeactivateChatParticipant,
+  type ChatParticipantView,
+} from "../../hooks/use-chat-participants";
 import { useUpdateGameWidgets } from "../../hooks/use-game";
 import { useRegexScripts, useUpdateRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
 import { api } from "../../lib/api-client";
