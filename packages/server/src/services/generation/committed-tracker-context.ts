@@ -1,11 +1,10 @@
 import {
   compactQuestProgressForContext,
   formatCustomTrackerFieldForPrompt,
-  formatParticipantTrackerField,
-  splitParticipantTrackerFields,
   type CustomTrackerField,
 } from "@marinara-engine/shared";
 import { wrapContent } from "../prompt/format-engine.js";
+import { splitTrackerFields } from "./content-hooks.js";
 
 type WrapFormat = "xml" | "markdown" | "none";
 
@@ -188,20 +187,14 @@ export function buildCommittedTrackerContextBlock(args: {
       }
 
       if (hasCustomTracker && Array.isArray(stats.customTrackerFields) && stats.customTrackerFields.length > 0) {
-        const { participantTracker, customFields } = splitParticipantTrackerFields(
+        const { participantTrackerText, customFields } = splitTrackerFields(
           stats.customTrackerFields as CustomTrackerField[],
         );
-        if (participantTracker) {
-          trackerParts.push(
-            wrapContent(
-              formatParticipantTrackerField(participantTracker),
-              "Participant Tracker",
-              args.wrapFormat,
-            ),
-          );
+        if (participantTrackerText) {
+          trackerParts.push(wrapContent(participantTrackerText, "Participant Tracker", args.wrapFormat));
         }
         if (customFields.length > 0) {
-          const customLines = customFields.map(formatCustomTrackerFieldForPrompt);
+          const customLines = (customFields as CustomTrackerField[]).map(formatCustomTrackerFieldForPrompt);
           trackerParts.push(wrapContent(customLines.join("\n"), "Custom Tracker", args.wrapFormat));
         }
       }

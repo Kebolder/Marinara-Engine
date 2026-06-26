@@ -239,3 +239,34 @@ export function resolveMessageAuthorName(extra: Record<string, unknown> | null |
   if (!messageAuthorNameResolver) return null;
   return messageAuthorNameResolver(extra);
 }
+
+// ── Custom tracker field split ────────────────────
+//
+// Splits the multiplayer "Participant Tracker" reserved field out of a chat's
+// custom tracker fields so core renders it under its own heading. Default
+// returns all fields as plain custom fields (no participant tracker).
+
+/** Result of splitting custom tracker fields into a participant tracker and the rest. */
+export interface TrackerFieldSplit {
+  /** Pre-rendered participant tracker text (core wraps it under a heading), or null. */
+  participantTrackerText: string | null;
+  /** The custom fields remaining after the participant tracker is extracted. */
+  customFields: unknown[];
+}
+
+type TrackerFieldSplitter = (fields: unknown[]) => TrackerFieldSplit;
+
+let trackerFieldSplitter: TrackerFieldSplitter | null = null;
+
+/** Register the custom tracker field splitter. */
+export function registerTrackerFieldSplitter(splitter: TrackerFieldSplitter): void {
+  trackerFieldSplitter = splitter;
+}
+
+/** Split custom tracker fields, or return them unchanged when no splitter is registered. */
+export function splitTrackerFields(fields: unknown[]): TrackerFieldSplit {
+  if (!trackerFieldSplitter) {
+    return { participantTrackerText: null, customFields: fields };
+  }
+  return trackerFieldSplitter(fields);
+}

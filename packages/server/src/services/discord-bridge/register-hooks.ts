@@ -9,6 +9,11 @@
 // with the app db so per-request providers can read bridge storage.
 
 import { createHash } from "crypto";
+import {
+  formatParticipantTrackerField,
+  splitParticipantTrackerFields,
+  type CustomTrackerField,
+} from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import {
   registerBridgeTurnFactory,
@@ -16,6 +21,7 @@ import {
   registerMessageAuthorNameResolver,
   registerParticipantContextProvider,
   registerPreviewParticipantContextProvider,
+  registerTrackerFieldSplitter,
   type BridgeTurn,
   type BridgeTurnRequest,
   type BridgeUserMessageInfo,
@@ -237,6 +243,15 @@ export function registerDiscordBridgeHooks(db: DB): void {
       participantSnapshot: extra?.participantSnapshot,
     }),
   );
+
+  // Split the reserved "Participant Tracker" field out of the custom tracker fields.
+  registerTrackerFieldSplitter((fields) => {
+    const { participantTracker, customFields } = splitParticipantTrackerFields(fields as CustomTrackerField[]);
+    return {
+      participantTrackerText: participantTracker ? formatParticipantTrackerField(participantTracker) : null,
+      customFields,
+    };
+  });
 }
 
 /** Parse a message `extra` blob that may be a JSON string or an object. */
