@@ -46,10 +46,10 @@ import { wrapContent } from "../../services/prompt/format-engine.js";
 import {
   buildParticipantPromptEntries,
   compactPersonaSummary,
-  formatParticipantHistoryContent,
   formatParticipantsMacro,
   participantSpeakerName,
 } from "../../services/discord-bridge/participant-prompt-context.js";
+import { applyHistoryContentTransforms } from "../../services/generation/content-hooks.js";
 import {
   yieldToEventLoop,
   fitMessagesToContext,
@@ -733,14 +733,10 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           : {};
       return {
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-        content:
-          m.role === "user"
-            ? formatParticipantHistoryContent({
-                content: appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
-                personaSnapshot: extra.personaSnapshot,
-                participantSnapshot: extra.participantSnapshot,
-              })
-            : appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
+        content: applyHistoryContentTransforms(
+          appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
+          { role: m.role, extra },
+        ),
         contextKind: "history" as const,
         characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
         ...(images?.length ? { images } : {}),

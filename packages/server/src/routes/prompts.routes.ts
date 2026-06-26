@@ -25,10 +25,10 @@ import { createDiscordBridgeStorage } from "../services/storage/discord-bridge.s
 import {
   buildParticipantPromptEntries,
   compactPersonaSummary,
-  formatParticipantHistoryContent,
   formatParticipantsMacro,
   participantSpeakerName,
 } from "../services/discord-bridge/participant-prompt-context.js";
+import { applyHistoryContentTransforms } from "../services/generation/content-hooks.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import AdmZip from "adm-zip";
 
@@ -326,14 +326,7 @@ export async function promptsRoutes(app: FastifyInstance) {
       const extra = parseMessageExtra(m.extra);
       return {
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-        content:
-          m.role === "user"
-            ? formatParticipantHistoryContent({
-                content: m.content as string,
-                personaSnapshot: extra?.personaSnapshot,
-                participantSnapshot: extra?.participantSnapshot,
-              })
-            : (m.content as string),
+        content: applyHistoryContentTransforms(m.content as string, { role: m.role, extra }),
       };
     });
 

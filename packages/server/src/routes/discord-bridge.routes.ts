@@ -21,6 +21,7 @@ import {
   getDiscordBridgeSetupOptions,
 } from "../services/discord-bridge/bridge-context.service.js";
 import { buildParticipantSnapshot } from "../services/discord-bridge/participant-prompt-context.js";
+import { registerDiscordBridgeHooks } from "../services/discord-bridge/register-hooks.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createChatPresetsStorage } from "../services/storage/chat-presets.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
@@ -39,6 +40,7 @@ import { createChatRealtimeEvent, publishChatEvent } from "../services/chat-even
 const DISCORD_BRIDGE_ROLEPLAY_SETTINGS_KEY = "discordBridge.roleplaySettings";
 
 export async function discordBridgeRoutes(app: FastifyInstance) {
+  registerDiscordBridgeHooks();
   const chatsStorage = createChatsStorage(app.db);
   const charactersStorage = createCharactersStorage(app.db);
   const appSettingsStorage = createAppSettingsStorage(app.db);

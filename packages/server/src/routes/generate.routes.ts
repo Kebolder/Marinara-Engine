@@ -85,6 +85,7 @@ import { resolveChatSummaryConnection } from "../services/chat-summary/connectio
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { textRewriteDropsProtectedMarkup } from "../services/generation/text-rewrite-safety.js";
+import { applyHistoryContentTransforms } from "../services/generation/content-hooks.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { extractLeadingThinkingBlocks } from "../services/llm/inline-thinking.js";
 import { resolveSpotifyCredentials, spotifyHasScope } from "../services/spotify/spotify.service.js";
@@ -105,7 +106,6 @@ import {
   buildParticipantPromptEntries,
   buildParticipantSnapshot,
   compactPersonaSummary,
-  formatParticipantHistoryContent,
   formatParticipantPromptBlock,
   formatParticipantsMacro,
   participantSnapshotPersonaName,
@@ -1768,13 +1768,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // Skip illustration/selfie attachments (type "image") â€” those are generated
         // by agents and should be invisible to the main model.
         let content = appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), attachments);
-        if (m.role === "user") {
-          content = formatParticipantHistoryContent({
-            content,
-            personaSnapshot: extra.personaSnapshot,
-            participantSnapshot: extra.participantSnapshot,
-          });
-        }
+        content = applyHistoryContentTransforms(content, { role: m.role, extra });
         const userUploadedImages = attachments?.filter((a) => a.type?.startsWith("image/"));
         if (m.role === "assistant" && userUploadedImages?.length) {
           const photoName = userUploadedImages[0]?.filename ?? userUploadedImages[0]?.name;
@@ -2633,14 +2627,10 @@ export async function generateRoutes(app: FastifyInstance) {
                 const files = extractFileAttachmentInputs(att);
                 return {
                   role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-                  content:
-                    m.role === "user"
-                      ? formatParticipantHistoryContent({
-                          content: appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
-                          personaSnapshot: ex.personaSnapshot,
-                          participantSnapshot: ex.participantSnapshot,
-                        })
-                      : appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
+                  content: applyHistoryContentTransforms(
+                    appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
+                    { role: m.role, extra: ex },
+                  ),
                   contextKind: "history" as const,
                   characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
                   ...(imgs?.length ? { images: imgs } : {}),
