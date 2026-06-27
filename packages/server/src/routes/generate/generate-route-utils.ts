@@ -976,6 +976,34 @@ export function appendReadableAttachmentsToContent(
   return `${content}${content.trim() ? "\n\n" : ""}${blocks.join("\n\n")}`;
 }
 
+export function formatSeparateAgentInjection(agentType: string, text: string, wrapFormat: string): string {
+  const meta =
+    agentType === "knowledge-router"
+      ? { heading: "Knowledge Router", tag: "knowledge_router" }
+      : agentType === "knowledge-retrieval"
+        ? { heading: "Knowledge Retrieval", tag: "knowledge_retrieval" }
+        : agentType === "director"
+          ? { heading: "Narrative Director", tag: "narrative_director" }
+          : { heading: agentType, tag: agentType.replace(/[^a-z0-9_-]/gi, "_") };
+
+  if (wrapFormat === "none") return `${meta.heading}:\n${text}`;
+  if (wrapFormat === "markdown") return `## ${meta.heading}\n${text}`;
+  return `<${meta.tag}>\n${text}\n</${meta.tag}>`;
+}
+
+export function appendSeparateAgentInjectionMessage(
+  messages: SimpleMessage[],
+  agentType: string,
+  text: string,
+  wrapFormat: string,
+): void {
+  messages.push({
+    role: "system",
+    content: formatSeparateAgentInjection(agentType, text, wrapFormat),
+    contextKind: "injection",
+  });
+}
+
 /** Resolve the base URL for a connection, falling back to the provider default. */
 export function resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string {
   if (connection.baseUrl) return connection.baseUrl.replace(/\/+$/, "");

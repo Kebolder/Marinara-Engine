@@ -204,6 +204,7 @@ import {
   buildLockedPersonaTrackerPatch,
   extractImageAttachmentDataUrls,
   appendNonLeadingSystemMessagesToLastUser,
+  appendSeparateAgentInjectionMessage,
   computeSummaryHideIds,
   selectRollingSummaryMessages,
   injectIntoOutputFormatOrLastUser,
@@ -5318,36 +5319,11 @@ export async function generateRoutes(app: FastifyInstance) {
           return results;
         };
 
-        // Helper: wrap a separate-injection agent's text and append it to the last
-        // user message. Used by both knowledge-retrieval and knowledge-router on
-        // both fresh generations AND regen-cache replays — keeping the wrap+append
-        // in one place prevents the two paths from drifting again (PR #228 had to
-        // fix exactly that drift once already).
+        // Helper: wrap a separate-injection agent's text as protected prompt
+        // context. Used by both knowledge-retrieval and knowledge-router on both
+        // fresh generations AND regen-cache replays so the two paths stay aligned.
         const appendSeparateAgentInjection = (agentType: string, text: string): void => {
-          const meta =
-            agentType === "knowledge-router"
-              ? { heading: "Knowledge Router", tag: "knowledge_router" }
-              : agentType === "knowledge-retrieval"
-                ? { heading: "Knowledge Retrieval", tag: "knowledge_retrieval" }
-                : agentType === "director"
-                  ? { heading: "Narrative Director", tag: "narrative_director" }
-                  : { heading: agentType, tag: agentType.replace(/[^a-z0-9_-]/gi, "_") };
-          // Honor all three wrapFormat values (the previous KR-only injection had
-          // a markdown-or-xml-fallback bug that "none" silently fell into).
-          const wrapped =
-            wrapFormat === "none"
-              ? `\n\n${meta.heading}:\n${text}`
-              : wrapFormat === "markdown"
-                ? `\n\n## ${meta.heading}\n${text}`
-                : `\n\n<${meta.tag}>\n${text}\n</${meta.tag}>`;
-          const lastUserIdx = findLastIndex(finalMessages, "user");
-          if (lastUserIdx >= 0) {
-            const target = finalMessages[lastUserIdx]!;
-            finalMessages[lastUserIdx] = { ...target, content: target.content + wrapped };
-          } else {
-            const last = finalMessages[finalMessages.length - 1]!;
-            finalMessages[finalMessages.length - 1] = { ...last, content: last.content + wrapped };
-          }
+          appendSeparateAgentInjectionMessage(finalMessages, agentType, text, wrapFormat);
         };
 
         if (shouldRunDirectorSecretPlot || shouldRunPreGen || shouldRunKR || shouldRunRouter) {

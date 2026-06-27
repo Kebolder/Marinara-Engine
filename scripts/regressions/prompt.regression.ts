@@ -8,10 +8,12 @@ import {
 } from "../../packages/shared/src/index.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
+  appendSeparateAgentInjectionMessage,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
   type SimpleMessage,
 } from "../../packages/server/src/routes/generate/generate-route-utils.js";
+import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 
 type RegressionCase = {
   name: string;
@@ -149,6 +151,64 @@ const cases: RegressionCase[] = [
         }),
         false,
       );
+    },
+  },
+  {
+    name: "separate agent injections survive long-history context fitting",
+    run() {
+      const messages: SimpleMessage[] = [{ role: "system", content: "Stable system prompt." }];
+      for (let index = 0; index < 8; index += 1) {
+        messages.push({
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `old context ${index} ${"x ".repeat(450)}`,
+          contextKind: "history",
+        });
+      }
+      messages.push({ role: "user", content: "latest visible user turn", contextKind: "history" });
+
+      appendSeparateAgentInjectionMessage(messages, "knowledge-router", "ROUTER_SURVIVOR_CONTEXT", "xml");
+      messages.push({ role: "assistant", content: "assistant prefill tail" });
+
+      const fitted = fitMessagesForModelAccess({
+        messages,
+        policy: { suppressModelParameters: false, effectiveMaxContext: 900 },
+        maxTokens: 128,
+      }).messages;
+      const promptText = fitted.map((message) => message.content).join("\n");
+
+      assert.equal(promptText.includes("old context 0"), false);
+      assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
+    },
+  },
+  {
+    name: "separate agent injections do not depend on a user-adjacent tail",
+    run() {
+      const messages: SimpleMessage[] = [{ role: "system", content: "Stable system prompt." }];
+      messages.push({
+        role: "user",
+        content: `old user anchor ${"x ".repeat(450)}`,
+        contextKind: "history",
+      });
+      for (let index = 0; index < 6; index += 1) {
+        messages.push({
+          role: "assistant",
+          content: `assistant history tail ${index} ${"x ".repeat(450)}`,
+          contextKind: "history",
+        });
+      }
+
+      appendSeparateAgentInjectionMessage(messages, "knowledge-router", "ROUTER_SURVIVOR_CONTEXT", "xml");
+      messages.push({ role: "assistant", content: "assistant prefill tail" });
+
+      const fitted = fitMessagesForModelAccess({
+        messages,
+        policy: { suppressModelParameters: false, effectiveMaxContext: 900 },
+        maxTokens: 128,
+      }).messages;
+      const promptText = fitted.map((message) => message.content).join("\n");
+
+      assert.equal(promptText.includes("old user anchor"), false);
+      assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
     },
   },
 ];
