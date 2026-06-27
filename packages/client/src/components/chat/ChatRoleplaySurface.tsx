@@ -44,6 +44,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
+import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useActiveLorebookEntries, useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresetFull, usePresets } from "../../hooks/use-presets";
 import { ChatMessage } from "./ChatMessage";
@@ -312,7 +313,7 @@ function StreamingIndicator({
   groupChatMode?: string;
   expressionAvatarResolver?: ExpressionAvatarResolver;
 }) {
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const streamBuffer = useThrottledStreamBuffer();
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
 
@@ -353,7 +354,7 @@ function RegeneratingMessageContent({
 }: {
   msg: MessageWithSwipes;
 } & Omit<ComponentProps<typeof ChatMessage>, "message" | "isStreaming">) {
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const streamBuffer = useThrottledStreamBuffer();
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   // Strip old-swipe attachments so a previous illustration doesn't linger
   // while the new swipe's text is streaming in.
@@ -851,18 +852,34 @@ function AuthorNotesButton({
     const handle = (e: MouseEvent) => {
       const target = e.target as Node;
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
+      // On mobile, the virtual keyboard opening can synthesise a pointer/mouse
+      // event outside the panel that would otherwise close it mid-edit; don't
+      // dismiss while a field inside the panel is focused. Mobile-only: on desktop
+      // a mousedown fires before focus moves, so guarding there would swallow the
+      // first outside click (see SummaryPopover, which only runs on touch).
+      if (useMobilePanel) {
+        const active = document.activeElement;
+        if (active instanceof Node && panelRef.current?.contains(active)) return;
+      }
       onOpenChange(false);
     };
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
-  }, [onOpenChange, open, renderPanel]);
+  }, [onOpenChange, open, renderPanel, useMobilePanel]);
 
   useLayoutEffect(() => {
     if (!open || !renderPanel || !useMobilePanel) {
       setMobileFrame(null);
       return;
     }
-    const update = () => setMobileFrame(getMobileFloatingPanelFrame(buttonRef.current, 288));
+    const update = () => {
+      const next = getMobileFloatingPanelFrame(buttonRef.current, 288);
+      // Keep the last good frame when the anchor button is transiently
+      // unmeasurable (e.g. the mobile keyboard opening collapses the toolbar /
+      // overflow menu so the button's rect is 0) — otherwise the portal panel
+      // unmounts the instant the keyboard appears and the user can't type.
+      if (next) setMobileFrame(next);
+    };
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);

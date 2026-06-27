@@ -825,6 +825,7 @@ export function ConversationInput({
         characterNames: activeCharacterNames,
         characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
+        lastMessageRole,
       };
       const submittedDraft = textareaRef.current?.value ?? "";
       const submittedHeight = textareaRef.current?.style.height ?? "auto";
@@ -948,6 +949,7 @@ export function ConversationInput({
   }, [
     activeChatId,
     activeChatCharacters,
+    lastMessageRole,
     attachments,
     canRetry,
     isReadingAttachments,
@@ -996,6 +998,7 @@ export function ConversationInput({
         characterNames: activeCharacterNames,
         characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
+        lastMessageRole,
       };
 
       const previousDraft = textareaRef.current?.value ?? "";
@@ -1051,6 +1054,7 @@ export function ConversationInput({
       activeChatId,
       activeChatCharacters,
       activeCharacterNames,
+      lastMessageRole,
       clearInputDraft,
       completions,
       _mentionQuery,
