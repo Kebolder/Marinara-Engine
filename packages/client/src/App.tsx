@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { AppShell } from "./components/layout/AppShell";
@@ -26,7 +26,8 @@ import {
   isCssGradient,
   RAINBOW_GRADIENT_PRESET,
 } from "./lib/css-colors";
-import { useLegacyThemeMigration } from "./hooks/use-themes";
+import { normalizeThemeCss } from "./lib/theme-css";
+import { useLegacyThemeMigration, useThemes } from "./hooks/use-themes";
 import { useLegacyExtensionMigration } from "./hooks/use-extensions";
 import { useSettingsSync } from "./hooks/use-settings-sync";
 
@@ -69,6 +70,11 @@ const ACCENT_RGB_SOLID_CYCLE_MS = 7_200;
 const ACCENT_RGB_GRADIENT_STOP_MS = 6_000;
 const TOAST_DURATION_MS = 6_000;
 const TOAST_VISIBLE_LIMIT = 3;
+const THEME_ACCENT_PULSE_VARIABLE = "--marinara-theme-accent-pulse";
+const THEME_ACCENT_PULSE_SOURCE_VARIABLE = "--marinara-theme-accent-pulse-source";
+const THEME_ACCENT_PULSE_ENABLED_VALUES = new Set(["1", "true", "yes", "on", "enabled", "enable", "pulse"]);
+const ACCENT_SOURCE_SELF_REFERENCE_RE =
+  /var\(\s*--(?:primary|ring|accent|sidebar-accent|sidebar-accent-foreground|marinara-app-accent-solid|marinara-app-accent-gradient|marinara-chat-chrome-accent|marinara-chat-chrome-accent-gradient)\b/i;
 
 export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -173,6 +179,44 @@ function getAccentGlow(accent: string, theme: "dark" | "light") {
   return `color-mix(in srgb, ${accent} ${theme === "light" ? "12%" : "18%"}, transparent)`;
 }
 
+function stripCssComments(css: string) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readCssCustomProperty(css: string, name: string) {
+  const match = css.match(new RegExp(`${escapeRegExp(name)}\\s*:\\s*([^;{}\\n\\r]+)`, "i"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function isEnabledCssValue(value: string) {
+  return THEME_ACCENT_PULSE_ENABLED_VALUES.has(value.trim().toLowerCase());
+}
+
+function getFirstThemeAccentSource(css: string) {
+  const sourceCandidates = [
+    readCssCustomProperty(css, THEME_ACCENT_PULSE_SOURCE_VARIABLE),
+    readCssCustomProperty(css, "--marinara-app-accent-gradient"),
+    readCssCustomProperty(css, "--marinara-app-accent-solid"),
+    readCssCustomProperty(css, "--primary"),
+  ];
+
+  return sourceCandidates.find((value) => value && !ACCENT_SOURCE_SELF_REFERENCE_RE.test(value)) ?? "";
+}
+
+function getThemeAccentPulseConfig(css: string | null | undefined) {
+  const normalizedCss = stripCssComments(normalizeThemeCss(css ?? ""));
+  const enabled = isEnabledCssValue(readCssCustomProperty(normalizedCss, THEME_ACCENT_PULSE_VARIABLE));
+
+  return {
+    enabled,
+    source: enabled ? getFirstThemeAccentSource(normalizedCss) : "",
+  };
+}
+
 function applyAppAccentVariables({
   root,
   accent,
@@ -262,6 +306,12 @@ export function App() {
   const rightPanel = useUIStore((s) => s.rightPanel);
   const settingsTab = useUIStore((s) => s.settingsTab);
   const appearanceSettingsActive = rightPanelOpen && rightPanel === "settings" && settingsTab === "appearance";
+  const { data: syncedThemes = [] } = useThemes();
+  const activeCustomTheme = useMemo(() => syncedThemes.find((themeItem) => themeItem.isActive) ?? null, [syncedThemes]);
+  const themeAccentPulseConfig = useMemo(
+    () => getThemeAccentPulseConfig(activeCustomTheme?.css),
+    [activeCustomTheme?.css],
+  );
   useLegacyThemeMigration();
   useLegacyExtensionMigration();
   useSettingsSync();
@@ -366,7 +416,7 @@ export function App() {
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const accent = appAccentColor.trim();
     const defaultAccent = getDefaultAppAccentColor(theme);
-    const accentSource = accent || defaultAccent;
+    const accentSource = themeAccentPulseConfig.source || accent || defaultAccent;
     const solidAccent = getCssColorFallback(accentSource, defaultAccent);
     const accentIsGradient = isCssGradient(accentSource);
     const animatedAccentSource = appAccentRgbMode ? RAINBOW_GRADIENT_PRESET : accentSource;
@@ -375,7 +425,7 @@ export function App() {
     const animatedGradientStops = animatedAccentIsGradient
       ? getCssGradientColorStops(animatedAccentSource, animatedSolidAccent)
       : [animatedSolidAccent];
-    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode;
+    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode || themeAccentPulseConfig.enabled;
 
     let accentAnimationTimer: ReturnType<typeof window.setTimeout> | null = null;
 
@@ -486,7 +536,15 @@ export function App() {
       }
       delete root.dataset.marinaraAccentAnimation;
     };
-  }, [appAccentColor, appAccentPulseMode, appAccentRgbMode, appearanceSettingsActive, theme]);
+  }, [
+    appAccentColor,
+    appAccentPulseMode,
+    appAccentRgbMode,
+    appearanceSettingsActive,
+    theme,
+    themeAccentPulseConfig.enabled,
+    themeAccentPulseConfig.source,
+  ]);
 
   useEffect(() => {
     const root = document.documentElement;

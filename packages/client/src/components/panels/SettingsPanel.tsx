@@ -2117,7 +2117,7 @@ function AppearanceSettings() {
             label="Accent Pulse"
             checked={appAccentPulseMode}
             onChange={handleAppAccentPulseModeChange}
-            help="Animates the selected Accent Color. Solid colors gently brighten and darken; gradients cycle through their selected colors. Reduced-motion preferences are respected."
+            help="Animates the selected Accent Color. Solid colors gently brighten and darken; gradients cycle through their selected colors. Custom CSS themes can also request it with --marinara-theme-accent-pulse: enabled. Reduced-motion preferences are respected."
           />
 
           <ToggleSetting
@@ -3733,6 +3733,7 @@ function ThemesSettings() {
             <code className="rounded bg-[var(--secondary)] px-1">--background</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--primary</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-app-accent-solid</code>,{" "}
+            <code className="rounded bg-[var(--secondary)] px-1">--marinara-theme-accent-pulse</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent-gradient</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-surface-bg</code>) or add custom
@@ -3758,6 +3759,8 @@ const CSS_TEMPLATE = `/* ══════════════════�
   /* --primary-foreground: #fff; */
   /* --marinara-app-accent-solid: var(--primary); */
   /* --marinara-app-accent-gradient: linear-gradient(90deg, var(--marinara-app-accent-solid), color-mix(in srgb, var(--marinara-app-accent-solid) 76%, var(--foreground) 24%), var(--marinara-app-accent-solid)); */
+  /* --marinara-theme-accent-pulse: enabled; */
+  /* --marinara-theme-accent-pulse-source: #a78bfa; */
 
   /* ── Surface Colors ── */
   /* --card: #111118; */
