@@ -160,11 +160,12 @@ function parseLorebookRow(row: Record<string, unknown>) {
 }
 
 function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const normalize = (items: unknown[]) => items.map(String).map((item) => item.trim()).filter(Boolean);
+  if (Array.isArray(value)) return normalize(value);
   if (typeof value !== "string" || !value.trim()) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    return Array.isArray(parsed) ? normalize(parsed) : [];
   } catch {
     return [];
   }
@@ -280,6 +281,18 @@ async function syncLorebookLinks(
 }
 
 export function createLorebooksStorage(db: DB) {
+  const assertFolderBelongsToLorebook = async (lorebookId: string, folderId: string | null | undefined) => {
+    if (folderId === null || folderId === undefined) return;
+    const folderRows = await db
+      .select({ lorebookId: lorebookFolders.lorebookId })
+      .from(lorebookFolders)
+      .where(eq(lorebookFolders.id, folderId));
+    const folderRow = folderRows[0];
+    if (!folderRow || folderRow.lorebookId !== lorebookId) {
+      throw new Error("folderId does not belong to this lorebook");
+    }
+  };
+
   return {
     // ── Lorebooks ──
 
@@ -543,21 +556,8 @@ export function createLorebooksStorage(db: DB) {
     async createEntry(input: CreateLorebookEntryInput) {
       const id = newId();
       const timestamp = now();
-      // If a folderId is supplied, the folder must exist AND live in the same
-      // lorebook. Without this check, the route layer accepts any string and
-      // we'd silently create orphaned entries that disappear from the editor's
-      // grouped view and bypass the disabled-folder activation gate.
       const requestedFolderId = input.folderId ?? null;
-      if (requestedFolderId !== null) {
-        const folderRows = await db
-          .select({ lorebookId: lorebookFolders.lorebookId })
-          .from(lorebookFolders)
-          .where(eq(lorebookFolders.id, requestedFolderId));
-        const folderRow = folderRows[0];
-        if (!folderRow || folderRow.lorebookId !== input.lorebookId) {
-          throw new Error("folderId does not belong to this lorebook");
-        }
-      }
+      await assertFolderBelongsToLorebook(input.lorebookId, requestedFolderId);
       await db.insert(lorebookEntries).values({
         id,
         lorebookId: input.lorebookId,
@@ -714,6 +714,9 @@ export function createLorebooksStorage(db: DB) {
     /** Bulk create entries (for imports and AI generation). */
     async bulkCreateEntries(lorebookId: string, entries: Omit<CreateLorebookEntryInput, "lorebookId">[]) {
       const results = [];
+      for (const entry of entries) {
+        await assertFolderBelongsToLorebook(lorebookId, entry.folderId ?? null);
+      }
       for (const entry of entries) {
         const result = await this.createEntry({ ...entry, lorebookId });
         results.push(result);

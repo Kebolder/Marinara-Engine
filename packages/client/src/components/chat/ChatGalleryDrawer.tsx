@@ -22,9 +22,18 @@ interface ChatGalleryDrawerProps {
   anchor?: { right: number; top: number } | null;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void | Promise<void>;
+  /** Generate and apply a background for the current scene. */
+  onGenerateBackground?: () => void | Promise<void>;
 }
 
-export function ChatGalleryDrawer({ chat, open, onClose, anchor, onIllustrate }: ChatGalleryDrawerProps) {
+export function ChatGalleryDrawer({
+  chat,
+  open,
+  onClose,
+  anchor,
+  onIllustrate,
+  onGenerateBackground,
+}: ChatGalleryDrawerProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -77,7 +86,12 @@ export function ChatGalleryDrawer({ chat, open, onClose, anchor, onIllustrate }:
         </div>
 
         <div className={cn(ROLEPLAY_POPOVER_SCROLL_AREA, "flex-1 overflow-y-auto")}>
-          <ChatGallery chatId={chat.id} mode={chat.mode} onIllustrate={onIllustrate} />
+          <ChatGallery
+            chatId={chat.id}
+            mode={chat.mode}
+            onIllustrate={onIllustrate}
+            onGenerateBackground={onGenerateBackground}
+          />
         </div>
       </div>
     </>

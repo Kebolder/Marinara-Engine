@@ -49,15 +49,19 @@ interface GalleryState {
   pinnedImages: ChatImage[];
   /** Chat IDs with an in-flight manual gallery illustration request. */
   illustratingChatIds: Set<string>;
+  /** Chat IDs with an in-flight manual scene background request. */
+  backgroundGeneratingChatIds: Set<string>;
   pinImage: (image: ChatImage) => void;
   unpinImage: (imageId: string) => void;
   clearPinned: () => void;
   setChatIllustrating: (chatId: string, illustrating: boolean) => void;
+  setChatGeneratingBackground: (chatId: string, generating: boolean) => void;
 }
 
 export const useGalleryStore = create<GalleryState>((set) => ({
   pinnedImages: loadPinnedImages(),
   illustratingChatIds: new Set(),
+  backgroundGeneratingChatIds: new Set(),
 
   pinImage: (image) =>
     set((s) => {
@@ -85,5 +89,13 @@ export const useGalleryStore = create<GalleryState>((set) => ({
       if (illustrating) next.add(chatId);
       else next.delete(chatId);
       return { illustratingChatIds: next };
+    }),
+
+  setChatGeneratingBackground: (chatId, generating) =>
+    set((s) => {
+      const next = new Set(s.backgroundGeneratingChatIds);
+      if (generating) next.add(chatId);
+      else next.delete(chatId);
+      return { backgroundGeneratingChatIds: next };
     }),
 }));

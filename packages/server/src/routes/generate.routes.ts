@@ -7055,8 +7055,10 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Save assistant message (or user message for impersonate)
           let savedMsg: any;
+          let savedSwipeIndex: number | null = null;
           if (input.regenerateMessageId) {
-            savedMsg = await chats.addSwipe(input.regenerateMessageId, fullResponse);
+            const createdSwipe = await chats.addSwipe(input.regenerateMessageId, fullResponse);
+            savedSwipeIndex = createdSwipe.index;
             savedMsg = await chats.getMessage(input.regenerateMessageId);
           } else if (input.continueMessageId) {
             const targetMessage = (await chats.getMessage(input.continueMessageId)) ?? continueTargetMessage;
@@ -7064,6 +7066,10 @@ export async function generateRoutes(app: FastifyInstance) {
               input.continueMessageId,
               appendContinuationMessageContent(targetMessage?.content, fullResponse),
             );
+            savedSwipeIndex =
+              typeof savedMsg?.activeSwipeIndex === "number" && Number.isInteger(savedMsg.activeSwipeIndex)
+                ? savedMsg.activeSwipeIndex
+                : 0;
           } else {
             savedMsg = await chats.createMessage({
               chatId: input.chatId,
@@ -7071,6 +7077,7 @@ export async function generateRoutes(app: FastifyInstance) {
               characterId: input.impersonate ? null : targetCharId,
               content: fullResponse,
             });
+            savedSwipeIndex = 0;
           }
           if (markGenerationCommitted && savedMsg?.id) {
             generationComplete = true;
@@ -7112,6 +7119,7 @@ export async function generateRoutes(app: FastifyInstance) {
             else extraUpdate.thinking = null;
             // Store Gemini response parts (thought signatures + summaries) for multi-turn continuity
             if (geminiResponseParts) extraUpdate.geminiParts = geminiResponseParts;
+            else extraUpdate.geminiParts = null;
             // Store Chat Completions reasoning fields for providers that require replay (DeepSeek/OpenRouter)
             if (chatCompletionsReasoning) extraUpdate.chatCompletionsReasoning = chatCompletionsReasoning;
             else extraUpdate.chatCompletionsReasoning = null;
@@ -7133,12 +7141,10 @@ export async function generateRoutes(app: FastifyInstance) {
             extraUpdate.chatSummaryFingerprint = fingerprintChatSummary(chatMeta.summary);
             const persistentAttachments = resolveUserRegenerationPersistentAttachments(regenMsg ?? {});
             if (persistentAttachments) extraUpdate.attachments = persistentAttachments;
-            await chats.updateMessageExtra(savedMsg.id, extraUpdate);
-            // Also persist on the active swipe so switching swipes preserves per-swipe extras
-            const refreshedMsg = await chats.getMessage(savedMsg.id);
-            if (refreshedMsg) {
-              await chats.updateSwipeExtra(savedMsg.id, refreshedMsg.activeSwipeIndex, extraUpdate);
-            }
+            const refreshedMsg =
+              savedSwipeIndex !== null
+                ? await chats.updateMessageExtraForSwipe(savedMsg.id, savedSwipeIndex, extraUpdate)
+                : await chats.updateMessageExtra(savedMsg.id, extraUpdate);
 
             const savedMessagePayload =
               holdForProseGuardianRewrite && !input.impersonate
@@ -8205,8 +8211,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
                 try {
                   if (Object.keys(exprMap).length > 0) {
-                    await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
-                    await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+                    await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
                   }
                   if (Object.keys(personaExprMap).length > 0) {
                     const personaMessageId =
@@ -8226,8 +8231,9 @@ export async function generateRoutes(app: FastifyInstance) {
               const cyoaData = result.data as { choices?: Array<{ label: string; text: string }> };
               if (cyoaData.choices && cyoaData.choices.length > 0) {
                 try {
-                  await chats.updateMessageExtra(messageId, { cyoaChoices: cyoaData.choices });
-                  await chats.updateSwipeExtra(messageId, targetSwipeIndex, { cyoaChoices: cyoaData.choices });
+                  await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, {
+                    cyoaChoices: cyoaData.choices,
+                  });
                 } catch {
                   /* non-critical */
                 }

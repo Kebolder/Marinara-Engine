@@ -1690,6 +1690,12 @@ export function ConversationInput({
     [activeChatId, quoteFormat, setInputDraft, syncInputState],
   );
 
+  const ensureInputVisible = useCallback(() => {
+    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    requestAnimationFrame(scroll);
+    window.setTimeout(scroll, 260);
+  }, []);
+
   const statusDotClass = (status?: string) =>
     status === "offline"
       ? "bg-gray-400"
@@ -1702,7 +1708,7 @@ export function ConversationInput({
     status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : null;
 
   return (
-    <div className="relative px-2 pb-3 sm:px-3">
+    <div className="mari-chat-input chat-input-container relative px-2 pb-3 sm:px-3">
       {/* Slash command autocomplete */}
       {completions.length > 0 && (
         <div className="absolute bottom-full left-3 right-3 z-40 mb-1 max-h-[min(18rem,45dvh)] overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg [-webkit-overflow-scrolling:touch]">
@@ -1941,6 +1947,7 @@ export function ConversationInput({
           onPaste={handlePaste}
           onFocus={() => {
             if (mobilePickerOpen) setMobilePickerOpen(false);
+            ensureInputVisible();
           }}
           className="max-h-[12.5rem] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[1rem] leading-tight text-foreground outline-none placeholder:text-foreground/30 sm:min-h-0 sm:px-0 sm:py-0 sm:leading-normal"
         />

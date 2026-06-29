@@ -997,6 +997,30 @@ function replaceCachedMessage(
   return changed ? { ...old, pages } : old;
 }
 
+function parseMessageExtraForCache(raw: unknown): Message["extra"] | undefined {
+  if (!raw) return undefined;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as Message["extra"];
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return typeof raw === "object" && !Array.isArray(raw) ? (raw as Message["extra"]) : undefined;
+}
+
+function applyCachedSwipeToMessage(message: Message, swipe: MessageSwipe): Message {
+  const parsedExtra = parseMessageExtraForCache(swipe.extra);
+  return {
+    ...message,
+    activeSwipeIndex: swipe.index,
+    content: swipe.content,
+    ...(parsedExtra ? { extra: parsedExtra } : {}),
+    swipeCount: Math.max(message.swipeCount ?? 0, swipe.index + 1),
+  };
+}
+
 /** Peek at the assembled prompt for a chat */
 export function usePeekPrompt() {
   return useMutation({
@@ -1190,8 +1214,12 @@ export function useSetActiveSwipe(chatId: string | null) {
       if (!chatId) return;
       await qc.cancelQueries({ queryKey: chatKeys.messages(chatId), exact: true });
       const previous = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
+      const cachedSwipes = qc.getQueryData<MessageSwipe[]>([...chatKeys.all, "swipes", messageId]);
+      const targetSwipe = cachedSwipes?.find((swipe) => swipe.index === index);
       qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) =>
-        replaceCachedMessage(old, messageId, (msg) => ({ ...msg, activeSwipeIndex: index })),
+        replaceCachedMessage(old, messageId, (msg) =>
+          targetSwipe ? applyCachedSwipeToMessage(msg, targetSwipe) : { ...msg, activeSwipeIndex: index },
+        ),
       );
       return { previous };
     },

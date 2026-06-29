@@ -14,6 +14,9 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added a prominent Connections warning that the bundled Local Model is intended for tracker/helper work, not main chat, roleplay, Game Master narration, or Professor Mari creation tasks.
 - Added an explicit Local Model connection option for Professor Mari and non-Game chat generation paths when the sidecar model is downloaded, for users who still want to route main chat/roleplay requests through it.
 - Added persisted drag-and-drop ordering for custom Functions in the Presets panel, including desktop hover handles and mobile touch dragging.
+- Added a Game Illustrator Chat Settings toggle for automatic visual generation plus a Gallery Background action for Roleplay and Game scenes that creates a background-only image, applies it to the current scene, and saves it into the Appearance background library.
+- Added a Game mode decision-step branch button on the latest narration/dialogue beat so players can fork before choosing their next action.
+- Added a per-chat Illustrator Prompt Model override in Chat Settings so selfie and illustration prompts can be written by a different text connection than the main chat model (#2969).
 
 ### Fixed
 
@@ -45,6 +48,22 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed synced theme hardening and migration/import diagnostics by adding the extension-style privileged write gate, a 256 KiB theme CSS cap, per-entry theme import skip reasons, and legacy-theme migration backoff/permanent-error handling (#2947, #2953, #2954).
 - Fixed card CSS sanitizing so app theme token protection includes popover/sidebar tokens and nested conditional at-rules preserve all outer conditions when scoped (#2950, #2951).
 - Fixed client TTS sequencing so failed chunks no longer discard successfully generated audio, and added a saved Progressive Playback option for local/self-hosted TTS backends to start playback while later chunks are still being fetched (#2949).
+- Fixed manual Gallery background generation so UI debug mode logs the final image prompt sent to the provider.
+- Fixed Spotify mini-player startup noise so disconnected Spotify state no longer polls playback endpoints, and Spotify's Web Playback SDK only loads after the user asks to use Marinara as the playback device.
+- Fixed chat JSONL exports so hidden reasoning is emitted once instead of duplicated through message and swipe metadata, and stale NPC journal rows from unrelated Game chats are filtered from exported `gameJournal` metadata.
+- Fixed Game mode History Above VN rows so stacked history messages expose the same copy, delete, edit, branch, and NPC portrait actions as the full Logs view.
+- Fixed a Game mode History Above VN visual jump when deleting a stacked narration beat by holding the stacked history shell height during the delete frame.
+- Fixed lorebook data edge cases so approval-gated Keeper updates append instead of overwriting entries, drawer autosaves stop clobbering header edits, nested explicit replacements still replace, character-linked lorebook sync preserves entry names/descriptions/settings, bulk imports validate folders before writing, moved entries clean up failed target copies, and entry-row optimistic toggles roll back on failed saves (#2970, #2971, #2972, #2977, #2978, #2980, #2981).
+- Fixed lorebook matching and scanning so whitespace-only keywords do not match everything, whole-word matching handles non-ASCII word characters, per-lorebook recursion depths below 3 are honored, sticky carry-over does not spend ephemeral activations, and invalid create-time scope conflicts are rejected (#2973, #2974, #2975, #2976, #2979).
+- Fixed chat branching so unknown cutoff message IDs are rejected instead of silently copying the full chat, every alternate swipe is preserved, active swipe indexes survive, and Game/turn-game snapshots are copied to the matching branched swipe (#2956, #2962).
+- Fixed swipe persistence races so structural swipe edits, generation extras, retry-agent extras, CYOA choices, sprites, attachments, and thinking data target the correct swipe even when users switch swipes while generation is finishing (#2960).
+- Fixed regenerated swipes so translations, sprites, choices, token counts, Gemini parts, attachments, and other old-swipe metadata do not leak onto the fresh swipe (#2958).
+- Fixed message editing so no-op saves no longer rewrite punctuation/whitespace, empty edit saves are ignored, and classic Conversation edits preserve the raw saved name/timestamp prefix instead of saving the stripped display copy (#2957, #2959).
+- Fixed imported Game JSONL transcripts so manual narration edits in `mes` override stale active-swipe content and imported source `gameId`/scene pointers are remapped or stripped so branch imports cannot drive another campaign's sessions (#2966).
+- Fixed turn-game engine cleanup so UNO/turn-game state is deleted when messages, chats, groups, or swipes are removed, preventing orphaned game state from resurfacing later (#2961).
+- Fixed conditional macros for persona cards by adding persona field operands/macros such as `personaDescription`, `personaPersonality`, and related fields to the shared macro engine (#2964).
+- Fixed Android Firefox mobile keyboard layout by sizing the mobile shell from the visual viewport and nudging chat input bars into view after keyboard focus (#2965).
+- Fixed swipe counter flashes after regenerate/switch by preserving cached swipe counts and moving optimistic swipe content/extra together with the active index (#2963).
 
 ### Platform Notes
 

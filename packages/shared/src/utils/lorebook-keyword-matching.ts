@@ -9,6 +9,7 @@ import { isPatternSafe } from "./regex-safety.js";
 export type RegexExecutor = (regex: RegExp, text: string) => boolean;
 
 const defaultRegexExecutor: RegexExecutor = (regex, text) => regex.test(text);
+const unicodeWordCharacter = /[\p{L}\p{N}_]/u;
 
 export interface KeywordMatchOptions {
   useRegex: boolean;
@@ -23,42 +24,71 @@ export interface KeywordMatchOptions {
 }
 
 function literalMatch(keyword: string, text: string, options: KeywordMatchOptions): boolean {
-  const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
-  const haystack = options.caseSensitive ? text : text.toLowerCase();
+  const trimmedKeyword = keyword.trim();
+  if (!trimmedKeyword) return false;
+  const needle = options.caseSensitive ? trimmedKeyword : trimmedKeyword.toLocaleLowerCase();
+  const haystack = options.caseSensitive ? text : text.toLocaleLowerCase();
   return haystack.includes(needle);
+}
+
+function readPreviousCodePoint(text: string, index: number): string {
+  if (index <= 0) return "";
+  const before = text.slice(0, index);
+  return Array.from(before).pop() ?? "";
+}
+
+function readNextCodePoint(text: string, index: number): string {
+  if (index >= text.length) return "";
+  return Array.from(text.slice(index))[0] ?? "";
+}
+
+function isUnicodeWordCharacter(value: string): boolean {
+  return value.length > 0 && unicodeWordCharacter.test(value);
 }
 
 /** Test whether a single keyword would match the given text under the given options. */
 export function testKeyword(keyword: string, text: string, options: KeywordMatchOptions): boolean {
-  if (!keyword) return false;
+  const trimmedKeyword = keyword.trim();
+  if (!trimmedKeyword) return false;
 
   try {
     if (options.useRegex) {
       // Static ReDoS guard: refuse to compile patterns with nested quantifiers,
       // pathological repetition counts, or oversized sources. Fall back to literal
       // substring match — same posture as the existing invalid-regex catch below.
-      if (!isPatternSafe(keyword)) {
-        return literalMatch(keyword, text, options);
+      if (!isPatternSafe(trimmedKeyword)) {
+        return literalMatch(trimmedKeyword, text, options);
       }
       const flags = options.caseSensitive ? "g" : "gi";
-      const regex = new RegExp(keyword, flags);
+      const regex = new RegExp(trimmedKeyword, flags);
       const exec = options.regexExecutor ?? defaultRegexExecutor;
       return exec(regex, text);
     }
 
     if (options.matchWholeWords) {
-      const needle = options.caseSensitive ? keyword : keyword.toLowerCase();
+      const needle = options.caseSensitive ? trimmedKeyword : trimmedKeyword.toLocaleLowerCase();
+      const haystack = options.caseSensitive ? text : text.toLocaleLowerCase();
       const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const flags = options.caseSensitive ? "g" : "gi";
-      const regex = new RegExp(`\\b${escaped}\\b`, flags);
+      const regex = new RegExp(escaped, "gu");
       // No regexExecutor here — pattern is built from escaped-literal text, can't ReDoS.
-      return regex.test(text);
+      for (const match of haystack.matchAll(regex)) {
+        const start = match.index ?? -1;
+        if (start < 0) continue;
+        const end = start + match[0].length;
+        if (
+          !isUnicodeWordCharacter(readPreviousCodePoint(haystack, start)) &&
+          !isUnicodeWordCharacter(readNextCodePoint(haystack, end))
+        ) {
+          return true;
+        }
+      }
+      return false;
     }
 
-    return literalMatch(keyword, text, options);
+    return literalMatch(trimmedKeyword, text, options);
   } catch {
     // Invalid regex or executor failure — fall back to plain substring
-    return literalMatch(keyword, text, options);
+    return literalMatch(trimmedKeyword, text, options);
   }
 }
 

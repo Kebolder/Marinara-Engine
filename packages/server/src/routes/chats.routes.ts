@@ -1697,8 +1697,6 @@ export async function chatsRoutes(app: FastifyInstance) {
         }
       }
 
-      // Keep swipe extra in sync so per-swipe data (like spriteExpressions) persists.
-      await storage.updateSwipeExtra(req.params.messageId, updated.activeSwipeIndex, partial);
       return updated;
     },
   );
@@ -2659,6 +2657,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     return typeof value === "string" && value.trim().length > 0 ? value : null;
   };
 
+  const EXPORT_REASONING_EXTRA_KEYS = new Set(["thinking", "reasoning", "reasoning_content"]);
+
   const INTERNAL_EXPORT_EXTRA_KEYS = new Set([
     "cachedPrompt",
     "chatCompletionsReasoning",
@@ -2680,11 +2680,99 @@ export async function chatsRoutes(app: FastifyInstance) {
     return sanitized;
   };
 
+  const sanitizeJsonlMessageExtra = (extra: Record<string, unknown>): Record<string, unknown> => {
+    const sanitized = sanitizeExportExtra(extra);
+    for (const key of EXPORT_REASONING_EXTRA_KEYS) {
+      delete sanitized[key];
+    }
+    delete sanitized.marinara_swipes;
+    return sanitized;
+  };
+
   const sanitizeBranchedMessageExtra = (extra: Record<string, unknown>): Record<string, unknown> => {
     const sanitized = sanitizeExportExtra(extra);
     delete sanitized.summaryCandidate;
     delete sanitized.summaryDebug;
     return sanitized;
+  };
+
+  const isExportRecord = (value: unknown): value is Record<string, unknown> =>
+    !!value && typeof value === "object" && !Array.isArray(value);
+
+  const readExportName = (value: unknown): string | null =>
+    typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+
+  const addExportName = (names: Set<string>, value: unknown): void => {
+    const name = readExportName(value);
+    if (!name) return;
+    const normalized = normalizeTextForMatch(name);
+    if (normalized) names.add(normalized);
+  };
+
+  const stripJournalNpcTitlePrefix = (value: string): string => {
+    const trimmed = value.trim();
+    let offset = 0;
+    for (const char of trimmed) {
+      const isNumber = /[0-9]/.test(char);
+      const isLetter = char.toLocaleLowerCase() !== char.toLocaleUpperCase();
+      if (isNumber || isLetter) break;
+      offset += char.length;
+    }
+    return trimmed.slice(offset).replace(/^npc\s*[:\-]\s*/i, "").trim();
+  };
+
+  const collectExportJournalNpcNames = (
+    metadata: Record<string, unknown>,
+    charNameMap: Map<string, string>,
+  ): Set<string> => {
+    const names = new Set<string>();
+    for (const name of charNameMap.values()) addExportName(names, name);
+    for (const npc of Array.isArray(metadata.gameNpcs) ? metadata.gameNpcs : []) {
+      if (isExportRecord(npc)) addExportName(names, npc.name);
+    }
+    for (const card of Array.isArray(metadata.gameCharacterCards) ? metadata.gameCharacterCards : []) {
+      if (isExportRecord(card)) addExportName(names, card.name);
+    }
+    return names;
+  };
+
+  const sanitizeGameJournalForExport = (journal: unknown, knownNpcNames: Set<string>): unknown => {
+    if (!isExportRecord(journal) || knownNpcNames.size === 0) return journal;
+
+    const isKnownNpcName = (value: unknown): boolean => {
+      const direct = normalizeTextForMatch(value);
+      if (direct && knownNpcNames.has(direct)) return true;
+      if (typeof value !== "string") return false;
+      const stripped = normalizeTextForMatch(stripJournalNpcTitlePrefix(value));
+      return !!stripped && knownNpcNames.has(stripped);
+    };
+
+    const entries = Array.isArray(journal.entries)
+      ? journal.entries.filter((entry) => {
+          if (!isExportRecord(entry) || entry.type !== "npc") return true;
+          return isKnownNpcName(entry.title);
+        })
+      : journal.entries;
+    const npcLog = Array.isArray(journal.npcLog)
+      ? journal.npcLog.filter((entry) => isExportRecord(entry) && isKnownNpcName(entry.npcName))
+      : journal.npcLog;
+
+    return {
+      ...journal,
+      entries,
+      npcLog,
+    };
+  };
+
+  const sanitizeChatMetadataForJsonlExport = (
+    metadata: Record<string, unknown>,
+    knownNpcNames: Set<string>,
+  ): Record<string, unknown> => {
+    if (!("gameJournal" in metadata)) return metadata;
+    return {
+      ...metadata,
+      gameJournal: sanitizeGameJournalForExport(metadata.gameJournal, knownNpcNames),
+    };
   };
 
   const safeExportNamePart = (value: unknown, fallback: string): string => {
@@ -2719,6 +2807,10 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
     }
     const primaryCharName = (charIds[0] && charNameMap.get(charIds[0])) ?? chat.name;
+    const jsonlMetadata = sanitizeChatMetadataForJsonlExport(
+      metadata,
+      collectExportJournalNpcNames(metadata, charNameMap),
+    );
     const persona = await buildPersonaSnapshotForChat(app, chat);
     const { buildPromptMacroContext, resolvePromptMessageMacros } = await import("../services/prompt/index.js");
     const exportCharacterIds = resolveActiveCharacterIds(charIds, metadata, {
@@ -2785,10 +2877,10 @@ export async function chatsRoutes(app: FastifyInstance) {
         create_date: chat.createdAt,
         chat_metadata: {
           mode: chat.mode,
-          ...metadata,
+          ...jsonlMetadata,
           branchName,
           marinara_metadata: {
-            ...metadata,
+            ...jsonlMetadata,
             mode: chat.mode,
           },
         },
@@ -2797,7 +2889,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     for (const msg of msgs) {
       const rawMessageExtra = parseExportMetadata(msg.extra);
-      const messageExtra = sanitizeExportExtra(rawMessageExtra);
+      const messageExtra = sanitizeJsonlMessageExtra(rawMessageExtra);
       const thinking = getExportThinking(rawMessageExtra);
       const swipes = await storage.getSwipes(msg.id);
       const activeContent = resolveExportMessageContent(msg);
@@ -2812,7 +2904,7 @@ export async function chatsRoutes(app: FastifyInstance) {
               extra:
                 swipe.index === msg.activeSwipeIndex
                   ? messageExtra
-                  : sanitizeExportExtra(parseExportMetadata(swipe.extra)),
+                  : sanitizeJsonlMessageExtra(parseExportMetadata(swipe.extra)),
               createdAt: swipe.createdAt,
             }))
           : [
@@ -2833,8 +2925,6 @@ export async function chatsRoutes(app: FastifyInstance) {
           mes: activeContent,
           ...(thinking
             ? {
-                thinking,
-                reasoning: thinking,
                 reasoning_content: thinking,
               }
             : {}),
@@ -2980,6 +3070,11 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const { upToMessageId } = (req.body ?? {}) as { upToMessageId?: string };
 
+    const msgs = await storage.listMessages(req.params.id);
+    if (upToMessageId && !msgs.some((msg) => msg.id === upToMessageId)) {
+      return reply.status(404).send({ error: "Cutoff message not found in source chat" });
+    }
+
     // Ensure the source chat belongs to a group so branches are linked
     let groupId = sourceChat.groupId as string | null;
     if (!groupId) {
@@ -3018,54 +3113,66 @@ export async function chatsRoutes(app: FastifyInstance) {
       branchName: "New Branch",
     });
 
-    // Copy messages from source chat, using the active swipe's content.
+    // Copy messages from source chat, preserving every swipe and the active index.
     // Preserve each message's original createdAt timestamp so ordering and
     // display times remain identical to the source chat.
-    const msgs = await storage.listMessages(req.params.id);
     const sourceToBranchedMessageId = new Map<string, string>();
+    const sourceToCopiedSwipeIndexes = new Map<string, number[]>();
     const copiedSourceMessages: typeof msgs = [];
+    const copiedMessageInputs: Parameters<typeof storage.createMessagesBatch>[1] = [];
 
     for (const msg of msgs) {
-      // Resolve the content from the active swipe (may differ from msg.content
-      // if the user swiped to an alternative response)
-      let content = msg.content;
-      if (msg.activeSwipeIndex > 0) {
-        const swipes = await storage.getSwipes(msg.id);
-        const activeSwipe = swipes.find((s: { index: number }) => s.index === msg.activeSwipeIndex);
-        if (activeSwipe) content = activeSwipe.content;
-      }
+      const swipes = await storage.getSwipes(msg.id);
+      const messageExtra = sanitizeBranchedMessageExtra(parseExportMetadata(msg.extra));
+      const activeSwipeIndex =
+        Number.isInteger(msg.activeSwipeIndex) && msg.activeSwipeIndex >= 0 ? msg.activeSwipeIndex : 0;
+      const copiedSwipes =
+        swipes.length > 0
+          ? swipes.map((swipe: { index: number; content: string; extra?: unknown; createdAt?: string | null }) => {
+              const swipeExtra = sanitizeBranchedMessageExtra(parseExportMetadata(swipe.extra));
+              const extra = swipe.index === activeSwipeIndex ? { ...swipeExtra, ...messageExtra } : swipeExtra;
+              return {
+                index: swipe.index,
+                content: swipe.index === activeSwipeIndex ? msg.content : swipe.content,
+                extra,
+                createdAt: swipe.createdAt ?? null,
+              };
+            })
+          : [
+              {
+                index: 0,
+                content: msg.content,
+                extra: messageExtra,
+                createdAt: msg.createdAt as string,
+              },
+            ];
+      const activeSwipe = copiedSwipes.find((swipe) => swipe.index === activeSwipeIndex) ?? copiedSwipes[0];
+      const copiedActiveSwipeIndex = activeSwipe?.index ?? 0;
 
-      const created = await storage.createMessage(
-        {
-          chatId: newChat.id,
-          role: msg.role as "user" | "assistant" | "system" | "narrator",
-          characterId: msg.characterId,
-          content,
-        },
-        { createdAt: msg.createdAt as string },
+      copiedMessageInputs.push({
+        role: msg.role as "user" | "assistant" | "system" | "narrator",
+        characterId: msg.characterId,
+        content: activeSwipe?.content ?? msg.content,
+        extra: activeSwipe?.extra ?? messageExtra,
+        activeSwipeIndex: copiedActiveSwipeIndex,
+        swipes: copiedSwipes,
+        createdAt: msg.createdAt as string,
+      });
+      copiedSourceMessages.push(msg);
+      sourceToCopiedSwipeIndexes.set(
+        msg.id,
+        copiedSwipes.map((swipe) => swipe.index),
       );
-
-      if (created) {
-        sourceToBranchedMessageId.set(msg.id, created.id);
-        copiedSourceMessages.push(msg);
-
-        // Preserve display metadata but drop bulky prompt/debug payloads.
-        try {
-          const extraObj = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
-          if (extraObj && typeof extraObj === "object") {
-            await storage.updateMessageExtra(
-              created.id,
-              sanitizeBranchedMessageExtra(extraObj as Record<string, unknown>),
-            );
-          }
-        } catch {
-          // Ignore malformed extra payloads rather than failing the branch.
-        }
-      }
 
       // Stop if we hit the specified message
       if (upToMessageId && msg.id === upToMessageId) break;
     }
+
+    const branchedMessageIds = await storage.createMessagesBatch(newChat.id, copiedMessageInputs);
+    copiedSourceMessages.forEach((msg, index) => {
+      const branchedId = branchedMessageIds[index];
+      if (branchedId) sourceToBranchedMessageId.set(msg.id, branchedId);
+    });
 
     // Fix updatedAt: createMessage sets the chat's updatedAt to each message's
     // (preserved) timestamp, so after the loop the branched chat's updatedAt is
@@ -3083,9 +3190,11 @@ export async function chatsRoutes(app: FastifyInstance) {
     // for that specific message, not just the latest snapshot in the source chat.
     if (sourceToBranchedMessageId.size > 0 && sourceChat.mode === "game") {
       const { createGameStateStorage } = await import("../services/storage/game-state.storage.js");
+      const { createGameEngineStateStorage } = await import("../services/storage/game-engine-state.storage.js");
       const gameStateStore = createGameStateStorage(app.db);
+      const gameEngineStore = createGameEngineStateStorage(app.db);
 
-      // Helper to create a snapshot re-keyed for the new branch.
+      // Helpers to create snapshots re-keyed for the new branch.
       const copySnapshot = async (
         snapshot: NonNullable<Awaited<ReturnType<typeof gameStateStore.getByMessage>>>,
         targetMessageId: string,
@@ -3117,13 +3226,39 @@ export async function chatsRoutes(app: FastifyInstance) {
           // Ignore individual snapshot copy failures; branching should still succeed.
         }
       };
+      const copyEngineSnapshot = async (
+        snapshot: NonNullable<Awaited<ReturnType<typeof gameEngineStore.getByChatAndMessage>>>,
+        targetMessageId: string,
+        targetSwipeIndex: number,
+      ) => {
+        try {
+          await gameEngineStore.create({
+            chatId: newChat.id,
+            messageId: targetMessageId,
+            swipeIndex: targetSwipeIndex,
+            gameType: snapshot.gameType,
+            schemaVersion: snapshot.schemaVersion,
+            state: snapshot.state,
+            committed: (snapshot.committed as any) === 1,
+          });
+        } catch (err) {
+          logger.warn(err, "Failed to copy turn-game engine snapshot while branching chat");
+        }
+      };
 
       for (const srcMsg of copiedSourceMessages) {
         const branchedMsgId = sourceToBranchedMessageId.get(srcMsg.id);
         if (!branchedMsgId) continue;
-        const snapshot = await gameStateStore.getByMessage(srcMsg.id, srcMsg.activeSwipeIndex);
-        if (snapshot) {
-          await copySnapshot(snapshot, branchedMsgId, 0);
+        const swipeIndexes = sourceToCopiedSwipeIndexes.get(srcMsg.id) ?? [srcMsg.activeSwipeIndex ?? 0];
+        for (const swipeIndex of swipeIndexes) {
+          const snapshot = await gameStateStore.getByMessage(srcMsg.id, swipeIndex);
+          if (snapshot) {
+            await copySnapshot(snapshot, branchedMsgId, swipeIndex);
+          }
+          const engineSnapshot = await gameEngineStore.getByChatAndMessage(req.params.id, srcMsg.id, swipeIndex);
+          if (engineSnapshot) {
+            await copyEngineSnapshot(engineSnapshot, branchedMsgId, swipeIndex);
+          }
         }
       }
 
@@ -3133,6 +3268,10 @@ export async function chatsRoutes(app: FastifyInstance) {
       const bootstrap = await gameStateStore.getByChatAndMessage(req.params.id, "", 0);
       if (bootstrap) {
         await copySnapshot(bootstrap, "", 0);
+      }
+      const engineBootstrap = await gameEngineStore.getByChatAndMessage(req.params.id, "", 0);
+      if (engineBootstrap) {
+        await copyEngineSnapshot(engineBootstrap, "", 0);
       }
     }
 

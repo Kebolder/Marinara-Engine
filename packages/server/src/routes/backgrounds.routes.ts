@@ -5,9 +5,20 @@ import type { FastifyInstance } from "fastify";
 import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "fs";
 import { writeFile } from "fs/promises";
 import { join, extname, basename, parse as parsePath } from "path";
+import { z } from "zod";
 import { DATA_DIR } from "../utils/data-dir.js";
+import { logDebugOverride } from "../lib/logger.js";
+import { isDebugAgentsEnabled } from "../config/runtime-config.js";
 import { buildAssetManifest, getAssetManifest } from "../services/game/asset-manifest.service.js";
 import { assertInsideDir, isAllowedImageBuffer } from "../utils/security.js";
+import { createAgentsStorage } from "../services/storage/agents.storage.js";
+import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createGameStateStorage } from "../services/storage/game-state.storage.js";
+import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import { generateChatBackground } from "../services/game/game-asset-generation.js";
+import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
+import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 
 const BG_DIR = join(DATA_DIR, "backgrounds");
 const META_PATH = join(BG_DIR, "meta.json");
@@ -42,6 +53,15 @@ function writeMeta(meta: MetaMap) {
 
 const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
 const BACKGROUND_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const SCENE_BACKGROUND_MODES = new Set(["roleplay", "visual_novel", "game"]);
+
+const generateSceneBackgroundSchema = z.object({
+  chatId: z.string().min(1),
+  sceneDescription: z.string().min(1).max(1200),
+  locationSlug: z.string().max(180).optional(),
+  reason: z.string().max(300).optional(),
+  debugMode: z.boolean().optional().default(false),
+});
 
 /** Sanitise a filename: keep alphanumeric, spaces, hyphens, underscores, dots. */
 function sanitizeFilename(name: string): string {
@@ -63,6 +83,62 @@ function encodeAssetPath(path: string): string {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
+}
+
+function parseRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function readTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+async function readAgentImageConnectionId(
+  agents: ReturnType<typeof createAgentsStorage>,
+  type: "background" | "illustrator",
+): Promise<string | null> {
+  const agent = await agents.getByType(type);
+  return readTrimmedString(parseRecord(agent?.settings).imageConnectionId);
+}
+
+async function resolveSceneBackgroundImageConnection(
+  connections: ReturnType<typeof createConnectionsStorage>,
+  agents: ReturnType<typeof createAgentsStorage>,
+  mode: string,
+  metadata: Record<string, unknown>,
+) {
+  const candidates: string[] = [];
+  const pushCandidate = (id: string | null) => {
+    if (id && !candidates.includes(id)) candidates.push(id);
+  };
+
+  if (mode === "game") {
+    pushCandidate(readTrimmedString(metadata.gameImageConnectionId));
+    pushCandidate(await readAgentImageConnectionId(agents, "illustrator"));
+  } else {
+    pushCandidate(await readAgentImageConnectionId(agents, "background"));
+    pushCandidate(await readAgentImageConnectionId(agents, "illustrator"));
+  }
+
+  for (const id of candidates) {
+    const conn = await connections.getWithKey(id);
+    if (conn?.provider === "image_generation") return conn;
+  }
+
+  return connections.getDefaultForImageGeneration();
+}
+
+function backgroundTagForFilename(filename: string): string {
+  return `backgrounds:user:${parsePath(filename).name}`;
 }
 
 export async function backgroundsRoutes(app: FastifyInstance) {
@@ -159,6 +235,83 @@ export async function backgroundsRoutes(app: FastifyInstance) {
       originalName: data.filename,
       url: `/api/backgrounds/file/${encodeURIComponent(safeName)}`,
       tags: [],
+    };
+  });
+
+  app.post("/generate-scene", async (req, reply) => {
+    const input = generateSceneBackgroundSchema.parse(req.body);
+    const debugOverrideEnabled = input.debugMode === true || isDebugAgentsEnabled();
+    const debugLog = (message: string, ...args: any[]) => {
+      logDebugOverride(debugOverrideEnabled, message, ...args);
+    };
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.getById(input.chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    const mode = String(chat.mode ?? "");
+    if (!SCENE_BACKGROUND_MODES.has(mode)) {
+      return reply.status(400).send({ error: "Scene background generation is available in Roleplay and Game modes." });
+    }
+
+    const metadata = parseRecord(chat.metadata);
+    const connections = createConnectionsStorage(app.db);
+    const agents = createAgentsStorage(app.db);
+    const imgConn = await resolveSceneBackgroundImageConnection(connections, agents, mode, metadata);
+    if (!imgConn) {
+      return reply.status(400).send({
+        error:
+          "Choose an image generation connection for the Background/Illustrator agent, or mark an image generation connection as the default for agents.",
+      });
+    }
+
+    const setupConfig = parseRecord(metadata.gameSetupConfig);
+    const gameState =
+      mode === "game"
+        ? await createGameStateStorage(app.db)
+            .getLatest(input.chatId)
+            .catch(() => null)
+        : null;
+    const imageSettings = await loadImageGenerationUserSettings(app.db);
+    const styleProfileId =
+      readTrimmedString(setupConfig.imageStyleProfileId) ?? readTrimmedString(metadata.imageStyleProfileId);
+    const filename = await generateChatBackground({
+      chatId: input.chatId,
+      locationSlug: input.locationSlug?.trim() || input.reason?.trim() || chat.name || "current-scene",
+      sceneDescription: input.sceneDescription.trim(),
+      genre: readTrimmedString(setupConfig.genre) ?? undefined,
+      setting: readTrimmedString(setupConfig.setting) ?? undefined,
+      currentLocation: gameState?.location ?? null,
+      currentWeather: gameState?.weather ?? null,
+      currentTimeOfDay: gameState?.time ?? null,
+      worldOverview: readTrimmedString(metadata.gameWorldOverview),
+      artStyle: readTrimmedString(setupConfig.artStylePrompt) ?? undefined,
+      reason: input.reason?.trim() || "Manual Gallery background request",
+      sourceMode: mode === "game" ? "game" : mode === "visual_novel" ? "visual_novel" : "roleplay",
+      imgModel: imgConn.model || "",
+      imgBaseUrl: imgConn.baseUrl || "https://image.pollinations.ai",
+      imgApiKey: imgConn.apiKey || "",
+      imgSource: (imgConn as any).imageGenerationSource || imgConn.model || "",
+      imgService: imgConn.imageService || (imgConn as any).imageGenerationSource || "",
+      imgEndpointId: imgConn.imageEndpointId || undefined,
+      imgComfyWorkflow: imgConn.comfyuiWorkflow || undefined,
+      imgDefaults: resolveConnectionImageDefaults(imgConn),
+      styleProfiles: imageSettings.styleProfiles,
+      styleProfileId,
+      debugLog,
+      promptOverridesStorage: createPromptOverridesStorage(app.db),
+      size: imageSettings.background,
+    });
+
+    if (!filename) {
+      return reply.status(500).send({ error: "Background image generation failed. Check the image connection." });
+    }
+
+    const url = `/api/backgrounds/file/${encodeURIComponent(filename)}`;
+    return {
+      success: true,
+      filename,
+      url,
+      tag: backgroundTagForFilename(filename),
     };
   });
 

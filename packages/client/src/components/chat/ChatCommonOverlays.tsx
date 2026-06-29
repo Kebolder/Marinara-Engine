@@ -241,6 +241,8 @@ type ChatCommonOverlaysProps = {
   onCloseGallery: () => void;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void;
+  /** Generate and apply a background for the current scene. */
+  onGenerateBackground?: () => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onDeleteConfirm: () => void;
@@ -275,6 +277,7 @@ export function ChatCommonOverlays({
   onCloseFiles,
   onCloseGallery,
   onIllustrate,
+  onGenerateBackground,
   onWizardFinish,
   onClosePeekPrompt,
   onDeleteConfirm,
@@ -320,6 +323,7 @@ export function ChatCommonOverlays({
               onClose={onCloseGallery}
               anchor={galleryAnchor}
               onIllustrate={onIllustrate}
+              onGenerateBackground={onGenerateBackground}
             />
           )}
         </Suspense>

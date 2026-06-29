@@ -1588,7 +1588,7 @@ function ImageGenerationSettings() {
 
         <ImageDimensionRow
           label="Backgrounds"
-          help="Used for Game mode generated backgrounds."
+          help="Used for Roleplay and Game generated scene backgrounds."
           width={imageBackgroundWidth}
           height={imageBackgroundHeight}
           onCommit={setImageBackgroundDimensions}
@@ -5670,9 +5670,9 @@ function AdvancedSettings() {
 
       <ImageGenerationSettings />
       <PromptOverridesEditor
-        title="Game Image Prompt Templates"
-        description="Edit the reusable templates Game Mode uses for NPC portraits, backgrounds, and scene illustrations."
-        help="These templates render before Game Mode sends recurring image-generation requests. One-off prompt review edits still only affect the current request."
+        title="Image Prompt Templates"
+        description="Edit the reusable templates used for NPC portraits, scene backgrounds, and scene illustrations."
+        help="These templates render before recurring Game image requests and manual Gallery background generation. One-off prompt review edits still only affect the current request."
         keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
         preferredKey="game.npcPortrait"
       />

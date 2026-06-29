@@ -306,9 +306,11 @@ export function mergeLorebookKeeperUpdateContent(args: {
 
 function getExplicitUpdateReplacementContent(update: Record<string, unknown>): string | null {
   if (typeof update.action !== "string" || update.action.trim().toLowerCase() !== "update") return null;
-  if (typeof update.content !== "string") return null;
 
-  const replacement = dedupeKeeperContentParagraphs(update.content);
+  const content = readKeeperUpdateContent(update);
+  if (!content.trim()) return null;
+
+  const replacement = dedupeKeeperContentParagraphs(content);
   return replacement.length > 0 ? replacement : null;
 }
 

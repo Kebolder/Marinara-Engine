@@ -180,6 +180,34 @@ export function AppShell() {
   // Auto idle detection (10 min inactivity → idle, activity → active)
   useIdleDetection();
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const root = document.documentElement;
+    let frame = 0;
+    const updateVisualViewportHeight = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const height = window.visualViewport?.height ?? window.innerHeight;
+        root.style.setProperty("--mari-visual-viewport-height", `${Math.max(0, Math.round(height))}px`);
+      });
+    };
+
+    updateVisualViewportHeight();
+    window.visualViewport?.addEventListener("resize", updateVisualViewportHeight);
+    window.visualViewport?.addEventListener("scroll", updateVisualViewportHeight);
+    window.addEventListener("resize", updateVisualViewportHeight);
+    window.addEventListener("orientationchange", updateVisualViewportHeight);
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.visualViewport?.removeEventListener("resize", updateVisualViewportHeight);
+      window.visualViewport?.removeEventListener("scroll", updateVisualViewportHeight);
+      window.removeEventListener("resize", updateVisualViewportHeight);
+      window.removeEventListener("orientationchange", updateVisualViewportHeight);
+      root.style.removeProperty("--mari-visual-viewport-height");
+    };
+  }, []);
+
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);

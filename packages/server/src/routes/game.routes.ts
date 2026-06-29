@@ -7262,6 +7262,7 @@ export async function gameRoutes(app: FastifyInstance) {
     );
     const gameGenerationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
     const enableGen = !!meta.enableSpriteGeneration;
+    const enableAutoGen = enableGen && meta.gameImageAutoGenerationEnabled !== false;
     const imgConnId = await resolveGameImageConnectionId(meta, agents);
     const setupCfgForScene = meta.gameSetupConfig as Record<string, unknown> | null;
     const artStyleForScene = (setupCfgForScene?.artStylePrompt as string) || "";
@@ -7280,9 +7281,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const sceneCtx = {
       ...(input.context as unknown as SceneAnalyzerContext),
       turnNumber: approxTurnNumber,
-      canGenerateBackgrounds: enableGen && !!imgConnId,
+      canGenerateBackgrounds: enableAutoGen && !!imgConnId,
       canGenerateIllustrations:
-        enableGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
+        enableAutoGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
       artStylePrompt: artStyleForScene || null,
       imagePromptInstructions: imagePromptInstructions || null,
       currentLocation: input.context.currentLocation ?? latestSceneState?.location ?? null,
@@ -7463,11 +7464,13 @@ export async function gameRoutes(app: FastifyInstance) {
       const generateSceneWrapAssetsInline = false;
       if (!enableGen) {
         logger.debug("[game/scene-wrap] asset-gen skipped: enableSpriteGeneration=false");
+      } else if (!enableAutoGen) {
+        logger.debug("[game/scene-wrap] automatic visual generation skipped: gameImageAutoGenerationEnabled=false");
       } else if (!imgConnId) {
         logger.debug("[game/scene-wrap] asset-gen skipped: no Illustrator image connection configured");
       }
 
-      if (enableGen && imgConnId && parsed && typeof parsed === "object") {
+      if (enableAutoGen && imgConnId && parsed && typeof parsed === "object") {
         const sceneResult = parsed as unknown as Record<string, unknown>;
 
         try {

@@ -158,6 +158,37 @@ function serializeJsonField(value: unknown, fallback: Record<string, unknown>) {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+function parseExtraRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function freshSwipeMessageExtra(value: unknown): Record<string, unknown> {
+  const current = parseExtraRecord(value);
+  const next: Record<string, unknown> = {
+    displayText: null,
+    isGenerated: typeof current.isGenerated === "boolean" ? current.isGenerated : true,
+    tokenCount: null,
+    generationInfo: null,
+  };
+
+  for (const key of ["hiddenFromAI", "hiddenFromUser", "isConversationStart", "reactions", "personaSnapshot"]) {
+    if (Object.prototype.hasOwnProperty.call(current, key)) {
+      next[key] = current[key];
+    }
+  }
+
+  return next;
+}
+
 function isUsableTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && !Number.isNaN(Date.parse(value));
 }
@@ -271,6 +302,7 @@ export function createChatsStorage(db: DB) {
       }
       await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.messageId, chunk));
       await db.delete(gameStateSnapshots).where(inArray(gameStateSnapshots.messageId, chunk));
+      await db.delete(gameEngineState).where(inArray(gameEngineState.messageId, chunk));
     }
   }
 
@@ -658,6 +690,7 @@ export function createChatsStorage(db: DB) {
       await db.delete(agentMemory).where(eq(agentMemory.chatId, id));
       await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
       await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
+      await db.delete(gameEngineState).where(eq(gameEngineState.chatId, id));
 
       // Clean up gallery images (DB records + files on disk)
       await db.delete(chatImages).where(eq(chatImages.chatId, id));
@@ -676,6 +709,7 @@ export function createChatsStorage(db: DB) {
         await db.delete(agentMemory).where(eq(agentMemory.chatId, chat.id));
         await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
         await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
+        await db.delete(gameEngineState).where(eq(gameEngineState.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
         const galleryDir = join(GALLERY_DIR, chat.id);
         if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
@@ -818,8 +852,7 @@ export function createChatsStorage(db: DB) {
      * snapshots, hidden context flags, alternate swipes, and original
      * timestamps survive the copy.
      *
-     * Does NOT return the created messages or update chat.updatedAt per message —
-     * caller should update chat.updatedAt once after the batch.
+     * Returns the created message IDs in input order and updates chat.updatedAt once after the batch.
      */
     async createMessagesBatch(
       chatId: string,
@@ -839,9 +872,10 @@ export function createChatsStorage(db: DB) {
       >,
       timestampOverrides?: TimestampOverrides | null,
     ) {
-      if (inputs.length === 0) return;
+      if (inputs.length === 0) return [];
       const msgRows: (typeof messages.$inferInsert)[] = [];
       const swipeRows: (typeof messageSwipes.$inferInsert)[] = [];
+      const createdIds: string[] = [];
       const batchTimestamps = resolveTimestamps(timestampOverrides);
       const baseTime = Date.parse(batchTimestamps.createdAt);
       const safeBaseTime = Number.isNaN(baseTime) ? Date.now() : baseTime;
@@ -850,6 +884,7 @@ export function createChatsStorage(db: DB) {
       for (let idx = 0; idx < inputs.length; idx++) {
         const input = inputs[idx]!;
         const id = newId();
+        createdIds.push(id);
         const explicitTimestamp = normalizeTimestampOverrides({
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
@@ -907,24 +942,27 @@ export function createChatsStorage(db: DB) {
         await db.insert(messageSwipes).values(swipeRows.slice(i, i + CHUNK));
       }
       await db.update(chats).set({ lastMessageAt: lastTimestamp, updatedAt: lastTimestamp }).where(eq(chats.id, chatId));
+      return createdIds;
     },
 
     async updateMessageContent(id: string, content: string) {
-      const existing = await this.getMessage(id);
-      await db.update(messages).set({ content }).where(eq(messages.id, id));
-      if (existing) {
-        await invalidateMemoryChunksFrom(db, existing.chatId, existing.createdAt);
-      }
-      // Also sync the edit to the active swipe row so it persists across swipe switches
-      const msg = await this.getMessage(id);
-      if (msg) {
-        const swipes = await this.getSwipes(id);
-        const activeSwipe = swipes.find((s: any) => s.index === msg.activeSwipeIndex);
-        if (activeSwipe) {
-          await db.update(messageSwipes).set({ content }).where(eq(messageSwipes.id, activeSwipe.id));
+      return withPatchQueue(messageExtraPatchQueues, id, async () => {
+        const existing = await this.getMessage(id);
+        await db.update(messages).set({ content }).where(eq(messages.id, id));
+        if (existing) {
+          await invalidateMemoryChunksFrom(db, existing.chatId, existing.createdAt);
         }
-      }
-      return msg;
+        // Also sync the edit to the active swipe row so it persists across swipe switches.
+        const msg = await this.getMessage(id);
+        if (msg) {
+          const swipes = await this.getSwipes(id);
+          const activeSwipe = swipes.find((s: any) => s.index === msg.activeSwipeIndex);
+          if (activeSwipe) {
+            await db.update(messageSwipes).set({ content }).where(eq(messageSwipes.id, activeSwipe.id));
+          }
+        }
+        return msg;
+      });
     },
 
     /** Merge partial data into a message's extra JSON field. */
@@ -932,12 +970,50 @@ export function createChatsStorage(db: DB) {
       return withPatchQueue(messageExtraPatchQueues, id, async () => {
         const msg = await this.getMessage(id);
         if (!msg) return null;
-        const existing = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
+        const existing = parseExtraRecord(msg.extra);
         const merged = { ...existing, ...partial };
         await db
           .update(messages)
           .set({ extra: JSON.stringify(merged) })
           .where(eq(messages.id, id));
+
+        const swipes = await this.getSwipes(id);
+        const activeSwipe = swipes.find((s: any) => s.index === msg.activeSwipeIndex);
+        if (activeSwipe) {
+          const swipeExtra = parseExtraRecord(activeSwipe.extra);
+          await db
+            .update(messageSwipes)
+            .set({ extra: JSON.stringify({ ...swipeExtra, ...partial }) })
+            .where(eq(messageSwipes.id, activeSwipe.id));
+        }
+
+        return this.getMessage(id);
+      });
+    },
+
+    /** Merge partial data into a specific swipe and mirror it to the message only if that swipe is active. */
+    async updateMessageExtraForSwipe(id: string, swipeIndex: number, partial: Record<string, unknown>) {
+      return withPatchQueue(messageExtraPatchQueues, id, async () => {
+        const msg = await this.getMessage(id);
+        if (!msg) return null;
+        const swipes = await this.getSwipes(id);
+        const targetSwipe = swipes.find((s: any) => s.index === swipeIndex);
+        if (!targetSwipe) return null;
+
+        const swipeExtra = parseExtraRecord(targetSwipe.extra);
+        await db
+          .update(messageSwipes)
+          .set({ extra: JSON.stringify({ ...swipeExtra, ...partial }) })
+          .where(eq(messageSwipes.id, targetSwipe.id));
+
+        if (msg.activeSwipeIndex === swipeIndex) {
+          const msgExtra = parseExtraRecord(msg.extra);
+          await db
+            .update(messages)
+            .set({ extra: JSON.stringify({ ...msgExtra, ...partial }) })
+            .where(eq(messages.id, id));
+        }
+
         return this.getMessage(id);
       });
     },
@@ -1034,7 +1110,7 @@ export function createChatsStorage(db: DB) {
       return withPatchQueue(messageExtraPatchQueues, id, async () => {
         const msg = await this.getMessage(id);
         if (!msg) return null;
-        const existing = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
+        const existing = parseExtraRecord(msg.extra);
         const attachments = Array.isArray(existing.attachments) ? existing.attachments : [];
         const merged = { ...existing, attachments: [...attachments, attachment] };
         await db
@@ -1086,175 +1162,172 @@ export function createChatsStorage(db: DB) {
     },
 
     async addSwipe(messageId: string, content: string, silent?: boolean) {
-      const existing = await this.getSwipes(messageId);
-      const nextIndex = existing.length;
+      return withPatchQueue(messageExtraPatchQueues, messageId, async () => {
+        const existing = await this.getSwipes(messageId);
+        const nextIndex = existing.length;
 
-      // Backfill: save current message extra onto the currently-active swipe
-      // so its thinking/generationInfo isn't lost when we switch away
-      // (skip when silent — greeting swipes don't need backfill)
-      const msg = silent ? null : await this.getMessage(messageId);
-      if (msg) {
-        const msgExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
-        const activeSwipe = existing.find((s: any) => s.index === msg.activeSwipeIndex);
-        if (activeSwipe) {
-          await db
-            .update(messageSwipes)
-            .set({ extra: JSON.stringify(msgExtra) })
-            .where(eq(messageSwipes.id, activeSwipe.id));
+        // Backfill: save current message extra onto the currently-active swipe
+        // so its thinking/generationInfo isn't lost when we switch away
+        // (skip when silent — greeting swipes don't need backfill)
+        const msg = silent ? null : await this.getMessage(messageId);
+        if (msg) {
+          const msgExtra = parseExtraRecord(msg.extra);
+          const activeSwipe = existing.find((s: any) => s.index === msg.activeSwipeIndex);
+          if (activeSwipe) {
+            await db
+              .update(messageSwipes)
+              .set({ extra: JSON.stringify(msgExtra) })
+              .where(eq(messageSwipes.id, activeSwipe.id));
+          }
         }
-      }
 
-      const id = newId();
-      await db.insert(messageSwipes).values({
-        id,
-        messageId,
-        index: nextIndex,
-        content,
-        extra: JSON.stringify({}),
-        createdAt: now(),
+        const id = newId();
+        await db.insert(messageSwipes).values({
+          id,
+          messageId,
+          index: nextIndex,
+          content,
+          extra: JSON.stringify({}),
+          createdAt: now(),
+        });
+
+        // When silent, only insert the swipe row without switching the active index.
+        if (!silent) {
+          // Set active swipe to the new one and reset message extra for the fresh swipe.
+          const clearedExtra = msg ? freshSwipeMessageExtra(msg.extra) : {};
+          await db
+            .update(messages)
+            .set({ activeSwipeIndex: nextIndex, content, extra: JSON.stringify(clearedExtra) })
+            .where(eq(messages.id, messageId));
+          if (msg) {
+            await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
+          }
+        }
+        return { id, index: nextIndex };
       });
+    },
 
-      // When silent, only insert the swipe row without switching the active index
-      if (!silent) {
-        // Set active swipe to the new one and reset message extra for the fresh swipe
-        // (thinking/generationInfo will be populated by updateMessageExtra after generation)
-        const clearedExtra = msg
-          ? {
-              ...(typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {})),
-              thinking: null,
-              generationInfo: null,
-              attachments: null,
-              generationReplay: null,
-            }
-          : {};
+    async setActiveSwipe(messageId: string, index: number) {
+      return withPatchQueue(messageExtraPatchQueues, messageId, async () => {
+        const swipes = await this.getSwipes(messageId);
+        const target = swipes.find((s: any) => s.index === index);
+        if (!target) return null;
+
+        // Before switching, save current message content and extra onto the outgoing swipe.
+        const msg = await this.getMessage(messageId);
+        if (msg) {
+          const msgExtra = parseExtraRecord(msg.extra);
+          const outgoingSwipe = swipes.find((s: any) => s.index === msg.activeSwipeIndex);
+          if (outgoingSwipe) {
+            await db
+              .update(messageSwipes)
+              .set({ content: msg.content, extra: JSON.stringify(msgExtra) })
+              .where(eq(messageSwipes.id, outgoingSwipe.id));
+          }
+        }
+
+        // Sync the target swipe's extra onto the message.
+        const swipeExtra = parseExtraRecord(target.extra);
         await db
           .update(messages)
-          .set({ activeSwipeIndex: nextIndex, content, extra: JSON.stringify(clearedExtra) })
+          .set({
+            activeSwipeIndex: index,
+            content: target.content,
+            extra: JSON.stringify(swipeExtra),
+          })
           .where(eq(messages.id, messageId));
         if (msg) {
           await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
         }
-      }
-      return { id, index: nextIndex };
-    },
-
-    async setActiveSwipe(messageId: string, index: number) {
-      const swipes = await this.getSwipes(messageId);
-      const target = swipes.find((s: any) => s.index === index);
-      if (!target) return null;
-
-      // Before switching, save current message content and extra onto the outgoing swipe
-      const msg = await this.getMessage(messageId);
-      if (msg) {
-        const msgExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
-        const outgoingSwipe = swipes.find((s: any) => s.index === msg.activeSwipeIndex);
-        if (outgoingSwipe) {
-          await db
-            .update(messageSwipes)
-            .set({ content: msg.content, extra: JSON.stringify(msgExtra) })
-            .where(eq(messageSwipes.id, outgoingSwipe.id));
-        }
-      }
-
-      // Sync the target swipe's extra onto the message
-      const swipeExtra = typeof target.extra === "string" ? JSON.parse(target.extra) : (target.extra ?? {});
-      await db
-        .update(messages)
-        .set({
-          activeSwipeIndex: index,
-          content: target.content,
-          extra: JSON.stringify(swipeExtra),
-        })
-        .where(eq(messages.id, messageId));
-      if (msg) {
-        await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
-      }
-      return this.getMessage(messageId);
+        return this.getMessage(messageId);
+      });
     },
 
     async removeSwipe(messageId: string, index: number) {
-      const msg = await this.getMessage(messageId);
-      if (!msg) return null;
+      return withPatchQueue(messageExtraPatchQueues, messageId, async () => {
+        const msg = await this.getMessage(messageId);
+        if (!msg) return null;
 
-      const swipes = await this.getSwipes(messageId);
-      const target = swipes.find((s: any) => s.index === index);
-      if (!target || swipes.length <= 1) return null;
+        const swipes = await this.getSwipes(messageId);
+        const target = swipes.find((s: any) => s.index === index);
+        if (!target || swipes.length <= 1) return null;
 
-      const remaining = swipes.filter((s: any) => s.index !== index);
-      const currentExtra = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
+        const remaining = swipes.filter((s: any) => s.index !== index);
+        const currentExtra = parseExtraRecord(msg.extra);
 
-      const activeSwipeRemoved = msg.activeSwipeIndex === index;
-      let nextActiveSwipeIndex = msg.activeSwipeIndex;
-      let nextContent = msg.content;
-      let nextExtra = currentExtra;
+        const activeSwipeRemoved = msg.activeSwipeIndex === index;
+        let nextActiveSwipeIndex = msg.activeSwipeIndex;
+        let nextContent = msg.content;
+        let nextExtra = currentExtra;
 
-      if (msg.activeSwipeIndex > index) {
-        nextActiveSwipeIndex = msg.activeSwipeIndex - 1;
-      } else if (msg.activeSwipeIndex === index) {
-        nextActiveSwipeIndex = Math.min(index, remaining.length - 1);
-        const replacement = remaining[index] ?? remaining[remaining.length - 1];
-        if (replacement) {
-          nextContent = replacement.content;
-          nextExtra = typeof replacement.extra === "string" ? JSON.parse(replacement.extra) : (replacement.extra ?? {});
+        if (msg.activeSwipeIndex > index) {
+          nextActiveSwipeIndex = msg.activeSwipeIndex - 1;
+        } else if (msg.activeSwipeIndex === index) {
+          nextActiveSwipeIndex = Math.min(index, remaining.length - 1);
+          const replacement = remaining[index] ?? remaining[remaining.length - 1];
+          if (replacement) {
+            nextContent = replacement.content;
+            nextExtra = parseExtraRecord(replacement.extra);
+          }
         }
-      }
 
-      await db.delete(messageSwipes).where(eq(messageSwipes.id, target.id));
-      await db
-        .delete(gameStateSnapshots)
-        .where(and(eq(gameStateSnapshots.messageId, messageId), eq(gameStateSnapshots.swipeIndex, index)));
-
-      const swipesToShift = await db
-        .select()
-        .from(messageSwipes)
-        .where(and(eq(messageSwipes.messageId, messageId), gt(messageSwipes.index, index)));
-      for (const swipe of swipesToShift) {
+        await db.delete(messageSwipes).where(eq(messageSwipes.id, target.id));
         await db
-          .update(messageSwipes)
-          .set({ index: swipe.index - 1 })
-          .where(eq(messageSwipes.id, swipe.id));
-      }
+          .delete(gameStateSnapshots)
+          .where(and(eq(gameStateSnapshots.messageId, messageId), eq(gameStateSnapshots.swipeIndex, index)));
 
-      const snapshotsToShift = await db
-        .select()
-        .from(gameStateSnapshots)
-        .where(and(eq(gameStateSnapshots.messageId, messageId), gt(gameStateSnapshots.swipeIndex, index)));
-      for (const snapshot of snapshotsToShift) {
+        const swipesToShift = await db
+          .select()
+          .from(messageSwipes)
+          .where(and(eq(messageSwipes.messageId, messageId), gt(messageSwipes.index, index)));
+        for (const swipe of swipesToShift) {
+          await db
+            .update(messageSwipes)
+            .set({ index: swipe.index - 1 })
+            .where(eq(messageSwipes.id, swipe.id));
+        }
+
+        const snapshotsToShift = await db
+          .select()
+          .from(gameStateSnapshots)
+          .where(and(eq(gameStateSnapshots.messageId, messageId), gt(gameStateSnapshots.swipeIndex, index)));
+        for (const snapshot of snapshotsToShift) {
+          await db
+            .update(gameStateSnapshots)
+            .set({ swipeIndex: snapshot.swipeIndex - 1 })
+            .where(eq(gameStateSnapshots.id, snapshot.id));
+        }
+
+        // Mirror the prune for turn-game (UNO) snapshots so anchors stay aligned
+        // with the message's swipes after one is removed.
         await db
-          .update(gameStateSnapshots)
-          .set({ swipeIndex: snapshot.swipeIndex - 1 })
-          .where(eq(gameStateSnapshots.id, snapshot.id));
-      }
+          .delete(gameEngineState)
+          .where(and(eq(gameEngineState.messageId, messageId), eq(gameEngineState.swipeIndex, index)));
+        const engineSnapshotsToShift = await db
+          .select()
+          .from(gameEngineState)
+          .where(and(eq(gameEngineState.messageId, messageId), gt(gameEngineState.swipeIndex, index)));
+        for (const snapshot of engineSnapshotsToShift) {
+          await db
+            .update(gameEngineState)
+            .set({ swipeIndex: snapshot.swipeIndex - 1 })
+            .where(eq(gameEngineState.id, snapshot.id));
+        }
 
-      // Mirror the prune for turn-game (UNO) snapshots so anchors stay aligned
-      // with the message's swipes after one is removed.
-      await db
-        .delete(gameEngineState)
-        .where(and(eq(gameEngineState.messageId, messageId), eq(gameEngineState.swipeIndex, index)));
-      const engineSnapshotsToShift = await db
-        .select()
-        .from(gameEngineState)
-        .where(and(eq(gameEngineState.messageId, messageId), gt(gameEngineState.swipeIndex, index)));
-      for (const snapshot of engineSnapshotsToShift) {
         await db
-          .update(gameEngineState)
-          .set({ swipeIndex: snapshot.swipeIndex - 1 })
-          .where(eq(gameEngineState.id, snapshot.id));
-      }
+          .update(messages)
+          .set({
+            activeSwipeIndex: nextActiveSwipeIndex,
+            content: nextContent,
+            extra: JSON.stringify(nextExtra),
+          })
+          .where(eq(messages.id, messageId));
+        if (activeSwipeRemoved) {
+          await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
+        }
 
-      await db
-        .update(messages)
-        .set({
-          activeSwipeIndex: nextActiveSwipeIndex,
-          content: nextContent,
-          extra: JSON.stringify(nextExtra),
-        })
-        .where(eq(messages.id, messageId));
-      if (activeSwipeRemoved) {
-        await invalidateMemoryChunksFrom(db, msg.chatId, msg.createdAt);
-      }
-
-      return this.getMessage(messageId);
+        return this.getMessage(messageId);
+      });
     },
 
     /** Merge partial data into a swipe's extra JSON field. */

@@ -44,6 +44,45 @@ const lorebookGeneratedBySchema = z
   .nullable()
   .transform((value) => (value === "lorebook-maker" ? "agent" : value));
 
+type LorebookScopeConflictInput = {
+  characterId?: string | null;
+  characterIds?: string[];
+  personaId?: string | null;
+  personaIds?: string[];
+  isGlobal?: boolean;
+};
+
+function addLorebookScopeConflictIssues(value: LorebookScopeConflictInput, ctx: z.RefinementCtx) {
+  const hasCharacterId = typeof value.characterId === "string" && value.characterId.trim().length > 0;
+  const hasCharacterIds = value.characterIds !== undefined && value.characterIds.length > 0;
+  const hasPersonaId = typeof value.personaId === "string" && value.personaId.trim().length > 0;
+  const hasPersonaIds = value.personaIds !== undefined && value.personaIds.length > 0;
+
+  if (hasCharacterId && hasCharacterIds) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["characterIds"],
+      message: "Use either characterId or characterIds, not both.",
+    });
+  }
+
+  if (hasPersonaId && hasPersonaIds) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["personaIds"],
+      message: "Use either personaId or personaIds, not both.",
+    });
+  }
+
+  if (value.isGlobal === true && (hasCharacterId || hasCharacterIds || hasPersonaId || hasPersonaIds)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["isGlobal"],
+      message: "Global lorebooks cannot also target specific characters or personas.",
+    });
+  }
+}
+
 // ──────────────────────────────────────────────
 // Folders — collapsible containers for entries
 // `parentFolderId` is reserved for a future nested-folder PR; v1 enforces
@@ -64,51 +103,53 @@ export const updateLorebookFolderSchema = z.object({
   order: z.number().int().optional(),
 });
 
-export const createLorebookSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().default(""),
-  category: lorebookCategorySchema.default("uncategorized"),
-  imagePath: z.string().nullable().default(null),
-  scanDepth: z.number().int().min(0).default(2),
-  tokenBudget: z.number().int().min(0).default(2048),
-  entryLimit: z
-    .number()
-    .int()
-    .min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN)
-    .max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX)
-    .default(LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT),
-  recursiveScanning: z.boolean().default(false),
-  maxRecursionDepth: z.number().int().min(1).max(10).default(3),
-  excludeFromVectorization: z.boolean().default(true),
-  vectorQueryDepth: z
-    .number()
-    .int()
-    .min(0)
-    .max(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX)
-    .default(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT),
-  vectorScoreThreshold: z
-    .number()
-    .min(0)
-    .max(1)
-    .default(LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT),
-  vectorMaxResults: z
-    .number()
-    .int()
-    .min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN)
-    .max(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX)
-    .default(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT),
-  characterId: z.string().nullable().default(null),
-  characterIds: z.array(z.string()).default([]),
-  personaId: z.string().nullable().default(null),
-  personaIds: z.array(z.string()).default([]),
-  chatId: z.string().nullable().default(null),
-  isGlobal: z.boolean().default(false),
-  enabled: z.boolean().default(true),
-  scope: lorebookScopeSchema.default({ mode: "all", chatIds: [] }),
-  tags: z.array(z.string()).default([]),
-  generatedBy: lorebookGeneratedBySchema.default(null),
-  sourceAgentId: z.string().nullable().default(null),
-});
+export const createLorebookSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    description: z.string().default(""),
+    category: lorebookCategorySchema.default("uncategorized"),
+    imagePath: z.string().nullable().default(null),
+    scanDepth: z.number().int().min(0).default(2),
+    tokenBudget: z.number().int().min(0).default(2048),
+    entryLimit: z
+      .number()
+      .int()
+      .min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN)
+      .max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX)
+      .default(LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT),
+    recursiveScanning: z.boolean().default(false),
+    maxRecursionDepth: z.number().int().min(1).max(10).default(3),
+    excludeFromVectorization: z.boolean().default(true),
+    vectorQueryDepth: z
+      .number()
+      .int()
+      .min(0)
+      .max(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX)
+      .default(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT),
+    vectorScoreThreshold: z
+      .number()
+      .min(0)
+      .max(1)
+      .default(LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT),
+    vectorMaxResults: z
+      .number()
+      .int()
+      .min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN)
+      .max(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX)
+      .default(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT),
+    characterId: z.string().nullable().default(null),
+    characterIds: z.array(z.string()).default([]),
+    personaId: z.string().nullable().default(null),
+    personaIds: z.array(z.string()).default([]),
+    chatId: z.string().nullable().default(null),
+    isGlobal: z.boolean().default(false),
+    enabled: z.boolean().default(true),
+    scope: lorebookScopeSchema.default({ mode: "all", chatIds: [] }),
+    tags: z.array(z.string()).default([]),
+    generatedBy: lorebookGeneratedBySchema.default(null),
+    sourceAgentId: z.string().nullable().default(null),
+  })
+  .superRefine(addLorebookScopeConflictIssues);
 
 export const updateLorebookSchema = z
   .object({
@@ -147,36 +188,7 @@ export const updateLorebookSchema = z
     generatedBy: lorebookGeneratedBySchema.optional(),
     sourceAgentId: z.string().nullable().optional(),
   })
-  .superRefine((value, ctx) => {
-    const hasCharacterId = typeof value.characterId === "string" && value.characterId.trim().length > 0;
-    const hasCharacterIds = value.characterIds !== undefined && value.characterIds.length > 0;
-    const hasPersonaId = typeof value.personaId === "string" && value.personaId.trim().length > 0;
-    const hasPersonaIds = value.personaIds !== undefined && value.personaIds.length > 0;
-
-    if (hasCharacterId && hasCharacterIds) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["characterIds"],
-        message: "Use either characterId or characterIds, not both.",
-      });
-    }
-
-    if (hasPersonaId && hasPersonaIds) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["personaIds"],
-        message: "Use either personaId or personaIds, not both.",
-      });
-    }
-
-    if (value.isGlobal === true && (hasCharacterId || hasCharacterIds || hasPersonaId || hasPersonaIds)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["isGlobal"],
-        message: "Global lorebooks cannot also target specific characters or personas.",
-      });
-    }
-  });
+  .superRefine(addLorebookScopeConflictIssues);
 
 export const createLorebookEntrySchema = z.object({
   lorebookId: z.string(),

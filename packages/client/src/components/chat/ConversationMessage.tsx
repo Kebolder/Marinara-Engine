@@ -451,11 +451,11 @@ export const ConversationMessage = memo(function ConversationMessage({
       setEditing(false);
       return;
     }
-    const val = formatTextQuotes(editValueRef.current.trim(), quoteFormat);
-    if (val !== editSourceContent) onEdit?.(message.id, val);
+    const val = formatTextQuotes(editValueRef.current, quoteFormat);
+    if (val.trim().length > 0 && val !== formattedEditSourceContent) onEdit?.(message.id, val);
     editSwipeIndexRef.current = null;
     setEditing(false);
-  }, [editSourceContent, message.activeSwipeIndex, message.id, onEdit, quoteFormat]);
+  }, [formattedEditSourceContent, message.activeSwipeIndex, message.id, onEdit, quoteFormat]);
 
   const handleCancelEdit = useCallback(() => {
     editSwipeIndexRef.current = null;

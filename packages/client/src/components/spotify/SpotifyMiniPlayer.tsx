@@ -82,6 +82,17 @@ type SpotifyAccessTokenResponse = {
   hasStreamingScope: boolean;
 };
 
+type SpotifyStatusResponse = {
+  connected: boolean;
+  expired: boolean;
+  agentId: string | null;
+  clientId: string | null;
+  redirectUri: string;
+  scopes: string[];
+  missingScopes: string[];
+  hasStreamingScope: boolean;
+};
+
 type DjMariPlaylistResponse = {
   success: true;
   name: string;
@@ -130,6 +141,7 @@ declare global {
 }
 
 const spotifyKeys = {
+  status: ["spotify", "status"] as const,
   player: ["spotify", "player"] as const,
   devices: ["spotify", "devices"] as const,
 };
@@ -304,6 +316,7 @@ export function SpotifyMiniPlayer({
   const setMobilePosition = useUIStore((s) => s.setSpotifyMobileWidgetPosition);
   const [sdkDeviceId, setSdkDeviceId] = useState<string | null>(null);
   const [sdkError, setSdkError] = useState<string | null>(null);
+  const [browserPlaybackRequested, setBrowserPlaybackRequested] = useState(false);
   const [volumeDraft, setVolumeDraft] = useState(50);
   const [volumeUnsupportedDeviceKey, setVolumeUnsupportedDeviceKey] = useState<string | null>(null);
   const previousVolumeRef = useRef(50);
@@ -321,10 +334,21 @@ export function SpotifyMiniPlayer({
   const floating = mobile || forceFloating;
   const wasForceFloatingRef = useRef(false);
 
+  const statusQuery = useQuery({
+    queryKey: spotifyKeys.status,
+    queryFn: () => api.get<SpotifyStatusResponse>("/spotify/status"),
+    enabled,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const spotifyConnected = statusQuery.data?.connected === true && statusQuery.data.expired !== true;
+  const spotifyStreamingAvailable = spotifyConnected && statusQuery.data?.hasStreamingScope === true;
+
   const playerQuery = useQuery({
     queryKey: spotifyKeys.player,
     queryFn: () => api.get<SpotifyPlaybackState>("/spotify/player"),
-    enabled,
+    enabled: enabled && spotifyConnected,
     staleTime: 2_000,
     refetchInterval: 5_000,
     retry: false,
@@ -333,7 +357,7 @@ export function SpotifyMiniPlayer({
   const devicesQuery = useQuery({
     queryKey: spotifyKeys.devices,
     queryFn: () => api.get<SpotifyDevicesState>("/spotify/devices"),
-    enabled: enabled && mobile,
+    enabled: enabled && spotifyConnected && mobile,
     staleTime: 2_000,
     refetchInterval: 5_000,
     retry: false,
@@ -392,7 +416,7 @@ export function SpotifyMiniPlayer({
   }, [controlDevice, deviceVolume, volumeDeviceKey]);
 
   useEffect(() => {
-    if (!enabled || mobile) return;
+    if (!enabled || mobile || !browserPlaybackRequested || !spotifyStreamingAvailable) return;
     let disposed = false;
     let sdkPlayer: SpotifyWebPlaybackPlayer | null = null;
 
@@ -448,7 +472,7 @@ export function SpotifyMiniPlayer({
         sdkPlayer.disconnect();
       }
     };
-  }, [enabled, mobile, qc]);
+  }, [browserPlaybackRequested, enabled, mobile, qc, spotifyStreamingAvailable]);
 
   const invalidate = useCallback(() => {
     void qc.invalidateQueries({ queryKey: spotifyKeys.player });
@@ -631,6 +655,33 @@ export function SpotifyMiniPlayer({
     });
   }, [controlDeviceId, mobile, player?.active, player?.device?.id, player?.isPlaying, runControl, sdkDeviceId]);
 
+  const handleMarinaraPlayerPress = useCallback(() => {
+    if (sdkDeviceId) {
+      runControl.mutate({ type: "transfer", deviceId: sdkDeviceId, play: player?.isPlaying === true });
+      return;
+    }
+    if (!spotifyConnected) {
+      openRightPanel("agents");
+      openAgentDetail("spotify");
+      return;
+    }
+    if (!spotifyStreamingAvailable) {
+      setSdkError("Reconnect Spotify to enable in-app playback.");
+      toast.info("Reconnect Spotify with the streaming scope to use Marinara as a Spotify player.");
+      return;
+    }
+    setSdkError(null);
+    setBrowserPlaybackRequested(true);
+  }, [
+    openAgentDetail,
+    openRightPanel,
+    player?.isPlaying,
+    runControl,
+    sdkDeviceId,
+    spotifyConnected,
+    spotifyStreamingAvailable,
+  ]);
+
   const openSpotifyAgent = useCallback(() => {
     openRightPanel("agents");
     openAgentDetail("spotify");
@@ -756,8 +807,10 @@ export function SpotifyMiniPlayer({
     [collapsed, floating, setCollapsed],
   );
 
-  const title = item?.name ?? (playerQuery.isError ? "Spotify not connected" : "Spotify");
-  const subtitle = item ? formatArtists(item.artists) : sdkError || "No active playback";
+  const title = item?.name ?? (!spotifyConnected ? "Spotify not connected" : "Spotify");
+  const subtitle = item
+    ? formatArtists(item.artists)
+    : sdkError || (!spotifyConnected ? "Open Music DJ setup" : "No active playback");
   const cover = item?.imageUrl;
   const playPauseBusy =
     runControl.isPending && (runControl.variables?.type === "play" || runControl.variables?.type === "pause");
@@ -769,7 +822,9 @@ export function SpotifyMiniPlayer({
   const RepeatIcon = repeatState === "track" ? Repeat1 : Repeat2;
   const repeatTitle =
     repeatState === "track" ? "Repeat track" : repeatState === "context" ? "Repeat playlist" : "Repeat off";
-  const canTransferToApp = !mobile && !!sdkDeviceId && player?.device?.id !== sdkDeviceId;
+  const browserPlaybackLoading = browserPlaybackRequested && !sdkDeviceId && !sdkError;
+  const canUseMarinaraPlayer =
+    !mobile && spotifyConnected && (browserPlaybackLoading || !sdkDeviceId || player?.device?.id !== sdkDeviceId);
   const progressPercent =
     typeof player?.progressMs === "number" && typeof player.durationMs === "number" && player.durationMs > 0
       ? Math.max(0, Math.min(100, (player.progressMs / player.durationMs) * 100))
@@ -968,20 +1023,19 @@ export function SpotifyMiniPlayer({
           >
             {createDjMariPlaylist.isPending ? <Loader2 size="0.8125rem" className="animate-spin" /> : "DJ"}
           </button>
-          {canTransferToApp && (
+          {canUseMarinaraPlayer && (
             <button
               type="button"
-              onClick={() =>
-                runControl.mutate({ type: "transfer", deviceId: sdkDeviceId, play: player?.isPlaying === true })
-              }
+              onClick={handleMarinaraPlayerPress}
+              disabled={browserPlaybackLoading}
               className={cn(
-                "hidden h-7 w-7 items-center justify-center rounded-full transition-colors sm:inline-flex",
+                "hidden h-7 w-7 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-80 sm:inline-flex",
                 MUSIC_PLAYER_ICON_CLASS,
                 MUSIC_PLAYER_ICON_HOVER_CLASS,
               )}
-              title="Use Marinara player"
+              title={sdkDeviceId ? "Use Marinara player" : "Enable Marinara player"}
             >
-              <Laptop size="0.8125rem" />
+              {browserPlaybackLoading ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Laptop size="0.8125rem" />}
             </button>
           )}
           <button
@@ -1000,10 +1054,12 @@ export function SpotifyMiniPlayer({
       </>
     ),
     [
-      canTransferToApp,
+      browserPlaybackLoading,
+      canUseMarinaraPlayer,
       cover,
       createDjMariPlaylist,
       deviceId,
+      handleMarinaraPlayerPress,
       handleShufflePress,
       handlePlayPause,
       openSpotifyAgent,

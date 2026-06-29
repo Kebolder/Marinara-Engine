@@ -4076,6 +4076,11 @@ summary[class*="cursor-pointer"],
 }
 
 @media (max-width: 767px) {
+  .mari-app {
+    height: var(--mari-visual-viewport-height, 100dvh) !important;
+    max-height: var(--mari-visual-viewport-height, 100dvh) !important;
+  }
+
   body {
     /* Safe-area insets handled by AppShell — only apply sides + bottom here */
     padding-bottom: env(safe-area-inset-bottom);
@@ -4236,11 +4241,16 @@ summary[class*="cursor-pointer"],
   }
 
   .chat-input-container {
-    padding: 0.25em 2% 0.5em !important;
+    padding: 0.25em 2% max(0.5em, env(safe-area-inset-bottom)) !important;
+    scroll-margin-bottom: max(4.5rem, env(safe-area-inset-bottom));
   }
   .chat-input-container .rounded-2xl {
     padding-left: 0.75em !important;
     padding-right: 0.5em !important;
+  }
+
+  .mari-chat-input-textarea {
+    max-height: min(12.5rem, calc(var(--mari-visual-viewport-height, 100dvh) * 0.32)) !important;
   }
 }
 

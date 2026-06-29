@@ -597,18 +597,25 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
   // ── Bulk operations ──
 
-  app.post<{ Params: { id: string } }>("/:id/entries/bulk", async (req) => {
-    const body = req.body as { entries: unknown[] };
-    const entries = (body.entries ?? []).map((e: unknown) => {
-      const { lorebookId, ...rest } = createLorebookEntrySchema.parse({
-        ...(e as Record<string, unknown>),
-        lorebookId: req.params.id,
+  app.post<{ Params: { id: string } }>("/:id/entries/bulk", async (req, reply) => {
+    try {
+      const body = req.body as { entries: unknown[] };
+      const entries = (body.entries ?? []).map((e: unknown) => {
+        const { lorebookId, ...rest } = createLorebookEntrySchema.parse({
+          ...(e as Record<string, unknown>),
+          lorebookId: req.params.id,
+        });
+        return rest;
       });
-      return rest;
-    });
-    const result = await storage.bulkCreateEntries(req.params.id, entries);
-    await syncCharacterBookFromLorebook(app.db, req.params.id);
-    return result;
+      const result = await storage.bulkCreateEntries(req.params.id, entries);
+      await syncCharacterBookFromLorebook(app.db, req.params.id);
+      return result;
+    } catch (err) {
+      if (err instanceof Error && err.message === "folderId does not belong to this lorebook") {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
   });
 
   app.post<{ Params: { id: string } }>("/:id/entries/transfer", async (req, reply) => {
@@ -649,20 +656,26 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
     const targetEntries = (await storage.listEntries(targetLorebookId)) as LorebookEntry[];
     const maxTargetOrder = targetEntries.reduce((max, entry) => Math.max(max, entry.order ?? 0), 0);
-    const created = [];
-    for (const [index, entry] of sourceEntries.entries()) {
-      created.push(
-        await storage.createEntry(
+    const created: LorebookEntry[] = [];
+    try {
+      for (const [index, entry] of sourceEntries.entries()) {
+        const transferred = (await storage.createEntry(
           buildTransferredEntryInput(entry, targetLorebookId, maxTargetOrder + (index + 1) * 10),
-        ),
-      );
-    }
-
-    if (operation === "move") {
-      for (const entry of sourceEntries) {
-        await storage.removeEntry(entry.id);
+        )) as LorebookEntry | null;
+        if (transferred) created.push(transferred);
       }
-      await syncCharacterBookFromLorebook(app.db, req.params.id);
+
+      if (operation === "move") {
+        for (const entry of sourceEntries) {
+          await storage.removeEntry(entry.id);
+        }
+        await syncCharacterBookFromLorebook(app.db, req.params.id);
+      }
+    } catch (err) {
+      if (created.length > 0) {
+        await Promise.allSettled(created.map((entry) => storage.removeEntry(entry.id)));
+      }
+      throw err;
     }
     await syncCharacterBookFromLorebook(app.db, targetLorebookId);
 

@@ -199,6 +199,13 @@ type GameAssetGenerationResult = {
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
 };
 
+type GeneratedSceneBackgroundResponse = {
+  success: boolean;
+  filename: string;
+  url: string;
+  tag: string;
+};
+
 const GAME_TOP_ICON_BUTTON = getChatToolbarButtonClass();
 const GAME_MOBILE_ROOT_BUTTON = getChatToolbarButtonClass({
   compact: true,
@@ -3262,12 +3269,14 @@ function GameSurfaceComponent({
     chatMeta.enableSpriteGeneration === true &&
     typeof chatMeta.gameImageConnectionId === "string" &&
     chatMeta.gameImageConnectionId.trim().length > 0;
+  const gameImageAutoGenerationEnabled =
+    gameImageGenerationEnabled && chatMeta.gameImageAutoGenerationEnabled !== false;
   const gameImageUseAvatarReferences = chatMeta.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = chatMeta.gameImageIncludeCharacterAppearance !== false;
 
   const missingSceneAssetGeneration = useMemo(() => {
     return buildMissingSceneAssetGenerationPayload({
-      gameImageGenerationEnabled,
+      gameImageGenerationEnabled: gameImageAutoGenerationEnabled,
       activeChatId,
       currentBackground,
       savedSceneBackground: chatMeta.gameSceneBackground as string | undefined,
@@ -3282,7 +3291,7 @@ function GameSurfaceComponent({
     scopedAssetMap,
     chatMeta.gameSceneBackground,
     currentBackground,
-    gameImageGenerationEnabled,
+    gameImageAutoGenerationEnabled,
     failedNpcAvatarNames,
     npcAvatarLookup,
     npcsNeedingAvatars,
@@ -4176,8 +4185,8 @@ function GameSurfaceComponent({
       setting:
         ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.setting as string | undefined) ?? null,
       worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
-      canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
-      canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
+      canGenerateBackgrounds: gameImageAutoGenerationEnabled,
+      canGenerateIllustrations: gameImageAutoGenerationEnabled,
       artStylePrompt:
         ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.artStylePrompt as string | undefined) ??
         null,
@@ -4640,7 +4649,7 @@ function GameSurfaceComponent({
       // met yet — by the time the party encounters them their avatar is ready, and the
       // /generate-assets schema already caps this at 10 per turn so cost stays bounded.
       const pendingIllustration = result.generatedIllustration ? null : result.illustration;
-      if (gameImageGenerationEnabled && (unresolvedBg || pendingIllustration || npcsNeedingAvatars.length > 0)) {
+      if (gameImageAutoGenerationEnabled && (unresolvedBg || pendingIllustration || npcsNeedingAvatars.length > 0)) {
         const messageTags = "content" in msg && typeof msg.content === "string" ? parseGmTags(msg.content) : null;
         const combatTransitionTurn = !!(messageTags?.combatEncounter || messageTags?.stateChange === "combat");
         const assetPayload = {
@@ -4785,46 +4794,39 @@ function GameSurfaceComponent({
       return;
     }
 
-    const assetPayload: GameAssetGenerationPayload = {
-      chatId: activeChatId,
-      backgroundTag: sceneDescription,
-      debugMode: useUIStore.getState().debugMode,
-    };
-
     setManualBackgroundGenerating(true);
-    setPendingAssetGeneration(assetPayload);
-    setAssetGenerationBlocksScene(false);
     setAssetGenerationFailed(false);
     try {
-      const result = await runGameAssetGeneration(assetPayload, { allowPromptReview: true });
-      setPendingAssetGeneration(null);
-      if (!result) return;
-      await applyGeneratedAssets(result);
-      if (result.generatedBackground) {
-        toast.success("Background generated.", { duration: 1800 });
-      } else if (result.fallbackBackground) {
-        toast.success("Scene background updated.", { duration: 1800 });
-      } else {
-        toast.error("Illustrator did not return a background for this scene.");
-      }
+      const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
+        chatId: activeChatId,
+        sceneDescription,
+        locationSlug: gameSnapshot?.location || chat.name,
+        reason: "Manual Gallery background request",
+        debugMode: useUIStore.getState().debugMode,
+      });
+      await fetchManifest();
+      useGameAssetStore.getState().setCurrentBackground(result.tag);
+      api.patch(`/chats/${activeChatId}/metadata`, { gameSceneBackground: result.tag }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
+      toast.success("Background generated.", { duration: 1800 });
     } catch (error) {
       setAssetGenerationFailed(true);
       toast.error(error instanceof Error ? error.message : "Background generation failed.");
     } finally {
       setManualBackgroundGenerating(false);
-      setAssetGenerationBlocksScene(false);
     }
   }, [
     activeChatId,
-    applyGeneratedAssets,
     chatMeta.gameSetupConfig,
     chatMeta.gameWorldOverview,
+    chat.name,
+    fetchManifest,
     gameImageGenerationEnabled,
     gameSnapshot?.location,
     gameSnapshot?.time,
     gameSnapshot?.weather,
     manualBackgroundGenerating,
-    runGameAssetGeneration,
+    queryClient,
   ]);
 
   const handleManualSceneIllustration = useCallback(async () => {
@@ -5197,8 +5199,8 @@ function GameSurfaceComponent({
       genre: (setupConfig?.genre as string | undefined) ?? null,
       setting: (setupConfig?.setting as string | undefined) ?? null,
       worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
-      canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
-      canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
+      canGenerateBackgrounds: gameImageAutoGenerationEnabled,
+      canGenerateIllustrations: gameImageAutoGenerationEnabled,
       artStylePrompt:
         ((chatMeta.gameSetupConfig as Record<string, unknown> | undefined)?.artStylePrompt as string | undefined) ??
         null,
@@ -5250,14 +5252,13 @@ function GameSurfaceComponent({
     }
   }, [
     activeChatId,
-    chatMeta.enableSpriteGeneration,
-    chatMeta.gameImageConnectionId,
     chatMeta.gameImagePromptInstructions,
     chatMeta.gameSceneConnectionId,
     chatMeta.gameSetupConfig,
     chatMeta.gameWorldOverview,
     currentBackground,
     fetchSpotifySceneCandidates,
+    gameImageAutoGenerationEnabled,
     gameSnapshot?.location,
     gameSnapshot?.time,
     gameSnapshot?.weather,
@@ -6566,8 +6567,8 @@ function GameSurfaceComponent({
             }))
             .filter((enemy) => enemy.name && enemy.description)
             .slice(0, 10);
-          const shouldGenerateBossVisuals = !!visuals?.isBossFight && !!chatMeta.enableSpriteGeneration;
-          const shouldGenerateEnemyAvatars = !!chatMeta.enableSpriteGeneration && enemyAvatarRequests.length > 0;
+          const shouldGenerateBossVisuals = !!visuals?.isBossFight && gameImageAutoGenerationEnabled;
+          const shouldGenerateEnemyAvatars = gameImageAutoGenerationEnabled && enemyAvatarRequests.length > 0;
           if (
             (shouldGenerateBossVisuals && (visuals?.backgroundPrompt || visuals?.illustrationPrompt)) ||
             shouldGenerateEnemyAvatars
@@ -6634,8 +6635,8 @@ function GameSurfaceComponent({
     },
     [
       activeChatId,
-      chatMeta.enableSpriteGeneration,
       combatGenerationPending,
+      gameImageAutoGenerationEnabled,
       hydrateGeneratedCombatState,
       requestAssetGeneration,
     ],
@@ -8057,11 +8058,19 @@ function GameSurfaceComponent({
   const handleBranchMessage = useCallback(
     (messageId: string) => {
       if (!activeChatId || branchChat.isPending) return;
+      const branchToastId = toast.loading("Creating branch...");
       branchChat.mutate(
         { chatId: activeChatId, upToMessageId: messageId },
         {
           onSuccess: (newChat) => {
             if (newChat) useChatStore.getState().setActiveChatId(newChat.id);
+            toast.success("Branch created.");
+          },
+          onError: (error) => {
+            toast.error(error instanceof Error ? `Branch failed: ${error.message}` : "Branch failed.");
+          },
+          onSettled: () => {
+            toast.dismiss(branchToastId);
           },
         },
       );
@@ -8112,8 +8121,8 @@ function GameSurfaceComponent({
       genre: (setupConfig?.genre as string | undefined) ?? null,
       setting: (setupConfig?.setting as string | undefined) ?? null,
       worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
-      canGenerateBackgrounds: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
-      canGenerateIllustrations: !!chatMeta.enableSpriteGeneration && !!chatMeta.gameImageConnectionId,
+      canGenerateBackgrounds: gameImageAutoGenerationEnabled,
+      canGenerateIllustrations: gameImageAutoGenerationEnabled,
       artStylePrompt: (setupConfig?.artStylePrompt as string | undefined) ?? null,
       imagePromptInstructions:
         typeof chatMeta.gameImagePromptInstructions === "string" ? chatMeta.gameImagePromptInstructions : null,
@@ -8149,6 +8158,7 @@ function GameSurfaceComponent({
     hudWidgets,
     npcs,
     currentBackground,
+    gameImageAutoGenerationEnabled,
     gameSnapshot,
     chatMeta,
     activeChatId,
@@ -9853,6 +9863,7 @@ function GameSurfaceComponent({
                   onClose={handleCloseGalleryPanel}
                   anchor={galleryAnchor}
                   onIllustrate={handleManualSceneIllustration}
+                  onGenerateBackground={handleManualSceneBackground}
                 />
               </Suspense>
               <PinnedImageOverlay activeChatId={activeChatId} />

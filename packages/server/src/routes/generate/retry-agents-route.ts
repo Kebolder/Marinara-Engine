@@ -917,6 +917,36 @@ async function buildRetryAgentContext(args: {
   return agentContext;
 }
 
+function readTrimmedRetryString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveRetryAgentConnectionRequest(args: {
+  agentType: string;
+  configuredConnectionId: string | null | undefined;
+  defaultAgentConnectionId: string | null | undefined;
+  chatMeta: Record<string, unknown>;
+  localSidecarAvailable: boolean;
+}): string | null | "skip-local-sidecar" {
+  if (args.agentType !== "illustrator") {
+    return resolveAgentConnectionId({
+      requestedConnectionId: args.configuredConnectionId,
+      defaultAgentConnectionId: args.defaultAgentConnectionId,
+      localSidecarAvailable: args.localSidecarAvailable,
+    });
+  }
+
+  const promptConnectionId = readTrimmedRetryString(args.chatMeta.illustratorPromptConnectionId);
+  const configuredConnectionId = readTrimmedRetryString(args.configuredConnectionId);
+  const requestedConnectionId = promptConnectionId ?? configuredConnectionId;
+
+  return resolveAgentConnectionId({
+    requestedConnectionId,
+    defaultAgentConnectionId: promptConnectionId ? null : configuredConnectionId ? args.defaultAgentConnectionId : null,
+    localSidecarAvailable: args.localSidecarAvailable,
+  });
+}
+
 async function resolveRetryAgents(args: {
   agentTypes: string[];
   chat: any;
@@ -1098,9 +1128,11 @@ async function resolveRetryAgents(args: {
     : null;
 
   for (const cfg of enabledConfigs) {
-    const effectiveConnectionId = resolveAgentConnectionId({
-      requestedConnectionId: cfg.connectionId as string | null,
+    const effectiveConnectionId = resolveRetryAgentConnectionRequest({
+      agentType: cfg.type as string,
+      configuredConnectionId: cfg.connectionId as string | null,
       defaultAgentConnectionId: defaultAgentConn?.id ?? null,
+      chatMeta,
       localSidecarAvailable: localSidecarAvailableForTrackers,
     });
 
@@ -1163,11 +1195,30 @@ async function resolveRetryAgents(args: {
     });
   }
 
-  const warnings =
-    skippedLocalSidecarAgents.length > 0 ? [buildLocalSidecarUnavailableWarning(skippedLocalSidecarAgents)] : [];
+  const warnings: AgentConnectionWarning[] = [];
 
   for (const builtIn of builtInFallbackConfigs) {
-    const builtInConnection = defaultAgentConn ? defaultAgentConnection : await resolveRetryAgentConnection(null);
+    const builtInConnectionId = resolveRetryAgentConnectionRequest({
+      agentType: builtIn.id,
+      configuredConnectionId: null,
+      defaultAgentConnectionId: defaultAgentConn?.id ?? null,
+      chatMeta,
+      localSidecarAvailable: localSidecarAvailableForTrackers,
+    });
+
+    if (builtInConnectionId === "skip-local-sidecar") {
+      skippedLocalSidecarAgents.push(builtIn.name);
+      logger.warn(
+        "[retry-agents] Skipping built-in agent %s because Local Model was requested but the sidecar is unavailable",
+        builtIn.id,
+      );
+      continue;
+    }
+
+    const builtInConnection =
+      defaultAgentConn && builtInConnectionId === defaultAgentConn.id
+        ? defaultAgentConnection
+        : await resolveRetryAgentConnection(builtInConnectionId);
     if (!builtInConnection?.entry) {
       addUnavailableConnectionWarning(builtIn.name, builtInConnection ?? {});
       logger.warn(
@@ -1177,7 +1228,7 @@ async function resolveRetryAgents(args: {
       );
       continue;
     }
-    if (defaultAgentConn) defaultAgentConnectionAgents.push(builtIn.name);
+    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id) defaultAgentConnectionAgents.push(builtIn.name);
 
     let settings = applyDefaultBuiltInAgentTools(builtIn.id, getDefaultBuiltInAgentSettings(builtIn.id));
     if (builtIn.id === "spotify") {
@@ -1216,6 +1267,10 @@ async function resolveRetryAgents(args: {
 
   for (const warning of unavailableConnectionWarnings.values()) {
     warnings.push(buildAgentConnectionUnavailableWarning(warning));
+  }
+
+  if (skippedLocalSidecarAgents.length > 0) {
+    warnings.push(buildLocalSidecarUnavailableWarning(skippedLocalSidecarAgents));
   }
 
   if (defaultAgentConn && defaultAgentConnectionAgents.length > 0) {
@@ -2378,8 +2433,7 @@ async function applyRetryResultEffects(args: {
             list = list.filter((e) => e.agentType !== result.agentType);
           }
           const chatSummaryFingerprint = fingerprintChatSummary(chatMeta.summary);
-          await chats.updateMessageExtra(retryMessageId, { contextInjections: list, chatSummaryFingerprint });
-          await chats.updateSwipeExtra(retryMessageId, retrySwipeIndex, {
+          await chats.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, {
             contextInjections: list,
             chatSummaryFingerprint,
           });
@@ -2569,26 +2623,14 @@ async function applyRetryResultEffects(args: {
       try {
         const cyoaData = result.data as { choices?: Array<{ label: string; text: string }> };
         if (retryMessageId && cyoaData.choices && cyoaData.choices.length > 0) {
-          await chats.updateSwipeExtra(retryMessageId, retrySwipeIndex, { cyoaChoices: cyoaData.choices });
-          const msgRow = await chats.getMessage(retryMessageId);
-          if (msgRow && (msgRow.activeSwipeIndex ?? 0) === retrySwipeIndex) {
-            await chats.updateMessageExtra(retryMessageId, { cyoaChoices: cyoaData.choices });
-            logger.info(
-              "[retry-agents] CYOA choices persisted chatId=%s messageId=%s choiceCount=%d",
-              chatId,
-              retryMessageId,
-              cyoaData.choices.length,
-            );
-          } else {
-            logger.info(
-              "[retry-agents] CYOA choices persisted to swipe only (active swipe changed) chatId=%s messageId=%s retrySwipeIndex=%d activeSwipeIndex=%s choiceCount=%d",
-              chatId,
-              retryMessageId,
-              retrySwipeIndex,
-              msgRow?.activeSwipeIndex ?? "null",
-              cyoaData.choices.length,
-            );
-          }
+          await chats.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, { cyoaChoices: cyoaData.choices });
+          logger.info(
+            "[retry-agents] CYOA choices persisted chatId=%s messageId=%s swipeIndex=%d choiceCount=%d",
+            chatId,
+            retryMessageId,
+            retrySwipeIndex,
+            cyoaData.choices.length,
+          );
         }
       } catch (err) {
         logger.warn(
@@ -2814,18 +2856,7 @@ async function applyRetryResultEffects(args: {
                   typeof swipeRow.extra === "string" ? JSON.parse(swipeRow.extra) : (swipeRow.extra ?? {});
                 const swipeAtts = (swipeExtra.attachments as any[]) ?? [];
                 swipeAtts.push(attachment);
-                await chatsDb.updateSwipeExtra(retryMessageId, retrySwipeIndex, { attachments: swipeAtts });
-              }
-              const msgRow = await chatsDb.getMessage(retryMessageId);
-              if (msgRow && (msgRow.activeSwipeIndex ?? 0) === retrySwipeIndex) {
-                const msgExtra = msgRow.extra
-                  ? typeof msgRow.extra === "string"
-                    ? JSON.parse(msgRow.extra)
-                    : msgRow.extra
-                  : {};
-                const existingAttachments = (msgExtra.attachments as any[]) ?? [];
-                existingAttachments.push(attachment);
-                await chatsDb.updateMessageExtra(retryMessageId, { attachments: existingAttachments });
+                await chatsDb.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, { attachments: swipeAtts });
               }
             }
 
@@ -2902,8 +2933,7 @@ async function applyRetryResultEffects(args: {
       try {
         const chatsDb = createChatsStorage(app.db);
         if (Object.keys(exprMap).length > 0) {
-          await chatsDb.updateMessageExtra(retryMessageId, { spriteExpressions: exprMap });
-          await chatsDb.updateSwipeExtra(retryMessageId, retrySwipeIndex, { spriteExpressions: exprMap });
+          await chatsDb.updateMessageExtraForSwipe(retryMessageId, retrySwipeIndex, { spriteExpressions: exprMap });
         }
         if (Object.keys(personaExprMap).length > 0) {
           const personaMessageId = await findLastUserMessageIdBefore(chatsDb, chatId, retryMessageId);

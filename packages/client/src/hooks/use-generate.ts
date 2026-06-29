@@ -417,6 +417,15 @@ function parseMessageExtraRecordForMerge(value: unknown): Record<string, unknown
 
 function mergeCachedGeneratedMessage(existing: Message, incoming: Message): Message {
   const merged = { ...existing, ...incoming };
+  const existingSwipeCount = typeof existing.swipeCount === "number" ? existing.swipeCount : 0;
+  const incomingSwipeCount = typeof incoming.swipeCount === "number" ? incoming.swipeCount : 0;
+  const activeSwipeFloor =
+    typeof incoming.activeSwipeIndex === "number" && Number.isInteger(incoming.activeSwipeIndex)
+      ? incoming.activeSwipeIndex + 1
+      : 0;
+  if (existingSwipeCount || incomingSwipeCount || activeSwipeFloor) {
+    merged.swipeCount = Math.max(existingSwipeCount, incomingSwipeCount, activeSwipeFloor);
+  }
   const existingExtra = parseMessageExtraRecordForMerge(existing.extra);
   const incomingExtra = parseMessageExtraRecordForMerge(incoming.extra);
   // The saved-message SSE snapshot can predate post-processing extras such as

@@ -1322,6 +1322,12 @@ export const ChatInput = memo(function ChatInput({
     [activeChatId, quoteFormat, setInputDraft, syncInputState],
   );
 
+  const ensureInputVisible = useCallback(() => {
+    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    requestAnimationFrame(scroll);
+    window.setTimeout(scroll, 260);
+  }, []);
+
   return (
     <div className="mari-chat-input chat-input-container px-3 pb-3">
       {/* Slash command autocomplete popup */}
@@ -1485,6 +1491,7 @@ export const ChatInput = memo(function ChatInput({
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onFocus={ensureInputVisible}
           placeholder={
             activeChatId
               ? mode === "roleplay"

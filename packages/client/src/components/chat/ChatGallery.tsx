@@ -3,7 +3,19 @@
 // ──────────────────────────────────────────────
 import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ImagePlus, Paintbrush, Trash2, X, Download, Sparkles, Pin, Loader2, Images, Search } from "lucide-react";
+import {
+  Image,
+  ImagePlus,
+  Paintbrush,
+  Trash2,
+  X,
+  Download,
+  Sparkles,
+  Pin,
+  Loader2,
+  Images,
+  Search,
+} from "lucide-react";
 import {
   useChatAssetBrowser,
   useGalleryImages,
@@ -23,6 +35,8 @@ interface ChatGalleryProps {
   mode?: string;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void | Promise<void>;
+  /** Generate and apply a background for the current scene. */
+  onGenerateBackground?: () => void | Promise<void>;
 }
 
 function formatAssetKind(asset: ChatAssetBrowserItem) {
@@ -38,7 +52,7 @@ function getAssetMeta(asset: ChatAssetBrowserItem) {
   return details.join(" | ");
 }
 
-export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
+export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }: ChatGalleryProps) {
   const { data: images, isLoading } = useGalleryImages(chatId);
   const upload = useUploadGalleryImage(chatId);
   const remove = useDeleteGalleryImage(chatId);
@@ -47,10 +61,15 @@ export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
   const [assetBrowserOpen, setAssetBrowserOpen] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
   const isIllustrating = useGalleryStore((s) => s.illustratingChatIds.has(chatId));
+  const isGeneratingBackground = useGalleryStore((s) => s.backgroundGeneratingChatIds.has(chatId));
   const pinImage = useGalleryStore((s) => s.pinImage);
   const setChatIllustrating = useGalleryStore((s) => s.setChatIllustrating);
+  const setChatGeneratingBackground = useGalleryStore((s) => s.setChatGeneratingBackground);
   const canBrowseAssets = mode === "roleplay";
-  const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(chatId, canBrowseAssets && assetBrowserOpen);
+  const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(
+    chatId,
+    canBrowseAssets && assetBrowserOpen,
+  );
   const portalRoot = typeof document !== "undefined" ? document.body : null;
   const filteredAssets = useMemo(() => {
     const query = assetSearch.trim().toLowerCase();
@@ -90,6 +109,19 @@ export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
     }
   };
 
+  const handleGenerateBackground = async () => {
+    if (!onGenerateBackground || useGalleryStore.getState().backgroundGeneratingChatIds.has(chatId)) return;
+
+    setChatGeneratingBackground(chatId, true);
+    try {
+      await onGenerateBackground();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Background generation failed.");
+    } finally {
+      setChatGeneratingBackground(chatId, false);
+    }
+  };
+
   const handlePinImage = useCallback(
     (image: ChatImage) => {
       pinImage({ ...image, chatId });
@@ -110,18 +142,41 @@ export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
   return (
     <>
       <div className="flex flex-col gap-3 p-4">
-        {/* Illustrate button */}
-        {onIllustrate && (
-          <button
-            type="button"
-            onClick={() => void handleIllustrate()}
-            disabled={isIllustrating}
-            aria-busy={isIllustrating}
-            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-4 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
-          >
-            {isIllustrating ? <Loader2 size="1rem" className="animate-spin" /> : <Paintbrush size="1rem" />}
-            {isIllustrating ? "Generating image..." : "Illustrate"}
-          </button>
+        {(onIllustrate || onGenerateBackground) && (
+          <div className={onIllustrate && onGenerateBackground ? "grid grid-cols-2 gap-2" : "grid gap-2"}>
+            {onIllustrate && (
+              <button
+                type="button"
+                onClick={() => void handleIllustrate()}
+                disabled={isIllustrating}
+                aria-busy={isIllustrating}
+                className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-3 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
+              >
+                {isIllustrating ? (
+                  <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                ) : (
+                  <Paintbrush size="1rem" className="shrink-0" />
+                )}
+                <span className="min-w-0 truncate">{isIllustrating ? "Generating..." : "Illustrate"}</span>
+              </button>
+            )}
+            {onGenerateBackground && (
+              <button
+                type="button"
+                onClick={() => void handleGenerateBackground()}
+                disabled={isGeneratingBackground}
+                aria-busy={isGeneratingBackground}
+                className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-3 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
+              >
+                {isGeneratingBackground ? (
+                  <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                ) : (
+                  <Image size="1rem" className="shrink-0" />
+                )}
+                <span className="min-w-0 truncate">{isGeneratingBackground ? "Generating..." : "Background"}</span>
+              </button>
+            )}
+          </div>
         )}
 
         {canBrowseAssets && (
@@ -135,13 +190,15 @@ export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
           </button>
         )}
 
-        {isIllustrating && (
+        {(isIllustrating || isGeneratingBackground) && (
           <div
             className="rounded-xl border border-[var(--primary)]/25 bg-[var(--primary)]/10 px-3 py-2 text-xs text-[var(--primary)]"
             role="status"
             aria-live="polite"
           >
-            AI image generation is running. The new image will appear here when it finishes.
+            {isGeneratingBackground
+              ? "AI background generation is running. The new background will be applied when it finishes."
+              : "AI image generation is running. The new image will appear here when it finishes."}
           </div>
         )}
 
@@ -341,9 +398,7 @@ export function ChatGallery({ chatId, mode, onIllustrate }: ChatGalleryProps) {
         )}
 
       {/* Lightbox */}
-      {lightbox && (
-        <ChatImageLightbox image={lightbox} onPin={handlePinImage} onClose={() => setLightbox(null)} />
-      )}
+      {lightbox && <ChatImageLightbox image={lightbox} onPin={handlePinImage} onClose={() => setLightbox(null)} />}
     </>
   );
 }

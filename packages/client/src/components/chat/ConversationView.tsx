@@ -529,6 +529,7 @@ export function ConversationView({
           isGrouped: boolean;
           index: number;
           contentParts?: string[];
+          rawContent?: string;
           bubbleGroupPosition: "single" | "first" | "middle" | "last";
         }
     > = [];
@@ -604,6 +605,7 @@ export function ConversationView({
         isGrouped: grouped,
         index: messageOffset + i,
         contentParts,
+        rawContent: displayContent !== msg.content ? msg.content : undefined,
         bubbleGroupPosition,
       });
     }
@@ -988,7 +990,7 @@ export function ConversationView({
               : msg;
           const contentParts = isRegenerating ? undefined : item.contentParts;
           const visiblePartCount = contentParts ? (visiblePartCounts[item.key] ?? contentParts.length) : undefined;
-          const originalContent = displayMsg.content !== msg.content ? msg.content : undefined;
+          const originalContent = item.rawContent ?? (displayMsg.content !== msg.content ? msg.content : undefined);
           const regenerationDraftMessage =
             isBubbleRegenerating && !isStreamWindingDown
               ? ({

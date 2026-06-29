@@ -232,12 +232,16 @@ export interface ChatMetadata {
   illustratorIncludeCharacterAppearance?: boolean;
   /** Whether Illustrator should send matching character/persona avatar references to image providers. */
   illustratorUseAvatarReferences?: boolean;
+  /** Optional per-chat LLM connection override used only to write Illustrator/selfie image prompts. */
+  illustratorPromptConnectionId?: string | null;
   /** Whether Conversation selfie commands should send the matching character avatar as a reference image. */
   selfieUseAvatarReferences?: boolean;
   /** Whether Game Mode scene illustrations should send matching character/persona avatar references. */
   gameImageUseAvatarReferences?: boolean;
   /** Whether Game Mode scene illustrations should append matched character appearance descriptions. */
   gameImageIncludeCharacterAppearance?: boolean;
+  /** When false, Game Mode keeps manual Illustrator controls but stops automatic visual generations. */
+  gameImageAutoGenerationEnabled?: boolean;
   /** Per-chat source overrides for knowledge agents. */
   knowledgeAgentSources?: Partial<Record<"knowledge-retrieval" | "knowledge-router", KnowledgeAgentSourceSettings>>;
   /** Narrative Director mode used when Push Story is armed. */

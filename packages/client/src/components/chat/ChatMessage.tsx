@@ -909,6 +909,7 @@ export const ChatMessage = memo(function ChatMessage({
     guideGenerations,
     boldDialogue,
     editMessageOnDoubleClick,
+    quoteFormat,
   } = useUIStore(
     useShallow((s) => ({
       chatFontSize: s.chatFontSize,
@@ -925,6 +926,7 @@ export const ChatMessage = memo(function ChatMessage({
       guideGenerations: s.guideGenerations,
       boldDialogue: s.boldDialogue ?? true,
       editMessageOnDoubleClick: s.editMessageOnDoubleClick,
+      quoteFormat: s.quoteFormat,
     })),
   );
   const isGuided = guideGenerations && hasDraftInput;
@@ -1342,13 +1344,14 @@ export const ChatMessage = memo(function ChatMessage({
         setEditing(false);
         return;
       }
-      if (content.trim() !== message.content) {
-        onEdit?.(message.id, content.trim());
+      const formattedSource = formatTextQuotes(message.content, quoteFormat);
+      if (content.trim().length > 0 && content !== formattedSource) {
+        onEdit?.(message.id, content);
       }
       editSwipeIndexRef.current = null;
       setEditing(false);
     },
-    [message.activeSwipeIndex, message.content, message.id, onEdit],
+    [message.activeSwipeIndex, message.content, message.id, onEdit, quoteFormat],
   );
 
   const handleCancelEdit = useCallback(() => {
@@ -1621,7 +1624,6 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
-  const quoteFormat = useUIStore((s) => s.quoteFormat);
   const isHtmlContent = HTML_TAG_RE.test(text);
   const htmlScopeClass = useMemo(() => {
     const suffix = message.id.replace(/[^a-zA-Z0-9_-]/g, "");

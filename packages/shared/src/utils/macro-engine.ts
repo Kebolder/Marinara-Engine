@@ -224,6 +224,11 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
     syntax: "{{persona}}",
     description: "Active persona description, personality, backstory, appearance, and scenario joined by new lines",
   },
+  { category: "Identity", syntax: "{{personaDescription}}", description: "Active persona description" },
+  { category: "Identity", syntax: "{{personaPersonality}}", description: "Active persona personality" },
+  { category: "Identity", syntax: "{{personaBackstory}}", description: "Active persona backstory" },
+  { category: "Identity", syntax: "{{personaAppearance}}", description: "Active persona appearance" },
+  { category: "Identity", syntax: "{{personaScenario}}", description: "Active persona scenario" },
   { category: "Identity", syntax: "{{char}}", description: "Current character name" },
   { category: "Identity", syntax: "{{charName}}", description: "Alias for {{char}}" },
   { category: "Identity", syntax: "{{characters}}", description: "All character names, comma-separated" },
@@ -572,6 +577,18 @@ function normalizeConditionKey(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase();
 }
 
+function resolvePersonaText(ctx: MacroContext): string {
+  return [
+    ctx.personaFields?.description,
+    ctx.personaFields?.personality,
+    ctx.personaFields?.backstory,
+    ctx.personaFields?.appearance,
+    ctx.personaFields?.scenario,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
+}
+
 function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
   const quoted = stripOuterQuotes(raw);
   if (quoted !== null) return quoted;
@@ -587,6 +604,18 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
     case "user":
     case "username":
       return ctx.user;
+    case "persona":
+      return resolvePersonaText(ctx);
+    case "personadescription":
+      return ctx.personaFields?.description ?? "";
+    case "personapersonality":
+      return ctx.personaFields?.personality ?? "";
+    case "personabackstory":
+      return ctx.personaFields?.backstory ?? "";
+    case "personaappearance":
+      return ctx.personaFields?.appearance ?? "";
+    case "personascenario":
+      return ctx.personaFields?.scenario ?? "";
     case "characters":
       return ctx.characters.join(", ");
     case "input":
@@ -1156,6 +1185,21 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   // ── Static substitutions ──
   result = result.replace(/\{\{user(?:Name)?\}\}/gi, ctx.user);
   result = result.replace(/\{\{persona\}\}/gi, personaText);
+  result = result.replace(/\{\{personaDescription\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.description ?? ""),
+  );
+  result = result.replace(/\{\{personaPersonality\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.personality ?? ""),
+  );
+  result = result.replace(/\{\{personaBackstory\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.backstory ?? ""),
+  );
+  result = result.replace(/\{\{personaAppearance\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.appearance ?? ""),
+  );
+  result = result.replace(/\{\{personaScenario\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.scenario ?? ""),
+  );
   result = result.replace(/\{\{char(?:Name)?\}\}/gi, characterReplacement("char"));
   result = result.replace(/\{\{characters\}\}/gi, ctx.characters.join(", "));
   result = result.replace(/\{\{description\}\}/gi, characterReplacement("description"));

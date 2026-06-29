@@ -1098,6 +1098,7 @@ type RoleplaySurfaceProps = {
   onCloseFiles: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
+  onGenerateBackground?: () => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onResetSpritePlacements: () => void;
@@ -1207,6 +1208,7 @@ export function ChatRoleplaySurface({
   onCloseFiles,
   onCloseGallery,
   onIllustrate,
+  onGenerateBackground,
   onWizardFinish,
   onClosePeekPrompt,
   onResetSpritePlacements,
@@ -1976,6 +1978,7 @@ export function ChatRoleplaySurface({
         onCloseFiles={onCloseFiles}
         onCloseGallery={onCloseGallery}
         onIllustrate={onIllustrate}
+        onGenerateBackground={onGenerateBackground}
         onWizardFinish={onWizardFinish}
         onClosePeekPrompt={onClosePeekPrompt}
         onDeleteConfirm={onDeleteConfirm}

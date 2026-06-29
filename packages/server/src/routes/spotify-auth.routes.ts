@@ -411,12 +411,23 @@ export async function spotifyAuthRoutes(app: FastifyInstance) {
    * GET /api/spotify/status?agentId=xxx
    * Returns whether Spotify is connected (has valid tokens).
    */
-  app.get<{ Querystring: { agentId: string } }>("/status", async (req, reply) => {
+  app.get<{ Querystring: { agentId?: string } }>("/status", async (req) => {
     const { agentId } = req.query;
-    if (!agentId) return reply.status(400).send({ error: "agentId is required" });
-
-    const agent = await storage.getById(agentId);
-    if (!agent) return reply.status(404).send({ error: "Agent not found" });
+    const agent = agentId ? await storage.getById(agentId) : await storage.getByType("spotify");
+    const redirectUri = buildSpotifyRedirectUri(req as FastifyRequest);
+    const allScopes = SPOTIFY_SCOPES.split(/\s+/).filter(Boolean);
+    if (!agent || agent.type !== "spotify") {
+      return {
+        connected: false,
+        expired: false,
+        agentId: null,
+        clientId: null,
+        redirectUri,
+        scopes: [],
+        missingScopes: allScopes,
+        hasStreamingScope: false,
+      };
+    }
 
     const settings =
       agent.settings && typeof agent.settings === "string" ? JSON.parse(agent.settings) : (agent.settings ?? {});
@@ -431,10 +442,12 @@ export async function spotifyAuthRoutes(app: FastifyInstance) {
     return {
       connected: hasToken && hasRefresh,
       expired: isExpired,
+      agentId: agent.id,
       clientId: (settings.spotifyClientId as string) ?? null,
-      redirectUri: buildSpotifyRedirectUri(req as FastifyRequest),
+      redirectUri,
       scopes,
-      missingScopes: scopeText ? SPOTIFY_SCOPES.split(/\s+/).filter((scope) => !scopes.includes(scope)) : [],
+      missingScopes: scopeText ? allScopes.filter((scope) => !scopes.includes(scope)) : allScopes,
+      hasStreamingScope: spotifyHasScope(scopes, "streaming"),
     };
   });
 

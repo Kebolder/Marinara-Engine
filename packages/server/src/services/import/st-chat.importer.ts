@@ -238,6 +238,25 @@ function normalizeMarinaraSwipeMetadata(extra: STChatMessageExtra | undefined) {
   return byIndex;
 }
 
+function sanitizeImportedMarinaraMetadata(
+  metadata: Record<string, unknown>,
+  localGameId: string,
+): Record<string, unknown> {
+  const sanitized = { ...metadata };
+
+  // These are source-chat pointers. Keeping them after import can make the new
+  // branch/session operate on the exported campaign or an already-closed scene.
+  delete sanitized.activeSceneChatId;
+  delete sanitized.sceneOriginChatId;
+  delete sanitized.sceneStatus;
+
+  if (typeof sanitized.gameId === "string" && sanitized.gameId.trim().length > 0) {
+    sanitized.gameId = localGameId;
+  }
+
+  return sanitized;
+}
+
 /**
  * Import a SillyTavern JSONL chat file.
  *
@@ -309,6 +328,10 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
       const storedMessageExtra = Object.keys(messageExtra).length > 0 ? messageExtra : undefined;
       const swipeContents = normalizeSwipeContents(stMsg.swipes, rawContent);
       const activeSwipeIndex = normalizeSwipeIndex(stMsg.swipe_id, swipeContents.length);
+      // Marinara exports store the currently displayed message in `mes`.
+      // Older/broken exports could leave `swipes[swipe_id]` stale after a manual
+      // edit, so prefer `mes` for the active swipe while preserving alternates.
+      swipeContents[activeSwipeIndex] = rawContent;
       const content = swipeContents[activeSwipeIndex] ?? rawContent;
       const swipeMetadata = normalizeMarinaraSwipeMetadata(stMsg.extra);
       const swipes = swipeContents.map((swipeContent, index) => {
@@ -390,11 +413,15 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   // Preserve an imported branch/file label separately from the main thread/chat name.
   if (Object.keys(marinaraMetadata).length > 0 || importedBranchName) {
     const existingMetadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+    const importedMetadata = sanitizeImportedMarinaraMetadata(
+      marinaraMetadata,
+      opts?.groupId ?? chat.groupId ?? chat.id,
+    );
     await storage.patchMetadata(
       chat.id,
       {
         ...existingMetadata,
-        ...marinaraMetadata,
+        ...importedMetadata,
         ...(importedBranchName ? { branchName: importedBranchName } : {}),
       },
       { touchUpdatedAt: false },

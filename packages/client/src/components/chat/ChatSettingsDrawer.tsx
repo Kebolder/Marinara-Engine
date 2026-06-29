@@ -719,6 +719,22 @@ export function ChatSettingsDrawer({
       ),
     [isGame, sidecarModelDisplayName, sidecarModelDownloaded, textConnectionsList],
   );
+  const illustratorPromptConnectionsList = useMemo(
+    () => {
+      const options: Array<{ id: string; name: string; model?: string | null }> = [];
+      for (const connection of chatGenerationConnectionsList) {
+        const id = typeof connection.id === "string" ? connection.id.trim() : "";
+        if (!id) continue;
+        options.push({
+          id,
+          name: connection.name || "Connection",
+          model: connection.model ?? null,
+        });
+      }
+      return options;
+    },
+    [chatGenerationConnectionsList],
+  );
   const { data: allPersonas } = usePersonas();
   const { data: agentConfigs } = useAgentConfigs();
   const { data: customTools } = useCustomTools();
@@ -1297,9 +1313,49 @@ export function ChatSettingsDrawer({
     typeof metadata.illustratorUseAvatarReferences === "boolean"
       ? metadata.illustratorUseAvatarReferences
       : illustratorDefaults.useAvatarReferences === true;
+  const illustratorPromptConnectionId =
+    typeof metadata.illustratorPromptConnectionId === "string" ? metadata.illustratorPromptConnectionId : "";
+  const selectedIllustratorPromptConnectionMissing =
+    illustratorPromptConnectionId.length > 0 &&
+    !illustratorPromptConnectionsList.some((connection) => connection.id === illustratorPromptConnectionId);
   const selfieUseAvatarReferences = metadata.selfieUseAvatarReferences === true;
   const gameImageUseAvatarReferences = metadata.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
+  const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
+  const updateIllustratorPromptConnection = useCallback(
+    (connectionId: string) => {
+      updateMeta.mutate({
+        id: chat.id,
+        illustratorPromptConnectionId: connectionId || null,
+      });
+    },
+    [chat.id, updateMeta],
+  );
+  const renderIllustratorPromptConnectionSelect = () => (
+    <label className="flex flex-col gap-1">
+      <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Prompt Model</span>
+      <select
+        value={illustratorPromptConnectionId}
+        onChange={(event) => updateIllustratorPromptConnection(event.target.value)}
+        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+      >
+        <option value="">Main chat model</option>
+        {selectedIllustratorPromptConnectionMissing && (
+          <option value={illustratorPromptConnectionId}>Missing connection</option>
+        )}
+        {illustratorPromptConnectionsList.map((connection) => (
+          <option key={connection.id} value={connection.id}>
+            {connection.name ?? "Connection"}
+            {connection.model ? ` — ${connection.model}` : ""}
+          </option>
+        ))}
+      </select>
+      <span className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+        Chooses the text model that writes Illustrator/selfie prompts. Image rendering still uses the selected image
+        connection for this feature or the agent setup.
+      </span>
+    </label>
+  );
   const toggleIllustratorCharacterAppearance = useCallback(() => {
     updateMeta.mutate({
       id: chat.id,
@@ -4651,28 +4707,31 @@ export function ChatSettingsDrawer({
                 )}
 
                 {/* Selfie Connection — connection picker for character selfies */}
-                <div className="space-y-1.5">
-                  <span className="text-xs font-medium">Selfie Connection</span>
-                  <select
-                    value={(metadata.imageGenConnectionId as string) ?? ""}
-                    onChange={(e) => updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })}
-                    className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
-                  >
-                    <option value="">None (selfies disabled)</option>
-                    {imageConnectionsList.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} ({c.provider})
-                      </option>
-                    ))}
-                  </select>
-                  <label className="block">
-                    <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                      Image style
-                    </span>
+                <div className="space-y-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Selfie Connection</span>
+                    <select
+                      value={(metadata.imageGenConnectionId as string) ?? ""}
+                      onChange={(e) =>
+                        updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
+                      }
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                    >
+                      <option value="">None (selfies disabled)</option>
+                      {imageConnectionsList.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.provider})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {renderIllustratorPromptConnectionSelect()}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
                     <select
                       value={(metadata.imageStyleProfileId as string) ?? ""}
                       onChange={(e) => updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })}
-                      className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
                     >
                       <option value="">Use default style from Style Profiles in Advanced settings</option>
                       {imageStyleProfiles.profiles.map((profile) => (
@@ -4694,8 +4753,8 @@ export function ChatSettingsDrawer({
                     }
                   />
                   <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                    Used for character selfies when Commands are enabled. The Illustrator agent uses its own connection
-                    from the Agents tab.
+                    Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt;
+                    the selfie connection renders the final image.
                   </p>
 
                   {/* Selfie resolution picker */}
@@ -6137,6 +6196,7 @@ export function ChatSettingsDrawer({
                             updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
                           }
                         />
+                        {renderIllustratorPromptConnectionSelect()}
                         <AgentSettingsToggle
                           label="Attach Card Appearance"
                           description="Append matched character appearance lines to image prompts, using only visible/generated names."
@@ -6476,31 +6536,46 @@ export function ChatSettingsDrawer({
                     />
                     {metadata.enableSpriteGeneration && (
                       <div className="space-y-2">
-                        <select
-                          value={(metadata.gameImageConnectionId as string) ?? ""}
-                          onChange={(e) =>
-                            updateMeta.mutate({ id: chat.id, gameImageConnectionId: e.target.value || null })
+                        <AgentSettingsToggle
+                          label="Automatic Visuals"
+                          description="Let Game Mode automatically request backgrounds, NPC portraits, and scene illustrations. Manual buttons stay available when this is off."
+                          enabled={gameImageAutoGenerationEnabled}
+                          onToggle={() =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameImageAutoGenerationEnabled: !gameImageAutoGenerationEnabled,
+                            })
                           }
-                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                        >
-                          <option value="">Select image connection…</option>
-                          {(imageConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                              {c.model ? ` — ${c.model}` : ""}
-                            </option>
-                          ))}
-                        </select>
+                        />
+                        {renderIllustratorPromptConnectionSelect()}
                         <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            Image style
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
+                            Image Connection
                           </span>
+                          <select
+                            value={(metadata.gameImageConnectionId as string) ?? ""}
+                            onChange={(e) =>
+                              updateMeta.mutate({ id: chat.id, gameImageConnectionId: e.target.value || null })
+                            }
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                          >
+                            <option value="">Select image connection…</option>
+                            {(imageConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                                {c.model ? ` — ${c.model}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
                           <select
                             value={(metadata.imageStyleProfileId as string) ?? ""}
                             onChange={(e) =>
                               updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
                             }
-                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
                           >
                             <option value="">Use global or connection default</option>
                             {imageStyleProfiles.profiles.map((profile) => (
@@ -6643,6 +6718,7 @@ export function ChatSettingsDrawer({
                                           updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
                                         }
                                       />
+                                      {renderIllustratorPromptConnectionSelect()}
                                       <AgentSettingsToggle
                                         label="Attach Card Appearance"
                                         description="Append matched character appearance lines to image prompts, using only visible/generated names."

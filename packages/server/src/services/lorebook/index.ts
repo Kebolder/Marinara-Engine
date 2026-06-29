@@ -978,18 +978,15 @@ export async function processLorebooks(
   };
 
   // Determine recursion settings from relevant enabled lorebooks only.
-  const recursiveLorebookIds = new Set(
-    relevantLorebooks.filter((b: { recursiveScanning: boolean }) => b.recursiveScanning).map((b) => b.id),
-  );
-  const anyRecursive =
-    options?.enableRecursive || recursiveLorebookIds.size > 0;
-  const maxRecursionDepth = relevantLorebooks.reduce(
-    (max: number, b: { recursiveScanning: boolean; maxRecursionDepth?: number }) => {
-      if (!b.recursiveScanning) return max;
-      return Math.max(max, b.maxRecursionDepth ?? 3);
-    },
-    3,
-  );
+  const recursiveLorebooks = relevantLorebooks.filter((b: { recursiveScanning: boolean }) => b.recursiveScanning);
+  const recursiveLorebookIds = new Set(recursiveLorebooks.map((b) => b.id));
+  const anyRecursive = options?.enableRecursive || recursiveLorebookIds.size > 0;
+  const maxRecursionDepth =
+    recursiveLorebooks.length > 0
+      ? recursiveLorebooks.reduce((max: number, b: { maxRecursionDepth?: number }) => {
+          return Math.max(max, b.maxRecursionDepth ?? 3);
+        }, 1)
+      : 3;
 
   const budgetResult = anyRecursive
     ? resolveBudgetAndRecursivelyActivateLorebookEntriesWithDiagnostics(
@@ -1025,7 +1022,7 @@ export async function processLorebooks(
     // Per-chat tracking: write to overrides, leave global entry untouched
     updatedOverrides = { ...overrides };
     for (const a of finalActivated) {
-      if (a.entry.ephemeral !== null && a.entry.ephemeral > 0) {
+      if (!a.sticky && a.entry.ephemeral !== null && a.entry.ephemeral > 0) {
         const remaining = a.entry.ephemeral - 1;
         updatedOverrides[a.entry.id] = {
           ...updatedOverrides[a.entry.id],
@@ -1038,7 +1035,7 @@ export async function processLorebooks(
     // Legacy path: first call for this chat (no overrides yet) — initialise per-chat overrides
     updatedOverrides = {};
     for (const a of finalActivated) {
-      if (a.entry.ephemeral !== null && a.entry.ephemeral > 0) {
+      if (!a.sticky && a.entry.ephemeral !== null && a.entry.ephemeral > 0) {
         const remaining = a.entry.ephemeral - 1;
         updatedOverrides[a.entry.id] = {
           ephemeral: remaining,
