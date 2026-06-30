@@ -86,10 +86,14 @@ function buildPersonaSnapshot(persona: PersonaRow): PersonaCardSnapshot {
     trackerCardColors: persona.trackerCardColors ?? '{"mode":"chat"}',
     personaStats: persona.personaStats ?? "",
     tags: persona.tags ?? "[]",
+    savedStatusOptions: persona.savedStatusOptions ?? "[]",
   };
 }
 
-function mergePersonaSnapshot(current: PersonaCardSnapshot, updates: Partial<PersonaCardSnapshot>): PersonaCardSnapshot {
+function mergePersonaSnapshot(
+  current: PersonaCardSnapshot,
+  updates: Partial<PersonaCardSnapshot>,
+): PersonaCardSnapshot {
   return {
     ...current,
     ...updates,
@@ -115,6 +119,7 @@ function normalizePersonaSnapshot(data: PersonaCardSnapshot): PersonaCardSnapsho
     trackerCardColors: data.trackerCardColors ?? '{"mode":"chat"}',
     personaStats: data.personaStats ?? "",
     tags: data.tags ?? "[]",
+    savedStatusOptions: data.savedStatusOptions ?? "[]",
   };
 }
 
@@ -289,7 +294,26 @@ export function createCharactersStorage(db: DB) {
     },
 
     async remove(id: string) {
-      await db.delete(characters).where(eq(characters.id, id));
+      await db.transaction(async (tx) => {
+        await tx.delete(characters).where(eq(characters.id, id));
+        const groups = await tx.select().from(characterGroups);
+        for (const group of groups) {
+          let memberIds: string[];
+          try {
+            memberIds = typeof group.characterIds === "string" ? (JSON.parse(group.characterIds) as string[]) : [];
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
+          await tx
+            .update(characterGroups)
+            .set({
+              characterIds: JSON.stringify(memberIds.filter((characterId) => characterId !== id)),
+              updatedAt: now(),
+            })
+            .where(eq(characterGroups.id, group.id));
+        }
+      });
     },
 
     async duplicateCharacter(id: string) {
@@ -426,14 +450,33 @@ export function createCharactersStorage(db: DB) {
     },
 
     async setActivePersona(id: string) {
-      // Deactivate all
-      await db.update(personas).set({ isActive: "false" });
-      // Activate the one
-      await db.update(personas).set({ isActive: "true", updatedAt: now() }).where(eq(personas.id, id));
+      return db.transaction(async (tx) => {
+        const existing = await tx.select({ id: personas.id }).from(personas).where(eq(personas.id, id));
+        if (!existing[0]) return false;
+        await tx.update(personas).set({ isActive: "false" });
+        await tx.update(personas).set({ isActive: "true", updatedAt: now() }).where(eq(personas.id, id));
+        return true;
+      });
     },
 
     async removePersona(id: string) {
-      await db.delete(personas).where(eq(personas.id, id));
+      await db.transaction(async (tx) => {
+        await tx.delete(personas).where(eq(personas.id, id));
+        const groups = await tx.select().from(personaGroups);
+        for (const group of groups) {
+          let memberIds: string[];
+          try {
+            memberIds = JSON.parse(group.personaIds) as string[];
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(memberIds) || !memberIds.includes(id)) continue;
+          await tx
+            .update(personaGroups)
+            .set({ personaIds: JSON.stringify(memberIds.filter((personaId) => personaId !== id)), updatedAt: now() })
+            .where(eq(personaGroups.id, group.id));
+        }
+      });
     },
 
     async duplicatePersona(id: string) {
@@ -518,6 +561,7 @@ export function createCharactersStorage(db: DB) {
         ...(updates.trackerCardColors !== undefined && { trackerCardColors: updates.trackerCardColors }),
         ...(updates.personaStats !== undefined && { personaStats: updates.personaStats }),
         ...(updates.tags !== undefined && { tags: updates.tags }),
+        ...(updates.savedStatusOptions !== undefined && { savedStatusOptions: updates.savedStatusOptions }),
       });
       const nextComment = updates.comment !== undefined ? updates.comment : (existing.comment ?? "");
       const nextAvatarPath = updates.avatarPath !== undefined ? updates.avatarPath : existing.avatarPath;
@@ -583,6 +627,7 @@ export function createCharactersStorage(db: DB) {
           trackerCardColors: data.trackerCardColors,
           personaStats: data.personaStats,
           tags: data.tags,
+          savedStatusOptions: data.savedStatusOptions,
           updatedAt: now(),
         })
         .where(eq(personas.id, personaId));
@@ -625,7 +670,7 @@ export function createCharactersStorage(db: DB) {
 
     async updateGroup(
       id: string,
-      updates: { name?: string; description?: string; characterIds?: string[]; avatarPath?: string },
+      updates: { name?: string; description?: string; characterIds?: string[]; avatarPath?: string | null },
     ) {
       const existing = await this.getGroupById(id);
       if (!existing) return null;

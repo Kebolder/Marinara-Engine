@@ -35,8 +35,16 @@ function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+  return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
 }
 
 /**
@@ -55,19 +63,41 @@ function toCharacterBookEntry(entry: LoreEntryRow, index: number): CharacterBook
     keys: asStringArray(entry.keys),
     content: asString(entry.content),
     extensions: {},
-    enabled: entry.enabled === true,
+    enabled: asBoolean(entry.enabled),
     insertion_order: order,
-    case_sensitive: entry.caseSensitive === true,
+    case_sensitive: asBoolean(entry.caseSensitive),
     name: asString(entry.name, `Entry ${index + 1}`),
     priority: order,
     id: index,
-    comment: asString(entry.description),
-    selective: entry.selective === true,
+    comment: asString(entry.name, `Entry ${index + 1}`),
+    description: asString(entry.description),
+    selective: asBoolean(entry.selective),
     secondary_keys: asStringArray(entry.secondaryKeys),
-    constant: entry.constant === true,
+    constant: asBoolean(entry.constant),
     position,
     depth: asNumber(entry.depth, 4),
     role,
+    selectiveLogic: asString(entry.selectiveLogic, "and"),
+    probability: asNullableNumber(entry.probability),
+    scanDepth: asNullableNumber(entry.scanDepth),
+    scan_depth: asNullableNumber(entry.scanDepth),
+    matchWholeWords: asBoolean(entry.matchWholeWords),
+    match_whole_words: asBoolean(entry.matchWholeWords),
+    useRegex: asBoolean(entry.useRegex),
+    regex: asBoolean(entry.useRegex),
+    sticky: asNullableNumber(entry.sticky),
+    cooldown: asNullableNumber(entry.cooldown),
+    delay: asNullableNumber(entry.delay),
+    ephemeral: asNullableNumber(entry.ephemeral),
+    group: asString(entry.group),
+    groupWeight: asNullableNumber(entry.groupWeight),
+    tag: asString(entry.tag),
+    locked: asBoolean(entry.locked),
+    preventRecursion: asBoolean(entry.preventRecursion, true),
+    excludeRecursion: asBoolean(entry.excludeRecursion),
+    delayUntilRecursion: asBoolean(entry.delayUntilRecursion),
+    vectorized: !asBoolean(entry.excludeFromVectorization),
+    excludeFromVectorization: asBoolean(entry.excludeFromVectorization),
   };
 }
 

@@ -25,6 +25,7 @@ import {
 import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { getChatDisplayName } from "../../lib/chat-display";
+import { compareChatsByActivityDesc } from "../../lib/chat-recency";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
 import {
@@ -44,7 +45,9 @@ import {
 type BranchRow = {
   id: string;
   name: string;
+  createdAt?: string | null;
   updatedAt: string;
+  lastMessageAt?: string | null;
 };
 
 interface ChatBranchSelectorProps {
@@ -88,7 +91,7 @@ export function ChatBranchSelector({
     rows.sort((left, right) => {
       if (left.id === activeChatId) return -1;
       if (right.id === activeChatId) return 1;
-      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      return compareChatsByActivityDesc(left, right);
     });
     return rows;
   }, [activeChatId, groupChats]);
@@ -163,11 +166,13 @@ export function ChatBranchSelector({
     ) {
       return;
     }
-    const nextActiveChatId =
-      branchId === activeChatId ? displayBranches.find((branch) => branch.id !== branchId)?.id : null;
+    const deletingActiveBranch = branchId === activeChatId;
+    const nextActiveChatId = deletingActiveBranch
+      ? (displayBranches.find((branch) => branch.id !== branchId)?.id ?? null)
+      : null;
     try {
       await deleteChat.mutateAsync({ id: branchId, groupId: groupId ?? null, force: true });
-      if (nextActiveChatId) setActiveChatId(nextActiveChatId);
+      if (deletingActiveBranch) setActiveChatId(nextActiveChatId);
     } catch (err) {
       toast.error(err instanceof Error ? `Delete failed: ${err.message}` : "Delete failed.");
     }
@@ -378,32 +383,27 @@ export function ChatBranchSelector({
                       </div>
                     </button>
 
-                    {isActive && (
-                      <span className="shrink-0 rounded-full bg-[var(--foreground)]/10 px-2 py-0.5 text-[0.625rem] font-medium text-[var(--foreground)]/75">
-                        Active
-                      </span>
-                    )}
-                    {!isActive && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => void handleRenameBranch(branch)}
-                          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                          title="Rename branch"
-                        >
-                          <Pencil size="0.75rem" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteBranch(branch.id)}
-                          disabled={deleteChat.isPending}
-                          className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
-                          title="Delete branch"
-                        >
-                          <Trash2 size="0.75rem" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleRenameBranch(branch)}
+                        className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                        title="Rename branch"
+                        aria-label={`Rename ${getChatDisplayName(branch)}`}
+                      >
+                        <Pencil size="0.75rem" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteBranch(branch.id)}
+                        disabled={deleteChat.isPending}
+                        className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+                        title="Delete branch"
+                        aria-label={`Delete ${getChatDisplayName(branch)}`}
+                      >
+                        <Trash2 size="0.75rem" />
+                      </button>
+                    </div>
                   </div>
                 );
               })}

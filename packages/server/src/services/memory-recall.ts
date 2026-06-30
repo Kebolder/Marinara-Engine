@@ -71,6 +71,15 @@ export interface MemoryRecallEmbeddingOptions {
   signal?: AbortSignal;
 }
 
+export interface ChunkAndEmbedMessagesOptions extends MemoryRecallEmbeddingOptions {
+  /**
+   * Keep the most recent N messages out of durable memory chunks. This lets
+   * recall operate as read-behind storage for messages that have left the
+   * active prompt window.
+   */
+  readBehindMessageCount?: number | null;
+}
+
 export async function embedMemoryRecallTexts(
   texts: string[],
   options: MemoryRecallEmbeddingOptions = {},
@@ -95,6 +104,93 @@ export async function embedMemoryRecallTexts(
   return [];
 }
 
+function normalizeReadBehindMessageCount(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
+}
+
+async function pruneStaleNativeMemoryChunks(
+  db: DB,
+  chatId: string,
+  currentMessages: Array<{ createdAt: string }>,
+): Promise<void> {
+  const chunks = await db
+    .select({
+      id: memoryChunks.id,
+      messageCount: memoryChunks.messageCount,
+      firstMessageAt: memoryChunks.firstMessageAt,
+      lastMessageAt: memoryChunks.lastMessageAt,
+    })
+    .from(memoryChunks)
+    .where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)))
+    .orderBy(memoryChunks.firstMessageAt);
+
+  if (chunks.length === 0) return;
+
+  const messageTimes = currentMessages.map((message) => message.createdAt);
+  const messageTimeSet = new Set(messageTimes);
+  let invalidateFrom: string | null = null;
+
+  for (const chunk of chunks) {
+    const hasAnchors = messageTimeSet.has(chunk.firstMessageAt) && messageTimeSet.has(chunk.lastMessageAt);
+    const spanMessageCount = hasAnchors
+      ? messageTimes.filter((createdAt) => createdAt >= chunk.firstMessageAt && createdAt <= chunk.lastMessageAt).length
+      : 0;
+
+    if (!hasAnchors || spanMessageCount !== chunk.messageCount) {
+      invalidateFrom = chunk.firstMessageAt;
+      break;
+    }
+  }
+
+  if (!invalidateFrom) return;
+
+  const staleIds = chunks.filter((chunk) => chunk.firstMessageAt >= invalidateFrom).map((chunk) => chunk.id);
+  for (let i = 0; i < staleIds.length; i += 500) {
+    await db
+      .delete(memoryChunks)
+      .where(
+        and(
+          eq(memoryChunks.chatId, chatId),
+          isNull(memoryChunks.sourceChatId),
+          inArray(memoryChunks.id, staleIds.slice(i, i + 500)),
+        ),
+      );
+  }
+
+  logger.debug(
+    "[memory-recall] Pruned %d stale native chunk(s) for chat %s from %s",
+    staleIds.length,
+    chatId,
+    invalidateFrom,
+  );
+}
+
+async function pruneNativeMemoryChunksAfter(
+  db: DB,
+  chatId: string,
+  lastEligibleMessageAt: string | null,
+): Promise<void> {
+  if (!lastEligibleMessageAt) {
+    await db.delete(memoryChunks).where(and(eq(memoryChunks.chatId, chatId), isNull(memoryChunks.sourceChatId)));
+    logger.debug(
+      "[memory-recall] Pruned native chunks for chat %s because all messages are still in active context",
+      chatId,
+    );
+    return;
+  }
+
+  await db
+    .delete(memoryChunks)
+    .where(
+      and(
+        eq(memoryChunks.chatId, chatId),
+        isNull(memoryChunks.sourceChatId),
+        gt(memoryChunks.lastMessageAt, lastEligibleMessageAt),
+      ),
+    );
+}
+
 /**
  * Chunk any un-chunked messages for a given chat and embed them.
  * Should be called after generation completes (fire-and-forget).
@@ -104,9 +200,33 @@ export async function chunkAndEmbedMessages(
   chatId: string,
   /** Map from role → display name. Used to format "Name: content" lines. */
   nameMap: { userName: string; characterNames: Record<string, string> },
-  options: MemoryRecallEmbeddingOptions = {},
+  options: ChunkAndEmbedMessagesOptions = {},
 ): Promise<void> {
   if (isLite) return;
+  const allMessages = await db
+    .select({
+      id: messages.id,
+      role: messages.role,
+      characterId: messages.characterId,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(eq(messages.chatId, chatId))
+    .orderBy(messages.createdAt);
+
+  await pruneStaleNativeMemoryChunks(db, chatId, allMessages);
+
+  const readBehindMessageCount = normalizeReadBehindMessageCount(options.readBehindMessageCount);
+  const eligibleMessages =
+    readBehindMessageCount > 0
+      ? allMessages.slice(0, Math.max(0, allMessages.length - readBehindMessageCount))
+      : allMessages;
+
+  if (readBehindMessageCount > 0) {
+    await pruneNativeMemoryChunksAfter(db, chatId, eligibleMessages.at(-1)?.createdAt ?? null);
+  }
+
   // Find the last chunk for this chat to know where to start
   const lastChunk = await db
     .select({ lastMessageAt: memoryChunks.lastMessageAt })
@@ -117,22 +237,8 @@ export async function chunkAndEmbedMessages(
 
   const after = lastChunk[0]?.lastMessageAt ?? null;
 
-  // Get messages that haven't been chunked yet
-  const conditions = [eq(messages.chatId, chatId)];
-  if (after) {
-    conditions.push(gt(messages.createdAt, after));
-  }
-  const unchunked = await db
-    .select({
-      id: messages.id,
-      role: messages.role,
-      characterId: messages.characterId,
-      content: messages.content,
-      createdAt: messages.createdAt,
-    })
-    .from(messages)
-    .where(and(...conditions))
-    .orderBy(messages.createdAt);
+  // Get eligible messages that haven't been chunked yet.
+  const unchunked = after ? eligibleMessages.filter((message) => message.createdAt > after) : eligibleMessages;
 
   if (unchunked.length < CHUNK_SIZE) return; // not enough to form a chunk yet
 
@@ -227,7 +333,7 @@ export async function rebuildMemoryChunks(
   db: DB,
   chatId: string,
   nameMap: { userName: string; characterNames: Record<string, string> },
-  options: MemoryRecallEmbeddingOptions = {},
+  options: ChunkAndEmbedMessagesOptions = {},
 ): Promise<number> {
   if (isLite) return 0;
 

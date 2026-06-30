@@ -158,13 +158,14 @@ async function resetClientAfterExpunge(qc: ReturnType<typeof useQueryClient>) {
   qc.clear();
 }
 
-export function useChats() {
+export function useChats(options: { enabled?: boolean; refetchOnMount?: boolean | "always" } = {}) {
   return useQuery({
     queryKey: chatKeys.list(),
     queryFn: () => api.get<Chat[]>("/chats"),
+    enabled: options.enabled ?? true,
     placeholderData: (previousData) => previousData,
     staleTime: 10_000,
-    refetchOnMount: "always",
+    refetchOnMount: options.refetchOnMount ?? "always",
     refetchOnReconnect: true,
     retry: (failureCount, error) => {
       const status = error instanceof ApiError ? error.status : 0;
@@ -571,6 +572,10 @@ export function useUpdateChat() {
       }
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
       qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (vars.characterIds !== undefined) {
+        qc.invalidateQueries({ queryKey: chatKeys.messages(vars.id) });
+        qc.invalidateQueries({ queryKey: chatKeys.messageCount(vars.id) });
+      }
 
       // Patch the group cache so the branch selector dropdown reflects renames
       // (and any other field changes) without waiting for a chat switch.
@@ -810,6 +815,7 @@ export function useDeleteMessage(chatId: string | null) {
       if (chatId) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
+        qc.invalidateQueries({ queryKey: chatKeys.list() });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -824,6 +830,7 @@ export function useDeleteMessages(chatId: string | null) {
       if (chatId) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
+        qc.invalidateQueries({ queryKey: chatKeys.list() });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -991,6 +998,30 @@ function replaceCachedMessage(
   return changed ? { ...old, pages } : old;
 }
 
+function parseMessageExtraForCache(raw: unknown): Message["extra"] | undefined {
+  if (!raw) return undefined;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as Message["extra"];
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return typeof raw === "object" && !Array.isArray(raw) ? (raw as Message["extra"]) : undefined;
+}
+
+function applyCachedSwipeToMessage(message: Message, swipe: MessageSwipe): Message {
+  const parsedExtra = parseMessageExtraForCache(swipe.extra);
+  return {
+    ...message,
+    activeSwipeIndex: swipe.index,
+    content: swipe.content,
+    ...(parsedExtra ? { extra: parsedExtra } : {}),
+    swipeCount: Math.max(message.swipeCount ?? 0, swipe.index + 1),
+  };
+}
+
 /** Peek at the assembled prompt for a chat */
 export function usePeekPrompt() {
   return useMutation({
@@ -1026,8 +1057,10 @@ export function useExportChat() {
   return useMutation({
     mutationFn: async ({ chatId, format = "jsonl" }: { chatId: string; format?: "jsonl" | "text" }) => {
       const ext = format === "text" ? ".txt" : ".jsonl";
+      const includeReasoning = useUIStore.getState().includeReasoningInExports;
+      const reasoningParam = includeReasoning ? "&includeReasoning=true" : "";
       await api.download(
-        `/chats/${encodeURIComponent(chatId)}/export?format=${encodeURIComponent(format)}`,
+        `/chats/${encodeURIComponent(chatId)}/export?format=${encodeURIComponent(format)}${reasoningParam}`,
         `chat-${chatId}${ext}`,
       );
     },
@@ -1048,7 +1081,12 @@ export function useBulkExportChats() {
       chatIds?: string[];
       format?: "jsonl" | "text";
       scope?: "selected" | "all";
-    }) => api.downloadPost("/chats/export/bulk", { chatIds, format, scope }, `chat-transcripts-${format}.zip`),
+    }) =>
+      api.downloadPost(
+        "/chats/export/bulk",
+        { chatIds, format, scope, includeReasoning: useUIStore.getState().includeReasoningInExports },
+        `chat-transcripts-${format}.zip`,
+      ),
   });
 }
 
@@ -1184,8 +1222,12 @@ export function useSetActiveSwipe(chatId: string | null) {
       if (!chatId) return;
       await qc.cancelQueries({ queryKey: chatKeys.messages(chatId), exact: true });
       const previous = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
+      const cachedSwipes = qc.getQueryData<MessageSwipe[]>([...chatKeys.all, "swipes", messageId]);
+      const targetSwipe = cachedSwipes?.find((swipe) => swipe.index === index);
       qc.setQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId), (old) =>
-        replaceCachedMessage(old, messageId, (msg) => ({ ...msg, activeSwipeIndex: index })),
+        replaceCachedMessage(old, messageId, (msg) =>
+          targetSwipe ? applyCachedSwipeToMessage(msg, targetSwipe) : { ...msg, activeSwipeIndex: index },
+        ),
       );
       return { previous };
     },

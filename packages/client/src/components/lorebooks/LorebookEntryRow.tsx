@@ -322,19 +322,20 @@ export function LorebookEntryRow({
   }, [showStatusMenu]);
 
   const patch = useCallback(
-    (changes: Partial<LorebookEntry>) => {
-      updateEntry.mutate({ lorebookId, entryId: entry.id, ...changes });
+    (changes: Partial<LorebookEntry>, options?: { onError?: () => void }) => {
+      updateEntry.mutate({ lorebookId, entryId: entry.id, ...changes }, options);
     },
     [lorebookId, entry.id, updateEntry],
   );
 
   const handleStatusChange = useCallback(
     (next: EntryStatus) => {
+      const previous = localStatus;
       setLocalStatus(next);
       setShowStatusMenu(false);
-      patch(statusToFlags(next));
+      patch(statusToFlags(next), { onError: () => setLocalStatus(previous) });
     },
-    [patch],
+    [localStatus, patch],
   );
 
   const handleStatusMenuToggle = useCallback(
@@ -347,25 +348,30 @@ export function LorebookEntryRow({
 
   const handleEnabledChange = useCallback(
     (next: boolean) => {
+      const previous = localEnabled;
       setLocalEnabled(next);
-      patch({ enabled: next });
+      patch({ enabled: next }, { onError: () => setLocalEnabled(previous) });
     },
-    [patch],
+    [localEnabled, patch],
   );
 
   const handleUseRegexToggle = useCallback(
     (e: ReactMouseEvent) => {
       e.stopPropagation();
+      const previous = localUseRegex;
       const next = !localUseRegex;
       setLocalUseRegex(next);
-      patch({ useRegex: next });
+      patch({ useRegex: next }, { onError: () => setLocalUseRegex(previous) });
     },
     [localUseRegex, patch],
   );
 
   const handleNameCommit = useCallback(() => {
     if (localName.trim() && localName !== entry.name) {
-      patch({ name: localName.trim() });
+      const previous = entry.name;
+      const next = localName.trim();
+      setLocalName(next);
+      patch({ name: next }, { onError: () => setLocalName(previous) });
     } else if (!localName.trim()) {
       // Don't allow empty names — revert.
       setLocalName(entry.name);
@@ -1106,7 +1112,6 @@ function toggleStringValue(values: string[] | undefined, value: string) {
 
 function buildEntrySavePayload(form: Partial<LorebookEntry>) {
   return {
-    name: form.name,
     content: form.content,
     description: form.description,
     keys: form.keys,
@@ -1114,7 +1119,6 @@ function buildEntrySavePayload(form: Partial<LorebookEntry>) {
     selectiveLogic: form.selectiveLogic,
     matchWholeWords: form.matchWholeWords,
     caseSensitive: form.caseSensitive,
-    useRegex: form.useRegex,
     characterFilterMode: form.characterFilterMode,
     characterFilterIds: form.characterFilterIds,
     characterTagFilterMode: form.characterTagFilterMode,

@@ -169,6 +169,22 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+type SaveFilePickerWindow = Window &
+  typeof globalThis & {
+    showSaveFilePicker?: (options?: {
+      suggestedName?: string;
+      types?: Array<{
+        description?: string;
+        accept: Record<string, string[]>;
+      }>;
+    }) => Promise<{
+      createWritable: () => Promise<{
+        write: (data: Blob) => Promise<void>;
+        close: () => Promise<void>;
+      }>;
+    }>;
+  };
+
 function triggerBrowserDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -179,6 +195,39 @@ function triggerBrowserDownload(blob: Blob, filename: string) {
   a.click();
   a.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function getSavePickerTypes(blob: Blob, filename: string) {
+  const extension = filename.includes(".") ? filename.slice(filename.lastIndexOf(".")).toLowerCase() : "";
+  if (!extension) return undefined;
+  const mimeType = blob.type || "application/octet-stream";
+  return [
+    {
+      description: extension ? `${extension.slice(1).toUpperCase()} file` : "Export file",
+      accept: { [mimeType]: [extension] },
+    },
+  ];
+}
+
+async function saveBlob(blob: Blob, filename: string) {
+  const pickerWindow = window as SaveFilePickerWindow;
+  if (!window.isSecureContext || typeof pickerWindow.showSaveFilePicker !== "function") {
+    triggerBrowserDownload(blob, filename);
+    return;
+  }
+
+  try {
+    const handle = await pickerWindow.showSaveFilePicker({
+      suggestedName: filename,
+      types: getSavePickerTypes(blob, filename),
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") return;
+    triggerBrowserDownload(blob, filename);
+  }
 }
 
 async function readDownloadFilename(res: Response, fallbackFilename: string) {
@@ -228,7 +277,7 @@ export const api = {
     }
     const filename = await readDownloadFilename(res, fallbackFilename);
     const blob = await res.blob();
-    triggerBrowserDownload(blob, filename);
+    await saveBlob(blob, filename);
   },
 
   /** Download a POST endpoint as a file (useful for bulk exports). */
@@ -245,7 +294,7 @@ export const api = {
     }
     const filename = await readDownloadFilename(res, fallbackFilename);
     const blob = await res.blob();
-    triggerBrowserDownload(blob, filename);
+    await saveBlob(blob, filename);
   },
 
   /**

@@ -295,7 +295,10 @@ export async function injectGameGmPromptRuntime(args: {
     tone: (setupConfig?.tone as string) || "balanced",
     rating: (setupConfig?.rating as "sfw" | "nsfw") || "sfw",
     campaignPlan: gameBlueprint?.campaignPlan ?? null,
-    canGenerateBackgrounds: !!args.chatMetadata.enableSpriteGeneration && !!args.chatMetadata.gameImageConnectionId,
+    canGenerateBackgrounds:
+      !!args.chatMetadata.enableSpriteGeneration &&
+      args.chatMetadata.gameImageAutoGenerationEnabled !== false &&
+      !!args.chatMetadata.gameImageConnectionId,
     artStylePrompt: (setupConfig?.artStylePrompt as string) || undefined,
     gameTime,
     weatherContext,

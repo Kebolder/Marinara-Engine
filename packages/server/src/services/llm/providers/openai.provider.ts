@@ -187,6 +187,15 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
   }
 
+  private static normalizeResponsesIncompleteFinishReason(reason: unknown): string {
+    const normalized = typeof reason === "string" ? reason.trim().toLowerCase() : "";
+    if (!normalized) return "unknown";
+    if (normalized === "max_output_tokens" || normalized === "max_tokens" || normalized === "length") {
+      return "length";
+    }
+    return normalized;
+  }
+
   private static normalizeTopP(topP: number | null | undefined): number | undefined {
     if (topP == null || !Number.isFinite(topP)) return undefined;
     if (topP < 0) return undefined;
@@ -292,7 +301,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       function: {
         name,
         // "parameters" is used by some models instead of the OpenAI-standard "arguments"
-      arguments: OpenAIProvider.stringifyToolArguments(fn.arguments ?? fn.parameters ?? raw.arguments ?? raw.args ?? raw.parameters),
+        arguments: OpenAIProvider.stringifyToolArguments(
+          fn.arguments ?? fn.parameters ?? raw.arguments ?? raw.args ?? raw.parameters,
+        ),
       },
     };
   }
@@ -919,7 +930,11 @@ export class OpenAIProvider extends BaseLLMProvider {
         }
       }
 
-      if (this.shouldSendParameter(options, "verbosity") && options.verbosity && this.supportsGpt5Verbosity(options.model)) {
+      if (
+        this.shouldSendParameter(options, "verbosity") &&
+        options.verbosity &&
+        this.supportsGpt5Verbosity(options.model)
+      ) {
         body.verbosity = options.verbosity;
       }
 
@@ -979,6 +994,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         "OpenAI chat() non-stream response",
       );
       const choices = OpenAIProvider.requireChatCompletionsChoices<{
+        finish_reason?: string | null;
         message: Record<string, unknown> & { content: string | unknown[] | null; refusal?: string };
       }>(json, "OpenAI chat() non-stream response");
       const msg = choices[0]?.message;
@@ -997,7 +1013,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       } else {
         yield (typeof msg?.content === "string" ? msg.content : "") || refusal;
       }
-      return OpenAIProvider.extractChatCompletionsUsage(json.usage as ChatCompletionsUsagePayload | undefined);
+      const usage = OpenAIProvider.extractChatCompletionsUsage(json.usage as ChatCompletionsUsagePayload | undefined);
+      const finishReason = choices[0]?.finish_reason;
+      return usage && finishReason ? { ...usage, finishReason } : usage;
     }
 
     // Stream SSE response
@@ -1018,6 +1036,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     let streamUsage: LLMUsage | undefined;
+    let finishReason: string | undefined;
     const reasoningMetadata: Record<string, unknown> = {};
 
     try {
@@ -1034,7 +1053,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           if (data == null) continue;
           if (data === "[DONE]") {
             this.emitChatCompletionsReasoning(options, reasoningMetadata);
-            if (streamUsage) return streamUsage;
+            if (streamUsage) return finishReason ? { ...streamUsage, finishReason } : streamUsage;
             return;
           }
 
@@ -1056,6 +1075,8 @@ export class OpenAIProvider extends BaseLLMProvider {
             }
             continue;
           }
+          const choice0 = parsed.choices[0] as { finish_reason?: string | null } | undefined;
+          if (choice0?.finish_reason) finishReason = choice0.finish_reason;
           const delta = (
             parsed.choices[0] as
               | { delta?: Record<string, unknown> & { content?: string | unknown[]; refusal?: string } }
@@ -1083,7 +1104,7 @@ export class OpenAIProvider extends BaseLLMProvider {
       if (options.signal) options.signal.removeEventListener("abort", onAbort);
     }
     this.emitChatCompletionsReasoning(options, reasoningMetadata);
-    if (streamUsage) return streamUsage;
+    if (streamUsage) return finishReason ? { ...streamUsage, finishReason } : streamUsage;
   }
 
   /** Non-streaming completion with tool-call support */
@@ -1132,7 +1153,11 @@ export class OpenAIProvider extends BaseLLMProvider {
       body.max_tokens = maxTokens;
     }
 
-    if (options.tools?.length && !options.forceTextualToolCalls && (!suppressModelParameters || this.allowsToolCalling)) {
+    if (
+      options.tools?.length &&
+      !options.forceTextualToolCalls &&
+      (!suppressModelParameters || this.allowsToolCalling)
+    ) {
       body.tools = options.tools;
       body.tool_choice = "auto";
     }
@@ -1176,7 +1201,11 @@ export class OpenAIProvider extends BaseLLMProvider {
         }
       }
 
-      if (this.shouldSendParameter(options, "verbosity") && options.verbosity && this.supportsGpt5Verbosity(options.model)) {
+      if (
+        this.shouldSendParameter(options, "verbosity") &&
+        options.verbosity &&
+        this.supportsGpt5Verbosity(options.model)
+      ) {
         body.verbosity = options.verbosity;
       }
 
@@ -1388,8 +1417,13 @@ export class OpenAIProvider extends BaseLLMProvider {
                       ? fn.parameters
                       : typeof tc.parameters === "string"
                         ? tc.parameters
-                        : fn.arguments !== undefined || tc.arguments !== undefined || fn.parameters !== undefined || tc.parameters !== undefined
-                          ? OpenAIProvider.stringifyToolArguments(fn.arguments ?? tc.arguments ?? fn.parameters ?? tc.parameters)
+                        : fn.arguments !== undefined ||
+                            tc.arguments !== undefined ||
+                            fn.parameters !== undefined ||
+                            tc.parameters !== undefined
+                          ? OpenAIProvider.stringifyToolArguments(
+                              fn.arguments ?? tc.arguments ?? fn.parameters ?? tc.parameters,
+                            )
                           : "";
               const existing = toolCallsMap.get(index);
               if (!existing) {
@@ -1629,7 +1663,8 @@ export class OpenAIProvider extends BaseLLMProvider {
       !suppressModelParameters &&
       !this.isNoTemperatureModel(options.model, options.reasoningEffort)
     ) {
-      if (this.shouldSendParameter(options, "temperature") && options.temperature != null) body.temperature = options.temperature;
+      if (this.shouldSendParameter(options, "temperature") && options.temperature != null)
+        body.temperature = options.temperature;
       const topP = this.shouldSendParameter(options, "topP") ? OpenAIProvider.normalizeTopP(options.topP) : undefined;
       if (topP != null) body.top_p = topP;
     }
@@ -1761,7 +1796,15 @@ export class OpenAIProvider extends BaseLLMProvider {
       this.emitEncryptedReasoning(json, options);
       const text = this.extractResponsesText(json);
       if (text) yield text;
-      return this.extractResponsesUsage(json);
+      const usage = this.extractResponsesUsage(json);
+      return usage && json.status === "incomplete"
+        ? {
+            ...usage,
+            finishReason: OpenAIProvider.normalizeResponsesIncompleteFinishReason(
+              (json.incomplete_details as Record<string, unknown> | undefined)?.reason,
+            ),
+          }
+        : usage;
     }
 
     // Stream SSE
@@ -1847,6 +1890,14 @@ export class OpenAIProvider extends BaseLLMProvider {
               const resp = parsed.response as Record<string, unknown> | undefined;
               if (resp) {
                 streamUsage = this.extractResponsesUsage(resp);
+                if (resp.status === "incomplete" && streamUsage) {
+                  streamUsage = {
+                    ...streamUsage,
+                    finishReason: OpenAIProvider.normalizeResponsesIncompleteFinishReason(
+                      (resp.incomplete_details as Record<string, unknown> | undefined)?.reason,
+                    ),
+                  };
+                }
                 this.emitEncryptedReasoning(resp, options);
                 // If no text was streamed (e.g. refusal or content only in the
                 // completed payload), extract it as a last-resort fallback.
@@ -1871,6 +1922,21 @@ export class OpenAIProvider extends BaseLLMProvider {
               const resp = parsed.response as Record<string, unknown> | undefined;
               const reason = (resp?.incomplete_details as Record<string, unknown>)?.reason ?? "unknown";
               logger.warn("[OpenAI Responses] Stream ended with response.incomplete (reason=%s)", reason);
+              if (resp) {
+                streamUsage = this.extractResponsesUsage(resp);
+                this.emitEncryptedReasoning(resp, options);
+                if (!yieldedAny) {
+                  const fallback = this.extractResponsesText(resp);
+                  if (fallback) {
+                    yieldedAny = true;
+                    yield fallback;
+                  }
+                }
+              }
+              streamUsage = {
+                ...(streamUsage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 }),
+                finishReason: OpenAIProvider.normalizeResponsesIncompleteFinishReason(reason),
+              };
               break;
             }
             // Ignore other event types (response.created, response.in_progress, etc.)
@@ -1991,158 +2057,162 @@ export class OpenAIProvider extends BaseLLMProvider {
     let currentEvent = "";
 
     try {
-    while (true) {
-      const { done, value } = await reader.read();
+      while (true) {
+        const { done, value } = await reader.read();
 
-      sseBuffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
-      const lines = sseBuffer.split(/\r?\n/);
-      sseBuffer = done ? "" : (lines.pop() ?? "");
+        sseBuffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split(/\r?\n/);
+        sseBuffer = done ? "" : (lines.pop() ?? "");
 
-      for (const line of lines) {
-        const trimmed = line.trim();
+        for (const line of lines) {
+          const trimmed = line.trim();
 
-        const eventName = OpenAIProvider.extractSseEvent(trimmed);
-        if (eventName != null) {
-          currentEvent = eventName;
-          continue;
-        }
-
-        const data = OpenAIProvider.extractSseData(trimmed);
-        if (data == null) {
-          if (trimmed === "") currentEvent = "";
-          continue;
-        }
-
-        let parsed: Record<string, unknown>;
-        try {
-          parsed = JSON.parse(data) as Record<string, unknown>;
-        } catch {
-          currentEvent = "";
-          continue;
-        }
-        // Use SSE event: field if present, otherwise fall back to the JSON type field.
-        // Some proxies strip SSE event names and only forward data lines.
-        const eventType = currentEvent || (parsed.type as string) || "";
-
-        switch (eventType) {
-          case "response.text.delta":
-          case "response.output_text.delta": {
-            const delta = parsed.delta as string | undefined;
-            if (delta) {
-              content += delta;
-              await options.onToken?.(delta);
-            }
-            break;
+          const eventName = OpenAIProvider.extractSseEvent(trimmed);
+          if (eventName != null) {
+            currentEvent = eventName;
+            continue;
           }
 
-          case "response.refusal.delta": {
-            const delta = parsed.delta as string | undefined;
-            if (delta) {
-              content += delta;
-              await options.onToken?.(delta);
-            }
-            break;
+          const data = OpenAIProvider.extractSseData(trimmed);
+          if (data == null) {
+            if (trimmed === "") currentEvent = "";
+            continue;
           }
 
-          case "response.reasoning_summary_text.delta": {
-            const delta = parsed.delta as string | undefined;
-            if (delta && options.onThinking) options.onThinking(delta);
-            break;
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(data) as Record<string, unknown>;
+          } catch {
+            currentEvent = "";
+            continue;
           }
+          // Use SSE event: field if present, otherwise fall back to the JSON type field.
+          // Some proxies strip SSE event names and only forward data lines.
+          const eventType = currentEvent || (parsed.type as string) || "";
 
-          case "response.output_item.added": {
-            // A new output item appeared — could be a function_call
-            const item = parsed.item as Record<string, unknown> | undefined;
-            if (item?.type === "function_call") {
-              const callId = (item.call_id ?? item.id) as string;
-              fnCallArgs.set(callId, {
-                id: callId,
-                name: (item.name as string) ?? "",
-                arguments: (item.arguments as string) ?? "",
-              });
-            }
-            break;
-          }
-
-          case "response.function_call_arguments.delta": {
-            const callId = parsed.call_id as string | undefined;
-            const delta = parsed.delta as string | undefined;
-            if (callId && delta) {
-              const entry = fnCallArgs.get(callId);
-              if (entry) entry.arguments += delta;
-            }
-            break;
-          }
-
-          case "response.function_call_arguments.done": {
-            const callId = parsed.call_id as string | undefined;
-            if (callId) {
-              const entry = fnCallArgs.get(callId);
-              if (entry) {
-                // Overwrite with the final arguments if provided
-                const args = parsed.arguments as string | undefined;
-                if (args) entry.arguments = args;
+          switch (eventType) {
+            case "response.text.delta":
+            case "response.output_text.delta": {
+              const delta = parsed.delta as string | undefined;
+              if (delta) {
+                content += delta;
+                await options.onToken?.(delta);
               }
+              break;
             }
-            break;
-          }
 
-          case "response.output_item.done": {
-            // Finalize function_call items
-            const item = parsed.item as Record<string, unknown> | undefined;
-            if (item?.type === "function_call") {
-              const callId = ((item.call_id ?? item.id) as string) ?? "";
-              const entry = fnCallArgs.get(callId);
-              functionCalls.push({
-                id: callId,
-                type: "function",
-                function: {
-                  name: entry?.name ?? (item.name as string) ?? "",
-                  arguments: entry?.arguments ?? (item.arguments as string) ?? "",
-                },
-              });
+            case "response.refusal.delta": {
+              const delta = parsed.delta as string | undefined;
+              if (delta) {
+                content += delta;
+                await options.onToken?.(delta);
+              }
+              break;
             }
-            break;
-          }
 
-          case "response.completed": {
-            const resp = parsed.response as Record<string, unknown> | undefined;
-            if (resp) {
-              streamUsage = this.extractResponsesUsage(resp);
-              this.emitEncryptedReasoning(resp, options);
-              const status = resp.status as string | undefined;
-              if (status === "incomplete") finishReason = "length";
-              // Fallback: extract text/refusal from the completed response
-              // if nothing was streamed (e.g. model returned only in payload)
-              if (!content) {
-                const fallback = this.extractResponsesText(resp);
-                if (fallback) {
-                  content = fallback;
-                  await options.onToken?.(fallback);
+            case "response.reasoning_summary_text.delta": {
+              const delta = parsed.delta as string | undefined;
+              if (delta && options.onThinking) options.onThinking(delta);
+              break;
+            }
+
+            case "response.output_item.added": {
+              // A new output item appeared — could be a function_call
+              const item = parsed.item as Record<string, unknown> | undefined;
+              if (item?.type === "function_call") {
+                const callId = (item.call_id ?? item.id) as string;
+                fnCallArgs.set(callId, {
+                  id: callId,
+                  name: (item.name as string) ?? "",
+                  arguments: (item.arguments as string) ?? "",
+                });
+              }
+              break;
+            }
+
+            case "response.function_call_arguments.delta": {
+              const callId = parsed.call_id as string | undefined;
+              const delta = parsed.delta as string | undefined;
+              if (callId && delta) {
+                const entry = fnCallArgs.get(callId);
+                if (entry) entry.arguments += delta;
+              }
+              break;
+            }
+
+            case "response.function_call_arguments.done": {
+              const callId = parsed.call_id as string | undefined;
+              if (callId) {
+                const entry = fnCallArgs.get(callId);
+                if (entry) {
+                  // Overwrite with the final arguments if provided
+                  const args = parsed.arguments as string | undefined;
+                  if (args) entry.arguments = args;
                 }
               }
+              break;
             }
-            break;
+
+            case "response.output_item.done": {
+              // Finalize function_call items
+              const item = parsed.item as Record<string, unknown> | undefined;
+              if (item?.type === "function_call") {
+                const callId = ((item.call_id ?? item.id) as string) ?? "";
+                const entry = fnCallArgs.get(callId);
+                functionCalls.push({
+                  id: callId,
+                  type: "function",
+                  function: {
+                    name: entry?.name ?? (item.name as string) ?? "",
+                    arguments: entry?.arguments ?? (item.arguments as string) ?? "",
+                  },
+                });
+              }
+              break;
+            }
+
+            case "response.completed": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              if (resp) {
+                streamUsage = this.extractResponsesUsage(resp);
+                this.emitEncryptedReasoning(resp, options);
+                const status = resp.status as string | undefined;
+                if (status === "incomplete") {
+                  finishReason = OpenAIProvider.normalizeResponsesIncompleteFinishReason(
+                    (resp.incomplete_details as Record<string, unknown> | undefined)?.reason,
+                  );
+                }
+                // Fallback: extract text/refusal from the completed response
+                // if nothing was streamed (e.g. model returned only in payload)
+                if (!content) {
+                  const fallback = this.extractResponsesText(resp);
+                  if (fallback) {
+                    content = fallback;
+                    await options.onToken?.(fallback);
+                  }
+                }
+              }
+              break;
+            }
+            case "response.failed": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const error = resp?.error as Record<string, unknown> | undefined;
+              const msg = (error?.message as string) ?? "unknown error";
+              logger.error(new Error(msg), "[OpenAI Responses] chatCompleteResponses stream failed");
+              throw new Error(`OpenAI Responses stream failed: ${msg}`);
+            }
+            case "response.incomplete": {
+              const resp = parsed.response as Record<string, unknown> | undefined;
+              const reason = (resp?.incomplete_details as Record<string, unknown>)?.reason ?? "unknown";
+              logger.warn("[OpenAI Responses] chatCompleteResponses stream incomplete (reason=%s)", reason);
+              finishReason = OpenAIProvider.normalizeResponsesIncompleteFinishReason(reason);
+              break;
+            }
           }
-          case "response.failed": {
-            const resp = parsed.response as Record<string, unknown> | undefined;
-            const error = resp?.error as Record<string, unknown> | undefined;
-            const msg = (error?.message as string) ?? "unknown error";
-            logger.error(new Error(msg), "[OpenAI Responses] chatCompleteResponses stream failed");
-            throw new Error(`OpenAI Responses stream failed: ${msg}`);
-          }
-          case "response.incomplete": {
-            const resp = parsed.response as Record<string, unknown> | undefined;
-            const reason = (resp?.incomplete_details as Record<string, unknown>)?.reason ?? "unknown";
-            logger.warn("[OpenAI Responses] chatCompleteResponses stream incomplete (reason=%s)", reason);
-            finishReason = "length";
-            break;
-          }
+          currentEvent = "";
         }
-        currentEvent = "";
+        if (done) break;
       }
-      if (done) break;
-    }
     } finally {
       options.signal?.removeEventListener("abort", onAbortCCR);
     }
@@ -2261,7 +2331,9 @@ export class OpenAIProvider extends BaseLLMProvider {
     if (toolCalls.length > 0) {
       finishReason = "tool_calls";
     } else if (status === "incomplete") {
-      finishReason = "length";
+      finishReason = OpenAIProvider.normalizeResponsesIncompleteFinishReason(
+        (json.incomplete_details as Record<string, unknown> | undefined)?.reason,
+      );
     } else {
       finishReason = "stop";
     }

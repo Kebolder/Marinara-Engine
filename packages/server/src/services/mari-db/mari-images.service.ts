@@ -300,9 +300,9 @@ function capabilityForConnection(conn: ImageConnection): ImageCapability {
       if (!canEdit) notes.push("ComfyUI editing requires a workflow containing %reference_image% or %reference_image_name% placeholders.");
       break;
     case "novelai":
-      canEdit = /nai-diffusion-4/i.test(model);
+      canEdit = /^nai-diffusion-4-5(?:-(?:curated|full))?$/i.test(model.trim());
       editMode = canEdit ? "reference" : "none";
-      if (!canEdit) notes.push("NovelAI reference images are wired for V4/V4.5 models in Marinara.");
+      if (!canEdit) notes.push("NovelAI precise reference images require a V4.5 model in Marinara.");
       break;
     case "xai":
       notes.push("The current xAI adapter rejects reference images, so edits are not available through this path yet.");

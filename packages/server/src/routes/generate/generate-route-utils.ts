@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import {
   GENERATION_PARAMETER_SEND_KEYS,
+  LOCAL_SIDECAR_CONNECTION_ID,
   PROVIDERS,
   SUMMARY_TAIL_MESSAGES,
   applyTrackerFieldLocksToGameStatePatch,
@@ -15,6 +16,8 @@ import {
   type InventoryItem,
   type PlayerStats,
 } from "@marinara-engine/shared";
+import { LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
+import { sidecarModelService } from "../../services/sidecar/sidecar-model.service.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 
 export type SimpleMessage = {
@@ -30,6 +33,40 @@ export type SpeakerPrefixMessage = SimpleMessage & {
   providerMetadata?: Record<string, unknown>;
 };
 export type StoredGenerationParameters = Partial<GenerationParameters>;
+export type LocalSidecarGenerationConnection = {
+  id: typeof LOCAL_SIDECAR_CONNECTION_ID;
+  name: string;
+  provider: "local_sidecar";
+  baseUrl: string;
+  apiKey: string;
+  apiKeyEncrypted: string;
+  model: string;
+  imagePath: null;
+  maxContext: number;
+  isDefault: "false";
+  useForRandom: "false";
+  enableCaching: "false";
+  cachingAtDepth: number;
+  defaultForAgents: "false";
+  embeddingModel: string;
+  embeddingBaseUrl: string;
+  embeddingConnectionId: null;
+  openrouterProvider: null;
+  imageGenerationSource: null;
+  comfyuiWorkflow: null;
+  imageService: null;
+  imageEndpointId: null;
+  defaultParameters: null;
+  promptPresetId: null;
+  maxTokensOverride: null;
+  maxParallelJobs: number;
+  treatAsLocalEndpoint: "true";
+  claudeFastMode: "false";
+  folderId: null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
 export type PromptAttachment = {
   type?: string | null;
   url?: string | null;
@@ -39,6 +76,44 @@ export type PromptAttachment = {
   prompt?: string | null;
   galleryId?: string | null;
 };
+
+export function createLocalSidecarGenerationConnection(): LocalSidecarGenerationConnection {
+  const config = sidecarModelService.getConfig();
+  return {
+    id: LOCAL_SIDECAR_CONNECTION_ID,
+    name: "Local Model (sidecar)",
+    provider: "local_sidecar",
+    baseUrl: "local-sidecar://runtime",
+    apiKey: "",
+    apiKeyEncrypted: "",
+    model: LOCAL_SIDECAR_MODEL,
+    imagePath: null,
+    maxContext: config.contextSize,
+    isDefault: "false",
+    useForRandom: "false",
+    enableCaching: "false",
+    cachingAtDepth: 5,
+    defaultForAgents: "false",
+    embeddingModel: "",
+    embeddingBaseUrl: "",
+    embeddingConnectionId: null,
+    openrouterProvider: null,
+    imageGenerationSource: null,
+    comfyuiWorkflow: null,
+    imageService: null,
+    imageEndpointId: null,
+    defaultParameters: null,
+    promptPresetId: null,
+    maxTokensOverride: null,
+    maxParallelJobs: 1,
+    treatAsLocalEndpoint: "true",
+    claudeFastMode: "false",
+    folderId: null,
+    sortOrder: 0,
+    createdAt: "local-sidecar",
+    updatedAt: "local-sidecar",
+  };
+}
 
 function createEmptyPlayerStats(): PlayerStats {
   return { stats: [], attributes: null, skills: {}, inventory: [], activeQuests: [], status: "" };
@@ -416,8 +491,10 @@ function appendPromptMessageContent(target: PromptRoleMessage, source: PromptRol
  * conversation turns have started, later system blocks are appended to the
  * latest user message so the request remains system/user/assistant/user...
  * without making post-history preset sections removable during context fitting.
- * Depth injections are already positioned in history, so they become user
- * messages in place instead of moving to the latest user turn.
+ * History-context system messages are already positioned in the transcript, so
+ * they become user messages in place instead of moving to the latest user turn.
+ * Depth injections follow the same rule because they are also inserted at an
+ * exact history position.
  */
 export function appendNonLeadingSystemMessagesToLastUser<T extends PromptRoleMessage>(messages: T[]): T[] {
   const result: T[] = [];
@@ -435,7 +512,7 @@ export function appendNonLeadingSystemMessagesToLastUser<T extends PromptRoleMes
 
     if (cloned.role === "system") {
       const converted = { ...cloned, role: "user" as const };
-      if (cloned.contextKind === "injection") {
+      if (cloned.contextKind === "history" || cloned.contextKind === "injection") {
         result.push(converted as T);
         lastUserIndex = result.length - 1;
         continue;
@@ -511,6 +588,65 @@ export function computeSummaryHideIds(args: {
   return messages
     .filter((message) => entryIdSet.has(message.id) && !tailIdSet.has(message.id))
     .map((message) => message.id);
+}
+
+/**
+ * Select the messages a non-range rolling summary should cover. Normally the most
+ * recent `contextSize` *visible* messages (the historical `visible.slice(-contextSize)`
+ * behavior). When a previous summary has already hidden earlier messages, the window is
+ * extended back to that summary's hidden boundary, so a protected tail that has drifted
+ * beyond the last `contextSize` visible messages is re-summarized and hidden on this run
+ * instead of staying visible forever and accumulating (#2879). Because each entry's hide
+ * window is `entryMessageIds` minus the tail, the LLM-facing batch and the hide set share
+ * this selection; extending it is what lets a stranded tail be reclaimed.
+ *
+ * The boundary is identified ONLY by messages a live summary entry actually summarized
+ * (its `messageIds` / `hiddenMessageIds`) — NOT by the bare `hiddenFromAI` flag. That
+ * flag is ambiguous: the user's manual "Hide from AI" toggle writes the same flag, so
+ * keying off it would let a stray manual hide on an early message be misread as a summary
+ * boundary and balloon the window to (nearly) the whole chat. With no summary-owned
+ * hidden message before the window (e.g. the first summary, or only manual hides), the
+ * plain last-`size` window is used. Pure: `messages` must be chat-ordered (ascending).
+ */
+export function selectRollingSummaryMessages<T extends { id: string; extra?: unknown }>(args: {
+  messages: T[];
+  contextSize: number;
+  summaryEntries?: ReadonlyArray<{ enabled?: boolean; hiddenMessageIds?: string[]; messageIds?: string[] }>;
+}): T[] {
+  const { messages, contextSize } = args;
+  const size = Number.isFinite(contextSize) ? Math.max(0, Math.floor(contextSize)) : 0;
+  if (size <= 0) return [];
+  const visible = messages.filter((message) => !isMessageHiddenFromAI(message));
+  // Fewer visible messages than the window — nothing can have drifted out of it.
+  if (visible.length <= size) return visible;
+  // Ids owned by a live (enabled) summary entry — what it summarized. A manual "Hide from
+  // AI" never appears here, so it can't be mistaken for a boundary. We include both
+  // `hiddenMessageIds` and `messageIds` so entries created before `hiddenMessageIds`
+  // existed (see ChatSummaryEntry) still anchor a boundary; the hidden check in the scan
+  // keeps the protected tail (also in `messageIds`, but visible) from being chosen.
+  const summaryOwned = new Set<string>();
+  for (const entry of Array.isArray(args.summaryEntries) ? args.summaryEntries : []) {
+    if (entry?.enabled === false) continue;
+    for (const id of Array.isArray(entry?.hiddenMessageIds) ? entry.hiddenMessageIds : []) summaryOwned.add(id);
+    for (const id of Array.isArray(entry?.messageIds) ? entry.messageIds : []) summaryOwned.add(id);
+  }
+  if (summaryOwned.size === 0) return visible.slice(-size);
+  // The previous summary's boundary: the most recent hidden message owned by a summary.
+  let lastBoundaryIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isMessageHiddenFromAI(messages[i]!) && summaryOwned.has(messages[i]!.id)) {
+      lastBoundaryIndex = i;
+      break;
+    }
+  }
+  // No summary-hidden message precedes the window — keep the plain last-`size` window.
+  if (lastBoundaryIndex < 0) return visible.slice(-size);
+  // Visible messages accumulated since that boundary. Extend the window to cover all of
+  // them when they exceed `size`, pulling a drifted protected tail back into the batch.
+  const sinceBoundary = messages
+    .slice(lastBoundaryIndex + 1)
+    .filter((message) => !isMessageHiddenFromAI(message)).length;
+  return visible.slice(-Math.max(size, sinceBoundary));
 }
 
 export function resolveRoleplayChatSummary(chatMode: string, chatMetadata: Record<string, unknown>): string | null {
@@ -917,6 +1053,34 @@ export function appendReadableAttachmentsToContent(
   return `${content}${content.trim() ? "\n\n" : ""}${blocks.join("\n\n")}`;
 }
 
+export function formatSeparateAgentInjection(agentType: string, text: string, wrapFormat: string): string {
+  const meta =
+    agentType === "knowledge-router"
+      ? { heading: "Knowledge Router", tag: "knowledge_router" }
+      : agentType === "knowledge-retrieval"
+        ? { heading: "Knowledge Retrieval", tag: "knowledge_retrieval" }
+        : agentType === "director"
+          ? { heading: "Narrative Director", tag: "narrative_director" }
+          : { heading: agentType, tag: agentType.replace(/[^a-z0-9_-]/gi, "_") };
+
+  if (wrapFormat === "none") return `${meta.heading}:\n${text}`;
+  if (wrapFormat === "markdown") return `## ${meta.heading}\n${text}`;
+  return `<${meta.tag}>\n${text}\n</${meta.tag}>`;
+}
+
+export function appendSeparateAgentInjectionMessage(
+  messages: SimpleMessage[],
+  agentType: string,
+  text: string,
+  wrapFormat: string,
+): void {
+  messages.push({
+    role: "system",
+    content: formatSeparateAgentInjection(agentType, text, wrapFormat),
+    contextKind: "injection",
+  });
+}
+
 /** Resolve the base URL for a connection, falling back to the provider default. */
 export function resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string {
   if (connection.baseUrl) return connection.baseUrl.replace(/\/+$/, "");
@@ -1111,6 +1275,38 @@ function isNpcTrackerAvatarPath(value: unknown): value is string {
   return typeof value === "string" && value.trim().startsWith("/api/avatars/npc/");
 }
 
+function isTrackerAvatarCrop(value: unknown): value is Record<string, unknown> {
+  if (!isPlainRecord(value)) return false;
+
+  const hasCurrentShape =
+    typeof value.srcX === "number" &&
+    typeof value.srcY === "number" &&
+    typeof value.srcWidth === "number" &&
+    typeof value.srcHeight === "number" &&
+    Number.isFinite(value.srcX) &&
+    Number.isFinite(value.srcY) &&
+    Number.isFinite(value.srcWidth) &&
+    Number.isFinite(value.srcHeight) &&
+    value.srcX >= 0 &&
+    value.srcY >= 0 &&
+    value.srcWidth > 0 &&
+    value.srcHeight > 0 &&
+    value.srcX + value.srcWidth <= 1.001 &&
+    value.srcY + value.srcHeight <= 1.001;
+  if (hasCurrentShape) return true;
+
+  return (
+    typeof value.zoom === "number" &&
+    typeof value.offsetX === "number" &&
+    typeof value.offsetY === "number" &&
+    Number.isFinite(value.zoom) &&
+    Number.isFinite(value.offsetX) &&
+    Number.isFinite(value.offsetY) &&
+    value.zoom > 0 &&
+    (value.fullImage === undefined || typeof value.fullImage === "boolean")
+  );
+}
+
 export function isManualTrackerCharacterId(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("manual-");
 }
@@ -1151,11 +1347,15 @@ export function preserveTrackerCharacterUiFields(
     const previousPortraitFocusY = previous?.portraitFocusY;
     const previousPortraitZoom = previous?.portraitZoom;
     const previousAvatarPath = previous?.avatarPath;
+    const previousAvatarCrop = previous?.avatarCrop;
     if (
       (typeof character.avatarPath !== "string" || !character.avatarPath.trim()) &&
       isNpcTrackerAvatarPath(previousAvatarPath)
     ) {
       character.avatarPath = previousAvatarPath.trim();
+    }
+    if (!isTrackerAvatarCrop(character.avatarCrop) && isTrackerAvatarCrop(previousAvatarCrop)) {
+      character.avatarCrop = previousAvatarCrop;
     }
     if (
       (typeof character.portraitFocusX !== "number" || !Number.isFinite(character.portraitFocusX)) &&

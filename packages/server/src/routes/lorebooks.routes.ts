@@ -134,6 +134,8 @@ type CachedLorebookScanEntry = {
   id: string;
   content: string;
   matchedKeys: string[];
+  matchType?: "keyword" | "semantic" | "constant" | "sticky";
+  semanticScore?: number;
 };
 
 type CachedLorebookScan = {
@@ -176,6 +178,15 @@ function normalizeCachedLorebookScan(raw: unknown): CachedLorebookScan | null {
             matchedKeys: Array.isArray(candidate.matchedKeys)
               ? candidate.matchedKeys.filter((key): key is string => typeof key === "string")
               : [],
+            ...(candidate.matchType === "keyword" ||
+            candidate.matchType === "semantic" ||
+            candidate.matchType === "constant" ||
+            candidate.matchType === "sticky"
+              ? { matchType: candidate.matchType }
+              : {}),
+            ...(typeof candidate.semanticScore === "number" && Number.isFinite(candidate.semanticScore)
+              ? { semanticScore: candidate.semanticScore }
+              : {}),
           },
         ];
       })
@@ -257,42 +268,44 @@ function stringifyForSeed(value: unknown): string {
 }
 
 function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Array<Record<string, unknown>>) {
-  const exportedEntries: Record<string, Record<string, unknown>> = {};
-  entries.forEach((entry, index) => {
-    exportedEntries[String(index)] = {
-      uid: index,
-      key: asStringArray(entry.keys),
-      keysecondary: asStringArray(entry.secondaryKeys),
-      comment: String(entry.name ?? `Entry ${index + 1}`),
-      description: String(entry.description ?? ""),
-      content: String(entry.content ?? ""),
-      disable: entry.enabled === false,
-      constant: entry.constant === true,
-      selective: entry.selective === true,
-      selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
-      order: Number(entry.order ?? 100),
-      position: stPosition(entry.position),
-      depth: Number(entry.depth ?? 4),
-      probability: entry.probability ?? null,
-      scanDepth: entry.scanDepth ?? null,
-      matchWholeWords: entry.matchWholeWords === true,
-      caseSensitive: entry.caseSensitive === true,
-      role: stRole(entry.role),
-      group: String(entry.group ?? ""),
-      groupWeight: entry.groupWeight ?? null,
-      sticky: entry.sticky ?? null,
-      cooldown: entry.cooldown ?? null,
-      delay: entry.delay ?? null,
-      ephemeral: entry.ephemeral ?? null,
-      locked: entry.locked === true,
-      useRegex: entry.useRegex === true,
-      regex: entry.useRegex === true,
-      preventRecursion: entry.preventRecursion === true,
-      excludeRecursion: entry.excludeRecursion === true,
-      delayUntilRecursion: entry.delayUntilRecursion === true,
-      vectorized: entry.excludeFromVectorization !== true,
-    };
-  });
+  const exportedEntries = Object.fromEntries(
+    entries.map((entry, index) => [
+      String(index),
+      {
+        uid: index,
+        key: asStringArray(entry.keys),
+        keysecondary: asStringArray(entry.secondaryKeys),
+        comment: String(entry.name ?? `Entry ${index + 1}`),
+        description: String(entry.description ?? ""),
+        content: String(entry.content ?? ""),
+        disable: entry.enabled === false,
+        constant: entry.constant === true,
+        selective: entry.selective === true,
+        selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
+        order: Number(entry.order ?? 100),
+        position: stPosition(entry.position),
+        depth: Number(entry.depth ?? 4),
+        probability: entry.probability ?? null,
+        scanDepth: entry.scanDepth ?? null,
+        matchWholeWords: entry.matchWholeWords === true,
+        caseSensitive: entry.caseSensitive === true,
+        role: stRole(entry.role),
+        group: String(entry.group ?? ""),
+        groupWeight: entry.groupWeight ?? null,
+        sticky: entry.sticky ?? null,
+        cooldown: entry.cooldown ?? null,
+        delay: entry.delay ?? null,
+        ephemeral: entry.ephemeral ?? null,
+        locked: entry.locked === true,
+        useRegex: entry.useRegex === true,
+        regex: entry.useRegex === true,
+        preventRecursion: entry.preventRecursion === true,
+        excludeRecursion: entry.excludeRecursion === true,
+        delayUntilRecursion: entry.delayUntilRecursion === true,
+        vectorized: entry.excludeFromVectorization !== true,
+      },
+    ]),
+  );
 
   return {
     name: String(lb.name ?? "Lorebook"),
@@ -584,18 +597,25 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
   // ── Bulk operations ──
 
-  app.post<{ Params: { id: string } }>("/:id/entries/bulk", async (req) => {
-    const body = req.body as { entries: unknown[] };
-    const entries = (body.entries ?? []).map((e: unknown) => {
-      const { lorebookId, ...rest } = createLorebookEntrySchema.parse({
-        ...(e as Record<string, unknown>),
-        lorebookId: req.params.id,
+  app.post<{ Params: { id: string } }>("/:id/entries/bulk", async (req, reply) => {
+    try {
+      const body = req.body as { entries: unknown[] };
+      const entries = (body.entries ?? []).map((e: unknown) => {
+        const { lorebookId, ...rest } = createLorebookEntrySchema.parse({
+          ...(e as Record<string, unknown>),
+          lorebookId: req.params.id,
+        });
+        return rest;
       });
-      return rest;
-    });
-    const result = await storage.bulkCreateEntries(req.params.id, entries);
-    await syncCharacterBookFromLorebook(app.db, req.params.id);
-    return result;
+      const result = await storage.bulkCreateEntries(req.params.id, entries);
+      await syncCharacterBookFromLorebook(app.db, req.params.id);
+      return result;
+    } catch (err) {
+      if (err instanceof Error && err.message === "folderId does not belong to this lorebook") {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
   });
 
   app.post<{ Params: { id: string } }>("/:id/entries/transfer", async (req, reply) => {
@@ -636,20 +656,26 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
     const targetEntries = (await storage.listEntries(targetLorebookId)) as LorebookEntry[];
     const maxTargetOrder = targetEntries.reduce((max, entry) => Math.max(max, entry.order ?? 0), 0);
-    const created = [];
-    for (const [index, entry] of sourceEntries.entries()) {
-      created.push(
-        await storage.createEntry(
+    const created: LorebookEntry[] = [];
+    try {
+      for (const [index, entry] of sourceEntries.entries()) {
+        const transferred = (await storage.createEntry(
           buildTransferredEntryInput(entry, targetLorebookId, maxTargetOrder + (index + 1) * 10),
-        ),
-      );
-    }
-
-    if (operation === "move") {
-      for (const entry of sourceEntries) {
-        await storage.removeEntry(entry.id);
+        )) as LorebookEntry | null;
+        if (transferred) created.push(transferred);
       }
-      await syncCharacterBookFromLorebook(app.db, req.params.id);
+
+      if (operation === "move") {
+        for (const entry of sourceEntries) {
+          await storage.removeEntry(entry.id);
+        }
+        await syncCharacterBookFromLorebook(app.db, req.params.id);
+      }
+    } catch (err) {
+      if (created.length > 0) {
+        await Promise.allSettled(created.map((entry) => storage.removeEntry(entry.id)));
+      }
+      throw err;
     }
     await syncCharacterBookFromLorebook(app.db, targetLorebookId);
 
@@ -833,10 +859,12 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       if (cachedScan) {
         const resolvedContentById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.content]));
         const matchedKeysById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.matchedKeys]));
+        const matchTypeById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.matchType]));
+        const semanticScoreById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.semanticScore]));
         const activeEntries =
           cachedScan.activatedEntries.length > 0
-            ? await Promise.all(cachedScan.activatedEntries.map((entry) => storage.getEntry(entry.id))).then((entries) =>
-                entries.filter(Boolean),
+            ? await Promise.all(cachedScan.activatedEntries.map((entry) => storage.getEntry(entry.id))).then(
+                (entries) => entries.filter(Boolean),
               )
             : [];
 
@@ -853,6 +881,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
             constant: (e as Record<string, unknown>).constant,
             selective: (e as Record<string, unknown>).selective === true,
             matchedKeys: matchedKeysById.get(String((e as Record<string, unknown>).id)) ?? [],
+            matchType: matchTypeById.get(String((e as Record<string, unknown>).id)),
+            semanticScore: semanticScoreById.get(String((e as Record<string, unknown>).id)),
           })),
           totalTokens: cachedScan.totalTokensEstimate,
           totalEntries: cachedScan.totalEntries,
@@ -973,6 +1003,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
     const resolvedContentById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.content]));
     const matchedKeysById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.matchedKeys]));
+    const matchTypeById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.matchType]));
+    const semanticScoreById = new Map(result.activatedEntries.map((entry) => [entry.id, entry.semanticScore]));
 
     // Fetch full entry data for the activated IDs
     const activeEntries =
@@ -994,6 +1026,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         constant: (e as Record<string, unknown>).constant,
         selective: (e as Record<string, unknown>).selective === true,
         matchedKeys: matchedKeysById.get(String((e as Record<string, unknown>).id)) ?? [],
+        matchType: matchTypeById.get(String((e as Record<string, unknown>).id)),
+        semanticScore: semanticScoreById.get(String((e as Record<string, unknown>).id)),
       })),
       totalTokens: result.totalTokensEstimate,
       totalEntries: result.totalEntries,
@@ -1064,7 +1098,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     const existingEmbeddingDimension = body.onlyMissing
       ? ((allEntries as Array<Record<string, unknown>>)
           .map((entry) => entry.embedding)
-          .find((embedding): embedding is unknown[] => Array.isArray(embedding) && embedding.length > 0)?.length ?? null)
+          .find((embedding): embedding is unknown[] => Array.isArray(embedding) && embedding.length > 0)?.length ??
+        null)
       : null;
 
     // Batch embed (most APIs support multiple texts per call)
@@ -1111,5 +1146,15 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     }
 
     return { vectorized, total: allEntries.length, skipped: allEntries.length - entries.length };
+  });
+
+  app.delete<{ Params: { id: string } }>("/:id/vectors", async (req, reply) => {
+    const lorebook = await storage.getById(req.params.id);
+    if (!lorebook) return reply.status(404).send({ error: "Lorebook not found" });
+
+    const entries = (await storage.listEntries(req.params.id)) as Array<Record<string, unknown>>;
+    const cleared = entries.filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0).length;
+    await storage.clearEntryEmbeddings(req.params.id);
+    return { cleared, total: entries.length };
   });
 }

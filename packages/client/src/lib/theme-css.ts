@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Theme CSS utilities
 // ──────────────────────────────────────────────
+import { stripDangerousCss } from "./card-css";
 
 /**
  * Accept CSS that was accidentally saved with escaped newlines, e.g.
@@ -13,4 +14,8 @@ export function normalizeThemeCss(css: string): string {
   if (!/[{};]/.test(css)) return css;
 
   return css.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\r/g, "\n").replace(/\\t/g, "  ");
+}
+
+export function sanitizeAppCss(css: string): string {
+  return stripDangerousCss(normalizeThemeCss(css));
 }

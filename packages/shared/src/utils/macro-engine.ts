@@ -69,6 +69,20 @@ export interface ResolveMacroOptions {
    * "names" delays only {{char}}/{{charName}}; "all" also delays character field macros.
    */
   deferCharacterMacros?: "names" | "all";
+  /** Internal guard for recursive character/persona field macro expansion. */
+  fieldResolutionDepth?: number;
+  /** Stable seed used to resolve random/dice macros consistently for one message. */
+  randomSeed?: string;
+  /** Shared budget used internally to stop runaway recursive expansion. */
+  macroBudget?: MacroResolutionBudget;
+  /** Internal recursion depth for nested macro expansion. */
+  macroDepth?: number;
+  /** Maximum nested resolveMacros calls before expansion stops. */
+  maxMacroDepth?: number;
+  /** Maximum macro replacement operations in one resolution tree. */
+  maxMacroExpansions?: number;
+  /** Maximum resolved output length. */
+  maxMacroOutputLength?: number;
 }
 
 export interface SupportedMacroDefinition {
@@ -80,6 +94,11 @@ export interface SupportedMacroDefinition {
 const CHARACTER_MACRO_PATTERN =
   /\{\{(?:char|charName|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\}\}|\{\{\s*#if\s+[^}]*\b(?:char|charName|character|speaker|description|personality|backstory|appearance|scenario|example|charSysInfo|charPostHistory)\b/i;
 const MAX_CHARACTER_FIELD_RESOLUTION_DEPTH = 4;
+const MAX_DICE_COUNT = 1000;
+const MAX_DICE_SIDES = 1_000_000;
+const MAX_MACRO_RESOLUTION_DEPTH = 16;
+const MAX_MACRO_EXPANSIONS = 2_000;
+const MAX_MACRO_OUTPUT_LENGTH = 200_000;
 // Private placeholders used while character macros are deferred.
 // Internal-only and should be resolved before provider requests.
 const DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX = "\x1eMARINARA_DEFERRED_CHARACTER_";
@@ -107,10 +126,93 @@ type ConditionalBlockPayload = {
   condition: string;
   truthy: string;
   falsy: string;
+  branches?: never;
+};
+type ConditionalBranchPayload = {
+  condition: string | null;
+  content: string;
+};
+type ConditionalChainPayload = {
+  branches: ConditionalBranchPayload[];
+  condition?: never;
+  truthy?: never;
+  falsy?: never;
+};
+type DeferredConditionalPayload = ConditionalBlockPayload | ConditionalChainPayload;
+
+export type MacroResolutionBudget = {
+  expansions: number;
+  exceeded?: boolean;
 };
 
 export function stripMacroComments(template: string): string {
   return template.replace(MACRO_COMMENT_PATTERN, "");
+}
+
+function getMacroBudget(options: ResolveMacroOptions): MacroResolutionBudget {
+  if (options.macroBudget) return options.macroBudget;
+  const budget: MacroResolutionBudget = { expansions: 0 };
+  options.macroBudget = budget;
+  return budget;
+}
+
+function macroLimit(options: ResolveMacroOptions, key: "maxMacroDepth" | "maxMacroExpansions" | "maxMacroOutputLength") {
+  switch (key) {
+    case "maxMacroDepth":
+      return options.maxMacroDepth ?? MAX_MACRO_RESOLUTION_DEPTH;
+    case "maxMacroExpansions":
+      return options.maxMacroExpansions ?? MAX_MACRO_EXPANSIONS;
+    case "maxMacroOutputLength":
+      return options.maxMacroOutputLength ?? MAX_MACRO_OUTPUT_LENGTH;
+  }
+}
+
+function consumeMacroExpansion(options: ResolveMacroOptions): boolean {
+  const budget = getMacroBudget(options);
+  budget.expansions += 1;
+  if (budget.expansions > macroLimit(options, "maxMacroExpansions")) {
+    budget.exceeded = true;
+    return false;
+  }
+  return true;
+}
+
+function nestedMacroOptions(options: ResolveMacroOptions): ResolveMacroOptions {
+  return {
+    ...options,
+    macroBudget: getMacroBudget(options),
+    macroDepth: (options.macroDepth ?? 0) + 1,
+  };
+}
+
+function clampMacroOutput(value: string, options: ResolveMacroOptions): string {
+  const maxLength = macroLimit(options, "maxMacroOutputLength");
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
+function hashStringToUint32(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededUnitRandom(seed: string): number {
+  let state = hashStringToUint32(seed) || 0x9e3779b9;
+  state ^= state << 13;
+  state ^= state >>> 17;
+  state ^= state << 5;
+  return (state >>> 0) / 0x100000000;
+}
+
+function randomUnit(options: ResolveMacroOptions, original: string): number {
+  return options.randomSeed ? seededUnitRandom(`${options.randomSeed}:${original}`) : Math.random();
+}
+
+function randomInteger(options: ResolveMacroOptions, original: string, min: number, max: number): number {
+  return Math.floor(randomUnit(options, original) * (max - min + 1)) + min;
 }
 
 export function hasDeferredCharacterMacros(template: string): boolean {
@@ -131,6 +233,11 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
     syntax: "{{persona}}",
     description: "Active persona description, personality, backstory, appearance, and scenario joined by new lines",
   },
+  { category: "Identity", syntax: "{{personaDescription}}", description: "Active persona description" },
+  { category: "Identity", syntax: "{{personaPersonality}}", description: "Active persona personality" },
+  { category: "Identity", syntax: "{{personaBackstory}}", description: "Active persona backstory" },
+  { category: "Identity", syntax: "{{personaAppearance}}", description: "Active persona appearance" },
+  { category: "Identity", syntax: "{{personaScenario}}", description: "Active persona scenario" },
   { category: "Identity", syntax: "{{char}}", description: "Current character name" },
   { category: "Identity", syntax: "{{charName}}", description: "Alias for {{char}}" },
   { category: "Identity", syntax: "{{characters}}", description: "All character names, comma-separated" },
@@ -314,13 +421,29 @@ export function resolveDeferredCharacterMacros(
   return result;
 }
 
-function parseDeferredConditionalPayload(encoded: string): ConditionalBlockPayload | null {
+function parseDeferredConditionalPayload(encoded: string): DeferredConditionalPayload | null {
   try {
-    const parsed = JSON.parse(decodeURIComponent(encoded)) as Partial<ConditionalBlockPayload>;
-    if (typeof parsed.condition !== "string" || typeof parsed.truthy !== "string" || typeof parsed.falsy !== "string") {
+    const parsed = JSON.parse(decodeURIComponent(encoded)) as Partial<DeferredConditionalPayload>;
+    const branches = (parsed as Partial<ConditionalChainPayload>).branches;
+    if (Array.isArray(branches)) {
+      if (
+        branches.every(
+          (branch) =>
+            !!branch &&
+            typeof branch === "object" &&
+            (typeof branch.condition === "string" || branch.condition === null) &&
+            typeof branch.content === "string",
+        )
+      ) {
+        return { branches };
+      }
       return null;
     }
-    return { condition: parsed.condition, truthy: parsed.truthy, falsy: parsed.falsy };
+    const block = parsed as Partial<ConditionalBlockPayload>;
+    if (typeof block.condition !== "string" || typeof block.truthy !== "string" || typeof block.falsy !== "string") {
+      return null;
+    }
+    return { condition: block.condition, truthy: block.truthy, falsy: block.falsy };
   } catch {
     return null;
   }
@@ -330,7 +453,7 @@ function resolveDeferredCharacterConditionals(template: string, ctx: MacroContex
   return template.replace(DEFERRED_CHARACTER_CONDITIONAL_TOKEN_RE, (match, encoded: string) => {
     const payload = parseDeferredConditionalPayload(encoded);
     if (!payload) return match;
-    const selected = evaluateCondition(payload.condition, ctx) ? payload.truthy : payload.falsy;
+    const selected = selectConditionalPayloadBranch(payload, ctx, { trimResult: false });
     return resolveMacros(selected, ctx, { trimResult: false });
   });
 }
@@ -440,7 +563,7 @@ function replaceBalancedMacros(
   return result;
 }
 
-function encodeDeferredConditional(payload: ConditionalBlockPayload): string {
+function encodeDeferredConditional(payload: DeferredConditionalPayload): string {
   return `${DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX}${encodeURIComponent(JSON.stringify(payload))}\x1f`;
 }
 
@@ -466,6 +589,18 @@ function normalizeConditionKey(value: string): string {
   return value.trim().replace(/^@/, "").toLowerCase();
 }
 
+function resolvePersonaText(ctx: MacroContext): string {
+  return [
+    ctx.personaFields?.description,
+    ctx.personaFields?.personality,
+    ctx.personaFields?.backstory,
+    ctx.personaFields?.appearance,
+    ctx.personaFields?.scenario,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
+}
+
 function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
   const quoted = stripOuterQuotes(raw);
   if (quoted !== null) return quoted;
@@ -487,6 +622,18 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
       return ctx.participants ?? "";
     case "speakerpersona":
       return ctx.speakerPersona ?? "";
+    case "persona":
+      return resolvePersonaText(ctx);
+    case "personadescription":
+      return ctx.personaFields?.description ?? "";
+    case "personapersonality":
+      return ctx.personaFields?.personality ?? "";
+    case "personabackstory":
+      return ctx.personaFields?.backstory ?? "";
+    case "personaappearance":
+      return ctx.personaFields?.appearance ?? "";
+    case "personascenario":
+      return ctx.personaFields?.scenario ?? "";
     case "characters":
       return ctx.characters.join(", ");
     case "input":
@@ -529,7 +676,7 @@ function isCharacterConditionalOperand(raw: string): boolean {
 
 function parseConditionExpression(condition: string): { left: string; operator: string; right?: string } {
   const match = condition.match(
-    /^(.+?)\s*(==|!=|=|is\s+not|is|not\s+contains|not\s+includes|contains|includes)\s*(.+)$/i,
+    /^(.+?)\s*(>=|<=|>|<|==|!=|=|is\s+not|is|not\s+contains|not\s+includes|contains|includes)\s*(.+)$/i,
   );
   if (!match) return { left: condition.trim(), operator: "truthy" };
   return {
@@ -546,17 +693,37 @@ function conditionDependsOnCharacter(condition: string): boolean {
   );
 }
 
+function parseConditionNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function compareConditionValues(left: string, operator: string, right: string): boolean {
   const leftNormalized = left.trim().toLowerCase();
   const rightNormalized = right.trim().toLowerCase();
+  const leftNumber = parseConditionNumber(left);
+  const rightNumber = parseConditionNumber(right);
+  const bothNumeric = leftNumber !== null && rightNumber !== null;
   switch (operator) {
     case "=":
     case "==":
     case "is":
+      if (bothNumeric) return leftNumber === rightNumber;
       return leftNormalized === rightNormalized;
     case "!=":
     case "is not":
+      if (bothNumeric) return leftNumber !== rightNumber;
       return leftNormalized !== rightNormalized;
+    case ">":
+      return bothNumeric ? leftNumber > rightNumber : false;
+    case "<":
+      return bothNumeric ? leftNumber < rightNumber : false;
+    case ">=":
+      return bothNumeric ? leftNumber >= rightNumber : false;
+    case "<=":
+      return bothNumeric ? leftNumber <= rightNumber : false;
     case "contains":
     case "includes":
       return leftNormalized.includes(rightNormalized);
@@ -568,51 +735,184 @@ function compareConditionValues(left: string, operator: string, right: string): 
   }
 }
 
-function evaluateCondition(condition: string, ctx: MacroContext): boolean {
-  const parsed = parseConditionExpression(condition);
+function resolveConditionMacros(condition: string, ctx: MacroContext, options: ResolveMacroOptions): string {
+  if (!condition.includes("{{")) return condition;
+  return resolveMacros(condition, ctx, {
+    ...nestedMacroOptions(options),
+    trimResult: false,
+  });
+}
+
+function evaluateCondition(condition: string, ctx: MacroContext, options: ResolveMacroOptions = {}): boolean {
+  const parsed = parseConditionExpression(resolveConditionMacros(condition, ctx, options));
   const left = resolveConditionalOperand(parsed.left, ctx);
   if (parsed.operator === "truthy") return left.trim().length > 0 && !/^(false|0|no|off|null|undefined)$/i.test(left);
   const right = resolveConditionalOperand(parsed.right ?? "", ctx);
   return compareConditionValues(left, parsed.operator, right);
 }
 
-function findConditionalStart(input: string, fromIndex: number): RegExpExecArray | null {
-  const startRe = /\{\{\s*#if\s+([\s\S]*?)\s*\}\}/gi;
-  startRe.lastIndex = fromIndex;
-  return startRe.exec(input);
+type MacroTag = {
+  start: number;
+  end: number;
+  body: string;
+};
+
+type ConditionalStartTag = MacroTag & {
+  condition: string;
+};
+
+type ConditionalBranch = {
+  condition: string | null;
+  contentStart: number;
+  contentEnd: number;
+};
+
+function readNextMacroTag(input: string, fromIndex: number): MacroTag | null {
+  let searchIndex = fromIndex;
+  while (searchIndex < input.length) {
+    const start = input.indexOf("{{", searchIndex);
+    if (start === -1) return null;
+    const end = findBalancedMacroEnd(input, start);
+    if (end === -1) return null;
+    return { start, end, body: input.slice(start + 2, end - 2).trim() };
+  }
+  return null;
 }
 
-function findConditionalEnd(
+function parseIfCondition(body: string): string | null {
+  const match = body.match(/^#if(?:\s+([\s\S]*))?$/i);
+  return match ? (match[1] ?? "").trim() : null;
+}
+
+function parseElseIfCondition(body: string): string | null {
+  const match = body.match(/^else\s+if(?:\s+([\s\S]*))?$/i);
+  return match ? (match[1] ?? "").trim() : null;
+}
+
+function findConditionalStart(input: string, fromIndex: number): ConditionalStartTag | null {
+  let searchIndex = fromIndex;
+  while (searchIndex < input.length) {
+    const tag = readNextMacroTag(input, searchIndex);
+    if (!tag) return null;
+    const condition = parseIfCondition(tag.body);
+    if (condition !== null) return { ...tag, condition };
+    searchIndex = tag.end;
+  }
+  return null;
+}
+
+function findConditionalBranches(
   input: string,
   contentStart: number,
-): { elseStart: number | null; elseEnd: number | null; endStart: number; endEnd: number } | null {
-  const tagRe = /\{\{\s*(#if\b[\s\S]*?|else|\/if)\s*\}\}/gi;
-  tagRe.lastIndex = contentStart;
+  initialCondition: string,
+): { branches: ConditionalBranch[]; endStart: number; endEnd: number } | null {
   let depth = 1;
-  let elseStart: number | null = null;
-  let elseEnd: number | null = null;
-  let match: RegExpExecArray | null;
+  let currentBranch: Omit<ConditionalBranch, "contentEnd"> = {
+    condition: initialCondition,
+    contentStart,
+  };
+  const branches: ConditionalBranch[] = [];
+  let searchIndex = contentStart;
 
-  while ((match = tagRe.exec(input)) !== null) {
-    const body = (match[1] ?? "").trim().toLowerCase();
-    if (body.startsWith("#if")) {
+  while (searchIndex < input.length) {
+    const tag = readNextMacroTag(input, searchIndex);
+    if (!tag) return null;
+    const body = tag.body;
+    const normalized = body.toLowerCase();
+
+    if (parseIfCondition(body) !== null) {
       depth += 1;
+      searchIndex = tag.end;
       continue;
     }
-    if (body === "/if") {
+
+    if (normalized === "/if") {
       depth -= 1;
       if (depth === 0) {
-        return { elseStart, elseEnd, endStart: match.index, endEnd: tagRe.lastIndex };
+        branches.push({ ...currentBranch, contentEnd: tag.start });
+        return { branches, endStart: tag.start, endEnd: tag.end };
       }
+      searchIndex = tag.end;
       continue;
     }
-    if (body === "else" && depth === 1 && elseStart === null) {
-      elseStart = match.index;
-      elseEnd = tagRe.lastIndex;
+
+    if (depth === 1) {
+      const elseIfCondition = parseElseIfCondition(body);
+      if (normalized === "else" || elseIfCondition !== null) {
+        branches.push({ ...currentBranch, contentEnd: tag.start });
+        currentBranch = {
+          condition: normalized === "else" ? null : (elseIfCondition ?? ""),
+          contentStart: tag.end,
+        };
+        searchIndex = tag.end;
+        continue;
+      }
     }
+
+    searchIndex = tag.end;
   }
 
   return null;
+}
+
+function branchDependsOnCharacter(branches: ConditionalBranchPayload[]): boolean {
+  return branches.some((branch) => branch.condition !== null && conditionDependsOnCharacter(branch.condition));
+}
+
+function selectConditionalPayloadBranch(
+  payload: DeferredConditionalPayload,
+  ctx: MacroContext,
+  options: ResolveMacroOptions,
+): string {
+  const chainBranches = (payload as ConditionalChainPayload).branches;
+  const branches: ConditionalBranchPayload[] = Array.isArray(chainBranches)
+    ? chainBranches
+    : [
+        { condition: (payload as ConditionalBlockPayload).condition, content: (payload as ConditionalBlockPayload).truthy },
+        { condition: null, content: (payload as ConditionalBlockPayload).falsy },
+      ];
+
+  for (const branch of branches) {
+    if (branch.condition === null || evaluateCondition(branch.condition, ctx, options)) {
+      return branch.content;
+    }
+  }
+  return "";
+}
+
+function resolveVariableOperationMacros(input: string, ctx: MacroContext, options: ResolveMacroOptions): string {
+  return replaceBalancedMacros(input, (body, original) => {
+    const readMatch = body.match(/^(getvar|incvar|decvar)::([\w.-]+)$/i);
+    const writeMatch = body.match(/^(setvar|addvar)::([\w.-]+)::([\s\S]*)$/i);
+    const op = String(readMatch?.[1] ?? writeMatch?.[1] ?? "").toLowerCase();
+    const name = readMatch?.[2] ?? writeMatch?.[2];
+    if (!op || !name) return undefined;
+    if (!consumeMacroExpansion(options)) return original;
+
+    switch (op) {
+      case "getvar":
+        return ctx.variables[name] ?? "";
+      case "setvar":
+        ctx.variables[name] = resolveMacros(writeMatch?.[3] ?? "", ctx, {
+          ...nestedMacroOptions(options),
+          trimResult: false,
+        });
+        return "";
+      case "addvar":
+        ctx.variables[name] =
+          (ctx.variables[name] ?? "") +
+          resolveMacros(writeMatch?.[3] ?? "", ctx, { ...nestedMacroOptions(options), trimResult: false });
+        return "";
+      case "incvar":
+        ctx.variables[name] = String((parseInt(ctx.variables[name] ?? "0", 10) || 0) + 1);
+        return "";
+      case "decvar":
+        ctx.variables[name] = String((parseInt(ctx.variables[name] ?? "0", 10) || 0) - 1);
+        return "";
+      default:
+        return "";
+    }
+  });
 }
 
 function resolveConditionalBlocks(input: string, ctx: MacroContext, options: ResolveMacroOptions): string {
@@ -622,28 +922,29 @@ function resolveConditionalBlocks(input: string, ctx: MacroContext, options: Res
   while (index < input.length) {
     const startMatch = findConditionalStart(input, index);
     if (!startMatch) {
-      result += input.slice(index);
+      result += resolveVariableOperationMacros(input.slice(index), ctx, options);
       break;
     }
 
-    const blockStart = startMatch.index;
-    const condition = (startMatch[1] ?? "").trim();
-    const contentStart = startMatch.index + startMatch[0].length;
-    const blockEnd = findConditionalEnd(input, contentStart);
+    const blockStart = startMatch.start;
+    const condition = startMatch.condition;
+    const contentStart = startMatch.end;
+    const blockEnd = findConditionalBranches(input, contentStart, condition);
     if (!blockEnd) {
-      result += input.slice(index);
+      result += resolveVariableOperationMacros(input.slice(index), ctx, options);
       break;
     }
 
-    const truthy = input.slice(contentStart, blockEnd.elseStart ?? blockEnd.endStart);
-    const falsy =
-      blockEnd.elseStart === null ? "" : input.slice(blockEnd.elseEnd ?? blockEnd.endStart, blockEnd.endStart);
+    const branches = blockEnd.branches.map((branch) => ({
+      condition: branch.condition,
+      content: input.slice(branch.contentStart, branch.contentEnd),
+    }));
 
-    result += input.slice(index, blockStart);
-    if (options.deferCharacterMacros && conditionDependsOnCharacter(condition)) {
-      result += encodeDeferredConditional({ condition, truthy, falsy });
+    result += resolveVariableOperationMacros(input.slice(index, blockStart), ctx, options);
+    if (options.deferCharacterMacros && branchDependsOnCharacter(branches)) {
+      result += encodeDeferredConditional({ branches });
     } else {
-      const selected = evaluateCondition(condition, ctx) ? truthy : falsy;
+      const selected = selectConditionalPayloadBranch({ branches }, ctx, options);
       result += resolveConditionalBlocks(selected, ctx, options);
     }
     index = blockEnd.endEnd;
@@ -728,13 +1029,13 @@ function parseWeightedRandomChoice(choice: string): { text: string; weight: numb
   return { text: choice.slice(0, markerIndex).trim(), weight };
 }
 
-function pickWeightedRandomChoice(choices: string[]): string {
+function pickWeightedRandomChoice(choices: string[], options: ResolveMacroOptions, original: string): string {
   const weightedChoices = choices.map(parseWeightedRandomChoice).filter((choice) => choice.text.length > 0);
   const totalWeight = weightedChoices.reduce((total, choice) => total + choice.weight, 0);
 
   if (totalWeight <= 0) return "";
 
-  let roll = Math.random() * totalWeight;
+  let roll = randomUnit(options, original) * totalWeight;
   for (const choice of weightedChoices) {
     roll -= choice.weight;
     if (roll < 0) return choice.text;
@@ -796,12 +1097,7 @@ function formatMacroDateTime(now: Date, requestedTimeZone?: string): MacroDateTi
       datetime,
       isoTime: datetime,
       weekday: parts.get("weekday") ?? now.toLocaleDateString("en-US", { weekday: "long" }),
-      timeZone:
-        timeZone ??
-        Intl.DateTimeFormat()
-          .resolvedOptions()
-          .timeZone ??
-        "",
+      timeZone: timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "",
     };
   };
 
@@ -854,7 +1150,24 @@ function formatMacroDateTime(now: Date, requestedTimeZone?: string): MacroDateTi
  *  - {{#if char == "Name"}}...{{else}}...{{/if}} — conditional block
  */
 export function resolveMacros(template: string, ctx: MacroContext, options: ResolveMacroOptions = {}): string {
+  const macroDepth = options.macroDepth ?? 0;
+  if (macroDepth > macroLimit(options, "maxMacroDepth")) {
+    getMacroBudget(options).exceeded = true;
+    return clampMacroOutput(template, options);
+  }
+  getMacroBudget(options);
   let result = template;
+  const fieldResolutionDepth = options.fieldResolutionDepth ?? 0;
+  const resolveNestedFieldMacros = (value: string): string => {
+    const stripped = stripMacroComments(value);
+    if (!stripped.includes("{{")) return stripped;
+    if (fieldResolutionDepth >= MAX_CHARACTER_FIELD_RESOLUTION_DEPTH) return "";
+    return resolveMacros(stripped, ctx, {
+      ...nestedMacroOptions(options),
+      trimResult: false,
+      fieldResolutionDepth: fieldResolutionDepth + 1,
+    });
+  };
   const personaText = [
     ctx.personaFields?.description,
     ctx.personaFields?.personality,
@@ -862,7 +1175,7 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
     ctx.personaFields?.appearance,
     ctx.personaFields?.scenario,
   ]
-    .map((part) => (typeof part === "string" ? stripMacroComments(part) : part))
+    .map((part) => (typeof part === "string" ? resolveNestedFieldMacros(part) : part))
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
     .join("\n");
   const deferCharacterMacros = options.deferCharacterMacros;
@@ -871,7 +1184,7 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
       return DEFERRED_CHARACTER_MACRO_TOKENS[field];
     }
     if (field === "char") return ctx.char;
-    return stripMacroComments(ctx.characterFields?.[field] ?? "");
+    return resolveNestedFieldMacros(ctx.characterFields?.[field] ?? "");
   };
 
   // ── Comments — strip first so they don't interfere ──
@@ -893,6 +1206,21 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{speakerPersona\}\}/gi, ctx.speakerPersona ?? "");
   result = result.replace(/\{\{participants\}\}/gi, ctx.participants ?? "");
   result = result.replace(/\{\{persona\}\}/gi, personaText);
+  result = result.replace(/\{\{personaDescription\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.description ?? ""),
+  );
+  result = result.replace(/\{\{personaPersonality\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.personality ?? ""),
+  );
+  result = result.replace(/\{\{personaBackstory\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.backstory ?? ""),
+  );
+  result = result.replace(/\{\{personaAppearance\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.appearance ?? ""),
+  );
+  result = result.replace(/\{\{personaScenario\}\}/gi, () =>
+    resolveNestedFieldMacros(ctx.personaFields?.scenario ?? ""),
+  );
   result = result.replace(/\{\{char(?:Name)?\}\}/gi, characterReplacement("char"));
   result = result.replace(/\{\{characters\}\}/gi, ctx.characters.join(", "));
   result = result.replace(/\{\{description\}\}/gi, characterReplacement("description"));
@@ -909,11 +1237,6 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{lastGenerationType\}\}/gi, ctx.lastGenerationType ?? "");
   result = result.replace(/\{\{idle_duration\}\}/gi, ctx.idleDuration ?? "");
 
-  // ── Agent data ──
-  result = result.replace(/\{\{agent::([\w-]+)\}\}/gi, (_, type) => {
-    return ctx.agentData?.[type] ?? "";
-  });
-
   // ── Date/time ──
   const now = new Date();
   const macroDateTime = formatMacroDateTime(now, ctx.timeZone);
@@ -925,61 +1248,44 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{timezone\}\}/gi, macroDateTime.timeZone);
 
   // ── Random values ──
-  result = result.replace(/\{\{random\}\}/gi, () => String(Math.floor(Math.random() * 101)));
-  result = replaceBalancedMacros(result, (body) => {
+  result = result.replace(/\{\{random\}\}/gi, (original) => {
+    if (!consumeMacroExpansion(options)) return original;
+    return String(randomInteger(options, original, 0, 100));
+  });
+  result = replaceBalancedMacros(result, (body, original) => {
     const match = body.match(/^random::([\s\S]*)$/i);
     if (!match) return undefined;
+    if (!consumeMacroExpansion(options)) return original;
 
     const choices = splitTopLevelDoubleColon(match[1] ?? "")
       .map((choice) => choice.trim())
       .filter(Boolean);
     if (choices.length === 0) return "";
-    const choice = pickWeightedRandomChoice(choices);
-    return resolveMacros(choice, ctx, { ...options, trimResult: false });
+    const choice = pickWeightedRandomChoice(choices, options, original);
+    return resolveMacros(choice, ctx, { ...nestedMacroOptions(options), trimResult: false });
   });
-  result = result.replace(/\{\{random:(\d+):(\d+)\}\}/gi, (_, min, max) => {
-    const lo = parseInt(min, 10);
-    const hi = parseInt(max, 10);
-    return String(Math.floor(Math.random() * (hi - lo + 1)) + lo);
+  result = result.replace(/\{\{random:(\d+):(\d+)\}\}/gi, (original, min, max) => {
+    if (!consumeMacroExpansion(options)) return original;
+    const first = parseInt(min, 10);
+    const second = parseInt(max, 10);
+    const lo = Math.min(first, second);
+    const hi = Math.max(first, second);
+    return String(randomInteger(options, original, lo, hi));
   });
 
   // ── Dice rolls: {{roll:2d6}} ──
-  result = result.replace(/\{\{roll:(\d+)d(\d+)\}\}/gi, (_, count, sides) => {
-    const n = parseInt(count, 10);
-    const s = parseInt(sides, 10);
+  result = result.replace(/\{\{roll:(\d+)d(\d+)\}\}/gi, (original, count, sides) => {
+    if (!consumeMacroExpansion(options)) return original;
+    const n = Math.min(parseInt(count, 10), MAX_DICE_COUNT);
+    const s = Math.min(parseInt(sides, 10), MAX_DICE_SIDES);
+    if (n < 1 || s < 1) return "0";
     let total = 0;
-    for (let i = 0; i < n; i++) total += Math.floor(Math.random() * s) + 1;
+    for (let i = 0; i < n; i++) total += randomInteger(options, `${original}:${i}`, 1, s);
     return String(total);
   });
 
   // ── Variable operations — resolve left-to-right so lorebook entries can set values for later entries. ──
-  result = replaceBalancedMacros(result, (body) => {
-    const readMatch = body.match(/^(getvar|incvar|decvar)::([\w.-]+)$/i);
-    const writeMatch = body.match(/^(setvar|addvar)::([\w.-]+)::([\s\S]*)$/i);
-    const op = String(readMatch?.[1] ?? writeMatch?.[1] ?? "").toLowerCase();
-    const name = readMatch?.[2] ?? writeMatch?.[2];
-    if (!op || !name) return undefined;
-
-    switch (op) {
-      case "getvar":
-        return ctx.variables[name] ?? "";
-      case "setvar":
-        ctx.variables[name] = resolveMacros(writeMatch?.[3] ?? "", ctx, { ...options, trimResult: false });
-        return "";
-      case "addvar":
-        ctx.variables[name] =
-          (ctx.variables[name] ?? "") + resolveMacros(writeMatch?.[3] ?? "", ctx, { ...options, trimResult: false });
-        return "";
-      case "incvar":
-        ctx.variables[name] = String((parseInt(ctx.variables[name] ?? "0", 10) || 0) + 1);
-        return "";
-      case "decvar":
-        ctx.variables[name] = String((parseInt(ctx.variables[name] ?? "0", 10) || 0) - 1);
-        return "";
-      default:
-        return "";
-    }
-  });
+  result = resolveVariableOperationMacros(result, ctx, options);
 
   // ── Case transforms ──
   result = result.replace(/\{\{uppercase\}\}([\s\S]*?)\{\{\/uppercase\}\}/gi, (_, inner) =>
@@ -1013,9 +1319,17 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
     return val !== undefined ? val : match; // leave unknown macros as-is
   });
 
+  // ── Agent data ──
+  // Agent/tracker output is model-generated text. Insert it only after every
+  // executable macro pass has finished so `{{agent::TYPE}}` cannot smuggle
+  // dice rolls, variable writes, or other macros back into this resolution.
+  result = result.replace(/\{\{agent::([\w-]+)\}\}/gi, (_, type) => {
+    return ctx.agentData?.[type] ?? "";
+  });
+
   if (options.trimResult !== false) {
     result = result.trim();
   }
 
-  return result;
+  return clampMacroOutput(result, options);
 }

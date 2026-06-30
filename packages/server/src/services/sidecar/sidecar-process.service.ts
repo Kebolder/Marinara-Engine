@@ -427,6 +427,8 @@ class SidecarProcessService {
       contextSize: config.contextSize,
       runtimeVariant: runtime.variant,
       enableNativeToolCalls: config.enableNativeToolCalls,
+      embeddingPooling: config.embeddingPooling,
+      embeddingBatchSize: config.embeddingBatchSize,
     });
   }
 
@@ -528,6 +530,8 @@ class SidecarProcessService {
           contextSize: config.contextSize,
           gpuLayers: config.gpuLayers,
           enableNativeToolCalls: config.enableNativeToolCalls,
+          embeddingPooling: config.embeddingPooling,
+          embeddingBatchSize: config.embeddingBatchSize,
         });
   }
 

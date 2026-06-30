@@ -2058,9 +2058,13 @@ export async function backupRoutes(app: FastifyInstance) {
                   category: lb.category ?? "uncategorized",
                   scanDepth: lb.scanDepth,
                   tokenBudget: lb.tokenBudget,
+                  entryLimit: lb.entryLimit,
                   recursiveScanning: lb.recursiveScanning,
                   maxRecursionDepth: lb.maxRecursionDepth,
                   excludeFromVectorization: lb.excludeFromVectorization ?? false,
+                  vectorQueryDepth: lb.vectorQueryDepth ?? 10,
+                  vectorScoreThreshold: lb.vectorScoreThreshold ?? 0.3,
+                  vectorMaxResults: lb.vectorMaxResults ?? 10,
                   enabled: lb.enabled ?? true,
                   characterId: lb.characterId ?? null,
                   characterIds: Array.isArray(lb.characterIds)

@@ -4,7 +4,14 @@
 import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import type { BaseLLMProvider, ChatMessage, LLMToolDefinition, LLMToolCall, LLMUsage } from "../llm/base-provider.js";
-import type { AgentResult, AgentContext, AgentResultType, AgentCallDebugEvent, WrapFormat } from "@marinara-engine/shared";
+import type {
+  AgentResult,
+  AgentContext,
+  AgentResultType,
+  AgentCallDebugEvent,
+  MacroContext,
+  WrapFormat,
+} from "@marinara-engine/shared";
 import {
   compactQuestProgressForContext,
   DEFAULT_AGENT_CONTEXT_SIZE,
@@ -12,6 +19,8 @@ import {
   MIN_AGENT_MAX_TOKENS,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
+  normalizeRpgStatPools,
+  resolveMacros,
 } from "@marinara-engine/shared";
 import { getMaxToolRounds, isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
@@ -146,6 +155,72 @@ function renderAgentSettingsMacros(
     const rendered = stringifyAgentSettingMacroValue(value);
     return options.escapeValues ? escapeXml(rendered) : rendered;
   });
+}
+
+function renderAgentMacroValue(value: string | null | undefined, options: { escapeValues?: boolean }): string {
+  const text = value ?? "";
+  return options.escapeValues ? escapeXml(text) : text;
+}
+
+export function buildAgentPromptMacroContext(
+  context: AgentContext,
+  options: { escapeValues?: boolean } = {},
+): MacroContext {
+  const characters = context.characters.map((character) => character.name.trim()).filter(Boolean);
+  const firstCharacter = context.characters[0] ?? null;
+  const latestUserMessage = findLatestUserMessage(context);
+  const value = (entry: string | null | undefined) => renderAgentMacroValue(entry, options);
+
+  return {
+    user: value(context.persona?.name?.trim() || "User"),
+    char: value(characters.join(", ") || "Assistant"),
+    characters: characters.map(value),
+    variables: {},
+    lastInput: latestUserMessage ? value(latestUserMessage.content) : "",
+    chatId: value(context.chatId),
+    characterProfiles: context.characters.map((character) => ({
+      name: value(character.name),
+      description: value(character.description),
+      personality: value(character.personality),
+      backstory: value(character.backstory),
+      appearance: value(character.appearance),
+      scenario: value(character.scenario),
+      example: value(character.mesExample),
+      systemPrompt: value(character.systemPrompt),
+      postHistoryInstructions: value(character.postHistoryInstructions),
+    })),
+    characterFields: firstCharacter
+      ? {
+          description: value(firstCharacter.description),
+          personality: value(firstCharacter.personality),
+          backstory: value(firstCharacter.backstory),
+          appearance: value(firstCharacter.appearance),
+          scenario: value(firstCharacter.scenario),
+          example: value(firstCharacter.mesExample),
+          systemPrompt: value(firstCharacter.systemPrompt),
+          postHistoryInstructions: value(firstCharacter.postHistoryInstructions),
+        }
+      : undefined,
+    personaFields: context.persona
+      ? {
+          description: value(context.persona.description),
+          personality: value(context.persona.personality),
+          backstory: value(context.persona.backstory),
+          appearance: value(context.persona.appearance),
+          scenario: value(context.persona.scenario),
+        }
+      : undefined,
+  };
+}
+
+export function renderAgentPromptTemplate(
+  template: string,
+  settings: Record<string, unknown>,
+  context: AgentContext,
+  options: { escapeValues?: boolean } = {},
+): string {
+  const withSettingMacros = renderAgentSettingsMacros(template, settings, options);
+  return resolveMacros(withSettingMacros, buildAgentPromptMacroContext(context, options), { trimResult: false });
 }
 
 export function normalizeAgentContextSize(value: unknown, fallback = DEFAULT_AGENT_CONTEXT_SIZE): number {
@@ -353,9 +428,10 @@ export async function executeAgent(
   const startTime = Date.now();
 
   try {
-    const template = renderAgentSettingsMacros(
+    const template = renderAgentPromptTemplate(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
+      context,
     );
     if (!template) {
       return makeError(config, "No prompt template configured", startTime);
@@ -935,9 +1011,10 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   parts.push(`<agents>`);
   parts.push(`Fulfill each of the requested tasks here and return the outputs in the formats they're specified:`);
   for (const config of configs) {
-    const template = renderAgentSettingsMacros(
+    const template = renderAgentPromptTemplate(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
+      context,
       { escapeValues: true },
     );
     parts.push(``);
@@ -1046,34 +1123,65 @@ type ExtractedResultBlock = {
 };
 
 function extractResultBlocks(responseText: string): ExtractedResultBlock[] {
-  const openRegex = /<result\b([^>]*)>/gi;
-  const opens = Array.from(responseText.matchAll(openRegex));
+  const tokenRegex = /<result\b([^>]*)>|<\/result\s*>/gi;
+  type Token = { index: number; length: number; isClose: boolean; attributes: string };
+  const tokens: Token[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tokenRegex.exec(responseText))) {
+    const isClose = match[0][1] === "/";
+    tokens.push({
+      index: match.index,
+      length: match[0].length,
+      isClose,
+      attributes: isClose ? "" : (match[1] ?? ""),
+    });
+  }
+
   const blocks: ExtractedResultBlock[] = [];
 
-  for (let i = 0; i < opens.length; i++) {
-    const open = opens[i]!;
-    const agent = readResultAgentAttribute(open[1] ?? "");
-    if (!agent) continue;
-
-    const contentStart = open.index + open[0].length;
-    const nextStart = opens[i + 1]?.index ?? responseText.length;
-    const closeRegex = /<\/result\s*>/gi;
-    closeRegex.lastIndex = contentStart;
-
-    let selectedClose: RegExpExecArray | null = null;
-    let closeMatch: RegExpExecArray | null;
-    while ((closeMatch = closeRegex.exec(responseText))) {
-      if (closeMatch.index >= nextStart) break;
-      selectedClose = closeMatch;
+  let i = 0;
+  while (i < tokens.length) {
+    const open = tokens[i]!;
+    if (open.isClose) {
+      i++;
+      continue;
     }
-    if (!selectedClose) continue;
+    const agent = readResultAgentAttribute(open.attributes);
+    if (!agent) {
+      i++;
+      continue;
+    }
 
+    const contentStart = open.index + open.length;
+    let depth = 1;
+    let selectedCloseIdx = -1;
+    let j = i + 1;
+    while (j < tokens.length) {
+      const token = tokens[j]!;
+      if (token.isClose) {
+        depth--;
+        if (depth <= 0) {
+          selectedCloseIdx = j;
+          break;
+        }
+      } else {
+        depth++;
+      }
+      j++;
+    }
+    if (selectedCloseIdx === -1) {
+      i++;
+      continue;
+    }
+
+    const close = tokens[selectedCloseIdx]!;
     blocks.push({
       agent,
-      content: responseText.slice(contentStart, selectedClose.index),
+      content: responseText.slice(contentStart, close.index),
       start: open.index,
-      end: selectedClose.index + selectedClose[0].length,
+      end: close.index + close.length,
     });
+    i = selectedCloseIdx + 1;
   }
 
   return blocks;
@@ -1177,6 +1285,7 @@ function shouldRunAgentIndividually(config: Pick<AgentExecConfig, "type" | "sett
     config.type === "expression" ||
     config.type === "illustrator" ||
     config.type === "lorebook-keeper" ||
+    resolveAgentResultType(config) === "text_rewrite" ||
     musicDjUsesJsonOnlyProvider(config)
   );
 }
@@ -1849,7 +1958,15 @@ function buildLoreBlock(context: AgentContext): string {
     if (context.persona.rpgStats?.enabled) {
       const rpg = context.persona.rpgStats;
       parts.push(`RPG Stats:`);
-      parts.push(`- Max HP: ${rpg.hp.max}`);
+      const pools = normalizeRpgStatPools(rpg);
+      if (pools.length > 0) {
+        parts.push(`Pools:`);
+        for (const pool of pools) {
+          parts.push(`- ${pool.name}: ${pool.value}/${pool.max}`);
+        }
+      } else {
+        parts.push(`- Max HP: ${rpg.hp.max}`);
+      }
       if (rpg.attributes.length > 0) {
         parts.push(`Attributes:`);
         for (const attr of rpg.attributes) {
@@ -2292,8 +2409,44 @@ function repairJson(str: string): string {
     JSON.parse(str);
     return str;
   } catch {
-    return stripJsonRepairTokens(str).replace(/,\s*([\]\}])/g, "$1");
+    return stripTrailingCommas(stripJsonRepairTokens(str));
   }
+}
+
+function stripTrailingCommas(str: string): string {
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < str.length; index++) {
+    const char = str[index] ?? "";
+    if (inString) {
+      repaired += char;
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      repaired += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let lookahead = index + 1;
+      while (lookahead < str.length && /\s/.test(str[lookahead] ?? "")) lookahead++;
+      const nextSignificant = str[lookahead];
+      if (nextSignificant === "}" || nextSignificant === "]") continue;
+    }
+
+    repaired += char;
+  }
+  return repaired;
 }
 
 function stripJsonRepairTokens(str: string): string {

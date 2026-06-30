@@ -394,6 +394,8 @@ export interface ActiveLorebookEntry {
   constant: boolean;
   selective: boolean;
   matchedKeys?: string[];
+  matchType?: "keyword" | "semantic" | "constant" | "sticky";
+  semanticScore?: number;
 }
 
 export interface BudgetSkippedLorebookEntry {
@@ -402,6 +404,8 @@ export interface BudgetSkippedLorebookEntry {
   lorebookId: string;
   lorebookName: string;
   matchedKeys: string[];
+  matchType?: "keyword" | "semantic" | "constant" | "sticky";
+  semanticScore?: number;
   estimatedTokens: number;
   lorebookBudget: number;
   lorebookUsedTokens: number;

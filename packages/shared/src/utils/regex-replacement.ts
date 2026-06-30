@@ -9,6 +9,91 @@ type RegexReplaceMatch = {
 type CaseMode = "none" | "upper" | "lower";
 type OneShotCaseMode = "upper-first" | "lower-first" | null;
 const CASE_COMMANDS = new Set(["U", "L", "E", "u", "l"]);
+const LITERAL_PLACEHOLDER_PREFIX = "\x1eMARINARA_REGEX_LITERAL_";
+
+type PreparedLiteralMacros = {
+  template: string;
+  literals: Array<{ token: string; value: string }>;
+};
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function findBalancedMacroEnd(input: string, start: number): number {
+  let depth = 0;
+
+  for (let index = start; index < input.length - 1; index++) {
+    if (input[index] === "{" && input[index + 1] === "{") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+
+    if (input[index] === "}" && input[index + 1] === "}") {
+      depth -= 1;
+      index += 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+
+  return -1;
+}
+
+function replaceBalancedMacros(
+  input: string,
+  replacer: (original: string) => string | undefined,
+): string {
+  let result = "";
+  let index = 0;
+
+  while (index < input.length) {
+    const start = input.indexOf("{{", index);
+    if (start === -1) {
+      result += input.slice(index);
+      break;
+    }
+
+    result += input.slice(index, start);
+
+    const end = findBalancedMacroEnd(input, start);
+    if (end === -1) {
+      result += input.slice(start);
+      break;
+    }
+
+    const original = input.slice(start, end);
+    const replacement = replacer(original);
+    result += replacement ?? original;
+    index = end;
+  }
+
+  return result;
+}
+
+function prepareLiteralMacroPlaceholders(
+  value: string,
+  resolveLiteral?: (literal: string) => string,
+): PreparedLiteralMacros {
+  if (!resolveLiteral || !value.includes("{{")) return { template: value, literals: [] };
+
+  const literals: PreparedLiteralMacros["literals"] = [];
+  const template = replaceBalancedMacros(value, (original) => {
+    const token = `${LITERAL_PLACEHOLDER_PREFIX}${literals.length}\x1f`;
+    literals.push({ token, value: resolveLiteral(original) });
+    return token;
+  });
+
+  return { template, literals };
+}
+
+function restoreLiteralMacroPlaceholders(value: string, literals: PreparedLiteralMacros["literals"]): string {
+  let result = value;
+  for (const literal of literals) {
+    result = result.split(literal.token).join(literal.value);
+  }
+  return result;
+}
 
 function readCapture(captures: string[], index: number): string | null {
   if (index < 1 || index > captures.length) return null;
@@ -42,10 +127,13 @@ function expandRegexReplacementToken(replacement: string, index: number, ctx: Re
 
   if (next === "<") {
     const closeIndex = replacement.indexOf(">", index + 2);
-    if (closeIndex > index + 2) {
+    if (closeIndex !== -1) {
       const name = replacement.slice(index + 2, closeIndex);
       if (ctx.groups && Object.prototype.hasOwnProperty.call(ctx.groups, name)) {
         return { value: ctx.groups[name] ?? "", nextIndex: closeIndex + 1 };
+      }
+      if (ctx.groups) {
+        return { value: "", nextIndex: closeIndex + 1 };
       }
     }
     return { value: "$", nextIndex: index + 1 };
@@ -77,6 +165,12 @@ export function expandRegexReplacement(replacement: string, ctx: RegexReplaceMat
     oneShotCaseMode = transformed.oneShot;
   };
 
+  const startsCommandArgument = (command: string) => {
+    const afterCommand = replacement[index + 2];
+    if (command === "E") return caseMode !== "none" || oneShotCaseMode !== null;
+    return afterCommand === "$" || afterCommand === "\\";
+  };
+
   while (index < replacement.length) {
     const char = replacement[index];
 
@@ -88,27 +182,27 @@ export function expandRegexReplacement(replacement: string, ctx: RegexReplaceMat
         index += 3;
         continue;
       }
-      if (next === "U") {
+      if (next === "U" && startsCommandArgument("U")) {
         caseMode = "upper";
         index += 2;
         continue;
       }
-      if (next === "L") {
+      if (next === "L" && startsCommandArgument("L")) {
         caseMode = "lower";
         index += 2;
         continue;
       }
-      if (next === "E") {
+      if (next === "E" && startsCommandArgument("E")) {
         caseMode = "none";
         index += 2;
         continue;
       }
-      if (next === "u") {
+      if (next === "u" && startsCommandArgument("u")) {
         oneShotCaseMode = "upper-first";
         index += 2;
         continue;
       }
-      if (next === "l") {
+      if (next === "l" && startsCommandArgument("l")) {
         oneShotCaseMode = "lower-first";
         index += 2;
         continue;
@@ -129,12 +223,21 @@ export function expandRegexReplacement(replacement: string, ctx: RegexReplaceMat
   return result;
 }
 
+export function resolveRegexPatternLiteralMacros(
+  pattern: string,
+  resolveLiteral?: (literal: string) => string,
+): string {
+  if (!resolveLiteral || !pattern.includes("{{")) return pattern;
+  return replaceBalancedMacros(pattern, (original) => escapeRegExpLiteral(resolveLiteral(original)));
+}
+
 export function applyRegexReplacement(
   text: string,
   regex: RegExp,
   replacement: string,
   resolveReplacement?: (replacement: string) => string,
 ): string {
+  const preparedReplacement = prepareLiteralMacroPlaceholders(replacement, resolveReplacement);
   return text.replace(regex, (...args: unknown[]) => {
     const hasGroups = typeof args.at(-1) === "object" && args.at(-1) !== null;
     const groups = hasGroups ? (args.at(-1) as Record<string, string>) : undefined;
@@ -142,12 +245,13 @@ export function applyRegexReplacement(
     const offset = args.at(hasGroups ? -3 : -2) as number;
     const match = args[0] as string;
     const captures = args.slice(1, hasGroups ? -3 : -2).map((capture) => (capture == null ? "" : String(capture)));
-    return expandRegexReplacement(resolveReplacement ? resolveReplacement(replacement) : replacement, {
+    const expanded = expandRegexReplacement(preparedReplacement.template, {
       match,
       captures,
       offset,
       input,
       groups,
     });
+    return restoreLiteralMacroPlaceholders(expanded, preparedReplacement.literals);
   });
 }

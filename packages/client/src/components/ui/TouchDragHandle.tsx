@@ -22,7 +22,9 @@ export function TouchDragHandle({
       tabIndex={-1}
       title={label}
       className={cn(
-        "mari-chrome-accent-text-muted mari-accent-animated flex h-8 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md opacity-100 transition-all hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:cursor-grabbing active:scale-95 md:hidden",
+        // Coarse pointers need the handle visible for custom touch dragging; mouse users
+        // get the same hover-revealed affordance as the chat list.
+        "mari-chrome-accent-text-muted mari-accent-animated flex h-8 w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md opacity-100 transition-all hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:cursor-grabbing active:scale-95 [@media(pointer:fine)]:h-7 [@media(pointer:fine)]:w-5 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-focus-within:opacity-100 [@media(pointer:fine)]:group-hover:opacity-100",
         className,
       )}
       onClick={(event) => event.stopPropagation()}

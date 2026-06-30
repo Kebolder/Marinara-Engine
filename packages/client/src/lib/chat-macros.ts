@@ -192,13 +192,18 @@ export function buildMessageMacroContext({
 export function resolveMessageMacros(
   template: string,
   context: Parameters<typeof buildMessageMacroContext>[0],
+  options?: { randomSeed?: string },
 ): string {
-  return createMessageMacroResolver(context)(template);
+  return createMessageMacroResolver(context, options)(template);
 }
 
-export function createMessageMacroResolver(context: Parameters<typeof buildMessageMacroContext>[0]) {
+export function createMessageMacroResolver(
+  context: Parameters<typeof buildMessageMacroContext>[0],
+  options?: { randomSeed?: string },
+) {
   const macroContext = buildMessageMacroContext(context);
-  return (template: string) => resolveMacros(template, macroContext, { trimResult: false });
+  return (template: string) =>
+    resolveMacros(template, macroContext, { trimResult: false, randomSeed: options?.randomSeed });
 }
 
 export function isPromptPreviewMacro(input: string): boolean {

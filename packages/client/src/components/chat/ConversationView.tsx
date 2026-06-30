@@ -31,6 +31,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
+import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
@@ -279,7 +280,7 @@ export function ConversationView({
   const closeUnoSetup = useUnoGameStore((s) => s.closeSetup);
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const streamBuffer = useThrottledStreamBuffer();
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   const regenerateMessageId = useChatStore((s) => s.regenerateMessageId);
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
@@ -528,6 +529,7 @@ export function ConversationView({
           isGrouped: boolean;
           index: number;
           contentParts?: string[];
+          rawContent?: string;
           bubbleGroupPosition: "single" | "first" | "middle" | "last";
         }
     > = [];
@@ -603,6 +605,7 @@ export function ConversationView({
         isGrouped: grouped,
         index: messageOffset + i,
         contentParts,
+        rawContent: displayContent !== msg.content ? msg.content : undefined,
         bubbleGroupPosition,
       });
     }
@@ -987,7 +990,7 @@ export function ConversationView({
               : msg;
           const contentParts = isRegenerating ? undefined : item.contentParts;
           const visiblePartCount = contentParts ? (visiblePartCounts[item.key] ?? contentParts.length) : undefined;
-          const originalContent = displayMsg.content !== msg.content ? msg.content : undefined;
+          const originalContent = item.rawContent ?? (displayMsg.content !== msg.content ? msg.content : undefined);
           const regenerationDraftMessage =
             isBubbleRegenerating && !isStreamWindingDown
               ? ({

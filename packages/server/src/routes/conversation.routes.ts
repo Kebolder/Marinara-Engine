@@ -536,16 +536,25 @@ export async function conversationRoutes(app: FastifyInstance) {
 
     // Only save if we actually have schedules to persist (avoids overwriting real data with empty object)
     if (Object.keys(newSchedules).length > 0) {
-      // Re-read metadata fresh to avoid overwriting changes made by concurrent requests
-      const freshChat = await chats.getById(chatId);
-      const freshMeta =
-        typeof freshChat?.metadata === "string" ? JSON.parse(freshChat.metadata) : (freshChat?.metadata ?? {});
-      await chats.updateMetadata(chatId, {
-        ...freshMeta,
-        conversationSchedulesEnabled: true,
-        characterSchedules: newSchedules,
-        scheduleWeekStart: mondayStr,
-      });
+      const changedCharIds = Object.entries(results)
+        .filter(([, result]) => result.status === "generated" || result.status === "shared")
+        .map(([id]) => id);
+      if (changedCharIds.length > 0) {
+        await chats.patchMetadata(chatId, (current) => {
+          const currentSchedules: CharacterSchedules = hasSchedules(current.characterSchedules)
+            ? (current.characterSchedules as CharacterSchedules)
+            : {};
+          const mergedSchedules: CharacterSchedules = { ...currentSchedules };
+          for (const id of changedCharIds) {
+            mergedSchedules[id] = preserveTimingSettings(newSchedules[id]!, currentSchedules[id]);
+          }
+          return {
+            conversationSchedulesEnabled: true,
+            characterSchedules: mergedSchedules,
+            scheduleWeekStart: mondayStr,
+          };
+        });
+      }
 
       // Sync newly generated schedules to other conversation chats that use the same characters
       const generatedCharIds = Object.entries(results)
@@ -562,19 +571,26 @@ export async function conversationRoutes(app: FastifyInstance) {
           const cMeta = typeof c.metadata === "string" ? JSON.parse(c.metadata as string) : (c.metadata ?? {});
           if (!areConversationSchedulesEnabled(cMeta)) continue;
           const cSchedules: CharacterSchedules = hasSchedules(cMeta.characterSchedules) ? cMeta.characterSchedules : {};
-          let changed = false;
-          for (const cid of overlap) {
-            cSchedules[cid] = preserveTimingSettings(newSchedules[cid]!, cSchedules[cid]);
-            changed = true;
-          }
-          if (changed) {
-            await chats.updateMetadata(c.id, {
-              ...cMeta,
+          await chats.patchMetadata(c.id, (current) => {
+            if (!areConversationSchedulesEnabled(current)) {
+              return {};
+            }
+            const currentSchedules: CharacterSchedules = hasSchedules(current.characterSchedules)
+              ? (current.characterSchedules as CharacterSchedules)
+              : {};
+            const mergedSchedules: CharacterSchedules = { ...currentSchedules };
+            for (const cid of overlap) {
+              mergedSchedules[cid] = preserveTimingSettings(
+                newSchedules[cid]!,
+                currentSchedules[cid] ?? cSchedules[cid],
+              );
+            }
+            return {
               conversationSchedulesEnabled: true,
-              characterSchedules: cSchedules,
+              characterSchedules: mergedSchedules,
               scheduleWeekStart: mondayStr,
-            });
-          }
+            };
+          });
         }
       }
     }
@@ -601,7 +617,10 @@ export async function conversationRoutes(app: FastifyInstance) {
     const statusOverrides = parseConversationStatusOverrides(meta.conversationStatusOverrides);
 
     const now = new Date();
-    const statuses: Record<string, { status: string; activity: string; schedule?: WeekSchedule; override?: object; lastContact?: string }> = {};
+    const statuses: Record<
+      string,
+      { status: string; activity: string; schedule?: WeekSchedule; override?: object; lastContact?: string }
+    > = {};
 
     for (const charId of characterIds) {
       const schedule = schedules[charId];
@@ -818,7 +837,12 @@ export async function conversationRoutes(app: FastifyInstance) {
             return reply.send(result);
           }
 
-          const evaluation = evaluateAutonomousCandidate(chatId, catchUpCharacterId, autonomySchedules[catchUpCharacterId], meta);
+          const evaluation = evaluateAutonomousCandidate(
+            chatId,
+            catchUpCharacterId,
+            autonomySchedules[catchUpCharacterId],
+            meta,
+          );
           if (!evaluation.ok) return reply.send(blockedAutonomousResponse(evaluation.reason));
 
           // Character is online but hasn't responded — trigger catch-up

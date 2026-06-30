@@ -11,7 +11,7 @@ import type {
   LorebookMatchingSource,
   LorebookSchedule,
 } from "@marinara-engine/shared";
-import { testPrimaryKeys, testSecondaryKeys } from "@marinara-engine/shared";
+import { LIMITS, testPrimaryKeys, testSecondaryKeys } from "@marinara-engine/shared";
 import { vmRegexExecutor } from "./regex-timeout.js";
 
 /** Compute cosine similarity between two vectors. Returns 0 for empty/mismatched vectors. */
@@ -382,8 +382,14 @@ export interface ScanOptions {
   currentMessageIndex?: number;
   /** Pre-computed embedding of the chat context for semantic matching fallback. */
   chatEmbedding?: number[] | null;
+  /** Per-lorebook chat context embeddings for semantic matching. */
+  semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
   /** Cosine similarity threshold for semantic matching (0-1, default 0.3). */
   semanticThreshold?: number;
+  /** Per-lorebook cosine similarity thresholds for semantic matching. */
+  semanticThresholdByLorebookId?: ReadonlyMap<string, number>;
+  /** Per-lorebook maximum semantic matches. */
+  semanticMaxMatchesByLorebookId?: ReadonlyMap<string, number>;
   /** Active character IDs for per-entry include/exclude gates. */
   activeCharacterIds?: string[];
   /** Tags from active character cards for per-entry include/exclude gates. */
@@ -417,7 +423,10 @@ export function scanForActivatedEntries(
     timingStates = new Map(),
     currentMessageIndex = messages.length,
     chatEmbedding = null,
+    semanticEmbeddingsByLorebookId = new Map<string, number[] | null>(),
     semanticThreshold = 0.3,
+    semanticThresholdByLorebookId = new Map<string, number>(),
+    semanticMaxMatchesByLorebookId = new Map<string, number>(),
     activeCharacterIds = [],
     activeCharacterTags = [],
     generationTriggers = ["chat"],
@@ -532,7 +541,12 @@ export function scanForActivatedEntries(
   }
 
   // ── Semantic fallback: check entries with embeddings that weren't keyword-matched ──
-  if (chatEmbedding && chatEmbedding.length > 0) {
+  if (
+    (chatEmbedding && chatEmbedding.length > 0) ||
+    Array.from(semanticEmbeddingsByLorebookId.values()).some((embedding) => embedding && embedding.length > 0)
+  ) {
+    const semanticCandidates: Array<{ entry: LorebookEntry; similarity: number }> = [];
+
     for (const entry of entries) {
       if (!entry.enabled || entry.constant || activatedIds.has(entry.id)) continue;
       // Explicit primary keys mean the entry is keyword-gated. Vectorization is
@@ -542,11 +556,14 @@ export function scanForActivatedEntries(
       if (entry.excludeRecursion && recursionPass) continue;
       if (entry.excludeFromVectorization) continue;
       if (!entry.embedding || entry.embedding.length === 0) continue;
+      const queryEmbedding = semanticEmbeddingsByLorebookId.get(entry.lorebookId) ?? chatEmbedding;
+      if (!queryEmbedding || queryEmbedding.length === 0) continue;
       const timingState = timingStates.get(entry.id);
       if (!passesActivationGate(entry, timingState, filterContext, gameState, ignoreTiming)) continue;
 
-      const similarity = cosineSimilarity(chatEmbedding, entry.embedding);
-      if (similarity >= semanticThreshold) {
+      const threshold = semanticThresholdByLorebookId.get(entry.lorebookId) ?? semanticThreshold;
+      const similarity = cosineSimilarity(queryEmbedding, entry.embedding);
+      if (similarity >= threshold) {
         const entryScanText = getEntryScanText(entry);
         const matchOptions = {
           useRegex: entry.useRegex,
@@ -562,13 +579,24 @@ export function scanForActivatedEntries(
           continue;
         }
         if (!passesEntryProbability(entry)) continue;
-        activated.push({
-          entry,
-          matchedKeys: [`[semantic:${similarity.toFixed(3)}]`],
-          injectionOrder: entry.order,
-        });
-        activatedIds.add(entry.id);
+        semanticCandidates.push({ entry, similarity });
       }
+    }
+
+    const semanticCountsByLorebookId = new Map<string, number>();
+    for (const candidate of semanticCandidates.sort((a, b) => b.similarity - a.similarity)) {
+      const lorebookId = candidate.entry.lorebookId;
+      const maxMatches =
+        semanticMaxMatchesByLorebookId.get(lorebookId) ?? LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT;
+      const selectedCount = semanticCountsByLorebookId.get(lorebookId) ?? 0;
+      if (selectedCount >= maxMatches) continue;
+      activated.push({
+        entry: candidate.entry,
+        matchedKeys: [`[semantic:${candidate.similarity.toFixed(3)}]`],
+        injectionOrder: candidate.entry.order,
+      });
+      activatedIds.add(candidate.entry.id);
+      semanticCountsByLorebookId.set(lorebookId, selectedCount + 1);
     }
   }
 

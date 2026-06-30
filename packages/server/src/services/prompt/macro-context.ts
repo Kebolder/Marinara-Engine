@@ -17,6 +17,7 @@ import {
 import type { DB } from "../../db/connection.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { wrapContent } from "./format-engine.js";
+import { sanitizePromptLeaf } from "./prompt-escaping.js";
 
 type PersonaFields = NonNullable<MacroContext["personaFields"]>;
 
@@ -47,6 +48,7 @@ export interface CharacterMacroData {
 }
 
 export type PromptMacroMessage = {
+  id?: string | null;
   content: string;
   characterId?: string | null;
 };
@@ -315,6 +317,7 @@ export function resolvePromptMessageMacros<T extends PromptMacroMessage>(
       {
         trimResult: false,
         ...options,
+        randomSeed: message.id ? `${message.id}:${message.content}` : options.randomSeed,
       },
     );
     return content === message.content ? message : { ...message, content };
@@ -410,7 +413,11 @@ export async function collectCharacterPostHistoryEntries(
 
     if (content) {
       const label = multiCharacter ? `${data.name ?? "Character"} post-history instructions` : "post-history instructions";
-      entries.push({ content: wrapContent(content, label, wrapFormat), role: "user", depth: 0 });
+      entries.push({
+        content: wrapContent(sanitizePromptLeaf(content, wrapFormat), label, wrapFormat),
+        role: "user",
+        depth: 0,
+      });
     }
   }
 

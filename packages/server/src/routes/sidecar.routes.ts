@@ -26,6 +26,7 @@ import {
 } from "../services/sidecar/scene-analyzer.js";
 import { postProcessSceneResult, type PostProcessContext } from "../services/sidecar/scene-postprocess.js";
 import {
+  SIDECAR_EMBEDDING_POOLING_TYPES,
   SIDECAR_RUNTIME_PREFERENCES,
   scoreAmbient,
   scoreMusic,
@@ -91,6 +92,8 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     topK: z.number().int().min(0).max(500).optional(),
     gpuLayers: z.number().int().min(-1).max(1024).optional(),
     enableNativeToolCalls: z.boolean().optional(),
+    embeddingPooling: z.enum(SIDECAR_EMBEDDING_POOLING_TYPES).optional(),
+    embeddingBatchSize: z.number().int().min(128).max(32768).optional(),
     runtimePreference: z.enum(SIDECAR_RUNTIME_PREFERENCES).optional(),
   });
 

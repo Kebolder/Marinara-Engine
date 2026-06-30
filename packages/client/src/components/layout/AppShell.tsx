@@ -7,6 +7,8 @@ import { SpotifyMobileWidget } from "../spotify/SpotifyMiniPlayer";
 import { YouTubeMobileWidget } from "../chat/YouTubePlayer";
 import { LocalMusicMobileWidget } from "../chat/LocalMusicPlayer";
 import { ChatNotificationBubbles } from "../chat/ChatNotificationBubbles";
+import { ProfessorMariFloatingAssistantHost } from "../chat/ProfessorMariFloatingAssistantHost";
+import { hasProfessorMariFloatingFollowup } from "../chat/professor-mari-floating-events";
 import {
   getTrackerPanelWidthForProfile,
   RIGHT_PANEL_WIDTH_MAX,
@@ -127,9 +129,7 @@ function getViewportWidth() {
 }
 
 function MainPaneFallback() {
-  return (
-    <div className="mari-chrome-text-muted flex flex-1 items-center justify-center text-sm">Loading...</div>
-  );
+  return <div className="mari-chrome-text-muted flex flex-1 items-center justify-center text-sm">Loading...</div>;
 }
 /** Mounts children once `open` becomes true, then keeps them mounted so state persists.
  *  `overlay` mode uses framer-motion slide-in and never unmounts. */
@@ -170,9 +170,7 @@ function MountOnceWhenOpened({
 }
 
 function SidePanelFallback() {
-  return (
-    <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>
-  );
+  return <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>;
 }
 
 export function AppShell() {
@@ -181,6 +179,34 @@ export function AppShell() {
 
   // Auto idle detection (10 min inactivity → idle, activity → active)
   useIdleDetection();
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const root = document.documentElement;
+    let frame = 0;
+    const updateVisualViewportHeight = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const height = window.visualViewport?.height ?? window.innerHeight;
+        root.style.setProperty("--mari-visual-viewport-height", `${Math.max(0, Math.round(height))}px`);
+      });
+    };
+
+    updateVisualViewportHeight();
+    window.visualViewport?.addEventListener("resize", updateVisualViewportHeight);
+    window.visualViewport?.addEventListener("scroll", updateVisualViewportHeight);
+    window.addEventListener("resize", updateVisualViewportHeight);
+    window.addEventListener("orientationchange", updateVisualViewportHeight);
+
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.visualViewport?.removeEventListener("resize", updateVisualViewportHeight);
+      window.visualViewport?.removeEventListener("scroll", updateVisualViewportHeight);
+      window.removeEventListener("resize", updateVisualViewportHeight);
+      window.removeEventListener("orientationchange", updateVisualViewportHeight);
+      root.style.removeProperty("--mari-visual-viewport-height");
+    };
+  }, []);
 
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
@@ -283,7 +309,8 @@ export function AppShell() {
     const compact = useUIStore.getState().centerCompact;
     const width = el.clientWidth;
     const tooNarrowForDesktopChatChrome = width > 0 && width < CENTER_COMPACT_WIDTH;
-    const shouldCompact = centerSqueezedByPanels || tooNarrowForDesktopChatChrome || (!compact && hasHorizontalOverflow(el));
+    const shouldCompact =
+      centerSqueezedByPanels || tooNarrowForDesktopChatChrome || (!compact && hasHorizontalOverflow(el));
 
     if (shouldCompact) {
       compactWidthRef.current = width;
@@ -521,6 +548,9 @@ export function AppShell() {
   const trackerPanelSurfaceAvailable =
     trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
+
+  const professorMariFloatingActive = hasDetailView && hasProfessorMariFloatingFollowup();
+
   useEffect(() => {
     if (!trackerPanelOpen || !activeChat?.mode || trackerPanelModeAvailable) return;
     setTrackerPanelOpen(false);
@@ -864,7 +894,9 @@ export function AppShell() {
               } as CSSProperties
             }
           >
-            <Suspense fallback={<MainPaneFallback />}>{shellOverlayMode ? <ChatArea /> : (detailView ?? <ChatArea />)}</Suspense>
+            <Suspense fallback={<MainPaneFallback />}>
+              {shellOverlayMode ? <ChatArea /> : (detailView ?? <ChatArea />)}
+            </Suspense>
           </div>
         </div>
         {/* Floating avatar notification bubbles (right edge) */}
@@ -1009,6 +1041,7 @@ export function AppShell() {
           <OnboardingTutorial />
         </Suspense>
       )}
+      <ProfessorMariFloatingAssistantHost active={professorMariFloatingActive} />
       <SpotifyMobileWidget />
       <YouTubeMobileWidget />
       <LocalMusicMobileWidget />

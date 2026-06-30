@@ -59,6 +59,7 @@ export function AdvancedParametersSection({
     enabledParameters: STRICT_CONNECTION_PARAMETER_SEND_DEFAULTS,
   };
   const conn = connectionId ? connections.find((connection) => connection.id === connectionId) : null;
+  const canSaveConnectionDefaults = !!connectionId && connectionId !== "random" && conn?.isLocalSidecar !== true;
   const defaults = getEditableGenerationParameters(strictModeDefaults, conn?.defaultParameters);
   const saveDefaults = useSaveConnectionDefaults();
   const [expanded, setExpanded] = useState(false);
@@ -164,7 +165,7 @@ export function AdvancedParametersSection({
               labelClassName="text-xs font-medium"
             />
           </div>
-          {connectionId && connectionId !== "random" && (
+          {canSaveConnectionDefaults && (
             <button
               onClick={() => {
                 saveDefaults.mutate({

@@ -10,6 +10,24 @@ import { createConnectionsStorage } from "./storage/connections.storage.js";
 
 type ConnectionStorage = ReturnType<typeof createConnectionsStorage>;
 type ConnectionWithKey = NonNullable<Awaited<ReturnType<ConnectionStorage["getWithKey"]>>>;
+type EmbeddingConnectionLike = Omit<
+  Pick<
+    ConnectionWithKey,
+    | "id"
+    | "name"
+    | "provider"
+    | "baseUrl"
+    | "apiKey"
+    | "maxContext"
+    | "openrouterProvider"
+    | "maxTokensOverride"
+    | "claudeFastMode"
+    | "embeddingConnectionId"
+    | "embeddingBaseUrl"
+    | "embeddingModel"
+  >,
+  "provider"
+> & { provider: string };
 const VECTOR_VERDICT_TTL_MS = 60_000;
 
 let cachedVectorizerVerdict: { key: string; available: boolean; at: number } | null = null;
@@ -42,7 +60,7 @@ function nonEmptyString(value: unknown): string | null {
 function buildVectorizerCacheKey(options: {
   chatMetadata?: unknown;
   connectionId?: string | null;
-  activeConnection?: ConnectionWithKey | null;
+  activeConnection?: EmbeddingConnectionLike | null;
   activeBaseUrl?: string | null;
 }): string {
   const chatMeta = parseMetadata(options.chatMetadata);
@@ -74,7 +92,7 @@ export async function resolveMemoryRecallEmbeddingSource(
   options: {
     chatMetadata?: unknown;
     connectionId?: string | null;
-    activeConnection?: ConnectionWithKey | null;
+    activeConnection?: EmbeddingConnectionLike | null;
     activeBaseUrl?: string | null;
   },
 ): Promise<MemoryRecallEmbeddingSource | null> {
@@ -163,7 +181,7 @@ export async function isMemoryRecallVectorizerAvailable(
   options: {
     chatMetadata?: unknown;
     connectionId?: string | null;
-    activeConnection?: ConnectionWithKey | null;
+    activeConnection?: EmbeddingConnectionLike | null;
     activeBaseUrl?: string | null;
   },
 ): Promise<boolean> {

@@ -7,6 +7,7 @@ import { MessageSquare, BookOpen, Theater } from "lucide-react";
 import { useChats } from "../../hooks/use-chats";
 import { useCharacters } from "../../hooks/use-characters";
 import { useChatStore } from "../../stores/chat.store";
+import { compareChatsByActivityDesc } from "../../lib/chat-recency";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import type { Chat } from "@marinara-engine/shared";
 
@@ -59,7 +60,7 @@ export function RecentChats() {
 
   const recentChats = useMemo(() => {
     if (!chats || chats.length === 0) return [];
-    return [...chats].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 3);
+    return [...chats].sort(compareChatsByActivityDesc).slice(0, 3);
   }, [chats]);
 
   return (

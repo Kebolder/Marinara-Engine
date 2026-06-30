@@ -19,9 +19,14 @@ export const createCustomToolSchema = z.object({
   scriptBody: z.string().nullable().default(null),
   includeHiddenContext: z.boolean().default(false),
   enabled: z.boolean().default(true),
+  sortOrder: z.number().int().optional(),
 });
 
 export const updateCustomToolSchema = createCustomToolSchema.partial();
+export const reorderCustomToolsSchema = z.object({
+  toolIds: z.array(z.string().min(1)),
+});
 
 export type CreateCustomToolInput = z.infer<typeof createCustomToolSchema>;
 export type UpdateCustomToolInput = z.infer<typeof updateCustomToolSchema>;
+export type ReorderCustomToolsInput = z.infer<typeof reorderCustomToolsSchema>;

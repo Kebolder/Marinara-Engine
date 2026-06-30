@@ -33,6 +33,8 @@ export const chats = sqliteTable("chats", {
   folderId: text("folder_id"),
   /** Manual sort order within a folder (lower = higher). 0 = use default updatedAt sort. */
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Timestamp of the newest saved message; null until the chat has messages. */
+  lastMessageAt: text("last_message_at"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

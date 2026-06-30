@@ -162,7 +162,7 @@ export function HomeAchievements({
         type="button"
         onClick={() => setOpen(true)}
         className={cn(
-          "mari-chrome-control group flex w-full max-w-3xl items-center justify-start gap-2 px-3 py-2.5 text-left shadow-lg shadow-black/10 sm:gap-3 sm:px-4 sm:py-3",
+          "mari-chrome-control group flex w-full max-w-5xl items-center justify-start gap-2 px-3 py-2.5 text-left shadow-lg shadow-black/10 sm:gap-3 sm:px-4 sm:py-3",
           attached ? "-mt-px !rounded-b-xl !rounded-t-none !border-t-0" : "!rounded-xl",
           className,
         )}

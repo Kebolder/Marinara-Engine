@@ -25,7 +25,6 @@ import {
   useUpdateMessageExtra,
   usePeekPrompt,
   useSetActiveSwipe,
-  useTouchChat,
   useUpdateChatMetadata,
   useBranchChat,
   useChats,
@@ -133,6 +132,36 @@ function getNewestLoadedMessagePageIndex(pages: MessageWithSwipes[][] | undefine
     }
   }
   return newestIndex;
+}
+
+type GeneratedSceneBackgroundResponse = {
+  success: boolean;
+  filename: string;
+  url: string;
+  tag: string;
+};
+
+function buildRoleplayBackgroundSceneDescription(args: {
+  chatName?: string | null;
+  characterNames: string[];
+  messages?: MessageWithSwipes[];
+}): string {
+  const recentMessages = (args.messages ?? [])
+    .filter((message) => message.role !== "system" && message.content.trim())
+    .slice(-8)
+    .map((message) => {
+      const label = message.role === "user" ? "User" : message.role === "assistant" ? "Character" : "Narrator";
+      return `${label}: ${message.content.replace(/\s+/g, " ").trim().slice(0, 260)}`;
+    });
+
+  return [
+    args.chatName ? `Chat: ${args.chatName}` : null,
+    args.characterNames.length ? `Characters in scene: ${args.characterNames.slice(0, 8).join(", ")}` : null,
+    recentMessages.length ? `Recent scene:\n${recentMessages.join("\n")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 1200);
 }
 
 function sortLoadedMessagePagesChronologically(pages: MessageWithSwipes[][]): MessageWithSwipes[][] {
@@ -405,7 +434,20 @@ export function ChatArea() {
   const [agentInjectionReview, setAgentInjectionReview] = useState<AgentInjectionReviewRequest | null>(null);
   const [agentInjectionDrafts, setAgentInjectionDrafts] = useState<Record<string, string>>({});
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [homeProfessorChatOpen, setHomeProfessorChatOpen] = useState(false);
+  const [homeProfessorChatActive, setHomeProfessorChatActive] = useState(false);
+  const homeProfessorChatOpenRef = useRef(false);
   const queryClient = useQueryClient();
+  useEffect(() => {
+    homeProfessorChatOpenRef.current = homeProfessorChatOpen;
+  }, [homeProfessorChatOpen]);
+  const handleHomeProfessorChatOpenChange = useCallback((open: boolean) => {
+    if (open) setHomeProfessorChatActive(true);
+    setHomeProfessorChatOpen(open);
+  }, []);
+  const handleHomeProfessorChatExitComplete = useCallback(() => {
+    if (!homeProfessorChatOpenRef.current) setHomeProfessorChatActive(false);
+  }, []);
   const trackHomeFooterAchievement = useCallback(
     (event: AchievementEvent) => {
       void trackAchievementEvent(event, { keepalive: true })
@@ -429,12 +471,9 @@ export function ChatArea() {
     () => (activeChatId ? (allChats?.find((candidate) => candidate.id === activeChatId) ?? null) : null),
     [activeChatId, allChats],
   );
-  const readFloatingPanelAnchor = useCallback(
-    (event?: ReactMouseEvent<HTMLElement>): FloatingPanelAnchor => {
-      return readChatToolbarFloatingPanelAnchor(event?.currentTarget ?? null);
-    },
-    [],
-  );
+  const readFloatingPanelAnchor = useCallback((event?: ReactMouseEvent<HTMLElement>): FloatingPanelAnchor => {
+    return readChatToolbarFloatingPanelAnchor(event?.currentTarget ?? null);
+  }, []);
   const handleOpenSettingsPanel = useCallback(
     (event?: ReactMouseEvent<HTMLElement>, options?: OpenSettingsOptions) => {
       void preloadChatSettingsDrawer();
@@ -465,6 +504,10 @@ export function ChatArea() {
     setGalleryOpen(false);
     setGalleryAnchor(null);
   }, []);
+
+  useEffect(() => {
+    if (activeChatId) setHomeProfessorChatOpen(false);
+  }, [activeChatId]);
   const closeFloatingChatDrawers = useCallback(() => {
     setSettingsOpen(false);
     setSettingsAnchor(null);
@@ -542,7 +585,6 @@ export function ChatArea() {
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
   const peekPrompt = usePeekPrompt();
   const branchChat = useBranchChat();
-  const touchChat = useTouchChat();
   const { generate, retryAgents } = useGenerate();
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
@@ -560,17 +602,6 @@ export function ChatArea() {
     if (listedActiveChat) return;
     setActiveChatId(null);
   }, [activeChatId, allChats, listedActiveChat, setActiveChatId]);
-
-  const touchedActiveChatRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!chat?.id) {
-      touchedActiveChatRef.current = null;
-      return;
-    }
-    if (touchedActiveChatRef.current === chat.id) return;
-    touchedActiveChatRef.current = chat.id;
-    touchChat.mutate(chat.id);
-  }, [chat?.id, touchChat]);
 
   const currentGameSessionChatId = useMemo(() => resolveCurrentGameSessionChatId(chat, allChats), [allChats, chat]);
 
@@ -649,10 +680,33 @@ export function ChatArea() {
       const char = query.data;
       if (char?.id) map.set(char.id, toCharacterMapValue(char));
     }
+    const convoMeta = parseChatMetadata(chat?.metadata);
+    const archivedSnapshots = convoMeta.archivedCharacterSnapshots as Record<string, unknown> | undefined;
+    if (archivedSnapshots && typeof archivedSnapshots === "object" && !Array.isArray(archivedSnapshots)) {
+      for (const [id, value] of Object.entries(archivedSnapshots)) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        if (map.has(id)) continue;
+        const snapshot = value as CharacterMapValue;
+        if (typeof snapshot.name !== "string") continue;
+        map.set(id, {
+          name: snapshot.name,
+          description: snapshot.description ?? "",
+          personality: snapshot.personality ?? "",
+          backstory: snapshot.backstory ?? "",
+          appearance: snapshot.appearance ?? "",
+          scenario: snapshot.scenario ?? "",
+          example: snapshot.example ?? "",
+          avatarUrl: snapshot.avatarUrl ?? null,
+          avatarCrop: snapshot.avatarCrop ?? null,
+          nameColor: snapshot.nameColor,
+          dialogueColor: snapshot.dialogueColor,
+          boxColor: snapshot.boxColor,
+        });
+      }
+    }
     // Overlay per-chat presence status so status dots reflect this chat, not the last chat to
     // generate. Prefer the live override/schedule-derived status (matching the presence pill, via
     // the shared resolver) over the generation-time snapshot, which only refreshes on generation.
-    const convoMeta = parseChatMetadata(chat?.metadata);
     const chatStatuses = convoMeta.conversationCharacterStatuses as
       | Record<string, { status?: string; activity?: string }>
       | undefined;
@@ -838,10 +892,7 @@ export function ChatArea() {
   const spritePlacementsSource = hasLocalSpritePlacements
     ? localSpriteVisualSettings.spritePlacements
     : chatMeta.spritePlacements;
-  const spritePlacements = useMemo(
-    () => normalizeSpritePlacements(spritePlacementsSource),
-    [spritePlacementsSource],
-  );
+  const spritePlacements = useMemo(() => normalizeSpritePlacements(spritePlacementsSource), [spritePlacementsSource]);
   const hasCustomSpritePlacements = Object.keys(spritePlacements).length > 0;
   // Prefer per-swipe expressions from the last assistant message's extra (survives swipe switching),
   // falling back to chat-level metadata for backward compatibility.
@@ -864,6 +915,30 @@ export function ChatArea() {
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
+  const handleGenerateRoleplayBackground = useCallback(async () => {
+    if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
+    const sceneDescription = buildRoleplayBackgroundSceneDescription({
+      chatName: chat.name,
+      characterNames,
+      messages,
+    }).trim();
+    if (!sceneDescription) {
+      toast.error("Send a scene message before generating a background.");
+      return;
+    }
+
+    const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
+      chatId: activeChatId,
+      sceneDescription,
+      locationSlug: chat.name,
+      reason: "Manual Gallery background request",
+      debugMode: useUIStore.getState().debugMode,
+    });
+    useUIStore.getState().setChatBackground(result.url);
+    updateMeta.mutate({ id: activeChatId, background: result.filename });
+    queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
+    toast.success("Background generated.", { duration: 1800 });
+  }, [activeChatId, characterNames, chat, chatMode, messages, queryClient, updateMeta]);
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -888,6 +963,7 @@ export function ChatArea() {
       provider: chatMeta.translationProvider ?? "google",
       targetLanguage: chatMeta.translationTargetLang ?? "en",
       connectionId: chatMeta.translationConnectionId,
+      systemPrompt: typeof chatMeta.translationPrompt === "string" ? chatMeta.translationPrompt : undefined,
       deeplApiKey: chatMeta.translationDeeplApiKey,
       deeplxUrl: chatMeta.translationDeeplxUrl,
     });
@@ -896,6 +972,7 @@ export function ChatArea() {
     chatMeta.translationProvider,
     chatMeta.translationTargetLang,
     chatMeta.translationConnectionId,
+    chatMeta.translationPrompt,
     chatMeta.translationDeeplApiKey,
     chatMeta.translationDeeplxUrl,
   ]);
@@ -1486,12 +1563,20 @@ export function ChatArea() {
 
   const handleBranch = useCallback(
     (messageId: string) => {
-      if (!activeChatId) return;
+      if (!activeChatId || branchChat.isPending) return;
+      const branchToastId = toast.loading("Creating branch...");
       branchChat.mutate(
         { chatId: activeChatId, upToMessageId: messageId },
         {
           onSuccess: (newChat) => {
             if (newChat) useChatStore.getState().setActiveChatId(newChat.id);
+            toast.success("Branch created.");
+          },
+          onError: (error) => {
+            toast.error(error instanceof Error ? `Branch failed: ${error.message}` : "Branch failed.");
+          },
+          onSettled: () => {
+            toast.dismiss(branchToastId);
           },
         },
       );
@@ -1925,7 +2010,9 @@ export function ChatArea() {
     );
     if (ttsRequests.length === 0) return;
 
-    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id);
+    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id, {
+      progressive: cfg.progressivePlayback,
+    });
   }, [characterMap, isStreaming, resolveTTSCharacterId]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;
@@ -2094,146 +2181,176 @@ export function ChatArea() {
         <HomeCreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
         <div
           data-component="ChatArea.EmptyState"
-          className="mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center overflow-y-auto p-1.5 sm:p-3 lg:p-3"
+          className={cn(
+            "mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center",
+            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-y-auto p-1.5 sm:p-3 lg:p-3",
+          )}
         >
-          {showEmptyStateEffects && <HomeStarfield />}
-          <div className="relative z-[1] flex w-full max-w-3xl flex-col items-center gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2">
-            {/* Central hero */}
-            <div className="relative">
-              <div
-                className={cn(
-                  "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-16 sm:w-16",
-                  showEmptyStateEffects && "animate-pulse-ring bunny-glow",
-                )}
-              >
-                <img
-                  src={showEmptyStateEffects ? "/logo-splash.gif" : "/logo.png"}
-                  alt="Marinara Engine"
-                  width={80}
-                  height={80}
-                  decoding="async"
-                  className={cn(
-                    "h-full w-full",
-                    showEmptyStateEffects ? "object-cover" : "object-contain p-1.5 sm:p-2",
-                  )}
-                />
-              </div>
-            </div>
+          {showEmptyStateEffects && !homeProfessorChatActive && <HomeStarfield />}
+          <div
+            className={cn(
+              "relative z-[1] flex w-full flex-col items-center",
+              homeProfessorChatActive
+                ? "min-h-0 flex-1 max-w-none gap-0 py-0"
+                : "max-w-5xl gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
+            )}
+          >
+            {!homeProfessorChatActive && (
+              <>
+                {/* Central hero */}
+                <div className="relative">
+                  <div
+                    className={cn(
+                      "flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl shadow-xl shadow-orange-500/20 sm:h-16 sm:w-16",
+                      showEmptyStateEffects && "animate-pulse-ring bunny-glow",
+                    )}
+                  >
+                    <img
+                      src={showEmptyStateEffects ? "/logo-splash.gif" : "/logo.png"}
+                      alt="Marinara Engine"
+                      width={80}
+                      height={80}
+                      decoding="async"
+                      className={cn(
+                        "h-full w-full",
+                        showEmptyStateEffects ? "object-cover" : "object-contain p-1.5 sm:p-2",
+                      )}
+                    />
+                  </div>
+                </div>
 
-            <div className="text-center">
-              <h3
-                className={cn(
-                  "mari-logo-gradient-text text-base font-bold sm:text-xl",
-                  isPageActive && "mari-logo-gradient-text--active",
-                )}
-              >
-                Marinara Engine
-              </h3>
-              <p className="mari-chrome-text-muted mt-0.5 text-[0.625rem] tracking-wide opacity-65">
-                v{APP_VERSION}
-              </p>
-            </div>
+                <div className="text-center">
+                  <h3
+                    className={cn(
+                      "mari-logo-gradient-text text-base font-bold sm:text-xl",
+                      isPageActive && "mari-logo-gradient-text--active",
+                    )}
+                  >
+                    Marinara Engine
+                  </h3>
+                  <p className="mari-chrome-text-muted mt-0.5 text-[0.625rem] tracking-wide opacity-65">
+                    v{APP_VERSION}
+                  </p>
+                </div>
 
-            {/* Recent Chats */}
-            <RecentChats />
-
-            <div className="flex w-full max-w-3xl flex-col">
-              <HomeProfessorMariChat pageActive={isPageActive} attachedFooter />
-              <HomeAchievements attached />
-            </div>
+                {/* Recent Chats */}
+                <RecentChats />
+              </>
+            )}
 
             <div
               className={cn(
-                "w-48 [--retro-divider-margin:0]",
-                showEmptyStateEffects ? "retro-divider" : "h-px rounded-[1px] bg-[var(--border)]/40",
+                "flex w-full flex-col",
+                homeProfessorChatActive ? "min-h-0 flex-1 max-w-none" : "max-w-5xl",
               )}
-            />
-
-            {/* Footer */}
-            <div className="flex w-full max-w-2xl flex-col items-center gap-1">
-              <div className="mari-chrome-text-muted flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-center text-[0.625rem] leading-tight sm:text-xs">
-                <span>
-                  Created by{" "}
-                  <a
-                    href="https://spicymarinara.github.io/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
-                  >
-                    Marinara
-                  </a>
-                </span>
-                <span>
-                  Partnered with{" "}
-                  <a
-                    href="https://linkapi.ai/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
-                  >
-                    LinkAPI
-                  </a>
-                </span>
-                <span>
-                  Art and logo by{" "}
-                  <a
-                    href="https://huntercolliex.carrd.co/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
-                  >
-                    HunterCollieX
-                  </a>
-                </span>
-              </div>
-              <div className="flex flex-wrap justify-center gap-2">
-                <a
-                  href="https://discord.com/invite/KdAkTg94ME"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => trackHomeFooterAchievement("discord_clicked")}
-                  className="mari-chrome-control mari-chrome-control--small text-xs"
-                >
-                  <svg width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" />
-                  </svg>
-                  Discord
-                </a>
-                <a
-                  href="https://ko-fi.com/marinara_spaghetti"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => trackHomeFooterAchievement("kofi_clicked")}
-                  className="mari-chrome-control mari-chrome-control--small text-xs"
-                >
-                  <svg width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                  </svg>
-                  Support
-                </a>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreditsOpen(true);
-                    trackHomeFooterAchievement("credits_viewed");
-                  }}
-                  className="mari-chrome-control mari-chrome-control--small text-xs"
-                >
-                  <List size="0.875rem" />
-                  Credits
-                </button>
-              </div>
-
-              {/* Restart tutorial */}
-              <button
-                onClick={() => useUIStore.getState().setHasCompletedOnboarding(false)}
-                className="mari-chrome-control mari-chrome-control--small text-xs"
-                title="Replay tutorial"
-              >
-                <HelpCircle size="0.875rem" />
-                Replay Tutorial
-              </button>
+            >
+              <HomeProfessorMariChat
+                pageActive={isPageActive}
+                attachedFooter={!homeProfessorChatActive}
+                chatWindowOpen={homeProfessorChatOpen}
+                launchHidden={homeProfessorChatActive}
+                onChatWindowOpenChange={handleHomeProfessorChatOpenChange}
+                onChatWindowExitComplete={handleHomeProfessorChatExitComplete}
+              />
+              {!homeProfessorChatActive && <HomeAchievements attached />}
             </div>
+
+            {!homeProfessorChatActive && (
+              <>
+                <div
+                  className={cn(
+                    "w-48 [--retro-divider-margin:0]",
+                    showEmptyStateEffects ? "retro-divider" : "h-px rounded-[1px] bg-[var(--border)]/40",
+                  )}
+                />
+
+                {/* Footer */}
+                <div className="flex w-full max-w-2xl flex-col items-center gap-1">
+                  <div className="mari-chrome-text-muted flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-center text-[0.625rem] leading-tight sm:text-xs">
+                    <span>
+                      Created by{" "}
+                      <a
+                        href="https://spicymarinara.github.io/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
+                      >
+                        Marinara
+                      </a>
+                    </span>
+                    <span>
+                      Partnered with{" "}
+                      <a
+                        href="https://linkapi.ai/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
+                      >
+                        LinkAPI
+                      </a>
+                    </span>
+                    <span>
+                      Art and logo by{" "}
+                      <a
+                        href="https://huntercolliex.carrd.co/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mari-chrome-text underline decoration-[var(--marinara-chat-chrome-panel-muted)]/30 transition-colors hover:text-[var(--marinara-chat-chrome-button-text-hover)] hover:decoration-[var(--marinara-chat-chrome-button-border-hover)]"
+                      >
+                        HunterCollieX
+                      </a>
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <a
+                      href="https://discord.com/invite/KdAkTg94ME"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => trackHomeFooterAchievement("discord_clicked")}
+                      className="mari-chrome-control mari-chrome-control--small text-xs"
+                    >
+                      <svg width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.095 2.157 2.42 0 1.333-.947 2.418-2.157 2.418z" />
+                      </svg>
+                      Discord
+                    </a>
+                    <a
+                      href="https://ko-fi.com/marinara_spaghetti"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => trackHomeFooterAchievement("kofi_clicked")}
+                      className="mari-chrome-control mari-chrome-control--small text-xs"
+                    >
+                      <svg width="0.875rem" height="0.875rem" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                      </svg>
+                      Support
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreditsOpen(true);
+                        trackHomeFooterAchievement("credits_viewed");
+                      }}
+                      className="mari-chrome-control mari-chrome-control--small text-xs"
+                    >
+                      <List size="0.875rem" />
+                      Credits
+                    </button>
+                  </div>
+
+                  {/* Restart tutorial */}
+                  <button
+                    onClick={() => useUIStore.getState().setHasCompletedOnboarding(false)}
+                    className="mari-chrome-control mari-chrome-control--small text-xs"
+                    title="Replay tutorial"
+                  >
+                    <HelpCircle size="0.875rem" />
+                    Replay Tutorial
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
         {pendingNewChatMode && (
@@ -2549,6 +2666,7 @@ export function ChatArea() {
           onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
+          onGenerateBackground={handleGenerateRoleplayBackground}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();

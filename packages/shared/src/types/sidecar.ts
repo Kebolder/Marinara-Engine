@@ -15,6 +15,10 @@ export type SidecarQuantization = "q8_0" | "q4_k_m";
 /** Runtime backend used by the built-in local model. */
 export type SidecarBackend = "llama_cpp" | "mlx";
 
+/** llama.cpp embedding pooling modes accepted by llama-server. */
+export const SIDECAR_EMBEDDING_POOLING_TYPES = ["none", "mean", "cls", "last", "rank"] as const;
+export type SidecarEmbeddingPooling = (typeof SIDECAR_EMBEDDING_POOLING_TYPES)[number];
+
 /** Which runtime target Marinara should prepare for llama.cpp-based local inference. */
 export const SIDECAR_RUNTIME_PREFERENCES = ["auto", "nvidia", "amd", "intel", "vulkan", "cpu", "system"] as const;
 export type SidecarRuntimePreference = (typeof SIDECAR_RUNTIME_PREFERENCES)[number];
@@ -78,6 +82,10 @@ export interface SidecarConfig {
   gpuLayers: number;
   /** Start llama.cpp with Jinja chat templates so OpenAI-compatible native tool calls can work. */
   enableNativeToolCalls: boolean;
+  /** llama.cpp pooling mode for the OpenAI-compatible embeddings endpoint. */
+  embeddingPooling: SidecarEmbeddingPooling;
+  /** llama.cpp physical batch size for embeddings and prompt processing. */
+  embeddingBatchSize: number;
   /** Which runtime target to install for llama.cpp-based local inference. */
   runtimePreference: SidecarRuntimePreference;
 }
@@ -293,6 +301,8 @@ export const SIDECAR_DEFAULT_CONFIG: SidecarConfig = {
   topK: 64,
   gpuLayers: -1,
   enableNativeToolCalls: true,
+  embeddingPooling: "none",
+  embeddingBatchSize: 512,
   runtimePreference: "auto",
 };
 

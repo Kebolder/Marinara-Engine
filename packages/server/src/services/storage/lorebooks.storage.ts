@@ -22,6 +22,7 @@ import {
 } from "@marinara-engine/shared";
 import { collectEffectivelyDisabledFolderIds, collectFolderSubtreeIds } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
+import { GAME_LOREBOOK_KEEPER_SOURCE_ID } from "../lorebook/game-lorebook-scope.js";
 
 function normalizeLorebookEntryLimit(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -29,6 +30,27 @@ function normalizeLorebookEntryLimit(value: unknown): number {
   return Math.max(
     LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
     Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
+  );
+}
+
+function normalizeLorebookVectorQueryDepth(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT;
+  return Math.max(0, Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Math.trunc(parsed)));
+}
+
+function normalizeLorebookVectorScoreThreshold(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function normalizeLorebookVectorMaxResults(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN,
+    Math.min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX, Math.trunc(parsed)),
   );
 }
 
@@ -95,10 +117,12 @@ type LinkedLorebook = {
   personaId?: string | null;
   personaIds?: string[];
   chatId?: string | null;
+  sourceAgentId?: string | null;
 };
 
 function activeLorebookMatchesFilters(book: LinkedLorebook, filters: LorebookScopeFilters): boolean {
   if (!filters.activeLorebookIds?.includes(book.id)) return false;
+  if (book.sourceAgentId === GAME_LOREBOOK_KEEPER_SOURCE_ID) return true;
 
   const characterIds = resolveLinkIds(book.characterIds, book.characterId);
   if (characterIds.length > 0) return characterIds.some((id) => filters.characterIds?.includes(id));
@@ -120,6 +144,9 @@ function parseLorebookRow(row: Record<string, unknown>) {
     entryLimit: normalizeLorebookEntryLimit(row.entryLimit),
     maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
     excludeFromVectorization: row.excludeFromVectorization === "true",
+    vectorQueryDepth: normalizeLorebookVectorQueryDepth(row.vectorQueryDepth),
+    vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(row.vectorScoreThreshold),
+    vectorMaxResults: normalizeLorebookVectorMaxResults(row.vectorMaxResults),
     isGlobal: row.isGlobal === "true",
     enabled: row.enabled === "true",
     scope: parseLorebookScope(row.scope),
@@ -136,11 +163,12 @@ function parseLorebookRow(row: Record<string, unknown>) {
 }
 
 function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  const normalize = (items: unknown[]) => items.map(String).map((item) => item.trim()).filter(Boolean);
+  if (Array.isArray(value)) return normalize(value);
   if (typeof value !== "string" || !value.trim()) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    return Array.isArray(parsed) ? normalize(parsed) : [];
   } catch {
     return [];
   }
@@ -256,6 +284,18 @@ async function syncLorebookLinks(
 }
 
 export function createLorebooksStorage(db: DB) {
+  const assertFolderBelongsToLorebook = async (lorebookId: string, folderId: string | null | undefined) => {
+    if (folderId === null || folderId === undefined) return;
+    const folderRows = await db
+      .select({ lorebookId: lorebookFolders.lorebookId })
+      .from(lorebookFolders)
+      .where(eq(lorebookFolders.id, folderId));
+    const folderRow = folderRows[0];
+    if (!folderRow || folderRow.lorebookId !== lorebookId) {
+      throw new Error("folderId does not belong to this lorebook");
+    }
+  };
+
   return {
     // ── Lorebooks ──
 
@@ -314,7 +354,10 @@ export function createLorebooksStorage(db: DB) {
           entryLimit: normalizeLorebookEntryLimit(input.entryLimit),
           recursiveScanning: String(input.recursiveScanning ?? false),
           maxRecursionDepth: input.maxRecursionDepth ?? 3,
-          excludeFromVectorization: String(input.excludeFromVectorization ?? false),
+          excludeFromVectorization: String(input.excludeFromVectorization ?? true),
+          vectorQueryDepth: normalizeLorebookVectorQueryDepth(input.vectorQueryDepth),
+          vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(input.vectorScoreThreshold),
+          vectorMaxResults: normalizeLorebookVectorMaxResults(input.vectorMaxResults),
           characterId: characterIds[0] ?? null,
           personaId: personaIds[0] ?? null,
           chatId: input.chatId ?? null,
@@ -345,6 +388,12 @@ export function createLorebooksStorage(db: DB) {
       if (input.maxRecursionDepth !== undefined) updates.maxRecursionDepth = input.maxRecursionDepth;
       if (input.excludeFromVectorization !== undefined)
         updates.excludeFromVectorization = String(input.excludeFromVectorization);
+      if (input.vectorQueryDepth !== undefined)
+        updates.vectorQueryDepth = normalizeLorebookVectorQueryDepth(input.vectorQueryDepth);
+      if (input.vectorScoreThreshold !== undefined)
+        updates.vectorScoreThreshold = normalizeLorebookVectorScoreThreshold(input.vectorScoreThreshold);
+      if (input.vectorMaxResults !== undefined)
+        updates.vectorMaxResults = normalizeLorebookVectorMaxResults(input.vectorMaxResults);
       const shouldUpdateCharacterLinks = input.characterIds !== undefined || input.characterId !== undefined;
       const shouldUpdatePersonaLinks = input.personaIds !== undefined || input.personaId !== undefined;
       const current = shouldUpdateCharacterLinks || shouldUpdatePersonaLinks ? ((await this.getById(id)) as any) : null;
@@ -510,21 +559,8 @@ export function createLorebooksStorage(db: DB) {
     async createEntry(input: CreateLorebookEntryInput) {
       const id = newId();
       const timestamp = now();
-      // If a folderId is supplied, the folder must exist AND live in the same
-      // lorebook. Without this check, the route layer accepts any string and
-      // we'd silently create orphaned entries that disappear from the editor's
-      // grouped view and bypass the disabled-folder activation gate.
       const requestedFolderId = input.folderId ?? null;
-      if (requestedFolderId !== null) {
-        const folderRows = await db
-          .select({ lorebookId: lorebookFolders.lorebookId })
-          .from(lorebookFolders)
-          .where(eq(lorebookFolders.id, requestedFolderId));
-        const folderRow = folderRows[0];
-        if (!folderRow || folderRow.lorebookId !== input.lorebookId) {
-          throw new Error("folderId does not belong to this lorebook");
-        }
-      }
+      await assertFolderBelongsToLorebook(input.lorebookId, requestedFolderId);
       await db.insert(lorebookEntries).values({
         id,
         lorebookId: input.lorebookId,
@@ -670,9 +706,20 @@ export function createLorebooksStorage(db: DB) {
         .where(eq(lorebookEntries.id, id));
     },
 
+    /** Remove every stored embedding vector for entries in one lorebook. */
+    async clearEntryEmbeddings(lorebookId: string) {
+      await db
+        .update(lorebookEntries)
+        .set({ embedding: null, updatedAt: now() })
+        .where(eq(lorebookEntries.lorebookId, lorebookId));
+    },
+
     /** Bulk create entries (for imports and AI generation). */
     async bulkCreateEntries(lorebookId: string, entries: Omit<CreateLorebookEntryInput, "lorebookId">[]) {
       const results = [];
+      for (const entry of entries) {
+        await assertFolderBelongsToLorebook(lorebookId, entry.folderId ?? null);
+      }
       for (const entry of entries) {
         const result = await this.createEntry({ ...entry, lorebookId });
         results.push(result);

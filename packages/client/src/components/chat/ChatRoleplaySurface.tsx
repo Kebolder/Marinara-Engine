@@ -44,6 +44,7 @@ import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameStateStore } from "../../stores/game-state.store";
+import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useActiveLorebookEntries, useLorebooks } from "../../hooks/use-lorebooks";
 import { usePresetFull, usePresets } from "../../hooks/use-presets";
 import { ChatMessage } from "./ChatMessage";
@@ -312,7 +313,7 @@ function StreamingIndicator({
   groupChatMode?: string;
   expressionAvatarResolver?: ExpressionAvatarResolver;
 }) {
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const streamBuffer = useThrottledStreamBuffer();
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   const streamingCharacterId = useChatStore((s) => s.streamingCharacterId);
 
@@ -353,7 +354,7 @@ function RegeneratingMessageContent({
 }: {
   msg: MessageWithSwipes;
 } & Omit<ComponentProps<typeof ChatMessage>, "message" | "isStreaming">) {
-  const streamBuffer = useChatStore((s) => s.streamBuffer);
+  const streamBuffer = useThrottledStreamBuffer();
   const thinkingBuffer = useChatStore((s) => s.thinkingBuffer);
   // Strip old-swipe attachments so a previous illustration doesn't linger
   // while the new swipe's text is streaming in.
@@ -420,17 +421,19 @@ function resolveChatSummaryInjectionHint(
     const isMarker = (section.isMarker as unknown) === true || (section.isMarker as unknown) === "true";
     return isMarker && readMarkerConfig(section.markerConfig)?.type === "chat_summary";
   });
+  const enabledSummarySections = summarySections.filter((section) => promptEnabled(section.enabled));
+  const activeSummarySections = enabledSummarySections.filter((section) => groupPathEnabled(section.groupId, groupsById));
 
   if (summarySections.length === 0) {
-    return "Active preset has no Chat Summary marker, so enabled summaries will not be inserted.";
+    return "Enabled summaries will be added at the end of the system prompt. Add an enabled Chat Summary marker to the active preset to choose a specific position.";
   }
-  if (!summarySections.some((section) => promptEnabled(section.enabled))) {
-    return "Chat Summary section is disabled in the active preset.";
+  if (activeSummarySections.length > 0) {
+    return "Enabled summaries will be inserted where the active preset's Chat Summary marker is placed.";
   }
-  if (!summarySections.some((section) => promptEnabled(section.enabled) && groupPathEnabled(section.groupId, groupsById))) {
-    return "Chat Summary section is inside a disabled preset group.";
+  if (enabledSummarySections.length === 0) {
+    return "The active preset's Chat Summary marker is disabled, so enabled summaries will be added at the end of the system prompt.";
   }
-  return null;
+  return "The active preset's Chat Summary marker is inside a disabled group, so enabled summaries will be added at the end of the system prompt.";
 }
 
 function ActiveContextLinksButton({
@@ -848,21 +851,37 @@ function AuthorNotesButton({
 
   useEffect(() => {
     if (!open || !renderPanel) return;
-    const handle = (e: MouseEvent) => {
+    const handle = (e: PointerEvent) => {
       const target = e.target as Node;
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
+      // On mobile, the virtual keyboard opening can synthesise a pointer/mouse
+      // event outside the panel that would otherwise close it mid-edit; don't
+      // dismiss while a field inside the panel is focused. Mobile-only: on desktop
+      // a mousedown fires before focus moves, so guarding there would swallow the
+      // first outside click (see SummaryPopover, which only runs on touch).
+      if (useMobilePanel) {
+        const active = document.activeElement;
+        if (active instanceof Node && panelRef.current?.contains(active)) return;
+      }
       onOpenChange(false);
     };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [onOpenChange, open, renderPanel]);
+    document.addEventListener("pointerdown", handle);
+    return () => document.removeEventListener("pointerdown", handle);
+  }, [onOpenChange, open, renderPanel, useMobilePanel]);
 
   useLayoutEffect(() => {
     if (!open || !renderPanel || !useMobilePanel) {
       setMobileFrame(null);
       return;
     }
-    const update = () => setMobileFrame(getMobileFloatingPanelFrame(buttonRef.current, 288));
+    const update = () => {
+      const next = getMobileFloatingPanelFrame(buttonRef.current, 288);
+      // Keep the last good frame when the anchor button is transiently
+      // unmeasurable (e.g. the mobile keyboard opening collapses the toolbar /
+      // overflow menu so the button's rect is 0) — otherwise the portal panel
+      // unmounts the instant the keyboard appears and the user can't type.
+      if (next) setMobileFrame(next);
+    };
     update();
     window.addEventListener("resize", update);
     window.addEventListener("scroll", update, true);
@@ -937,6 +956,7 @@ function AuthorNotesButton({
                 maxHeight: mobileFrame.maxHeight,
               }}
               onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >
               <Suspense
@@ -969,6 +989,7 @@ function AuthorNotesButton({
                 top: `${desktopAnchor.top}px`,
               }}
               onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               <Suspense
                 fallback={
@@ -1079,6 +1100,7 @@ type RoleplaySurfaceProps = {
   onCloseFiles: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
+  onGenerateBackground?: () => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onResetSpritePlacements: () => void;
@@ -1188,6 +1210,7 @@ export function ChatRoleplaySurface({
   onCloseFiles,
   onCloseGallery,
   onIllustrate,
+  onGenerateBackground,
   onWizardFinish,
   onClosePeekPrompt,
   onResetSpritePlacements,
@@ -1957,6 +1980,7 @@ export function ChatRoleplaySurface({
         onCloseFiles={onCloseFiles}
         onCloseGallery={onCloseGallery}
         onIllustrate={onIllustrate}
+        onGenerateBackground={onGenerateBackground}
         onWizardFinish={onWizardFinish}
         onClosePeekPrompt={onClosePeekPrompt}
         onDeleteConfirm={onDeleteConfirm}

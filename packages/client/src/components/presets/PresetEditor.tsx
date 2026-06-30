@@ -1961,7 +1961,7 @@ function VariableCard({
 
   const moveOptionByOffset = (optionIdx: number, offset: number) => {
     if (optionOrderIsAlphabetical) return;
-    const next = reorderItems(opts, optionIdx, optionIdx + offset);
+    const next = reorderItems(currentOpts(), optionIdx, optionIdx + offset);
     if (next) updateOpts(next);
   };
 
@@ -2229,7 +2229,7 @@ function VariableCard({
           <div className="space-y-1.5" data-preset-variable-option-root={variable.id}>
             <label className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Options</label>
             {opts.map((opt, oi) => {
-              const valueBlank = !opt.value || !opt.value.trim();
+              const valueIsBlank = !opt.value || !opt.value.trim();
               const showDropBefore =
                 dropOptIdx === oi && draggingOptIdx !== null && draggingOptIdx !== oi && draggingOptIdx !== oi - 1;
               const showDropAfter =
@@ -2262,9 +2262,7 @@ function VariableCard({
                     }}
                     className={cn(
                       "flex min-w-0 flex-wrap items-center gap-2 rounded-lg px-2.5 py-1.5 ring-1 sm:flex-nowrap",
-                      valueBlank
-                        ? "bg-[var(--destructive)]/5 ring-[var(--destructive)]/30"
-                        : "mari-editor-panel mari-editor-panel--soft",
+                      "mari-editor-panel mari-editor-panel--soft",
                       draggingOptIdx === oi && "opacity-40",
                     )}
                   >
@@ -2322,23 +2320,14 @@ function VariableCard({
                     </span>
                     <OptionFieldInput
                       value={opt.label}
-                      onCommit={(v) => {
-                        const next = [...opts];
-                        next[oi] = { ...next[oi], label: v };
-                        updateOpts(next);
-                      }}
+                      onCommit={(v) => updateOptionField(opt.id, "label", v)}
                       className="mari-editor-field min-w-[7rem] flex-[1_1_7rem] px-1.5 py-0.5 text-xs sm:min-w-0 sm:flex-1"
                       placeholder="Label…"
                     />
                     <OptionFieldInput
                       value={opt.value}
                       onCommit={(v) => updateOptionField(opt.id, "value", v)}
-                      className={cn(
-                        "min-w-[7rem] flex-[1_1_7rem] rounded px-1.5 py-0.5 font-mono text-xs focus:outline-none focus:ring-1 sm:min-w-0 sm:flex-1",
-                        valueBlank
-                          ? "bg-[var(--destructive)]/10 ring-1 ring-[var(--destructive)]/30 placeholder:text-[var(--destructive)]/40"
-                          : "mari-editor-field",
-                      )}
+                      className="mari-editor-field min-w-[7rem] flex-[1_1_7rem] rounded px-1.5 py-0.5 font-mono text-xs focus:outline-none focus:ring-1 sm:min-w-0 sm:flex-1"
                       placeholder="Value…"
                     />
                     <button
@@ -2359,8 +2348,10 @@ function VariableCard({
                       <X size="0.625rem" className="text-[var(--destructive)]" />
                     </button>
                   </div>
-                  {valueBlank && (
-                    <p className="mt-1 pl-6 text-[0.5625rem] text-[var(--destructive)]">Value cannot be empty.</p>
+                  {valueIsBlank && (
+                    <p className="mt-1 pl-6 text-[0.5625rem] text-[var(--muted-foreground)]">
+                      Blank value inserts nothing.
+                    </p>
                   )}
                   {showDropAfter && (
                     <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />

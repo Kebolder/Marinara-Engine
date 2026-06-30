@@ -106,6 +106,7 @@ export const updateCharacterSchema = z.object({
 export const createGroupSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
+  avatarPath: z.string().nullable().optional(),
   characterIds: z.array(z.string()).default([]),
 });
 

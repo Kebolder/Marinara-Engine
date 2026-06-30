@@ -18,8 +18,9 @@ import type {
   MacroContext,
   ResolveMacroOptions,
 } from "@marinara-engine/shared";
-import { DEFAULT_GENERATION_PARAMS, resolveMacros } from "@marinara-engine/shared";
+import { DEFAULT_GENERATION_PARAMS, generationParametersSchema, resolveMacros } from "@marinara-engine/shared";
 import { wrapContent, wrapGroup } from "./format-engine.js";
+import { sanitizePromptLeaf } from "./prompt-escaping.js";
 import { expandMarker, type MarkerContext } from "./marker-expander.js";
 import { mergeAdjacentMessages, squashLeadingSystemMessages } from "./merger.js";
 import { injectAtDepth } from "../lorebook/prompt-injector.js";
@@ -167,6 +168,8 @@ export interface AssemblerInput {
   disableLorebooks?: boolean;
   /** Pre-computed embedding of chat context for semantic lorebook matching. */
   chatEmbedding?: number[] | null;
+  /** Per-lorebook pre-computed embeddings for semantic lorebook matching. */
+  semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   /** Per-chat sticky/cooldown/delay timing state for lorebook entries. */
@@ -189,6 +192,8 @@ export interface AssemblerInput {
   idleDuration?: string;
   /** IANA timezone used by date/time macros. */
   timeZone?: string;
+  /** Skip regular preset instructions that would conflict with user impersonation. */
+  impersonate?: boolean;
   /** Preserve character-scoped macros for a later known-speaker finalization pass. */
   deferCharacterMacros?: boolean;
 }
@@ -214,15 +219,29 @@ export interface AssemblerOutput {
 }
 
 function parsePresetParameters(raw: string): GenerationParameters {
+  let parsed: unknown = null;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return { ...DEFAULT_GENERATION_PARAMS, ...(parsed as Partial<GenerationParameters>) };
-    }
+    parsed = JSON.parse(raw) as unknown;
   } catch {
     // Malformed legacy rows should not leave generation parameters undefined.
   }
-  return { ...DEFAULT_GENERATION_PARAMS };
+  const merged =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { ...DEFAULT_GENERATION_PARAMS, ...(parsed as Partial<GenerationParameters>) }
+      : { ...DEFAULT_GENERATION_PARAMS };
+  const result = generationParametersSchema.safeParse(merged);
+  if (result.success) return result.data;
+
+  const out: GenerationParameters = { ...DEFAULT_GENERATION_PARAMS };
+  const source = merged as Record<string, unknown>;
+  for (const key of Object.keys(generationParametersSchema.shape) as Array<keyof GenerationParameters>) {
+    const fieldSchema = generationParametersSchema.shape[key];
+    const field = fieldSchema.safeParse(source[key]);
+    if (field.success) {
+      (out as Record<keyof GenerationParameters, unknown>)[key] = field.data;
+    }
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════
@@ -327,6 +346,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     excludedLorebookSourceAgentIds: input.excludedLorebookSourceAgentIds ?? [],
     disableLorebooks: input.disableLorebooks === true,
     chatEmbedding: input.chatEmbedding ?? null,
+    semanticEmbeddingsByLorebookId: input.semanticEmbeddingsByLorebookId,
     entryStateOverrides: input.entryStateOverrides,
     entryTimingStates: input.entryTimingStates,
     lorebookTokenBudget: input.lorebookTokenBudget,
@@ -335,6 +355,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     previewOnly: input.previewOnly === true,
     resolveLorebookContent: (value) => resolveMacrosWithVariableSnapshot(value, macroCtx, deferNameMacroOptions),
     groupScenarioOverrideText: input.groupScenarioOverrideText ?? null,
+    macroCtx,
   };
 
   // ── Phase 1: Resolve sections in preset order ──
@@ -349,6 +370,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     const section = sectionMap.get(sectionId);
     if (!section) continue;
     if (section.enabled !== "true") continue;
+    if (input.impersonate === true && section.isMarker !== "true") continue;
 
     // Check if group is enabled
     if (section.groupId) {
@@ -401,17 +423,16 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     const section = orderedSections[i]!;
     if (processedSections.has(section.id)) continue;
 
-    if (section.groupId) {
+    if (section.groupId && !section.isChatHistory) {
       // Collect all consecutive sections in the same group
       const groupSections: ResolvedSection[] = [section];
       processedSections.add(section.id);
 
       for (let j = i + 1; j < orderedSections.length; j++) {
         const next = orderedSections[j]!;
-        if (next.groupId === section.groupId) {
-          groupSections.push(next);
-          processedSections.add(next.id);
-        }
+        if (next.isChatHistory || next.groupId !== section.groupId) break;
+        groupSections.push(next);
+        processedSections.add(next.id);
       }
 
       // Get group info for wrapping
@@ -432,26 +453,6 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
         chatHistoryEndIdx = messages.length;
       } else {
         messages.push(...section.messages.map((message) => ({ ...message, contextKind: "prompt" as const })));
-      }
-    }
-  }
-
-  // ── Phase 2b: Fallback chat summary injection ──
-  // If the preset has no chat_summary marker but a summary exists, append it
-  // to the bottom of the first system message so it's always included.
-  if (!hasChatSummaryMarker && markerCtx.chatSummary) {
-    const wrapped = wrapContent(markerCtx.chatSummary, "Chat Summary", wrapFormat);
-    if (wrapped) {
-      const firstSystemIdx = messages.findIndex((m) => m.role === "system");
-      if (firstSystemIdx >= 0) {
-        messages[firstSystemIdx] = {
-          ...messages[firstSystemIdx]!,
-          content: `${messages[firstSystemIdx]!.content}\n\n${wrapped}`,
-          contextKind: "prompt",
-        };
-      } else {
-        // No system message at all — prepend one
-        messages.unshift({ role: "system", content: wrapped, contextKind: "prompt" });
       }
     }
   }
@@ -519,7 +520,14 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     finalMessages = enforceStrictRoles(finalMessages);
   }
 
-  // ── Phase 7: Single user message mode ──
+  // ── Phase 7: Fallback chat summary injection ──
+  // A chat_summary marker owns placement when present. Without one, enabled
+  // summaries belong at the end of the system prompt block, before history.
+  if (!hasChatSummaryMarker) {
+    finalMessages = appendFallbackChatSummaryToSystemPrompt(finalMessages, markerCtx.chatSummary, wrapFormat, macroCtx);
+  }
+
+  // ── Phase 8: Single user message mode ──
   // Collapses entire prompt into one user message.
   if (parameters.singleUserMessage) {
     const combined = finalMessages
@@ -611,7 +619,7 @@ async function resolveSection(
             startToken: runtimeAgentData?.startToken,
             endToken: runtimeAgentData?.endToken,
           };
-    runtimeAgentText = normalizedRuntimeAgentData.text;
+    runtimeAgentText = sanitizePromptLeaf(normalizedRuntimeAgentData.text, ctx.wrapFormat);
     runtimeAgentStartToken = normalizedRuntimeAgentData.startToken;
     runtimeAgentEndToken = normalizedRuntimeAgentData.endToken;
     const hasRuntimeAgentData =
@@ -626,10 +634,7 @@ async function resolveSection(
         id: section.id,
         groupId: section.groupId,
         role,
-        messages: expanded.messages.map((message) => ({
-          ...message,
-          content: resolveMacros(message.content, ctx.macroCtx),
-        })),
+        messages: expanded.messages,
         depth: section.injectionDepth,
         isChatHistory: true,
       };
@@ -651,6 +656,11 @@ async function resolveSection(
       // Other markers return content to be wrapped
       content = expanded.content;
       contentMacrosResolved =
+        markerConfig.type === "character" ||
+        markerConfig.type === "persona" ||
+        markerConfig.type === "chat_summary" ||
+        markerConfig.type === "dialogue_examples" ||
+        markerConfig.type === "agent_data" ||
         markerConfig.type === "world_info_before" ||
         markerConfig.type === "world_info_after" ||
         markerConfig.type === "lorebook";
@@ -763,6 +773,39 @@ function findHistoryBounds(messages: ChatMLMessage[]): { start: number; end: num
     }
   }
   return start >= 0 ? { start, end } : null;
+}
+
+function appendFallbackChatSummaryToSystemPrompt(
+  messages: ChatMLMessage[],
+  chatSummary: string | null,
+  wrapFormat: WrapFormat,
+  macroCtx: MacroContext,
+): ChatMLMessage[] {
+  const summary = sanitizePromptLeaf(resolveMacros(chatSummary ?? "", macroCtx), wrapFormat).trim();
+  if (!summary) return messages;
+
+  const wrapped = wrapContent(summary, "Chat Summary", wrapFormat).trim();
+  if (!wrapped) return messages;
+
+  const next = messages.map((message) => ({ ...message }));
+  let lastLeadingSystemIdx = -1;
+  for (let i = 0; i < next.length; i++) {
+    const message = next[i]!;
+    if (message.role !== "system" || message.contextKind === "history") break;
+    lastLeadingSystemIdx = i;
+  }
+
+  if (lastLeadingSystemIdx >= 0) {
+    const target = next[lastLeadingSystemIdx]!;
+    next[lastLeadingSystemIdx] = {
+      ...target,
+      content: `${target.content}\n\n${wrapped}`,
+      contextKind: target.contextKind ?? "prompt",
+    };
+    return next;
+  }
+
+  return [{ role: "system", content: wrapped, contextKind: "prompt" }, ...next];
 }
 
 function enforceStrictRoles(messages: ChatMLMessage[]): ChatMLMessage[] {

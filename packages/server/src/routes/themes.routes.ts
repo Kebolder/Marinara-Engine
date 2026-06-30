@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { createThemeSchema, setActiveThemeSchema, updateThemeSchema } from "@marinara-engine/shared";
+import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { createThemesStorage } from "../services/storage/themes.storage.js";
 
 export async function themesRoutes(app: FastifyInstance) {
@@ -12,12 +13,14 @@ export async function themesRoutes(app: FastifyInstance) {
     return storage.list();
   });
 
-  app.post("/", async (req) => {
+  app.post("/", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Theme install/update/delete" })) return;
     const input = createThemeSchema.parse(req.body);
     return storage.create(input);
   });
 
   app.patch<{ Params: { id: string } }>("/:id", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Theme install/update/delete" })) return;
     const data = updateThemeSchema.parse(req.body);
     const existing = await storage.getById(req.params.id);
     if (!existing) return reply.status(404).send({ error: "Theme not found" });
@@ -25,6 +28,7 @@ export async function themesRoutes(app: FastifyInstance) {
   });
 
   app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Theme install/update/delete" })) return;
     const existing = await storage.getById(req.params.id);
     if (!existing) return reply.status(404).send({ error: "Theme not found" });
     await storage.remove(req.params.id);
@@ -32,6 +36,7 @@ export async function themesRoutes(app: FastifyInstance) {
   });
 
   app.put("/active", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Theme install/update/delete" })) return;
     const input = setActiveThemeSchema.parse(req.body);
     if (input.id !== null) {
       const existing = await storage.getById(input.id);

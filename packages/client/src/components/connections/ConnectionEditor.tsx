@@ -806,7 +806,6 @@ export function ConnectionEditor() {
   const handleManualModelChange = useCallback(
     (model: string) => {
       setLocalModel(model);
-      setLocalMaxTokensOverride(null);
       markDirty();
     },
     [markDirty],

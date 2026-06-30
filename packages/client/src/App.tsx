@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { lazy, Suspense, useEffect } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { AppShell } from "./components/layout/AppShell";
@@ -26,7 +26,8 @@ import {
   isCssGradient,
   RAINBOW_GRADIENT_PRESET,
 } from "./lib/css-colors";
-import { useLegacyThemeMigration } from "./hooks/use-themes";
+import { normalizeThemeCss } from "./lib/theme-css";
+import { useLegacyThemeMigration, useThemes } from "./hooks/use-themes";
 import { useLegacyExtensionMigration } from "./hooks/use-extensions";
 import { useSettingsSync } from "./hooks/use-settings-sync";
 import { useChatRealtimeEvents } from "./hooks/use-chat-realtime-events";
@@ -68,8 +69,85 @@ const APP_ACCENT_CUSTOM_VARIABLES = [
 const ACCENT_RGB_TICK_MS = 500;
 const ACCENT_RGB_SOLID_CYCLE_MS = 7_200;
 const ACCENT_RGB_GRADIENT_STOP_MS = 6_000;
+const CUSTOM_CURSOR_ANIMATED_RECOLOR_MS = 6_000;
+const CUSTOM_CURSOR_RECOLOR_SCROLL_FREEZE_MS = 360;
 const TOAST_DURATION_MS = 6_000;
 const TOAST_VISIBLE_LIMIT = 3;
+const THEME_ACCENT_PULSE_VARIABLE = "--marinara-theme-accent-pulse";
+const THEME_ACCENT_PULSE_SOURCE_VARIABLE = "--marinara-theme-accent-pulse-source";
+const THEME_ACCENT_PULSE_ENABLED_VALUES = new Set(["1", "true", "yes", "on", "enabled", "enable", "pulse"]);
+const ACCENT_SOURCE_SELF_REFERENCE_RE =
+  /var\(\s*--(?:primary|ring|accent|sidebar-accent|sidebar-accent-foreground|marinara-app-accent-solid|marinara-app-accent-gradient|marinara-chat-chrome-accent|marinara-chat-chrome-accent-gradient)\b/i;
+
+function formatRecoveryError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error) ?? "Unknown render error";
+  } catch {
+    return String(error);
+  }
+}
+
+export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { error: unknown; hasError: boolean }> {
+  state: { error: unknown; hasError: boolean } = { error: null, hasError: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error, hasError: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("[AppRecoveryBoundary] Unhandled render error", error, info.componentStack);
+  }
+
+  private resetLocalUiState = () => {
+    try {
+      window.localStorage.removeItem("marinara-engine-ui");
+      window.localStorage.removeItem("marinara-active-chat-id");
+      window.localStorage.removeItem("marinara-input-drafts");
+      window.sessionStorage.removeItem("marinara-input-drafts");
+    } catch {
+      /* ignore storage reset errors */
+    }
+    window.location.reload();
+  };
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const errorMessage = formatRecoveryError(this.state.error);
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--background,#050312)] px-4 text-[var(--foreground,#f8fafc)]">
+        <div className="w-full max-w-lg rounded-xl border border-[var(--border,rgba(255,255,255,0.16))] bg-[var(--card,rgba(15,23,42,0.88))] p-5 shadow-2xl">
+          <h1 className="text-lg font-semibold">Marinara hit a recoverable UI error.</h1>
+          <p className="mt-2 text-sm text-[var(--muted-foreground,#cbd5e1)]">
+            The app shell crashed while rendering. Reload first; reset local UI state only if the same screen keeps
+            returning after restart.
+          </p>
+          <pre className="mt-3 max-h-32 overflow-auto rounded-lg bg-black/30 p-2 text-xs text-[var(--muted-foreground,#cbd5e1)]">
+            {errorMessage}
+          </pre>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-[var(--primary,#d4acfb)] px-3 py-2 text-sm font-semibold text-[var(--primary-foreground,#120718)]"
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              onClick={this.resetLocalUiState}
+              className="rounded-lg border border-[var(--border,rgba(255,255,255,0.16))] px-3 py-2 text-sm font-semibold"
+            >
+              Reset local UI state
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 function stripFontFamilyQuotes(family: string): string {
   const trimmed = family.trim();
@@ -101,6 +179,113 @@ function syncRangeSliderProgress(input: HTMLInputElement) {
   input.style.setProperty("--range-progress", `${Math.max(0, Math.min(100, percent))}%`);
 }
 
+function escapeSvgAttribute(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+let cursorColorProbe: HTMLSpanElement | null = null;
+let cursorCanvasContext: CanvasRenderingContext2D | null | undefined;
+
+function clampCursorColorByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function parseCursorColorChannel(value: string, scaleUnit: boolean) {
+  const clean = value.trim();
+  if (!clean) return null;
+
+  if (clean.endsWith("%")) {
+    const percent = Number(clean.slice(0, -1));
+    return Number.isFinite(percent) ? clampCursorColorByte((percent / 100) * 255) : null;
+  }
+
+  const channel = Number(clean);
+  if (!Number.isFinite(channel)) return null;
+  return clampCursorColorByte(scaleUnit ? channel * 255 : channel);
+}
+
+function parseCursorColorChannels(value: string, scaleUnit: boolean) {
+  const clean = value.replace(/\s*\/\s*[^,\s)]+/g, " ").trim();
+  const channels = clean.split(/\s*,\s*|\s+/).filter(Boolean);
+  if (channels.length < 3) return null;
+
+  const red = parseCursorColorChannel(channels[0], scaleUnit);
+  const green = parseCursorColorChannel(channels[1], scaleUnit);
+  const blue = parseCursorColorChannel(channels[2], scaleUnit);
+  if (red === null || green === null || blue === null) return null;
+
+  return `rgb(${red} ${green} ${blue})`;
+}
+
+function normalizeCursorColorWithCanvas(color: string) {
+  if (typeof document === "undefined") return "";
+  if (cursorCanvasContext === undefined) {
+    cursorCanvasContext = document.createElement("canvas").getContext("2d");
+  }
+  if (!cursorCanvasContext) return "";
+
+  cursorCanvasContext.fillStyle = "#010203";
+  cursorCanvasContext.fillStyle = color;
+  return cursorCanvasContext.fillStyle === "#010203" ? "" : cursorCanvasContext.fillStyle;
+}
+
+function normalizeCursorColorForSvg(color: string, fallback: string) {
+  const clean = color.trim();
+  if (!clean) return fallback;
+
+  const rgbMatch = clean.match(/^rgba?\(\s*(.*?)\s*\)$/i);
+  if (rgbMatch) return parseCursorColorChannels(rgbMatch[1], false) ?? fallback;
+
+  const srgbMatch = clean.match(/^color\(\s*srgb\s+(.*?)\s*\)$/i);
+  if (srgbMatch) return parseCursorColorChannels(srgbMatch[1], true) ?? fallback;
+
+  return normalizeCursorColorWithCanvas(clean) || clean;
+}
+
+function resolveCursorColor(color: string, fallback: string) {
+  if (typeof document === "undefined") return fallback;
+  if (!cursorColorProbe) {
+    cursorColorProbe = document.createElement("span");
+    cursorColorProbe.setAttribute("aria-hidden", "true");
+    cursorColorProbe.style.position = "fixed";
+    cursorColorProbe.style.pointerEvents = "none";
+    cursorColorProbe.style.visibility = "hidden";
+    cursorColorProbe.style.width = "0";
+    cursorColorProbe.style.height = "0";
+    document.body.appendChild(cursorColorProbe);
+  } else if (!cursorColorProbe.isConnected) {
+    document.body.appendChild(cursorColorProbe);
+  }
+
+  cursorColorProbe.style.color = "";
+  cursorColorProbe.style.color = color;
+  if (!cursorColorProbe.style.color) return fallback;
+
+  return normalizeCursorColorForSvg(getComputedStyle(cursorColorProbe).color, fallback);
+}
+
+function getAccentCursorColors(accent: string, theme: "dark" | "light") {
+  const fill = resolveCursorColor(accent, theme === "light" ? "#e0709a" : "#d4acfb");
+  const stroke = theme === "light" ? "#1a1025" : "#050312";
+
+  return { fill, stroke };
+}
+
+function getAccentCursorValue(fill: string, stroke: string) {
+  const svg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 3L10 20L12 12L20 10L3 3Z" fill="${escapeSvgAttribute(fill)}" stroke="${stroke}" stroke-width="1"/></svg>`;
+
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 3 3`;
+}
+
+function setAccentCursorVariable(root: HTMLElement, accent: string, theme: "dark" | "light") {
+  const { fill, stroke } = getAccentCursorColors(accent, theme);
+  const nextCursor = getAccentCursorValue(fill, stroke);
+
+  root.style.setProperty("--marinara-custom-cursor-fill", fill);
+  root.style.setProperty("--marinara-custom-cursor-stroke", stroke);
+  root.style.setProperty("--cursor-pink", nextCursor);
+}
+
 function getSolidAccentGradient(accent: string) {
   return `linear-gradient(90deg, color-mix(in srgb, ${accent} 72%, var(--background) 28%), ${accent}, color-mix(in srgb, ${accent} 76%, var(--foreground) 24%), ${accent})`;
 }
@@ -115,18 +300,58 @@ function getAccentGlow(accent: string, theme: "dark" | "light") {
   return `color-mix(in srgb, ${accent} ${theme === "light" ? "12%" : "18%"}, transparent)`;
 }
 
+function stripCssComments(css: string) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readCssCustomProperty(css: string, name: string) {
+  const match = css.match(new RegExp(`${escapeRegExp(name)}\\s*:\\s*([^;{}\\n\\r]+)`, "i"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function isEnabledCssValue(value: string) {
+  return THEME_ACCENT_PULSE_ENABLED_VALUES.has(value.trim().toLowerCase());
+}
+
+function getFirstThemeAccentSource(css: string) {
+  const sourceCandidates = [
+    readCssCustomProperty(css, THEME_ACCENT_PULSE_SOURCE_VARIABLE),
+    readCssCustomProperty(css, "--marinara-app-accent-gradient"),
+    readCssCustomProperty(css, "--marinara-app-accent-solid"),
+    readCssCustomProperty(css, "--primary"),
+  ];
+
+  return sourceCandidates.find((value) => value && !ACCENT_SOURCE_SELF_REFERENCE_RE.test(value)) ?? "";
+}
+
+function getThemeAccentPulseConfig(css: string | null | undefined) {
+  const normalizedCss = stripCssComments(normalizeThemeCss(css ?? ""));
+  const enabled = isEnabledCssValue(readCssCustomProperty(normalizedCss, THEME_ACCENT_PULSE_VARIABLE));
+
+  return {
+    enabled,
+    source: enabled ? getFirstThemeAccentSource(normalizedCss) : "",
+  };
+}
+
 function applyAppAccentVariables({
   root,
   accent,
   gradient,
   surfaceAccent,
   theme,
+  updateCursor = true,
 }: {
   root: HTMLElement;
   accent: string;
   gradient: string;
   surfaceAccent: string;
   theme: "dark" | "light";
+  updateCursor?: boolean;
 }) {
   root.style.setProperty("--primary", accent);
   root.style.setProperty("--ring", accent);
@@ -138,6 +363,7 @@ function applyAppAccentVariables({
   root.style.setProperty("--marinara-app-accent-gradient", gradient);
   root.style.setProperty("--marinara-chat-chrome-accent", accent);
   root.style.setProperty("--marinara-chat-chrome-accent-gradient", gradient);
+  if (updateCursor) setAccentCursorVariable(root, accent, theme);
 }
 
 function getSolidRgbAccent(accent: string) {
@@ -167,12 +393,7 @@ function clearCustomAppAccentVariables(root: HTMLElement) {
 }
 
 function canRunAccentAnimation(reducedMotionQuery: MediaQueryList, forcePaused = false) {
-  return (
-    document.visibilityState === "visible" &&
-    document.hasFocus() &&
-    !reducedMotionQuery.matches &&
-    !forcePaused
-  );
+  return document.visibilityState === "visible" && document.hasFocus() && !reducedMotionQuery.matches && !forcePaused;
 }
 
 async function recoverFromVersionSkew(serverVersion: string) {
@@ -198,12 +419,20 @@ export function App() {
   const appAccentColor = useUIStore((s) => s.appAccentColor);
   const appAccentPulseMode = useUIStore((s) => s.appAccentPulseMode);
   const appAccentRgbMode = useUIStore((s) => s.appAccentRgbMode);
+  const customCursorEnabled = useUIStore((s) => s.customCursorEnabled);
   const chatChromeTextColor = useUIStore((s) => s.chatChromeTextColor);
   const hasModalOpen = useUIStore((s) => s.modal !== null);
   const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
   const rightPanel = useUIStore((s) => s.rightPanel);
   const settingsTab = useUIStore((s) => s.settingsTab);
   const appearanceSettingsActive = rightPanelOpen && rightPanel === "settings" && settingsTab === "appearance";
+  const pauseChromeEffectsForAppearance = appearanceSettingsActive && !appAccentRgbMode;
+  const { data: syncedThemes = [] } = useThemes();
+  const activeCustomTheme = useMemo(() => syncedThemes.find((themeItem) => themeItem.isActive) ?? null, [syncedThemes]);
+  const themeAccentPulseConfig = useMemo(
+    () => getThemeAccentPulseConfig(activeCustomTheme?.css),
+    [activeCustomTheme?.css],
+  );
   useLegacyThemeMigration();
   useLegacyExtensionMigration();
   useSettingsSync();
@@ -265,6 +494,15 @@ export function App() {
 
   useEffect(() => {
     const root = document.documentElement;
+    if (customCursorEnabled) {
+      root.dataset.marinaraCustomCursor = "enabled";
+    } else {
+      delete root.dataset.marinaraCustomCursor;
+    }
+  }, [customCursorEnabled]);
+
+  useEffect(() => {
+    const root = document.documentElement;
     const background = appBackgroundColor.trim();
     const defaultBackground = getDefaultAppBackgroundColor(theme);
 
@@ -280,7 +518,7 @@ export function App() {
   useEffect(() => {
     const root = document.documentElement;
     const syncEffectsPausedState = () => {
-      if (document.visibilityState === "visible" && document.hasFocus() && !appearanceSettingsActive) {
+      if (document.visibilityState === "visible" && document.hasFocus() && !pauseChromeEffectsForAppearance) {
         delete root.dataset.marinaraEffectsPaused;
       } else {
         root.dataset.marinaraEffectsPaused = "true";
@@ -302,14 +540,14 @@ export function App() {
       window.removeEventListener("pagehide", syncEffectsPausedState);
       delete root.dataset.marinaraEffectsPaused;
     };
-  }, [appearanceSettingsActive]);
+  }, [pauseChromeEffectsForAppearance]);
 
   useEffect(() => {
     const root = document.documentElement;
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const accent = appAccentColor.trim();
     const defaultAccent = getDefaultAppAccentColor(theme);
-    const accentSource = accent || defaultAccent;
+    const accentSource = themeAccentPulseConfig.source || accent || defaultAccent;
     const solidAccent = getCssColorFallback(accentSource, defaultAccent);
     const accentIsGradient = isCssGradient(accentSource);
     const animatedAccentSource = appAccentRgbMode ? RAINBOW_GRADIENT_PRESET : accentSource;
@@ -318,9 +556,61 @@ export function App() {
     const animatedGradientStops = animatedAccentIsGradient
       ? getCssGradientColorStops(animatedAccentSource, animatedSolidAccent)
       : [animatedSolidAccent];
-    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode;
+    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode || themeAccentPulseConfig.enabled;
 
     let accentAnimationTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let cursorRecolorFreezeTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let cursorRecolorFrozen = false;
+    let pendingCursorAccent: string | null = null;
+    let lastCursorRecolorAt = 0;
+
+    const applyCursorAccent = (cursorAccent: string, options: { slow?: boolean } = {}) => {
+      if (!customCursorEnabled) {
+        pendingCursorAccent = null;
+        return;
+      }
+      if (customCursorEnabled && cursorRecolorFrozen) {
+        pendingCursorAccent = cursorAccent;
+        return;
+      }
+      if (customCursorEnabled && options.slow && lastCursorRecolorAt > 0) {
+        const now = performance.now();
+        if (now - lastCursorRecolorAt < CUSTOM_CURSOR_ANIMATED_RECOLOR_MS) {
+          pendingCursorAccent = cursorAccent;
+          return;
+        }
+      }
+      pendingCursorAccent = null;
+      lastCursorRecolorAt = performance.now();
+      setAccentCursorVariable(root, cursorAccent, theme);
+    };
+
+    const unfreezeCursorRecolor = () => {
+      if (cursorRecolorFreezeTimer !== null) {
+        window.clearTimeout(cursorRecolorFreezeTimer);
+        cursorRecolorFreezeTimer = null;
+      }
+      cursorRecolorFrozen = false;
+      delete root.dataset.marinaraCursorRecolorFrozen;
+      if (pendingCursorAccent !== null) {
+        const nextCursorAccent = pendingCursorAccent;
+        pendingCursorAccent = null;
+        applyCursorAccent(nextCursorAccent, { slow: accentAnimationEnabled });
+      }
+    };
+
+    const freezeCursorRecolorDuringScroll = () => {
+      if (!customCursorEnabled) return;
+      cursorRecolorFrozen = true;
+      root.dataset.marinaraCursorRecolorFrozen = "true";
+      if (cursorRecolorFreezeTimer !== null) {
+        window.clearTimeout(cursorRecolorFreezeTimer);
+      }
+      cursorRecolorFreezeTimer = window.setTimeout(
+        unfreezeCursorRecolor,
+        CUSTOM_CURSOR_RECOLOR_SCROLL_FREEZE_MS,
+      );
+    };
 
     const setAccentModeDataset = () => {
       if (accentIsGradient) {
@@ -333,6 +623,7 @@ export function App() {
     const applyStaticAccent = () => {
       if (!accent) {
         clearCustomAppAccentVariables(root);
+        applyCursorAccent("var(--primary)");
         setAccentModeDataset();
         return;
       }
@@ -343,7 +634,9 @@ export function App() {
         gradient: accentIsGradient ? accentSource : getSolidAccentGradient(solidAccent),
         surfaceAccent: solidAccent,
         theme,
+        updateCursor: false,
       });
+      applyCursorAccent(solidAccent);
       setAccentModeDataset();
     };
 
@@ -359,7 +652,9 @@ export function App() {
         gradient: getSolidAccentGradient(liveAccent),
         surfaceAccent: accentIsGradient ? solidAccent : liveAccent,
         theme,
+        updateCursor: false,
       });
+      applyCursorAccent(liveAccent, { slow: true });
       setAccentModeDataset();
     };
 
@@ -377,7 +672,7 @@ export function App() {
 
       accentAnimationTimer = window.setTimeout(() => {
         accentAnimationTimer = null;
-        if (!accentAnimationEnabled || !canRunAccentAnimation(reducedMotionQuery, appearanceSettingsActive)) {
+        if (!accentAnimationEnabled || !canRunAccentAnimation(reducedMotionQuery, pauseChromeEffectsForAppearance)) {
           stopAccentAnimation();
           return;
         }
@@ -395,7 +690,7 @@ export function App() {
     };
 
     const syncAccentAnimationState = () => {
-      if (accentAnimationEnabled && canRunAccentAnimation(reducedMotionQuery, appearanceSettingsActive)) {
+      if (accentAnimationEnabled && canRunAccentAnimation(reducedMotionQuery, pauseChromeEffectsForAppearance)) {
         startAccentAnimation();
       } else {
         stopAccentAnimation();
@@ -415,6 +710,9 @@ export function App() {
     window.addEventListener("blur", syncAccentAnimationState);
     window.addEventListener("pageshow", syncAccentAnimationState);
     window.addEventListener("pagehide", syncAccentAnimationState);
+    if (customCursorEnabled) {
+      window.addEventListener("wheel", freezeCursorRecolorDuringScroll, { capture: true, passive: true });
+    }
     reducedMotionQuery.addEventListener("change", syncAccentAnimationState);
 
     return () => {
@@ -423,13 +721,29 @@ export function App() {
       window.removeEventListener("blur", syncAccentAnimationState);
       window.removeEventListener("pageshow", syncAccentAnimationState);
       window.removeEventListener("pagehide", syncAccentAnimationState);
+      if (customCursorEnabled) {
+        window.removeEventListener("wheel", freezeCursorRecolorDuringScroll, true);
+      }
       reducedMotionQuery.removeEventListener("change", syncAccentAnimationState);
       if (accentAnimationTimer !== null) {
         window.clearTimeout(accentAnimationTimer);
       }
+      if (cursorRecolorFreezeTimer !== null) {
+        window.clearTimeout(cursorRecolorFreezeTimer);
+      }
       delete root.dataset.marinaraAccentAnimation;
+      delete root.dataset.marinaraCursorRecolorFrozen;
     };
-  }, [appAccentColor, appAccentPulseMode, appAccentRgbMode, appearanceSettingsActive, theme]);
+  }, [
+    appAccentColor,
+    appAccentPulseMode,
+    appAccentRgbMode,
+    customCursorEnabled,
+    pauseChromeEffectsForAppearance,
+    theme,
+    themeAccentPulseConfig.enabled,
+    themeAccentPulseConfig.source,
+  ]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -587,11 +901,7 @@ export function App() {
       <div
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
-          if (
-            event.target.closest(
-              "[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']",
-            )
-          ) {
+          if (event.target.closest("[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']")) {
             toast.dismiss();
           }
         }}

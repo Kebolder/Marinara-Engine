@@ -2,13 +2,22 @@
 // Routes: Custom Tools
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createCustomToolSchema, updateCustomToolSchema } from "@marinara-engine/shared";
+import {
+  BUILT_IN_TOOLS,
+  createCustomToolSchema,
+  reorderCustomToolsSchema,
+  updateCustomToolSchema,
+} from "@marinara-engine/shared";
 import { createCustomToolsStorage } from "../services/storage/custom-tools.storage.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { isCustomToolScriptEnabled } from "../config/runtime-config.js";
 
 const SCRIPT_TOOL_DISABLED_MESSAGE =
-  "Script custom tools are disabled. Set CUSTOM_TOOL_SCRIPT_ENABLED=true in your .env and restart Marinara to enable local script tools.";
+  "Script custom tools are disabled. Set CUSTOM_TOOL_SCRIPT_ENABLED=true in your .env and restart Marinara only for trusted in-process script tools.";
+
+function isReservedBuiltInToolName(name: string): boolean {
+  return BUILT_IN_TOOLS.some((tool) => tool.name === name);
+}
 
 export async function customToolsRoutes(app: FastifyInstance) {
   const storage = createCustomToolsStorage(app.db);
@@ -19,6 +28,12 @@ export async function customToolsRoutes(app: FastifyInstance) {
 
   app.get("/capabilities", async () => {
     return { scriptExecutionEnabled: isCustomToolScriptEnabled() };
+  });
+
+  app.put("/reorder", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Custom tool reorder" })) return;
+    const input = reorderCustomToolsSchema.parse(req.body);
+    return storage.reorder(input.toolIds);
   });
 
   app.get<{ Params: { id: string } }>("/:id", async (req, reply) => {
@@ -32,6 +47,9 @@ export async function customToolsRoutes(app: FastifyInstance) {
     const input = createCustomToolSchema.parse(req.body);
     if (input.executionType === "script" && !isCustomToolScriptEnabled()) {
       return reply.status(403).send({ error: SCRIPT_TOOL_DISABLED_MESSAGE });
+    }
+    if (isReservedBuiltInToolName(input.name)) {
+      return reply.status(409).send({ error: `"${input.name}" is a reserved built-in tool name.` });
     }
     // Check name uniqueness
     const existing = await storage.getByName(input.name);
@@ -50,6 +68,15 @@ export async function customToolsRoutes(app: FastifyInstance) {
     const nextExecutionType = data.executionType ?? current.executionType;
     if (nextExecutionType === "script" && !isCustomToolScriptEnabled()) {
       return reply.status(403).send({ error: SCRIPT_TOOL_DISABLED_MESSAGE });
+    }
+    if (data.name !== undefined) {
+      if (isReservedBuiltInToolName(data.name)) {
+        return reply.status(409).send({ error: `"${data.name}" is a reserved built-in tool name.` });
+      }
+      const existing = await storage.getByName(data.name);
+      if (existing && existing.id !== req.params.id) {
+        return reply.status(409).send({ error: `A tool named "${data.name}" already exists.` });
+      }
     }
 
     return storage.update(req.params.id, data);

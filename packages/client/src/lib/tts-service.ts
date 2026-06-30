@@ -26,6 +26,10 @@ export interface TTSSpeakRequest {
   cacheAliases?: string[];
 }
 
+export interface TTSSpeakSequenceOptions extends Pick<TTSSpeakOptions, "signal" | "throwOnError"> {
+  progressive?: boolean;
+}
+
 function waitForBlobWithAbort(promise: Promise<Blob>, signal?: AbortSignal): Promise<Blob> {
   if (!signal) return promise;
   if (signal.aborted) return Promise.reject(new DOMException("TTS request aborted", "AbortError"));
@@ -209,7 +213,7 @@ class TTSService {
   async speakSequence(
     requests: TTSSpeakRequest[],
     id?: string,
-    options: Pick<TTSSpeakOptions, "signal" | "throwOnError"> = {},
+    options: TTSSpeakSequenceOptions = {},
   ): Promise<void> {
     const playableRequests = requests.filter((request) => request.text.trim().length > 0);
     if (playableRequests.length === 0) return;
@@ -223,58 +227,35 @@ class TTSService {
     this.abortController = abortController;
 
     const abortFromCaller = () => abortController.abort();
+    const detachAbortSignal = () => options.signal?.removeEventListener("abort", abortFromCaller);
     if (options.signal?.aborted) {
       abortController.abort();
     } else {
       options.signal?.addEventListener("abort", abortFromCaller, { once: true });
     }
 
-    let blobs: Blob[];
-    try {
-      blobs = await Promise.all(
-        playableRequests.map((request) =>
-          this.getAudioBlob(request.text, {
-            speaker: request.speaker,
-            tone: request.tone,
-            voice: request.voice,
-            signal: abortController.signal,
-            cacheKey: request.cacheKey,
-            cacheAliases: request.cacheAliases,
-          }),
-        ),
-      );
-    } catch (err) {
-      options.signal?.removeEventListener("abort", abortFromCaller);
-      if (!this.isCurrentSequence(sequence)) return;
-      if (err instanceof Error && err.name === "AbortError") {
-        this.setState("idle");
-        return;
+    type ChunkResult = { ok: true; blob: Blob } | { ok: false; error: Error };
+    const toError = (err: unknown, fallback: string) => (err instanceof Error ? err : new Error(fallback));
+    const isAbortError = (error: Error) => error.name === "AbortError";
+    const fetchChunk = async (request: TTSSpeakRequest): Promise<ChunkResult> => {
+      try {
+        const blob = await this.getAudioBlob(request.text, {
+          speaker: request.speaker,
+          tone: request.tone,
+          voice: request.voice,
+          signal: abortController.signal,
+          cacheKey: request.cacheKey,
+          cacheAliases: request.cacheAliases,
+        });
+        return { ok: true, blob };
+      } catch (err) {
+        return { ok: false, error: toError(err, "TTS request failed") };
       }
-      const error = err instanceof Error ? err : new Error("TTS request failed");
-      this.lastError = error.message;
-      this.setState("error");
-      if (options.throwOnError) throw error;
-      return;
-    }
+    };
 
-    options.signal?.removeEventListener("abort", abortFromCaller);
-    if (!this.isCurrentSequence(sequence)) return;
-    if (this.abortController === abortController) {
-      this.abortController = null;
-    }
-
-    let index = 0;
-    const playNext = async (): Promise<void> => {
+    const playBlob = async (blob: Blob): Promise<void> => {
       if (!this.isCurrentSequence(sequence)) return;
       this.cleanup();
-
-      const blob = blobs[index];
-      if (!blob) {
-        this.audio = null;
-        this.setState("idle");
-        return;
-      }
-      index += 1;
 
       const objectUrl = URL.createObjectURL(blob);
       if (!this.isCurrentSequence(sequence)) {
@@ -286,31 +267,116 @@ class TTSService {
       const audio = new Audio(objectUrl);
       this.audio = audio;
 
-      audio.onended = () => {
-        if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
-        void playNext();
-      };
-      audio.onerror = () => {
-        if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
-        this.cleanup();
-        this.lastError = "Audio playback failed";
-        this.setState("error");
-      };
+      await new Promise<void>((resolve, reject) => {
+        const fail = (error: Error) => {
+          if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+          this.cleanup();
+          this.lastError = error.message;
+          this.setState("error");
+          reject(error);
+        };
 
-      this.setState("playing", id ?? null);
-      try {
-        await audio.play();
-      } catch (err) {
-        if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
-        this.cleanup();
-        const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
-        this.lastError = error.message;
-        this.setState("error");
-        if (options.throwOnError) throw error;
-      }
+        audio.onended = () => {
+          if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+          this.cleanup();
+          resolve();
+        };
+        audio.onerror = () => fail(new Error("Audio playback failed"));
+
+        this.setState("playing", id ?? null);
+        void audio.play().catch((err) => fail(toError(err, "Browser blocked audio playback")));
+      });
     };
 
-    await playNext();
+    const handleFetchFailures = (errors: Error[]) => {
+      if (errors.length === 0) return;
+      const first = errors[0]!;
+      this.lastError =
+        errors.length === 1 ? first.message : `${errors.length} TTS chunks failed; first error: ${first.message}`;
+      console.warn("[TTS] Skipped failed audio chunks:", errors);
+    };
+
+    if (options.progressive) {
+      let nextFetch: Promise<ChunkResult> | null = fetchChunk(playableRequests[0]!);
+      let played = 0;
+      const fetchErrors: Error[] = [];
+
+      for (let index = 0; index < playableRequests.length; index += 1) {
+        const result = await nextFetch!;
+        nextFetch = index + 1 < playableRequests.length ? fetchChunk(playableRequests[index + 1]!) : null;
+        if (!this.isCurrentSequence(sequence)) return;
+
+        if (!result.ok) {
+          if (isAbortError(result.error)) {
+            detachAbortSignal();
+            this.setState("idle");
+            return;
+          }
+          fetchErrors.push(result.error);
+          continue;
+        }
+
+        try {
+          await playBlob(result.blob);
+          played += 1;
+          if (nextFetch && this.isCurrentSequence(sequence)) {
+            this.setState("loading", id ?? null);
+          }
+        } catch (err) {
+          detachAbortSignal();
+          if (options.throwOnError) throw err;
+          return;
+        }
+      }
+
+      detachAbortSignal();
+      if (!this.isCurrentSequence(sequence)) return;
+      if (this.abortController === abortController) {
+        this.abortController = null;
+      }
+      handleFetchFailures(fetchErrors);
+      if (played === 0 && fetchErrors.length > 0) {
+        this.setState("error");
+        if (options.throwOnError) throw fetchErrors[0];
+        return;
+      }
+      this.setState("idle");
+      return;
+    }
+
+    const results = await Promise.all(playableRequests.map(fetchChunk));
+    detachAbortSignal();
+    if (!this.isCurrentSequence(sequence)) return;
+    if (this.abortController === abortController) {
+      this.abortController = null;
+    }
+
+    if (results.some((result) => !result.ok && isAbortError(result.error))) {
+      this.setState("idle");
+      return;
+    }
+
+    const blobs = results.flatMap((result) => (result.ok ? [result.blob] : []));
+    const fetchErrors = results.flatMap((result) => (result.ok ? [] : [result.error]));
+    handleFetchFailures(fetchErrors);
+    if (blobs.length === 0) {
+      const error = fetchErrors[0] ?? new Error("TTS request failed");
+      this.lastError = error.message;
+      this.setState("error");
+      if (options.throwOnError) throw error;
+      return;
+    }
+
+    for (const blob of blobs) {
+      try {
+        await playBlob(blob);
+      } catch (err) {
+        if (options.throwOnError) throw err;
+        return;
+      }
+      if (!this.isCurrentSequence(sequence)) return;
+    }
+    this.setState("idle");
   }
 
   /** Stop any in-progress fetch or playback. */

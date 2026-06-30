@@ -232,6 +232,26 @@ async function findExistingMigrationPersonaLorebook(
   return books.find((book) => book.sourceAgentId === SOURCE_AGENT_ID) ?? null;
 }
 
+async function ensurePersonaLorebookLink(
+  lorebooksStore: ReturnType<typeof createLorebooksStorage>,
+  lorebookId: string,
+  personaId: string,
+): Promise<void> {
+  const lorebook = (await lorebooksStore.getById(lorebookId)) as Record<string, unknown> | null;
+  if (!lorebook) return;
+
+  const existingIds = Array.isArray(lorebook.personaIds)
+    ? lorebook.personaIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : typeof lorebook.personaId === "string" && lorebook.personaId.length > 0
+      ? [lorebook.personaId]
+      : [];
+  if (existingIds.includes(personaId)) return;
+
+  await lorebooksStore.update(lorebookId, {
+    personaIds: [...existingIds, personaId],
+  });
+}
+
 async function ensureEntries(
   lorebooksStore: ReturnType<typeof createLorebooksStorage>,
   lorebookId: string,
@@ -361,6 +381,8 @@ async function migratePersona(
   }
   const lorebookId = typeof lorebook?.id === "string" ? lorebook.id : null;
   if (!lorebookId) return;
+
+  await ensurePersonaLorebookLink(lorebooksStore, lorebookId, persona.id);
 
   const createdEntries = await ensureEntries(lorebooksStore, lorebookId, descriptions);
   stats.entriesCreated += createdEntries;

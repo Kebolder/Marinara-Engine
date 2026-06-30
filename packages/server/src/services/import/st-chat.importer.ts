@@ -33,6 +33,9 @@ interface STChatMessage {
   character_id?: unknown;
   send_date?: string;
   mes?: unknown;
+  thinking?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
   swipes?: unknown;
   swipe_id?: unknown;
   extra?: STChatMessageExtra;
@@ -141,6 +144,33 @@ function normalizeImportedRole(value: unknown): ParsedSTChatMessageInput["role"]
   }
 }
 
+function normalizeImportedMode(value: unknown): ChatMode | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "conversation":
+    case "roleplay":
+    case "visual_novel":
+    case "game":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+const INTERNAL_EXTRA_KEYS = new Set([
+  "cachedPrompt",
+  "chatCompletionsReasoning",
+  "chatSummaryFingerprint",
+  "contextInjections",
+  "conversationCommandContent",
+  "encryptedReasoning",
+  "geminiParts",
+  "generationInfo",
+  "generationReplay",
+  "lorebookScan",
+]);
+
 function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
   if (!isRecord(raw)) return {};
 
@@ -150,12 +180,19 @@ function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
   delete extra.marinara_role;
   delete extra.marinara_character_id;
   delete extra.marinara_swipes;
+  for (const key of INTERNAL_EXTRA_KEYS) {
+    delete extra[key];
+  }
 
   if (typeof extra.displayText !== "string" && displayText) {
     extra.displayText = displayText;
   }
 
   return extra;
+}
+
+function normalizeImportedThinking(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
 }
 
 function normalizeSwipeContents(raw: unknown, fallbackContent: string): string[] {
@@ -201,6 +238,25 @@ function normalizeMarinaraSwipeMetadata(extra: STChatMessageExtra | undefined) {
   return byIndex;
 }
 
+function sanitizeImportedMarinaraMetadata(
+  metadata: Record<string, unknown>,
+  localGameId: string,
+): Record<string, unknown> {
+  const sanitized = { ...metadata };
+
+  // These are source-chat pointers. Keeping them after import can make the new
+  // branch/session operate on the exported campaign or an already-closed scene.
+  delete sanitized.activeSceneChatId;
+  delete sanitized.sceneOriginChatId;
+  delete sanitized.sceneStatus;
+
+  if (typeof sanitized.gameId === "string" && sanitized.gameId.trim().length > 0) {
+    sanitized.gameId = localGameId;
+  }
+
+  return sanitized;
+}
+
 /**
  * Import a SillyTavern JSONL chat file.
  *
@@ -227,6 +283,8 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
       : typeof marinaraMetadata.branchName === "string"
         ? marinaraMetadata.branchName
         : null);
+  const importedMode =
+    opts?.mode ?? normalizeImportedMode(headerMetadata.mode) ?? normalizeImportedMode(marinaraMetadata.mode) ?? "roleplay";
 
   // Build characterIds array. Caller-supplied list wins so an import-into-group
   // can fully inherit the existing chat's roster instead of being limited to a
@@ -260,9 +318,20 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
         (stMsg.is_user ? "user" : stMsg.is_system ? "system" : "assistant");
       const rawContent = typeof stMsg.mes === "string" ? stMsg.mes : "";
       const messageExtra = normalizeImportedExtra(stMsg.extra);
+      const exportedThinking =
+        normalizeImportedThinking(stMsg.thinking) ??
+        normalizeImportedThinking(stMsg.reasoning) ??
+        normalizeImportedThinking(stMsg.reasoning_content);
+      if (exportedThinking && typeof messageExtra.thinking !== "string") {
+        messageExtra.thinking = exportedThinking;
+      }
       const storedMessageExtra = Object.keys(messageExtra).length > 0 ? messageExtra : undefined;
       const swipeContents = normalizeSwipeContents(stMsg.swipes, rawContent);
       const activeSwipeIndex = normalizeSwipeIndex(stMsg.swipe_id, swipeContents.length);
+      // Marinara exports store the currently displayed message in `mes`.
+      // Older/broken exports could leave `swipes[swipe_id]` stale after a manual
+      // edit, so prefer `mes` for the active swipe while preserving alternates.
+      swipeContents[activeSwipeIndex] = rawContent;
       const content = swipeContents[activeSwipeIndex] ?? rawContent;
       const swipeMetadata = normalizeMarinaraSwipeMetadata(stMsg.extra);
       const swipes = swipeContents.map((swipeContent, index) => {
@@ -329,7 +398,7 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   const chat = await storage.create(
     {
       name: opts?.chatName ?? `${characterName} (imported)`,
-      mode: (opts?.mode ?? "roleplay") as ChatMode,
+      mode: importedMode,
       characterIds,
       groupId: opts?.groupId ?? null,
       personaId: opts?.personaId ?? null,
@@ -344,11 +413,15 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   // Preserve an imported branch/file label separately from the main thread/chat name.
   if (Object.keys(marinaraMetadata).length > 0 || importedBranchName) {
     const existingMetadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+    const importedMetadata = sanitizeImportedMarinaraMetadata(
+      marinaraMetadata,
+      opts?.groupId ?? chat.groupId ?? chat.id,
+    );
     await storage.patchMetadata(
       chat.id,
       {
         ...existingMetadata,
-        ...marinaraMetadata,
+        ...importedMetadata,
         ...(importedBranchName ? { branchName: importedBranchName } : {}),
       },
       { touchUpdatedAt: false },

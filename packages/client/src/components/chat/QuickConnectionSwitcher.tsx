@@ -7,7 +7,8 @@ import { Link, Dices, Check } from "lucide-react";
 import { useConnections, useUpdateConnection } from "../../hooks/use-connections";
 import { useUpdateChat, useChat } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { useSidecarStore } from "../../stores/sidecar.store";
+import { appendLocalSidecarConnectionOption, isLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { cn } from "../../lib/utils";
 
 export function QuickConnectionSwitcher({ className }: { className?: string }) {
@@ -19,13 +20,20 @@ export function QuickConnectionSwitcher({ className }: { className?: string }) {
   const { data: chat } = useChat(activeChatId);
   const updateChat = useUpdateChat();
   const updateConnection = useUpdateConnection();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
 
   const activeConnectionId = (chat as unknown as Record<string, unknown>)?.connectionId as string | null;
+  const chatMode = (chat as unknown as { mode?: string } | null | undefined)?.mode;
   const isRandom = activeConnectionId === "random";
 
-  const sorted = filterLanguageGenerationConnections(
+  const sorted = appendLocalSidecarConnectionOption(
     (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string }>,
-  ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    chatMode !== "game" && sidecarModelDownloaded,
+    sidecarModelDisplayName,
+  )
+    .filter((connection) => !isRandom || !isLocalSidecarConnectionOption(connection))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   const handleSwitch = useCallback(
     (connId: string | null) => {

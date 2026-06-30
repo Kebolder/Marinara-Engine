@@ -45,13 +45,23 @@ function renderImpersonateTemplate(
     personaDescription: string;
   },
 ): string {
+  const lineIsEmptyPlaceholderOnly = (line: string): boolean => {
+    let stripped = line;
+    let removedEmpty = false;
+    if (!personaDescription && stripped.includes("{{persona_description}}")) {
+      stripped = stripped.replaceAll("{{persona_description}}", "");
+      removedEmpty = true;
+    }
+    if (!direction && stripped.includes("{{impersonate_direction}}")) {
+      stripped = stripped.replaceAll("{{impersonate_direction}}", "");
+      removedEmpty = true;
+    }
+    return removedEmpty && stripped.replaceAll("{{user}}", personaName).trim() === "";
+  };
+
   return template
     .split(/\r?\n/)
-    .filter((line) => {
-      if (!personaDescription && line.includes("{{persona_description}}")) return false;
-      if (!direction && line.includes("{{impersonate_direction}}")) return false;
-      return true;
-    })
+    .filter((line) => !lineIsEmptyPlaceholderOnly(line))
     .map((line) =>
       line
         .replaceAll("{{user}}", personaName)

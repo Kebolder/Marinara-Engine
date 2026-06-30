@@ -368,7 +368,7 @@ export function GameTutorial({ open, onClose }: GameTutorialProps) {
   if (typeof document === "undefined") return null;
 
   const overlay = (
-    <div className="pointer-events-none fixed inset-0 z-[9999]">
+    <div className="mari-chrome-token-scope pointer-events-none fixed inset-0 z-[9999]">
       {/* Pulsing highlight around target */}
       {targetRect && (
         <div

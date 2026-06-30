@@ -1,4 +1,5 @@
-import { Plug } from "lucide-react";
+import { AlertTriangle, Plug } from "lucide-react";
+import { LOCAL_SIDECAR_CONNECTION_ID } from "@marinara-engine/shared";
 import { ChatSettingsSection } from "../ChatSettingsSection";
 
 export interface ChatConnectionOption {
@@ -15,6 +16,8 @@ interface ConnectionSectionProps {
 }
 
 export function ConnectionSection({ connectionId, connections, isGame, onConnectionChange }: ConnectionSectionProps) {
+  const selectedLocalSidecar = connectionId === LOCAL_SIDECAR_CONNECTION_ID;
+
   return (
     <ChatSettingsSection
       label="Connection"
@@ -66,6 +69,15 @@ export function ConnectionSection({ connectionId, connections, isGame, onConnect
             <p className="mt-1.5 text-[0.625rem] text-foreground/50">
               Each generation will randomly pick from connections marked for the random pool.
             </p>
+          )}
+          {selectedLocalSidecar && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+              <AlertTriangle size="0.75rem" className="mt-0.5 shrink-0 text-[var(--warning)]" />
+              <span>
+                Local Model is tiny and intended for trackers/helpers. Main chat and roleplay responses may be slow,
+                short, or low quality.
+              </span>
+            </div>
           )}
         </>
       )}

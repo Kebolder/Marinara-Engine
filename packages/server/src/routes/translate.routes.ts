@@ -5,7 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
-import { PROVIDERS } from "@marinara-engine/shared";
+import { DEFAULT_TRANSLATION_SYSTEM_PROMPT, PROVIDERS } from "@marinara-engine/shared";
 import { isDeeplxLocalUrlsEnabled } from "../config/runtime-config.js";
 import { safeFetch, validateOutboundUrl } from "../utils/security.js";
 
@@ -16,6 +16,7 @@ const translateSchema = z.object({
   provider: z.enum(["ai", "deeplx", "deepl", "google"]),
   targetLanguage: z.string().min(1),
   connectionId: z.string().optional(),
+  systemPrompt: z.string().max(5000).optional().nullable(),
   deeplApiKey: z.string().optional(),
   deeplxUrl: z
     .string()
@@ -85,12 +86,12 @@ async function translateWithAI(
     conn.openrouterProvider,
     conn.maxTokensOverride,
   );
+  const systemPrompt = input.systemPrompt?.trim() || DEFAULT_TRANSLATION_SYSTEM_PROMPT;
   const result = await provider.chatComplete(
     [
       {
         role: "system",
-        content:
-          "You are a translator. Translate the given text accurately, preserving formatting, markdown, and any special characters like *asterisks* for actions. Output ONLY the translated text, nothing else — no explanations, no extra commentary.",
+        content: systemPrompt,
       },
       {
         role: "user",

@@ -55,12 +55,14 @@ import {
   resolveModelAccessPolicy,
   resolveStoredModelContextLimit,
 } from "../../services/generation/model-access-policy.js";
+import { normalizeChatTopP } from "../../services/generation/generation-parameters.js";
 import { applyAllSegmentEdits } from "../../services/game/segment-edits.js";
 import { applyRegexScriptsToPromptMessages } from "../../services/regex/regex-application.js";
 import { sendSseEvent, startSseReply } from "./sse.js";
 import {
   appendReadableAttachmentsToContent,
   appendNonLeadingSystemMessagesToLastUser,
+  createLocalSidecarGenerationConnection,
   dedupeLastMessageWrappers,
   extractFileAttachmentInputs,
   extractImageAttachmentDataUrls,
@@ -105,63 +107,6 @@ function cardPromptText(value: unknown): string {
 function presetStringField(preset: Record<string, unknown> | null | undefined, field: string): string {
   const value = preset?.[field];
   return typeof value === "string" ? value.trim() : "";
-}
-
-type PromptChoiceBlockRow = {
-  variableName: string;
-  options: unknown;
-  multiSelect?: unknown;
-  randomPick?: unknown;
-  separator?: unknown;
-};
-
-function parsePromptChoiceOptions(value: unknown): Array<{ value: string }> {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((option) => {
-      if (!option || typeof option !== "object" || Array.isArray(option)) return [];
-      const rawValue = (option as Record<string, unknown>).value;
-      return typeof rawValue === "string" ? [{ value: rawValue }] : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function resolvePromptChoiceVariables(
-  choiceBlocks: PromptChoiceBlockRow[],
-  chatChoices: Record<string, string | string[]>,
-): Record<string, string> {
-  const variables: Record<string, string> = {};
-  for (const block of choiceBlocks) {
-    const options = parsePromptChoiceOptions(block.options);
-    const optionValues = new Set(options.map((option) => option.value));
-    const fallback = options[0]?.value ?? "";
-    const selected = chatChoices[block.variableName];
-    const isMulti = block.multiSelect === true || block.multiSelect === "true";
-    const isRandom = block.randomPick === true || block.randomPick === "true";
-    const separator = typeof block.separator === "string" ? block.separator : ", ";
-
-    if (isMulti) {
-      const selectedValues = Array.isArray(selected)
-        ? selected.filter((value) => optionValues.has(value))
-        : typeof selected === "string" && optionValues.has(selected)
-          ? [selected]
-          : [];
-      if (selectedValues.length === 0) {
-        variables[block.variableName] = fallback;
-      } else if (isRandom) {
-        variables[block.variableName] = selectedValues[Math.floor(Math.random() * selectedValues.length)] ?? "";
-      } else {
-        variables[block.variableName] = selectedValues.join(separator);
-      }
-      continue;
-    }
-
-    variables[block.variableName] = typeof selected === "string" && optionValues.has(selected) ? selected : fallback;
-  }
-  return variables;
 }
 
 function resolveDryRunLorebookGenerationTriggers(
@@ -471,12 +416,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeChatTopP(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  if (value <= 0) return 1;
-  return Math.min(value, 1);
-}
-
 export async function registerDryRunRoute(app: FastifyInstance) {
   const chats = createChatsStorage(app.db);
   const connections = createConnectionsStorage(app.db);
@@ -565,7 +504,12 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     if (!connId) return reply.status(400).send({ error: "No API connection configured for this chat" });
-    let conn = await connections.getWithKey(connId);
+    const resolveDryRunConnection = async (connectionId: string) =>
+      connectionId === LOCAL_SIDECAR_CONNECTION_ID
+        ? createLocalSidecarGenerationConnection()
+        : await connections.getWithKey(connectionId);
+
+    let conn = await resolveDryRunConnection(connId);
     if (!conn && impersonateConnectionOverride && connId === impersonateConnectionOverride && fallbackConnectionId) {
       logger.warn(
         "[dryRun] Impersonate connection override %s was not found; falling back to chat/request connection",
@@ -578,7 +522,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         const picked = pool[Math.floor(Math.random() * pool.length)];
         connId = picked.id;
       }
-      conn = connId ? await connections.getWithKey(connId) : null;
+      conn = connId ? await resolveDryRunConnection(connId) : null;
     }
     if (!conn) return reply.status(400).send({ error: "API connection not found" });
 
@@ -725,6 +669,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           ? { providerMetadata: { geminiParts: extra.geminiParts } }
           : {};
       return {
+        id: typeof m.id === "string" ? m.id : null,
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
         content: applyHistoryContentTransforms(
           appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
@@ -860,14 +805,6 @@ export async function registerDryRunRoute(app: FastifyInstance) {
 
     const chatChoices: Record<string, string | string[]> =
       requestChoices ?? (isDifferentPresetOverride ? (presetDefaultChoices ?? {}) : chatChoicesFromMeta);
-    const modePromptChoiceBlocks =
-      effectivePresetId && effectivePreset && (chatMode === "conversation" || chatMode === "game")
-        ? await presets.listChoiceBlocksForPreset(effectivePresetId)
-        : [];
-    const modePromptVariables = resolvePromptChoiceVariables(
-      modePromptChoiceBlocks as PromptChoiceBlockRow[],
-      chatChoices,
-    );
     const promptMacroContext = await buildPromptMacroContext({
       db: app.db,
       characterIds: promptCharacterIds,
@@ -877,7 +814,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       speakerName: participantSpeaker,
       speakerPersona,
       participants: participantsMacro,
-      variables: modePromptVariables,
+      variables: {},
       groupScenarioOverrideText:
         typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
           ? (chatMeta.groupScenarioText as string).trim()
@@ -898,7 +835,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
 
     // Apply regex scripts to prompt messages (mirrors main /generate, but stays read-only).
     applyRegexScriptsToPromptMessages(mappedMessages, await regexScriptsStore.list(), {
-      resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+      resolveMacros: (value, randomSeed) => resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
       targetCharacterId: promptTargetCharacterId,
     });
 
@@ -1338,6 +1275,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
             : null,
         lastGenerationType: promptLastGenerationType,
         idleDuration: promptIdleDuration,
+        impersonate,
       };
 
       const assembled = await assemblePrompt(assemblerInput);

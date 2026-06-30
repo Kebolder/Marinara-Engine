@@ -111,7 +111,7 @@ export function ImportPersonaModal({ open, onClose }: Props) {
           dialogueColor: stringField(json.dialogueColor),
           boxColor: stringField(json.boxColor),
           trackerCardColors: jsonStringField(json.trackerCardColors),
-          personaStats: stringField(json.personaStats),
+          personaStats: jsonStringField(json.personaStats, ""),
           tags: jsonStringField(json.tags, "[]"),
           savedStatusOptions: jsonStringField(json.savedStatusOptions, "[]"),
           avatarCrop: jsonStringField(json.avatarCrop, ""),

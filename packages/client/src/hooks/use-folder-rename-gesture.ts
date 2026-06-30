@@ -43,6 +43,23 @@ export function useFolderRenameGesture() {
       event.stopPropagation();
 
       if (prefersImmediateFolderTap()) {
+        const now = Date.now();
+        const pending = pendingGesturesRef.current.get(key);
+
+        if (pending) {
+          window.clearTimeout(pending.timeout);
+          pendingGesturesRef.current.delete(key);
+        }
+
+        if (pending && now - pending.lastClickAt < delayMs) {
+          onRename();
+          return;
+        }
+
+        const timeout = window.setTimeout(() => {
+          pendingGesturesRef.current.delete(key);
+        }, delayMs);
+        pendingGesturesRef.current.set(key, { lastClickAt: now, timeout });
         onSingleClick();
         return;
       }

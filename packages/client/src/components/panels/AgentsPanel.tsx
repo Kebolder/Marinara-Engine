@@ -19,6 +19,7 @@ import {
   FolderPlus,
   FolderOpen,
   ArrowUpDown,
+  GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore, type ResourcePanelSort } from "../../stores/ui.store";
@@ -861,7 +862,7 @@ export function AgentsPanel() {
             New Folder
           </button>
         </div>
-        {agentFolders.length > 0 && <p className="mari-folder-helper">Drag and drop agents to folders</p>}
+        {agentFolders.length > 0 && <p className="mari-folder-helper">Drag and drop agents to folders, double-click or double-tap to rename</p>}
         {draggedAgentId && (
           <div
             data-agent-folder-root
@@ -914,8 +915,8 @@ export function AgentsPanel() {
                 role="button"
                 tabIndex={0}
                 aria-expanded={isExpanded}
-                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Press F2 to rename.`}
-                title="Double-click or press F2 to rename."
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Double-tap or press F2 to rename.`}
+                title="Double-click, double-tap, or press F2 to rename."
                 className="group relative flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all hover:bg-[var(--sidebar-accent)]/40"
                 onClick={(event) =>
                   handleFolderRenameGesture(folder.id, event, {
@@ -1235,6 +1236,22 @@ function renderAgentCard({
         >
           <Check size="0.75rem" />
         </div>
+      )}
+      {!selectionMode && (
+        <button
+          type="button"
+          aria-hidden="true"
+          tabIndex={-1}
+          title="Drag agent"
+          className="mari-chrome-accent-text-muted mari-accent-animated flex h-7 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md opacity-0 transition-all hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:cursor-grabbing active:scale-95 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:hidden"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <GripVertical size="0.8125rem" />
+        </button>
       )}
       <button
         type="button"

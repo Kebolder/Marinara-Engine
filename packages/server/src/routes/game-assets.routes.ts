@@ -210,7 +210,10 @@ function cleanupFile(filePath: string): void {
 }
 
 function tempWritePath(filePath: string): string {
-  return join(dirname(filePath), `.${basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
+  return join(
+    dirname(filePath),
+    `.${basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`,
+  );
 }
 
 function atomicWriteBuffer(filePath: string, buffer: Buffer): void {
@@ -541,6 +544,8 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
   // ── GET /game-assets/local-music-file/:encoded ──
   // Serves an audio file selected through the local music folder picker.
   app.get("/local-music-file/:encoded", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Custom music folder picker" })) return;
+
     const { encoded } = (req.params as { encoded?: string }) ?? {};
     if (!encoded) {
       return reply.status(400).send({ error: "Missing music file" });
@@ -697,6 +702,9 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
     const filePath = join(GAME_ASSETS_DIR, wildcard);
     if (!existsSync(filePath)) {
       return reply.status(404).send({ error: "Asset not found" });
+    }
+    if (isInsideNativeFolder(filePath)) {
+      return reply.status(403).send({ error: "Cannot delete native assets" });
     }
 
     unlinkSync(filePath);
@@ -1030,6 +1038,10 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
         failed.push({ path: filePath, error: "Not a file" });
         continue;
       }
+      if (isInsideNativeFolder(oldFull)) {
+        failed.push({ path: filePath, error: "Cannot move native assets" });
+        continue;
+      }
       const safeName = uniqueFilename(destDir, basename(filePath));
       const newFull = join(destDir, safeName);
       renameSync(oldFull, newFull);
@@ -1122,6 +1134,10 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
       const stat = statSync(full);
       if (!stat.isFile()) {
         failed.push({ path: filePath, error: "Not a file" });
+        continue;
+      }
+      if (isInsideNativeFolder(full)) {
+        failed.push({ path: filePath, error: "Cannot delete native assets" });
         continue;
       }
       unlinkSync(full);

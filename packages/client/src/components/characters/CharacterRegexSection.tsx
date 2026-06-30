@@ -19,6 +19,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { downloadJsonFile } from "../../lib/download-json";
 import { getFolderImportEntries } from "@marinara-engine/shared";
+import { ApiError } from "../../lib/api-client";
 import { cn } from "../../lib/utils";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 
@@ -52,6 +53,38 @@ function parseNullableNumber(value: unknown): number | null {
   return null;
 }
 
+type RegexApplyMode = "prompt" | "display" | "both";
+
+function isRegexApplyMode(value: unknown): value is RegexApplyMode {
+  return value === "prompt" || value === "display" || value === "both";
+}
+
+function looksLikeSillyTavernRegex(entry: Record<string, unknown>): boolean {
+  return (
+    typeof entry.scriptName === "string" ||
+    (Array.isArray(entry.placement) && entry.placement.some((placement) => typeof placement === "number")) ||
+    "markdownOnly" in entry ||
+    "markdown_only" in entry ||
+    "onlyFormatDisplay" in entry
+  );
+}
+
+function readRegexApplyMode(entry: Record<string, unknown>): RegexApplyMode {
+  if (isRegexApplyMode(entry.applyMode)) return entry.applyMode;
+  const promptOnly =
+    parseBooleanValue(entry.promptOnly, false) ||
+    parseBooleanValue(entry.prompt_only, false) ||
+    parseBooleanValue(entry.onlyFormatPrompt, false);
+  const markdownOnly =
+    parseBooleanValue(entry.markdownOnly, false) ||
+    parseBooleanValue(entry.markdown_only, false) ||
+    parseBooleanValue(entry.onlyFormatDisplay, false);
+  if (promptOnly && !markdownOnly) return "prompt";
+  if (markdownOnly && !promptOnly) return "display";
+  if (looksLikeSillyTavernRegex(entry)) return "both";
+  return promptOnly ? "prompt" : "display";
+}
+
 function isJsonRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -67,26 +100,57 @@ function serializeRegexScript(script: RegexScriptRow) {
     placement: parseStringArray(script.placement),
     flags: script.flags,
     promptOnly: parseBooleanValue(script.promptOnly, false),
+    applyMode: isRegexApplyMode(script.applyMode) ? script.applyMode : readRegexApplyMode(script as unknown as Record<string, unknown>),
     order: script.order,
     minDepth: script.minDepth,
     maxDepth: script.maxDepth,
   };
 }
 
-function normalizeRegexImportEntry(entry: unknown) {
+function describeImportError(error: unknown): string {
+  if (error instanceof ApiError && isJsonRecord(error.payload)) {
+    const details = error.payload.details ?? error.payload.issues;
+    if (Array.isArray(details)) {
+      const messages = details
+        .map((issue) => {
+          if (!isJsonRecord(issue) || typeof issue.message !== "string") return null;
+          const path = Array.isArray(issue.path) ? issue.path.join(".") : "";
+          return path ? `${path}: ${issue.message}` : issue.message;
+        })
+        .filter((message): message is string => !!message);
+      if (messages.length > 0) return messages[0]!;
+    }
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return "Failed to import";
+}
+
+function getNextRegexOrderBase(regexScripts: RegexScriptRow[] | undefined) {
+  return (regexScripts ?? []).reduce((maxOrder, script) => Math.max(maxOrder, script.order), -1) + 1;
+}
+
+function getUnsupportedStRegexPlacements(entry: unknown): number[] {
+  if (!isJsonRecord(entry) || !Array.isArray(entry.placement)) return [];
+  return entry.placement.filter(
+    (placement): placement is number =>
+      typeof placement === "number" && placement !== 0 && placement !== 1 && placement !== 2,
+  );
+}
+
+function normalizeRegexImportEntry(entry: unknown, fallbackOrder: number) {
   if (!isJsonRecord(entry)) return null;
   const name =
     typeof entry.name === "string" ? entry.name : typeof entry.scriptName === "string" ? entry.scriptName : "";
   let findRegex = typeof entry.findRegex === "string" ? entry.findRegex : "";
   let flags = typeof entry.flags === "string" ? entry.flags : "gi";
-  const delimited = findRegex.match(/^\/(.+)\/([gimsuy]*)$/s);
+  const delimited = findRegex.match(/^\/(.+)\/([dgimsuy]*)$/s);
   if (delimited) {
     findRegex = delimited[1] ?? "";
     flags = delimited[2] || "g";
   }
   if (!name || !findRegex) return null;
 
-  const stPlacementMap: Record<number, string> = { 1: "user_input", 2: "ai_output" };
+  const stPlacementMap: Record<number, string> = { 0: "ai_output", 1: "user_input", 2: "ai_output" };
   const rawPlacement = Array.isArray(entry.placement) ? entry.placement : [];
   const mappedPlacement = rawPlacement
     .map((placementValue) => (typeof placementValue === "number" ? stPlacementMap[placementValue] : placementValue))
@@ -102,8 +166,9 @@ function normalizeRegexImportEntry(entry: unknown) {
     trimStrings: parseStringArray(entry.trimStrings),
     placement: mappedPlacement.length > 0 ? mappedPlacement : ["ai_output"],
     flags,
-    promptOnly: parseBooleanValue(entry.promptOnly, false),
-    order: typeof entry.order === "number" ? entry.order : 0,
+    promptOnly: readRegexApplyMode(entry) === "prompt",
+    applyMode: readRegexApplyMode(entry),
+    order: typeof entry.order === "number" ? fallbackOrder + entry.order : fallbackOrder,
     minDepth: parseNullableNumber(entry.minDepth),
     maxDepth: parseNullableNumber(entry.maxDepth),
   };
@@ -164,7 +229,11 @@ export function CharacterRegexSection({
       toast.error("No regexes to export");
       return;
     }
-    const safeName = (characterName ?? "character").trim().replace(/[^a-z0-9_-]+/gi, "-").toLowerCase() || "character";
+    const safeName =
+      (characterName ?? "character")
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .toLowerCase() || "character";
     downloadJsonFile(
       {
         kind: "marinara.regex-scripts",
@@ -191,22 +260,46 @@ export function CharacterRegexSection({
         if (entries.length === 0) throw new Error("No regex scripts found in file");
 
         let imported = 0;
-        for (const entry of entries) {
-          const normalized = normalizeRegexImportEntry(entry);
-          if (!normalized) continue;
-          // Force-scope every imported script to this character.
-          await createRegex.mutateAsync({ ...normalized, targetCharacterIds: [characterId] });
-          imported++;
+        const failed: string[] = [];
+        const orderBase = getNextRegexOrderBase((regexScripts ?? []) as RegexScriptRow[]);
+        for (const [index, entry] of entries.entries()) {
+          const unsupportedPlacements = getUnsupportedStRegexPlacements(entry);
+          if (unsupportedPlacements.length > 0) {
+            failed.push(
+              `Entry ${index + 1}: unsupported SillyTavern placement ${unsupportedPlacements.join(", ")} was skipped.`,
+            );
+            continue;
+          }
+          const normalized = normalizeRegexImportEntry(entry, orderBase + index);
+          if (!normalized) {
+            failed.push(`Entry ${index + 1}: missing name or find pattern.`);
+            continue;
+          }
+          try {
+            // Force-scope every imported script to this character.
+            await createRegex.mutateAsync({ ...normalized, targetCharacterIds: [characterId] });
+            imported++;
+          } catch (error) {
+            failed.push(`Entry ${index + 1} (${normalized.name}): ${describeImportError(error)}`);
+          }
         }
 
-        setImportSuccess(`Imported ${imported} regex script${imported === 1 ? "" : "s"}.`);
+        if (imported > 0) {
+          setImportSuccess(`Imported ${imported} regex script${imported === 1 ? "" : "s"}.`);
+        }
+        if (failed.length > 0) {
+          setImportError(`Skipped ${failed.length} regex script${failed.length === 1 ? "" : "s"}. ${failed[0]}`);
+        }
+        if (imported === 0 && failed.length === 0) {
+          setImportError("No valid regex scripts found in file.");
+        }
       } catch (error) {
         setImportError(error instanceof Error ? error.message : "Failed to import regex scripts");
       }
 
       event.target.value = "";
     },
-    [characterId, createRegex],
+    [characterId, createRegex, regexScripts],
   );
 
   const handleDelete = useCallback(
@@ -276,7 +369,9 @@ export function CharacterRegexSection({
           {importError && <div className="text-xs text-red-500">{importError}</div>}
           {importSuccess && <div className="text-xs text-green-500">{importSuccess}</div>}
           {scopedScripts.length === 0 ? (
-            <p className="py-1 text-[0.6875rem] text-[var(--muted-foreground)]">No regex scripts for this character yet.</p>
+            <p className="py-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+              No regex scripts for this character yet.
+            </p>
           ) : (
             <div className="space-y-1">
               {scopedScripts.map((script) => {

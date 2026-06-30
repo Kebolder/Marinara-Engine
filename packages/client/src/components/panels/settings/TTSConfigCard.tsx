@@ -321,6 +321,7 @@ export function TTSConfigCard() {
   const [autoplayRP, setAutoplayRP] = useState(false);
   const [autoplayConvo, setAutoplayConvo] = useState(false);
   const [autoplayGame, setAutoplayGame] = useState(false);
+  const [progressivePlayback, setProgressivePlayback] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
   const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
 
@@ -366,6 +367,7 @@ export function TTSConfigCard() {
     setAutoplayRP(savedConfig.autoplayRP);
     setAutoplayConvo(savedConfig.autoplayConvo);
     setAutoplayGame(savedConfig.autoplayGame);
+    setProgressivePlayback(savedConfig.progressivePlayback ?? false);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
     setAudioFormat(savedConfig.audioFormat ?? "mp3");
     setSaveStatus("idle");
@@ -412,6 +414,7 @@ export function TTSConfigCard() {
     autoplayRP,
     autoplayConvo,
     autoplayGame,
+    progressivePlayback,
     dialogueOnly,
     audioFormat,
     dialogueScope: "all",
@@ -1282,6 +1285,14 @@ export function TTSConfigCard() {
               onChange={(v) => {
                 setAutoplayGame(v);
                 mark({ autoplayGame: v });
+              }}
+            />
+            <ToggleRow
+              label="Progressive playback"
+              checked={progressivePlayback}
+              onChange={(v) => {
+                setProgressivePlayback(v);
+                mark({ progressivePlayback: v });
               }}
             />
             <ToggleRow

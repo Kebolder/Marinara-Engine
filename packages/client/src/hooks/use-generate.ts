@@ -417,6 +417,15 @@ function parseMessageExtraRecordForMerge(value: unknown): Record<string, unknown
 
 function mergeCachedGeneratedMessage(existing: Message, incoming: Message): Message {
   const merged = { ...existing, ...incoming };
+  const existingSwipeCount = typeof existing.swipeCount === "number" ? existing.swipeCount : 0;
+  const incomingSwipeCount = typeof incoming.swipeCount === "number" ? incoming.swipeCount : 0;
+  const activeSwipeFloor =
+    typeof incoming.activeSwipeIndex === "number" && Number.isInteger(incoming.activeSwipeIndex)
+      ? incoming.activeSwipeIndex + 1
+      : 0;
+  if (existingSwipeCount || incomingSwipeCount || activeSwipeFloor) {
+    merged.swipeCount = Math.max(existingSwipeCount, incomingSwipeCount, activeSwipeFloor);
+  }
   const existingExtra = parseMessageExtraRecordForMerge(existing.extra);
   const incomingExtra = parseMessageExtraRecordForMerge(incoming.extra);
   // The saved-message SSE snapshot can predate post-processing extras such as
@@ -2416,14 +2425,13 @@ export function useGenerate() {
         if (receivedContent) {
           try {
             const chatData = qc.getQueryData<Chat>(chatKeys.detail(params.chatId));
-            const meta =
-              chatData?.metadata != null
-                ? typeof chatData.metadata === "string"
-                  ? JSON.parse(chatData.metadata)
-                  : chatData.metadata
-                : {};
+            const meta = parseChatMetadata(chatData?.metadata);
             if (meta.autoTranslate) {
               const store = useTranslationStore.getState();
+              const chatSystemPrompt =
+                typeof meta.translationPrompt === "string" && meta.translationPrompt.trim().length > 0
+                  ? meta.translationPrompt
+                  : store.config.systemPrompt;
               for (const [id, msg] of persistedMessages) {
                 const textToTranslate =
                   chatData?.mode === "game" ? stripGmTagsKeepReadables(msg.content ?? "").trim() : (msg.content ?? "");
@@ -2440,6 +2448,7 @@ export function useGenerate() {
                       provider: store.config.provider,
                       targetLanguage: store.config.targetLanguage,
                       connectionId: store.config.connectionId,
+                      systemPrompt: chatSystemPrompt,
                       deeplApiKey: store.config.deeplApiKey,
                       deeplxUrl: store.config.deeplxUrl,
                     })

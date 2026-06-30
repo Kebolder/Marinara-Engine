@@ -3,11 +3,24 @@ import { logger } from "../../lib/logger.js";
 import { recallMemories } from "../memory-recall.js";
 import type { MemoryRecallEmbeddingSource } from "../memory-recall.js";
 import { packRecalledMemories } from "./memory-recall-pack.js";
+import { escapeXmlText } from "../prompt/prompt-escaping.js";
 
 type PromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
 };
+
+export function buildMemoryRecallBlock(lines: string[], resolveMacros?: (value: string) => string): string {
+  return [
+    `<memories>`,
+    `The following are recalled fragments from earlier in this conversation. Use them to maintain continuity, remember past events, and stay in character — but do not explicitly reference "remembering" unless it's natural.`,
+    ...lines.map((line, index) => {
+      const resolved = resolveMacros ? resolveMacros(line) : line;
+      return `--- Memory ${index + 1} ---\n${escapeXmlText(resolved)}`;
+    }),
+    `</memories>`,
+  ].join("\n");
+}
 
 export async function injectMemoryRecallContext({
   db,
@@ -18,6 +31,7 @@ export async function injectMemoryRecallContext({
   contextLimit,
   sendProgress,
   signal,
+  resolveMacros,
 }: {
   db: DB;
   messages: PromptMessage[];
@@ -27,6 +41,7 @@ export async function injectMemoryRecallContext({
   contextLimit: number | undefined;
   sendProgress(phase: string): void;
   signal?: AbortSignal;
+  resolveMacros?: (value: string) => string;
 }): Promise<void> {
   sendProgress("memory_recall");
   const startedAt = Date.now();
@@ -43,12 +58,7 @@ export async function injectMemoryRecallContext({
       return;
     }
 
-    const memoriesBlock = [
-      `<memories>`,
-      `The following are recalled fragments from earlier in this conversation. Use them to maintain continuity, remember past events, and stay in character — but do not explicitly reference "remembering" unless it's natural.`,
-      ...packedRecall.lines.map((line, index) => `--- Memory ${index + 1} ---\n${line}`),
-      `</memories>`,
-    ].join("\n");
+    const memoriesBlock = buildMemoryRecallBlock(packedRecall.lines, resolveMacros);
 
     logger.debug(
       "[memory-recall] Injecting %d/%d recalled memories (~%d/%d tokens)%s",

@@ -3,11 +3,26 @@
 // ──────────────────────────────────────────────
 import { useCallback, useMemo } from "react";
 import { useRegexScripts, type RegexScriptRow } from "./use-regex-scripts";
-import { applyRegexReplacement, formatTextQuotes, type RegexPlacement } from "@marinara-engine/shared";
+import {
+  applyRegexReplacement,
+  formatTextQuotes,
+  isPatternSafe,
+  resolveRegexPatternLiteralMacros,
+  type RegexPlacement,
+} from "@marinara-engine/shared";
 import { useUIStore } from "../stores/ui.store";
 
 /** How character-scoped regex scripts apply at display time (mirrors card CSS modes). */
 export type ScopedRegexMode = "disabled" | "exclusive" | "chat";
+type RegexApplyMode = "prompt" | "display" | "both";
+
+function getApplyMode(row: RegexScriptRow): RegexApplyMode {
+  return row.applyMode === "prompt" || row.applyMode === "display" || row.applyMode === "both"
+    ? row.applyMode
+    : row.promptOnly === "true"
+      ? "prompt"
+      : "display";
+}
 
 /**
  * Parses a RegexScriptRow from DB into a usable form.
@@ -15,14 +30,19 @@ export type ScopedRegexMode = "disabled" | "exclusive" | "chat";
 function parseScript(row: RegexScriptRow) {
   const placements: RegexPlacement[] = (() => {
     try {
-      return JSON.parse(row.placement);
+      const parsed = JSON.parse(row.placement) as unknown;
+      if (!Array.isArray(parsed)) return ["ai_output"];
+      return parsed.filter(
+        (placement): placement is RegexPlacement => placement === "ai_output" || placement === "user_input",
+      );
     } catch {
       return ["ai_output"];
     }
   })();
   const trimStrings: string[] = (() => {
     try {
-      return JSON.parse(row.trimStrings);
+      const parsed = JSON.parse(row.trimStrings) as unknown;
+      return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
     } catch {
       return [];
     }
@@ -38,7 +58,7 @@ function parseScript(row: RegexScriptRow) {
   return {
     ...row,
     enabledBool: row.enabled === "true",
-    promptOnlyBool: row.promptOnly === "true",
+    applyMode: getApplyMode(row),
     placements,
     trimStrings,
     targetCharacterIds,
@@ -70,8 +90,8 @@ function applyScripts(
     if (!script.placements.includes(placement)) continue;
     // Prompt context is opt-in. Display context runs visual scripts only.
     if (options?.promptOnly) {
-      if (!script.promptOnlyBool) continue;
-    } else if (script.promptOnlyBool) {
+      if (script.applyMode !== "prompt" && script.applyMode !== "both") continue;
+    } else if (script.applyMode !== "display" && script.applyMode !== "both") {
       continue;
     }
 
@@ -101,8 +121,11 @@ function applyScripts(
     }
 
     try {
-      const findRegex = options?.resolveMacros ? options.resolveMacros(script.findRegex) : script.findRegex;
+      const findRegex = options?.resolveMacros
+        ? resolveRegexPatternLiteralMacros(script.findRegex, options.resolveMacros)
+        : script.findRegex;
       if (!findRegex) continue;
+      if (!isPatternSafe(findRegex)) continue;
       const re = new RegExp(findRegex, script.flags);
       result = applyRegexReplacement(result, re, script.replaceString, (value) =>
         options?.resolveMacros ? options.resolveMacros(value) : value,
@@ -157,20 +180,5 @@ export function useApplyRegex() {
     [parsedScripts, quoteFormat],
   );
 
-  // Applies scripts in prompt context. Visual scripts are intentionally skipped.
-  const applyPromptOnly = useCallback(
-    (
-      text: string,
-      placement: RegexPlacement,
-      options?: {
-        depth?: number;
-        resolveMacros?: (value: string) => string;
-        targetCharacterId?: string | null;
-        targetedOnly?: boolean;
-      },
-    ) => applyScripts(text, parsedScripts, placement, { promptOnly: true, ...options }),
-    [parsedScripts],
-  );
-
-  return { applyToAIOutput, applyToUserInput, applyPromptOnly };
+  return { applyToAIOutput, applyToUserInput };
 }

@@ -101,6 +101,8 @@ import {
   serializeResolvedSkillCheckTag,
   applyTrackerFieldLocksToGameStatePatch,
   parseTrackerFieldLocks,
+  normalizeRpgStatPools,
+  type RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { mergeCustomParameters, parseGameStateRow } from "./generate/generate-route-utils.js";
 import {
@@ -1016,7 +1018,7 @@ function buildNpcRecruitCharacterSourceCard(npc: Pick<GameNpc, "name" | "descrip
 }
 
 function extractRecruitCharacterRpgStats(characterData: Record<string, any>) {
-  const rpgStats = characterData.extensions?.rpgStats;
+  const rpgStats = characterData.extensions?.rpgStats as RPGStatsConfig | undefined;
   if (!rpgStats?.enabled || !Array.isArray(rpgStats.attributes) || !rpgStats.hp) return undefined;
 
   return {
@@ -1030,6 +1032,7 @@ function extractRecruitCharacterRpgStats(characterData: Record<string, any>) {
       value: Math.max(0, Number(rpgStats.hp.max) || 0),
       max: Math.max(1, Number(rpgStats.hp.max) || 1),
     },
+    pools: normalizeRpgStatPools(rpgStats),
   };
 }
 
@@ -3337,15 +3340,8 @@ export async function gameRoutes(app: FastifyInstance) {
   };
 
   type SetupRpgContext = {
-    partyRpgStats: Record<
-      string,
-      { enabled: boolean; attributes: Array<{ name: string; value: number }>; hp: { value: number; max: number } }
-    >;
-    personaRpgStats: {
-      enabled: boolean;
-      attributes: Array<{ name: string; value: number }>;
-      hp: { value: number; max: number };
-    } | null;
+    partyRpgStats: Record<string, RPGStatsConfig>;
+    personaRpgStats: RPGStatsConfig | null;
     personaName: string | null;
   };
 
@@ -3546,6 +3542,7 @@ export async function gameRoutes(app: FastifyInstance) {
               ? {
                   attributes: rpg.attributes,
                   hp: { value: rpg.hp.max, max: rpg.hp.max },
+                  pools: normalizeRpgStatPools(rpg),
                 }
               : undefined,
           };
@@ -3929,10 +3926,7 @@ export async function gameRoutes(app: FastifyInstance) {
     // Load party character cards for context (full detail)
     const partyCards: string[] = [];
     const partyNames: string[] = [];
-    const partyRpgStats: Record<
-      string,
-      { enabled: boolean; attributes: Array<{ name: string; value: number }>; hp: { value: number; max: number } }
-    > = {};
+    const partyRpgStats: Record<string, RPGStatsConfig> = {};
     for (const pcId of setupConfig.partyCharacterIds) {
       const pc = await characters.getById(pcId);
       if (pc) {
@@ -3957,11 +3951,7 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     // Also collect persona RPG stats
-    let personaRpgStats: {
-      enabled: boolean;
-      attributes: Array<{ name: string; value: number }>;
-      hp: { value: number; max: number };
-    } | null = null;
+    let personaRpgStats: RPGStatsConfig | null = null;
     const personaName: string | null = setupPersona?.name ?? null;
     if (setupPersona) {
       try {
@@ -7262,6 +7252,7 @@ export async function gameRoutes(app: FastifyInstance) {
     );
     const gameGenerationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
     const enableGen = !!meta.enableSpriteGeneration;
+    const enableAutoGen = enableGen && meta.gameImageAutoGenerationEnabled !== false;
     const imgConnId = await resolveGameImageConnectionId(meta, agents);
     const setupCfgForScene = meta.gameSetupConfig as Record<string, unknown> | null;
     const artStyleForScene = (setupCfgForScene?.artStylePrompt as string) || "";
@@ -7280,9 +7271,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const sceneCtx = {
       ...(input.context as unknown as SceneAnalyzerContext),
       turnNumber: approxTurnNumber,
-      canGenerateBackgrounds: enableGen && !!imgConnId,
+      canGenerateBackgrounds: enableAutoGen && !!imgConnId,
       canGenerateIllustrations:
-        enableGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
+        enableAutoGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
       artStylePrompt: artStyleForScene || null,
       imagePromptInstructions: imagePromptInstructions || null,
       currentLocation: input.context.currentLocation ?? latestSceneState?.location ?? null,
@@ -7463,11 +7454,13 @@ export async function gameRoutes(app: FastifyInstance) {
       const generateSceneWrapAssetsInline = false;
       if (!enableGen) {
         logger.debug("[game/scene-wrap] asset-gen skipped: enableSpriteGeneration=false");
+      } else if (!enableAutoGen) {
+        logger.debug("[game/scene-wrap] automatic visual generation skipped: gameImageAutoGenerationEnabled=false");
       } else if (!imgConnId) {
         logger.debug("[game/scene-wrap] asset-gen skipped: no Illustrator image connection configured");
       }
 
-      if (enableGen && imgConnId && parsed && typeof parsed === "object") {
+      if (enableAutoGen && imgConnId && parsed && typeof parsed === "object") {
         const sceneResult = parsed as unknown as Record<string, unknown>;
 
         try {

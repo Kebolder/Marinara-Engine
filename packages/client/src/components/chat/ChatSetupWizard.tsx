@@ -19,6 +19,8 @@ import {
   Bot,
   UserRound,
   Sparkles,
+  Feather,
+  RotateCcw,
 } from "lucide-react";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { useConnections } from "../../hooks/use-connections";
@@ -30,8 +32,9 @@ import { useChatPresets, useApplyChatPreset } from "../../hooks/use-chat-presets
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
+import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
@@ -39,6 +42,7 @@ import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import {
   BUILT_IN_AGENTS,
   CONVERSATION_COMMAND_KEYS,
+  DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
@@ -621,10 +625,11 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const currentStep = CONVERSATION_STEPS[step]!;
   const isLast = step === CONVERSATION_STEPS.length - 1;
   const { data: connections } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const { data: presets } = usePresets();
   const { data: defaultPreset } = useDefaultPreset();
   const [selectedPromptPresetId, setSelectedPromptPresetId] = useState<string | null>(chat.promptPresetId ?? null);
-  const { data: presetFull, isLoading: presetFullLoading } = usePresetFull(selectedPromptPresetId);
   const { data: allCharacters } = useCharacters();
   const { data: allPersonas } = usePersonas();
   const updateChat = useUpdateChat();
@@ -634,8 +639,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const [scheduleState, setScheduleState] = useState<"idle" | "generating" | "done">("idle");
   const [autonomousEnabled, setAutonomousEnabled] = useState(true);
   const [generateSchedule, setGenerateSchedule] = useState(false);
-  const [showChoiceModal, setShowChoiceModal] = useState(false);
   const [promptPresetTouched, setPromptPresetTouched] = useState(false);
+  const [customConversationPromptEnabled, setCustomConversationPromptEnabled] = useState(false);
+  const [conversationSystemPromptDraft, setConversationSystemPromptDraft] = useState(DEFAULT_CONVERSATION_PROMPT);
   const defaultPromptPresetAppliedRef = useRef<string | null>(null);
   const selectedConnectionChatIdRef = useRef(chat.id);
   const latestChatConnectionIdRef = useRef(chat.connectionId);
@@ -674,6 +680,50 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       }>,
     [allPersonas],
   );
+  const promptPresetOptions = useMemo(
+    () =>
+      (presets ?? []) as Array<{
+        id: string;
+        name: string;
+        isDefault?: boolean | string;
+        conversationPrompt?: string;
+      }>,
+    [presets],
+  );
+  const selectedPromptPreset = useMemo(
+    () => promptPresetOptions.find((preset) => preset.id === selectedPromptPresetId) ?? null,
+    [promptPresetOptions, selectedPromptPresetId],
+  );
+  const selectedPromptPresetName = selectedPromptPreset?.name ?? null;
+  const baseConversationPrompt = useMemo(() => {
+    const presetPrompt = selectedPromptPreset?.conversationPrompt?.trim();
+    const defaultPresetPrompt =
+      defaultPreset?.id === selectedPromptPresetId ? (defaultPreset.conversationPrompt?.trim() ?? "") : "";
+    return presetPrompt || defaultPresetPrompt || DEFAULT_CONVERSATION_PROMPT;
+  }, [
+    defaultPreset?.conversationPrompt,
+    defaultPreset?.id,
+    selectedPromptPreset?.conversationPrompt,
+    selectedPromptPresetId,
+  ]);
+  const resolveConversationPromptForPresetId = useCallback(
+    (presetId: string | null) => {
+      const listedPresetPrompt = promptPresetOptions
+        .find((preset) => preset.id === presetId)
+        ?.conversationPrompt?.trim();
+      const defaultPresetPrompt =
+        defaultPreset?.id === presetId ? (defaultPreset.conversationPrompt?.trim() ?? "") : "";
+      const presetPrompt = listedPresetPrompt || defaultPresetPrompt;
+      return presetPrompt || DEFAULT_CONVERSATION_PROMPT;
+    },
+    [defaultPreset?.conversationPrompt, defaultPreset?.id, promptPresetOptions],
+  );
+
+  useEffect(() => {
+    if (customConversationPromptEnabled) return;
+    setConversationSystemPromptDraft(baseConversationPrompt);
+  }, [baseConversationPrompt, customConversationPromptEnabled]);
+
   const metadata = useMemo(() => {
     return readChatMetadata(chat);
   }, [chat]);
@@ -682,8 +732,13 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     Partial<Record<ConversationCommandKey, boolean>>
   >(() => readConversationCommandToggles(metadata.conversationCommandToggles));
   const connectionOptions = useMemo(
-    () => filterLanguageGenerationConnections((connections ?? []) as ConnectionSetupOption[]),
-    [connections],
+    () =>
+      appendLocalSidecarConnectionOption(
+        (connections ?? []) as ConnectionSetupOption[],
+        sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [connections, sidecarModelDisplayName, sidecarModelDownloaded],
   );
   const selectedConnection = useMemo(
     () => connectionOptions.find((connection) => connection.id === selectedConnectionId) ?? null,
@@ -788,9 +843,12 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     (presetId: string | null) => {
       setPromptPresetTouched(true);
       setSelectedPromptPresetId(presetId);
+      if (customConversationPromptEnabled) {
+        setConversationSystemPromptDraft(resolveConversationPromptForPresetId(presetId));
+      }
       updateChat.mutate({ id: chat.id, promptPresetId: presetId });
     },
-    [chat.id, updateChat],
+    [chat.id, customConversationPromptEnabled, resolveConversationPromptForPresetId, updateChat],
   );
 
   useEffect(() => {
@@ -802,8 +860,19 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
     defaultPromptPresetAppliedRef.current = applyKey;
     setSelectedPromptPresetId(defaultId);
+    if (customConversationPromptEnabled) {
+      setConversationSystemPromptDraft(resolveConversationPromptForPresetId(defaultId));
+    }
     updateChat.mutate({ id: chat.id, promptPresetId: defaultId });
-  }, [chat.id, chat.promptPresetId, defaultPreset?.id, promptPresetTouched, updateChat]);
+  }, [
+    chat.id,
+    chat.promptPresetId,
+    customConversationPromptEnabled,
+    defaultPreset?.id,
+    promptPresetTouched,
+    resolveConversationPromptForPresetId,
+    updateChat,
+  ]);
 
   const setPersona = useCallback(
     (personaId: string | null) => {
@@ -826,15 +895,19 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     setStep((value) => Math.max(0, value - 1));
   }, []);
   const goNext = useCallback(() => {
-    if (currentStep.key === "prompt" && selectedPromptPresetId && presetFull?.choiceBlocks?.length) {
-      setShowChoiceModal(true);
-      return;
-    }
     setStep((value) => Math.min(CONVERSATION_STEPS.length - 1, value + 1));
-  }, [currentStep.key, presetFull?.choiceBlocks?.length, selectedPromptPresetId]);
+  }, []);
 
   const handleStartChatting = useCallback(async () => {
     if (!hasConnection || !hasCharacters) return;
+    const trimmedConversationSystemPrompt = conversationSystemPromptDraft.trim();
+    const baseConversationPromptText = baseConversationPrompt.trim();
+    const customSystemPrompt =
+      customConversationPromptEnabled &&
+      trimmedConversationSystemPrompt &&
+      trimmedConversationSystemPrompt !== baseConversationPromptText
+        ? trimmedConversationSystemPrompt
+        : null;
     await updateMeta.mutateAsync({
       id: chat.id,
       autonomousMessages: autonomousEnabled,
@@ -842,6 +915,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       characterCommands: commandsEnabled,
       conversationCommandToggles,
       chatParameters: customizeParameters ? generationParameters : null,
+      customSystemPrompt,
     });
     if (autonomousEnabled && generateSchedule) {
       setScheduleState("generating");
@@ -876,6 +950,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     commandsEnabled,
     conversationCommandToggles,
     queryClient,
+    customConversationPromptEnabled,
+    conversationSystemPromptDraft,
+    baseConversationPrompt,
   ]);
 
   const renderConnectionStep = () => (
@@ -937,23 +1014,93 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   );
 
   const renderPromptStep = () => (
-    <div className="space-y-2">
-      <label className={WIZARD_FIELD_LABEL}>Conversation Prompt</label>
-      <select
-        value={selectedPromptPresetId ?? ""}
-        onChange={(event) => setPreset(event.target.value || null)}
-        className={WIZARD_INPUT_CLASS}
-      >
-        <option value="">None</option>
-        {((presets ?? []) as Array<{ id: string; name: string; isDefault?: boolean | string }>).map((preset) => (
-          <option key={preset.id} value={preset.id}>
-            {preset.name}
-          </option>
-        ))}
-      </select>
-      <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-        This selects the Conversation mode prompt stored in the preset. Chat Settings can still override it per chat.
-      </p>
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <label className={WIZARD_FIELD_LABEL}>Conversation Prompt</label>
+        <select
+          value={selectedPromptPresetId ?? ""}
+          onChange={(event) => setPreset(event.target.value || null)}
+          className={WIZARD_INPUT_CLASS}
+        >
+          <option value="">None</option>
+          {promptPresetOptions.map((preset) => (
+            <option key={preset.id} value={preset.id}>
+              {preset.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          This selects the Conversation mode prompt stored in the preset. Chat Settings can still override it per chat.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+        <button
+          type="button"
+          onClick={() => setCustomConversationPromptEnabled((enabled) => !enabled)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <Feather
+              size={14}
+              className={customConversationPromptEnabled ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-[var(--foreground)]">Conversation Prompt</p>
+              <p className="truncate text-[0.55rem] text-[var(--muted-foreground)]">
+                {customConversationPromptEnabled
+                  ? "Custom prompt will override the selected preset"
+                  : selectedPromptPresetName
+                    ? `Using ${selectedPromptPresetName}`
+                    : "Using default conversation prompt"}
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              {customConversationPromptEnabled ? "Custom" : selectedPromptPresetName ? "Preset" : "Default"}
+            </span>
+            <div
+              className={cn(
+                "flex h-5 w-8 items-center rounded-full px-0.5 transition-colors",
+                customConversationPromptEnabled ? "bg-[var(--primary)]" : "bg-[var(--secondary)]",
+              )}
+            >
+              <div
+                className={cn(
+                  "h-4 w-4 rounded-full bg-white transition-transform",
+                  customConversationPromptEnabled && "translate-x-3.5",
+                )}
+              />
+            </div>
+          </div>
+        </button>
+
+        {customConversationPromptEnabled && (
+          <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
+            <textarea
+              value={conversationSystemPromptDraft}
+              onChange={(event) => setConversationSystemPromptDraft(event.target.value)}
+              rows={10}
+              maxLength={16000}
+              className="max-h-72 min-h-48 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-all placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]/40"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                Leaving this unchanged keeps the selected preset or built-in default.
+              </p>
+              <button
+                type="button"
+                onClick={() => setConversationSystemPromptDraft(baseConversationPrompt)}
+                className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+              >
+                <RotateCcw size={11} />
+                Reset
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -1226,8 +1373,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       : currentStep.key === "participants"
         ? renderParticipantsStep()
         : renderAutomationStep();
-  const nextDisabled = currentStep.key === "prompt" && !!selectedPromptPresetId && presetFullLoading;
-
   const busyContent =
     scheduleState === "generating" ? (
       <div className="flex items-center justify-center gap-2 py-1">
@@ -1246,34 +1391,23 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   return (
     <>
       <WizardBackdrop onClose={onFinish} />
-      <ChoiceSelectionModal
-        open={showChoiceModal}
-        onClose={() => {
-          setShowChoiceModal(false);
-          setStep((value) => Math.min(CONVERSATION_STEPS.length - 1, value + 1));
-        }}
-        presetId={selectedPromptPresetId}
-        chatId={chat.id}
-      />
-      {!showChoiceModal && (
-        <SetupWizardShell
-          title="New Conversation"
-          steps={CONVERSATION_STEPS}
-          step={step}
-          currentStep={currentStep}
-          animationKey={`conversation-${currentStep.key}`}
-          onClose={onFinish}
-          onBack={step > 0 ? goBack : undefined}
-          onSkip={onFinish}
-          onPrimary={isLast ? handleStartChatting : goNext}
-          primaryLabel={isLast ? "Start Chatting" : "Next"}
-          primaryIcon={isLast ? <MessageCircle size="0.75rem" /> : <ChevronRight size="0.75rem" />}
-          primaryDisabled={nextDisabled || (isLast && (!hasConnection || !hasCharacters))}
-          busyContent={busyContent}
-        >
-          {content}
-        </SetupWizardShell>
-      )}
+      <SetupWizardShell
+        title="New Conversation"
+        steps={CONVERSATION_STEPS}
+        step={step}
+        currentStep={currentStep}
+        animationKey={`conversation-${currentStep.key}`}
+        onClose={onFinish}
+        onBack={step > 0 ? goBack : undefined}
+        onSkip={onFinish}
+        onPrimary={isLast ? handleStartChatting : goNext}
+        primaryLabel={isLast ? "Start Chatting" : "Next"}
+        primaryIcon={isLast ? <MessageCircle size="0.75rem" /> : <ChevronRight size="0.75rem" />}
+        primaryDisabled={isLast && (!hasConnection || !hasCharacters)}
+        busyContent={busyContent}
+      >
+        {content}
+      </SetupWizardShell>
     </>
   );
 }
@@ -1311,6 +1445,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: presetFull, isLoading: presetFullLoading } = usePresetFull(chat.promptPresetId ?? null);
 
   const { data: connections } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const { data: presets } = usePresets();
   const { data: defaultPreset } = useDefaultPreset();
   const { data: allPersonas } = usePersonas();
@@ -1344,8 +1480,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     [allCharacters],
   );
   const connectionOptions = useMemo(
-    () => filterLanguageGenerationConnections((connections ?? []) as ConnectionSetupOption[]),
-    [connections],
+    () =>
+      appendLocalSidecarConnectionOption(
+        (connections ?? []) as ConnectionSetupOption[],
+        sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [connections, sidecarModelDisplayName, sidecarModelDownloaded],
   );
   const selectedConnection = useMemo(
     () => connectionOptions.find((connection) => connection.id === chat.connectionId) ?? null,

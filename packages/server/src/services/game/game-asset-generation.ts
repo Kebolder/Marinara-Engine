@@ -31,7 +31,7 @@ const GENERATED_BACKGROUND_MAX_INPUT_PIXELS = 32_000_000;
 const GAME_PORTRAIT_NEGATIVE_PROMPT =
   "text, letters, captions, subtitles, UI, watermark, logo, signature, speech bubble, split screen, panel, collage, contact sheet, grid, four portraits, multiple portraits, duplicated face, extra head, extra person, bad anatomy, low quality";
 const GAME_BACKGROUND_NEGATIVE_PROMPT =
-  "text, letters, captions, subtitles, UI, watermark, logo, signature, people, character, portrait, split screen, panel, collage, contact sheet, grid, multiple frames, low quality";
+  "text, letters, captions, subtitles, UI, watermark, logo, signature, foreground character, main character, named character, portrait, close-up person, posed subject, split screen, panel, collage, contact sheet, grid, multiple frames, low quality";
 const GAME_ILLUSTRATION_NEGATIVE_PROMPT =
   "text, letters, captions, subtitles, UI, watermark, logo, signature, speech bubble, split screen, panel, collage, contact sheet, character sheet, grid, four images, duplicated face, extra head, unrelated character, bad anatomy, low quality";
 const MAX_GENERATED_ASSET_SLUG_BYTES = 180;
@@ -194,7 +194,7 @@ function writeChatBackgroundMeta(meta: ChatBackgroundMeta): void {
 }
 
 function chatBackgroundTags(req: ChatBackgroundGenRequest, slug: string): string[] {
-  const tags = new Set<string>(["generated", "roleplay", slug.replace(/-/g, " ")]);
+  const tags = new Set<string>(["generated", req.sourceMode === "game" ? "game" : "roleplay", slug.replace(/-/g, " ")]);
   for (const value of [req.locationSlug, req.reason]) {
     if (!value) continue;
     const clean = value.trim().replace(/\s+/g, " ");
@@ -611,6 +611,8 @@ export interface BackgroundGenRequest {
 export interface ChatBackgroundGenRequest extends BackgroundGenRequest {
   /** Why the background agent asked for generation. Stored as background metadata. */
   reason?: string;
+  /** Source chat mode used for library tags. */
+  sourceMode?: "roleplay" | "visual_novel" | "game";
 }
 
 export interface SceneIllustrationGenRequest {

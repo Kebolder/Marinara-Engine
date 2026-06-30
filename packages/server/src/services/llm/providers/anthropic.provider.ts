@@ -426,13 +426,16 @@ export class AnthropicProvider extends BaseLLMProvider {
       messages: mergedMessages.map((m, i) => {
         // Build content parts (documents + images + text)
         const parts: Array<Record<string, unknown>> = [...fileContentBlocks(m.files), ...imageContentBlocks(m.images)];
+        const isCacheBreakpoint = i === cacheControlMessageIndex;
         if (m.content) {
           const textBlock: Record<string, unknown> = { type: "text", text: m.content };
-          if (i === cacheControlMessageIndex) textBlock.cache_control = { type: "ephemeral" };
+          if (isCacheBreakpoint) textBlock.cache_control = { type: "ephemeral" };
           parts.push(textBlock);
+        } else if (isCacheBreakpoint && parts.length > 0) {
+          parts[parts.length - 1]!.cache_control = { type: "ephemeral" };
         }
         // Use content array if we have attachments or cache control, otherwise string
-        if (m.images?.length || m.files?.length || i === cacheControlMessageIndex) {
+        if (m.images?.length || m.files?.length || isCacheBreakpoint) {
           return { role: m.role, content: parts };
         }
         return { role: m.role, content: m.content };
@@ -514,6 +517,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     if (!options.stream) {
       const json = (await response.json()) as {
         content: Array<{ type: string; text?: string; thinking?: string }>;
+        stop_reason?: string | null;
         usage?: { input_tokens: number; output_tokens: number };
       };
       // Extract thinking content if present
@@ -531,6 +535,7 @@ export class AnthropicProvider extends BaseLLMProvider {
           promptTokens: json.usage.input_tokens,
           completionTokens: json.usage.output_tokens,
           totalTokens: json.usage.input_tokens + json.usage.output_tokens,
+          finishReason: normalizeAnthropicFinishReason(json.stop_reason),
         };
       }
       return;
@@ -555,6 +560,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     let inputTokens = 0;
     let outputTokens = 0;
     let finishReason = "stop";
+    let sawStopReason = false;
     let emittedText = false;
 
     try {
@@ -598,6 +604,7 @@ export class AnthropicProvider extends BaseLLMProvider {
           }
           if (event.type === "message_delta" && typeof event.delta?.stop_reason === "string") {
             finishReason = normalizeAnthropicFinishReason(event.delta.stop_reason);
+            sawStopReason = true;
           }
           // Track block type (thinking vs text)
           if (event.type === "content_block_start" && event.content_block) {
@@ -612,7 +619,7 @@ export class AnthropicProvider extends BaseLLMProvider {
             }
           }
           if (event.type === "message_stop") {
-            if (!emittedText && !options.signal?.aborted) {
+            if (!emittedText && !sawStopReason && !options.signal?.aborted) {
               throw new Error(`Anthropic stream completed without text (finish reason: ${finishReason})`);
             }
             if (inputTokens || outputTokens) {
@@ -631,7 +638,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     } finally {
       if (options.signal) options.signal.removeEventListener("abort", onAbort);
     }
-    if (!emittedText && !options.signal?.aborted) {
+    if (!emittedText && !sawStopReason && !options.signal?.aborted) {
       throw new Error(`Anthropic stream completed without text (finish reason: ${finishReason})`);
     }
     if (inputTokens || outputTokens) {

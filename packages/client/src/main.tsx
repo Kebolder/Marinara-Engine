@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { App } from "./App";
+import { App, AppRecoveryBoundary } from "./App";
 import { startKeepAlive } from "./lib/keep-alive";
 import { installCsrfFetchShim } from "./lib/csrf-fetch";
 import "./styles/globals.css";
@@ -68,7 +68,9 @@ function registerServiceWorker() {
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <AppRecoveryBoundary>
+        <App />
+      </AppRecoveryBoundary>
     </QueryClientProvider>
   </React.StrictMode>,
 );

@@ -5,12 +5,31 @@ import { eq, asc } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { regexScripts } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CreateRegexScriptInput } from "@marinara-engine/shared";
+import type { CreateRegexScriptInput, RegexApplyMode } from "@marinara-engine/shared";
+
+function deriveApplyMode(input: { applyMode?: RegexApplyMode; promptOnly?: boolean }): RegexApplyMode {
+  if (input.applyMode === "prompt" || input.applyMode === "display" || input.applyMode === "both") {
+    return input.applyMode;
+  }
+  return input.promptOnly === true ? "prompt" : "display";
+}
+
+function promptOnlyForApplyMode(applyMode: RegexApplyMode): string {
+  return String(applyMode === "prompt");
+}
 
 export function createRegexScriptsStorage(db: DB) {
+  async function getNextOrder(): Promise<number> {
+    const rows = await db.select({ order: regexScripts.order }).from(regexScripts);
+    return rows.reduce((maxOrder, row) => Math.max(maxOrder, row.order), -1) + 1;
+  }
+
   return {
     async list() {
-      return db.select().from(regexScripts).orderBy(asc(regexScripts.order));
+      return db
+        .select()
+        .from(regexScripts)
+        .orderBy(asc(regexScripts.order), asc(regexScripts.createdAt), asc(regexScripts.id));
     },
 
     async getById(id: string) {
@@ -21,6 +40,8 @@ export function createRegexScriptsStorage(db: DB) {
     async create(input: CreateRegexScriptInput) {
       const id = newId();
       const timestamp = now();
+      const order = input.order ?? (await getNextOrder());
+      const applyMode = deriveApplyMode(input);
       await db.insert(regexScripts).values({
         id,
         name: input.name,
@@ -30,9 +51,10 @@ export function createRegexScriptsStorage(db: DB) {
         trimStrings: JSON.stringify(input.trimStrings ?? []),
         placement: JSON.stringify(input.placement),
         flags: input.flags ?? "gi",
-        promptOnly: String(input.promptOnly ?? false),
+        promptOnly: promptOnlyForApplyMode(applyMode),
+        applyMode,
         targetCharacterIds: JSON.stringify(input.targetCharacterIds ?? []),
-        order: input.order ?? 0,
+        order,
         minDepth: input.minDepth ?? null,
         maxDepth: input.maxDepth ?? null,
         createdAt: timestamp,
@@ -50,7 +72,11 @@ export function createRegexScriptsStorage(db: DB) {
       if (data.trimStrings !== undefined) updateFields.trimStrings = JSON.stringify(data.trimStrings);
       if (data.placement !== undefined) updateFields.placement = JSON.stringify(data.placement);
       if (data.flags !== undefined) updateFields.flags = data.flags;
-      if (data.promptOnly !== undefined) updateFields.promptOnly = String(data.promptOnly);
+      if (data.applyMode !== undefined || data.promptOnly !== undefined) {
+        const applyMode = deriveApplyMode(data);
+        updateFields.promptOnly = promptOnlyForApplyMode(applyMode);
+        updateFields.applyMode = applyMode;
+      }
       if (data.targetCharacterIds !== undefined) {
         updateFields.targetCharacterIds = JSON.stringify(data.targetCharacterIds);
       }
@@ -62,12 +88,29 @@ export function createRegexScriptsStorage(db: DB) {
     },
 
     async reorder(scriptIds: string[]) {
+      const uniqueScriptIds = Array.from(new Set(scriptIds));
+      if (uniqueScriptIds.length === 0) return this.list();
+      const orderedRows = await this.list();
+      const existingIds = new Set(orderedRows.map((script) => script.id));
+      const incomingQueue = uniqueScriptIds.filter((id) => existingIds.has(id));
+      if (incomingQueue.length === 0) return orderedRows;
+      const movingIds = new Set(incomingQueue);
+      let cursor = 0;
+      const nextIds = orderedRows.map((script) => {
+        if (!movingIds.has(script.id)) return script.id;
+        const nextId = incomingQueue[cursor];
+        cursor += 1;
+        return nextId ?? script.id;
+      });
       const timestamp = now();
-      await Promise.all(
-        scriptIds.map((id, index) =>
-          db.update(regexScripts).set({ order: index, updatedAt: timestamp }).where(eq(regexScripts.id, id)),
-        ),
-      );
+      await db.transaction(async (tx) => {
+        for (let index = 0; index < nextIds.length; index += 1) {
+          await tx
+            .update(regexScripts)
+            .set({ order: index, updatedAt: timestamp })
+            .where(eq(regexScripts.id, nextIds[index]!));
+        }
+      });
       return this.list();
     },
 

@@ -576,7 +576,7 @@ export function PersonasPanel() {
             New Folder
           </button>
         </div>
-        {parsedGroups.length > 0 && <p className="mari-folder-helper">Drag and drop personas to folders</p>}
+        {parsedGroups.length > 0 && <p className="mari-folder-helper">Drag and drop personas to folders, double-click or double-tap to rename</p>}
       </div>
 
       {/* Filters */}
@@ -687,8 +687,8 @@ export function PersonasPanel() {
                 role="button"
                 tabIndex={0}
                 aria-expanded={isExpanded}
-                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${group.name}. Press F2 to rename.`}
-                title="Double-click or press F2 to rename."
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${group.name}. Double-tap or press F2 to rename.`}
+                title="Double-click, double-tap, or press F2 to rename."
                 className="group relative flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all hover:bg-[var(--sidebar-accent)]/40"
                 onClick={(event) =>
                   handleFolderRenameGesture(group.id, event, {
@@ -1025,7 +1025,7 @@ export function PersonasPanel() {
                     to the rounded-xl shape). The wrapper can't be the button itself
                     because the active-indicator star and the camera-hover overlay live
                     outside the avatar bounds via negative offsets / absolute inset-0. */}
-                <div className="relative h-full w-full overflow-hidden rounded-xl">
+                <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl">
                   {persona.avatarPath ? (
                     <img
                       src={persona.avatarPath}
@@ -1049,7 +1049,7 @@ export function PersonasPanel() {
               </button>
 
               {/* Info */}
-              <div className="min-w-0 flex-1">
+              <div className={cn("min-w-0 flex-1", !selectionMode && "pr-24")}>
                 <div className="truncate text-sm font-medium">{persona.name}</div>
                 {persona.comment && (
                   <div className="truncate text-[0.625rem] italic text-[var(--muted-foreground)]">

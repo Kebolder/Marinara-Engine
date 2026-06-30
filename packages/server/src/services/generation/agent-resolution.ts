@@ -69,6 +69,36 @@ type AgentConnectionResolution = {
   connectionName?: string;
 };
 
+function readTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveAgentConnectionRequest(args: {
+  agentType: string;
+  configuredConnectionId: string | null | undefined;
+  defaultAgentConnectionId: string | null | undefined;
+  chatMetadata?: Record<string, unknown>;
+  localSidecarAvailable: boolean;
+}): string | null | "skip-local-sidecar" {
+  if (args.agentType !== "illustrator") {
+    return resolveAgentConnectionId({
+      requestedConnectionId: args.configuredConnectionId,
+      defaultAgentConnectionId: args.defaultAgentConnectionId,
+      localSidecarAvailable: args.localSidecarAvailable,
+    });
+  }
+
+  const promptConnectionId = readTrimmedString(args.chatMetadata?.illustratorPromptConnectionId);
+  const configuredConnectionId = readTrimmedString(args.configuredConnectionId);
+  const requestedConnectionId = promptConnectionId ?? configuredConnectionId;
+
+  return resolveAgentConnectionId({
+    requestedConnectionId,
+    defaultAgentConnectionId: promptConnectionId ? null : configuredConnectionId ? args.defaultAgentConnectionId : null,
+    localSidecarAvailable: args.localSidecarAvailable,
+  });
+}
+
 export type ResolvedAgentPipelineAgents = {
   enabledConfigs: any[];
   resolvedAgents: ResolvedAgent[];
@@ -288,6 +318,14 @@ export async function resolveAgentPipelineAgents({
     ) {
       settings.enabledTools = DEFAULT_AGENT_TOOLS.spotify ?? [];
     }
+    if (
+      cfg.type !== "spotify" &&
+      BUILT_IN_AGENTS.some((agent) => agent.id === cfg.type) &&
+      !Array.isArray(settings.enabledTools) &&
+      (DEFAULT_AGENT_TOOLS[cfg.type as string]?.length ?? 0) > 0
+    ) {
+      settings.enabledTools = [...DEFAULT_AGENT_TOOLS[cfg.type as string]!];
+    }
     let selectedPromptTemplate = resolveAgentPromptTemplate({
       agentType: cfg.type as string,
       promptTemplate: normalizeProseGuardianPromptTemplate(cfg.type as string, cfg.promptTemplate),
@@ -295,9 +333,11 @@ export async function resolveAgentPipelineAgents({
       settings,
       selectedPromptTemplateId: agentPromptTemplateSelections[cfg.type as string] ?? null,
     });
-    const effectiveConnectionId = resolveAgentConnectionId({
-      requestedConnectionId: cfg.connectionId as string | null,
+    const effectiveConnectionId = resolveAgentConnectionRequest({
+      agentType: cfg.type as string,
+      configuredConnectionId: cfg.connectionId as string | null,
       defaultAgentConnectionId: defaultAgentConn?.id ?? null,
+      chatMetadata,
       localSidecarAvailable: localSidecarAvailableForTrackers,
     });
 
@@ -353,10 +393,6 @@ export async function resolveAgentPipelineAgents({
     });
   }
 
-  if (skippedLocalSidecarAgents.length > 0) {
-    agentConnectionWarnings.push(buildLocalSidecarUnavailableWarning(skippedLocalSidecarAgents));
-  }
-
   const resolvedTypes = new Set(resolvedAgents.map((agent) => agent.type));
   const builtInFallbacks =
     chatEnableAgents && hasPerChatAgentList
@@ -369,10 +405,28 @@ export async function resolveAgentPipelineAgents({
       : [];
 
   for (const builtIn of builtInFallbacks) {
+    const builtInConnectionId = resolveAgentConnectionRequest({
+      agentType: builtIn.id,
+      configuredConnectionId: null,
+      defaultAgentConnectionId: defaultAgentConn?.id ?? null,
+      chatMetadata,
+      localSidecarAvailable: localSidecarAvailableForTrackers,
+    });
+
+    if (builtInConnectionId === "skip-local-sidecar") {
+      skippedLocalSidecarAgents.push(builtIn.name);
+      logger.warn(
+        "[generate] Skipping built-in agent %s for chat %s because Local Model was requested but the sidecar is unavailable",
+        builtIn.id,
+        chatId,
+      );
+      continue;
+    }
+
     const builtInConnection = await resolveAgentConnectionProvider({
       connections,
       agentProviderCache,
-      connectionId: defaultAgentConn?.id ?? null,
+      connectionId: builtInConnectionId,
       fallbackProvider: chatProvider,
       fallbackModel: chatModel,
       fallbackCustomParameters: chatCustomParameters,
@@ -390,7 +444,7 @@ export async function resolveAgentPipelineAgents({
       );
       continue;
     }
-    if (defaultAgentConn) defaultAgentConnectionAgents.push(builtIn.name);
+    if (defaultAgentConn && builtInConnectionId === defaultAgentConn.id) defaultAgentConnectionAgents.push(builtIn.name);
     let builtInSettings = getDefaultBuiltInAgentSettings(builtIn.id);
     if (builtIn.id === "spotify") {
       builtInSettings = applyMusicPlayerSourceToMusicDjSettings(builtInSettings, activeMusicPlayerSource);
@@ -407,6 +461,13 @@ export async function resolveAgentPipelineAgents({
     ) {
       builtInSettings.enabledTools = DEFAULT_AGENT_TOOLS.spotify ?? [];
     }
+    if (
+      builtIn.id !== "spotify" &&
+      !Array.isArray(builtInSettings.enabledTools) &&
+      (DEFAULT_AGENT_TOOLS[builtIn.id]?.length ?? 0) > 0
+    ) {
+      builtInSettings.enabledTools = [...DEFAULT_AGENT_TOOLS[builtIn.id]!];
+    }
     let selectedPromptTemplate = resolveAgentPromptTemplate({
       agentType: builtIn.id,
       promptTemplate: "",
@@ -420,7 +481,7 @@ export async function resolveAgentPipelineAgents({
       name: builtIn.name,
       phase: resolveAgentRuntimePhase(builtIn.id, builtIn.phase),
       promptTemplate: selectedPromptTemplate,
-      connectionId: defaultAgentConn?.id ?? null,
+      connectionId: builtInConnectionId,
       settings: builtInSettings,
       provider: builtInConnection.entry.provider,
       model: builtInConnection.entry.model,
@@ -432,6 +493,10 @@ export async function resolveAgentPipelineAgents({
 
   // Smart group response selection is hidden runtime infrastructure now. It uses
   // the main generation provider directly instead of resolving a public agent.
+
+  if (skippedLocalSidecarAgents.length > 0) {
+    agentConnectionWarnings.push(buildLocalSidecarUnavailableWarning(skippedLocalSidecarAgents));
+  }
 
   for (const warning of unavailableConnectionWarnings.values()) {
     agentConnectionWarnings.push(buildAgentConnectionUnavailableWarning(warning));

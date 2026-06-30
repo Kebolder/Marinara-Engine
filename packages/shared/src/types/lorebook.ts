@@ -52,6 +52,12 @@ export interface Lorebook {
   maxRecursionDepth: number;
   /** When true, bulk vectorization skips every entry in this lorebook and semantic matching ignores stored vectors */
   excludeFromVectorization: boolean;
+  /** Recent message count used to build semantic/vector search queries. 0 = all messages. */
+  vectorQueryDepth: number;
+  /** Minimum cosine similarity required for semantic/vector entry activation. */
+  vectorScoreThreshold: number;
+  /** Maximum semantic/vector entries this lorebook may contribute per generation. */
+  vectorMaxResults: number;
   /** ID of the character this lorebook is linked to (character books) */
   characterId: string | null;
   /** IDs of characters this lorebook is linked to */

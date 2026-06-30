@@ -124,6 +124,7 @@ export const ttsConfigSchema = z.object({
   autoplayRP: z.boolean().default(false),
   autoplayConvo: z.boolean().default(false),
   autoplayGame: z.boolean().default(false),
+  progressivePlayback: z.boolean().default(false),
   dialogueOnly: z.boolean().default(false),
   audioFormat: ttsAudioFormatSchema.default("mp3"),
   dialogueScope: ttsDialogueScopeSchema.default("all"),

@@ -10,7 +10,8 @@ import { useConnections, useUpdateConnection } from "../../hooks/use-connections
 import { usePersonas, usePersonaGroups } from "../../hooks/use-characters";
 import { useUpdateChat, useChat } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { useSidecarStore } from "../../stores/sidecar.store";
+import { appendLocalSidecarConnectionOption, isLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { cn, getAvatarCropStyle, parseAvatarCropJson } from "../../lib/utils";
 
 interface Persona {
@@ -51,14 +52,21 @@ export function QuickSwitcherMobile() {
   const { data: chat } = useChat(activeChatId);
   const updateChat = useUpdateChat();
   const updateConnection = useUpdateConnection();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
 
   const activeConnectionId = (chat as unknown as Record<string, unknown>)?.connectionId as string | null;
   const activePersonaId = (chat as unknown as Record<string, unknown>)?.personaId as string | null;
+  const chatMode = (chat as unknown as { mode?: string } | null | undefined)?.mode;
   const isRandom = activeConnectionId === "random";
 
-  const sortedConnections = filterLanguageGenerationConnections(
+  const sortedConnections = appendLocalSidecarConnectionOption(
     (connections ?? []) as Array<{ id: string; name: string; provider?: string; useForRandom?: string }>,
-  ).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    chatMode !== "game" && sidecarModelDownloaded,
+    sidecarModelDisplayName,
+  )
+    .filter((connection) => !isRandom || !isLocalSidecarConnectionOption(connection))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   const sortedPersonas = ((rawPersonas ?? []) as Persona[])
     .slice()

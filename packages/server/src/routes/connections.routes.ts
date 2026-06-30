@@ -224,6 +224,8 @@ function knownStabilityImageModels() {
 
 export async function connectionsRoutes(app: FastifyInstance) {
   const storage = createConnectionsStorage(app.db);
+  const maskConnection = <T extends { apiKeyEncrypted?: unknown } | null>(conn: T): T =>
+    conn ? ({ ...conn, apiKeyEncrypted: conn.apiKeyEncrypted ? "••••••••" : "" } as T) : conn;
 
   app.get("/", async () => {
     return storage.list();
@@ -247,21 +249,21 @@ export async function connectionsRoutes(app: FastifyInstance) {
     const conn = await storage.getById(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
     // Mask key in response
-    return { ...conn, apiKeyEncrypted: conn.apiKeyEncrypted ? "••••••••" : "" };
+    return maskConnection(conn);
   });
 
   app.post("/", async (req) => {
     const input = createConnectionSchema.parse(req.body);
     const created = await storage.create(input);
     resetMemoryRecallVectorizerCache();
-    return created;
+    return maskConnection(created);
   });
 
   app.patch<{ Params: { id: string } }>("/:id", async (req) => {
     const data = createConnectionSchema.partial().parse(req.body);
     const updated = await storage.update(req.params.id, data);
     resetMemoryRecallVectorizerCache();
-    return updated;
+    return maskConnection(updated);
   });
 
   app.post<{ Params: { id: string } }>("/:id/image", async (req, reply) => {
@@ -285,7 +287,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
     const updated = await storage.update(req.params.id, { imagePath: `/api/connections/images/file/${filename}` });
     if (!updated) return reply.status(404).send({ error: "Connection not found" });
-    return updated;
+    return maskConnection(updated);
   });
 
   // Save default generation parameters for a connection
@@ -329,7 +331,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/:id/duplicate", async (req, reply) => {
     const result = await storage.duplicate(req.params.id);
     if (!result) return reply.status(404).send({ error: "Connection not found" });
-    return result;
+    return maskConnection(result);
   });
 
   // Test connection (sends a tiny ping to the API)

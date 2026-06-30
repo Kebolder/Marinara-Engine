@@ -5,7 +5,8 @@ import { useCreateChat } from "../../hooks/use-chats";
 import { useChatPresets, useApplyChatPreset } from "../../hooks/use-chat-presets";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { useSidecarStore } from "../../stores/sidecar.store";
+import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { cn } from "../../lib/utils";
 
 type Mode = "conversation" | "roleplay" | "game";
@@ -28,14 +29,18 @@ export function NewChatConnectionGate({ mode, onClose }: NewChatConnectionGatePr
   const applyChatPreset = useApplyChatPreset();
   const openRightPanel = useUIStore((s) => s.openRightPanel);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const [connectionId, setConnectionId] = useState<string>("");
 
   const connectionRows = useMemo(
     () =>
-      filterLanguageGenerationConnections(
+      appendLocalSidecarConnectionOption(
         (connections ?? []) as Array<{ id: string; name: string; provider?: string }>,
+        mode !== "game" && sidecarModelDownloaded,
+        sidecarModelDisplayName,
       ),
-    [connections],
+    [connections, mode, sidecarModelDisplayName, sidecarModelDownloaded],
   );
 
   useEffect(() => {

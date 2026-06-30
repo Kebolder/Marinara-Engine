@@ -2,7 +2,7 @@
 // Professor Mari Workspace Agent Contracts
 // ──────────────────────────────────────────────
 
-export type MariWorkspaceToolName = "read" | "grep" | "find" | "ls" | "edit" | "write" | "bash";
+export type MariWorkspaceToolName = "read" | "grep" | "find" | "ls" | "edit" | "write" | "bash" | "app_data";
 
 export interface MariWorkspaceToolTrace {
   id: string;
@@ -97,6 +97,7 @@ export interface MariDbCommandResult {
 }
 
 export interface MariDbPendingApproval {
+  kind?: "applied_review" | "approval";
   id: string;
   sessionId: string;
   command: string;
@@ -116,7 +117,17 @@ export interface MariDbHistoryEntry {
   sessionId: string;
   command: string;
   reason: string | null;
-  status: "dry-run" | "approved" | "rejected" | "cancelled" | "timed_out" | "blocked" | "state_changed" | "failed";
+  status:
+    | "dry-run"
+    | "approved"
+    | "kept"
+    | "restored"
+    | "rejected"
+    | "cancelled"
+    | "timed_out"
+    | "blocked"
+    | "state_changed"
+    | "failed";
   operationHash?: string;
   affectedTables: Record<string, number>;
   affectedRows: number;

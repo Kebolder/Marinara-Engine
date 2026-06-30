@@ -5,6 +5,7 @@ export interface TranslationConfig {
   provider: "ai" | "deeplx" | "deepl" | "google";
   targetLanguage: string;
   connectionId?: string;
+  systemPrompt?: string;
   deeplApiKey?: string;
   deeplxUrl?: string;
 }

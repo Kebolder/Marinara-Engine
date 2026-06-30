@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Agent Configs, Runs & Memory
 // ──────────────────────────────────────────────
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, notInArray } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { agentConfigs, agentRuns, agentMemory } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
@@ -366,19 +366,23 @@ export function createAgentsStorage(db: DB) {
 
     /** Get recent custom-agent runs for a chat, newest first. */
     async listCustomRunsForChat(chatId: string, limit = 50) {
-      const normalizedLimit = Math.max(1, Math.min(limit, 200));
+      const finiteLimit = Number.isFinite(limit) ? limit : 50;
+      const normalizedLimit = Math.max(1, Math.min(finiteLimit, 200));
       const rows = await db
         .select()
         .from(agentRuns)
         .innerJoin(agentConfigs, eq(agentRuns.agentConfigId, agentConfigs.id))
-        .where(and(eq(agentRuns.chatId, chatId), eq(agentRuns.success, "true")))
+        .where(
+          and(
+            eq(agentRuns.chatId, chatId),
+            eq(agentRuns.success, "true"),
+            notInArray(agentConfigs.type, Array.from(BUILT_IN_AGENT_TYPES)),
+          ),
+        )
         .orderBy(desc(agentRuns.createdAt))
-        .limit(200);
+        .limit(normalizedLimit);
 
-      return rows
-        .filter((row) => !isBuiltInAgentType(row.agent_configs.type))
-        .slice(0, normalizedLimit)
-        .map((row) => serializeRunWithConfig(row));
+      return rows.map((row) => serializeRunWithConfig(row));
     },
 
     async getRunWithConfig(id: string) {

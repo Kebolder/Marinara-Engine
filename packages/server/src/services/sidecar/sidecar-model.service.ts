@@ -11,6 +11,7 @@ import { basename, join, relative, resolve, sep } from "path";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
 import {
   SIDECAR_DEFAULT_CONFIG,
+  SIDECAR_EMBEDDING_POOLING_TYPES,
   SIDECAR_RUNTIME_PREFERENCES,
   SIDECAR_MLX_MODELS,
   SIDECAR_MODELS,
@@ -105,6 +106,10 @@ function isRuntimePreference(value: unknown): value is SidecarConfig["runtimePre
   return typeof value === "string" && (SIDECAR_RUNTIME_PREFERENCES as readonly string[]).includes(value);
 }
 
+function isEmbeddingPooling(value: unknown): value is SidecarConfig["embeddingPooling"] {
+  return typeof value === "string" && (SIDECAR_EMBEDDING_POOLING_TYPES as readonly string[]).includes(value);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -173,6 +178,17 @@ class SidecarModelService {
           nextConfig.enableNativeToolCalls,
           SIDECAR_DEFAULT_CONFIG.enableNativeToolCalls,
         );
+        nextConfig.embeddingBatchSize = normalizeIntegerSetting(
+          nextConfig.embeddingBatchSize,
+          SIDECAR_DEFAULT_CONFIG.embeddingBatchSize,
+          128,
+          32768,
+        );
+
+        if (!isEmbeddingPooling(nextConfig.embeddingPooling)) {
+          nextConfig.embeddingPooling = SIDECAR_DEFAULT_CONFIG.embeddingPooling;
+          shouldRewrite = true;
+        }
 
         if (!isRuntimePreference(nextConfig.runtimePreference)) {
           nextConfig.runtimePreference = SIDECAR_DEFAULT_CONFIG.runtimePreference;
@@ -550,6 +566,8 @@ class SidecarModelService {
         | "topK"
         | "gpuLayers"
         | "enableNativeToolCalls"
+        | "embeddingPooling"
+        | "embeddingBatchSize"
         | "runtimePreference"
       >
     >,

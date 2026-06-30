@@ -15,6 +15,7 @@ export interface CustomToolRow {
   scriptBody: string | null;
   includeHiddenContext: string;
   enabled: string;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,6 +73,17 @@ export function useUpdateCustomTool() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) => api.patch(`/custom-tools/${id}`, data),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: toolKeys.all });
+    },
+  });
+}
+
+export function useReorderCustomTools() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (toolIds: string[]) => api.put<CustomToolRow[]>("/custom-tools/reorder", { toolIds }),
+    onSuccess: (tools) => {
+      qc.setQueryData(toolKeys.all, tools);
       qc.invalidateQueries({ queryKey: toolKeys.all });
     },
   });

@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { getAdminSecret, isAdminSecretRequiredOnLoopback } from "../config/runtime-config.js";
 import { isBasicAuthSatisfied } from "./basic-auth.js";
-import { isLoopbackIp } from "./ip-allowlist.js";
+import { isInIpAllowlist, isLoopbackIp, isTrustedInterfaceRequest } from "./ip-allowlist.js";
 import { safeCompareString } from "../utils/security.js";
 
 export function isAdminAuthorized(request: FastifyRequest): boolean {
@@ -15,7 +15,7 @@ export function isAdminAuthorized(request: FastifyRequest): boolean {
 export function requirePrivilegedAccess(
   request: FastifyRequest,
   reply: FastifyReply,
-  options: { loopbackOnly?: boolean; feature?: string } = {},
+  options: { loopbackOnly?: boolean; trustedNetwork?: boolean; feature?: string } = {},
 ): boolean {
   if (!isBasicAuthSatisfied(request)) {
     reply.status(403).send({
@@ -34,6 +34,10 @@ export function requirePrivilegedAccess(
   }
 
   if (isLoopbackIp(request.ip) && !isAdminSecretRequiredOnLoopback()) {
+    return true;
+  }
+
+  if (options.trustedNetwork && (isInIpAllowlist(request.ip) || isTrustedInterfaceRequest(request))) {
     return true;
   }
 

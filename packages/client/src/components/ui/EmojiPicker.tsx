@@ -1173,27 +1173,29 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
     maxHeight?: number;
   }>({});
 
-  useLayoutEffect(() => {
-    if (!open || !anchorRef?.current) return;
+  const updatePosition = useCallback(() => {
+    if (!anchorRef?.current) return;
     const btnRect = anchorRef.current.getBoundingClientRect();
     const pad = 8;
     const pickerWidth = 336; // 21rem
     const pickerHeight = 352; // 22rem
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const viewport = window.visualViewport;
+    const vw = viewport?.width ?? window.innerWidth;
+    const vh = viewport?.height ?? window.innerHeight;
 
     // Composer mode (anchored to an input bar): pin the bottom edge above the bar's
     // top and grow upward. The bar sits at the bottom of the screen, so this fits.
     if (containerRef?.current) {
       const barRect = containerRef.current.getBoundingClientRect();
       const bottom = vh - barRect.top + pad;
+      const maxHeight = Math.min(pickerHeight, Math.max(0, barRect.top - 2 * pad));
       if (vw < 480) {
         // Center horizontally on mobile
         const left = Math.max(pad, (vw - Math.min(pickerWidth, vw - 2 * pad)) / 2);
-        setPos({ bottom, left });
+        setPos({ bottom, left, maxHeight });
       } else {
         const right = Math.max(pad, vw - btnRect.right);
-        setPos({ bottom, right });
+        setPos({ bottom, right, maxHeight });
       }
       return;
     }
@@ -1210,7 +1212,29 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
     let left = btnRect.right - pickerWidth;
     left = Math.max(pad, Math.min(left, vw - pickerWidth - pad));
     setPos({ top, left, maxHeight });
-  }, [open, anchorRef, containerRef]);
+  }, [anchorRef, containerRef]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    let frame = 0;
+    const scheduleUpdate = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        updatePosition();
+      });
+    };
+    window.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("scroll", scheduleUpdate);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      window.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleUpdate);
+    };
+  }, [open, updatePosition]);
 
   const handleSelect = useCallback(
     (emoji: string) => {

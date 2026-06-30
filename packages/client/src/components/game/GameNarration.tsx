@@ -421,7 +421,7 @@ interface GameNarrationProps {
   onRetryCombatGeneration?: () => void;
   /** Open the standard delete-message flow for a backing chat message. */
   onDeleteMessage?: (messageId: string) => void;
-  /** Create a chat branch ending at a user-authored game log message. */
+  /** Create a chat branch ending at a game log message or the current decision beat. */
   onBranchMessage?: (messageId: string) => void;
   /** Whether the global multi-delete bar is active. */
   multiSelectMode?: boolean;
@@ -1010,9 +1010,12 @@ export function GameNarration({
   const logScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pendingLogScrollAnchorRef = useRef<{ key: string; offsetTop: number; scrollTop: number } | null>(null);
   const pendingLogScrollTopRef = useRef<number | null>(null);
+  const stackedLogShellRef = useRef<HTMLDivElement | null>(null);
   const stackedLogRef = useRef<HTMLDivElement | null>(null);
   const activeSegmentScrollRef = useRef<HTMLDivElement | null>(null);
   const [stackedLogPinned, setStackedLogPinned] = useState(true);
+  const [stackedLogHeldHeight, setStackedLogHeldHeight] = useState<number | null>(null);
+  const stackedLogHeightHoldTimerRef = useRef<number | null>(null);
   const [copiedMessageKey, setCopiedMessageKey] = useState<string | null>(null);
   const copyResetTimerRef = useRef<number | null>(null);
   const [mobilePortraitActionsSpeaker, setMobilePortraitActionsSpeaker] = useState<string | null>(null);
@@ -1414,7 +1417,8 @@ export function GameNarration({
         primaryCharacter: resolveMacroCharacter(speaker),
         characters: macroCharacters,
       };
-      const resolveMacrosForText = createMessageMacroResolver(macroContext);
+      const macroRandomSeed = `${sourceMessageId ?? "game-segment"}:${text}`;
+      const resolveMacrosForText = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
       const regexApplied = applyOutputRegexForSource(text, sourceMessageId, sourceRole, resolveMacrosForText);
       return formatTextQuotes(resolveMacrosForText(regexApplied), quoteFormat);
     },
@@ -2629,6 +2633,39 @@ export function GameNarration({
     if (useStackedLogDisplay) setStackedLogPinned(true);
   }, [useStackedLogDisplay]);
 
+  const holdStackedLogHeightForDelete = useCallback(() => {
+    const shell = stackedLogShellRef.current;
+    if (!shell) return;
+
+    const measuredHeight = Math.ceil(shell.getBoundingClientRect().height);
+    if (measuredHeight <= 0) return;
+
+    setStackedLogHeldHeight(measuredHeight);
+    if (stackedLogHeightHoldTimerRef.current !== null) {
+      window.clearTimeout(stackedLogHeightHoldTimerRef.current);
+    }
+
+    const scrollEl = stackedLogRef.current;
+    const scrollTop = scrollEl?.scrollTop ?? null;
+    window.requestAnimationFrame(() => {
+      if (scrollTop == null || !scrollEl) return;
+      scrollEl.scrollTop = Math.min(scrollTop, scrollEl.scrollHeight);
+    });
+
+    stackedLogHeightHoldTimerRef.current = window.setTimeout(() => {
+      stackedLogHeightHoldTimerRef.current = null;
+      setStackedLogHeldHeight(null);
+    }, 320);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (stackedLogHeightHoldTimerRef.current !== null) {
+        window.clearTimeout(stackedLogHeightHoldTimerRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!useStackedLogDisplay || !stackedLogPinned) return;
     const el = stackedLogRef.current;
@@ -3351,6 +3388,8 @@ export function GameNarration({
     "flex min-h-7 items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-1 text-xs text-[var(--foreground)]/75 transition-colors hover:bg-[var(--muted)]/40 dark:border-white/10 dark:bg-white/5 dark:text-white/75 dark:hover:bg-white/10";
   const NARRATION_COUNT_BADGE =
     "absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--foreground)] px-0.5 text-[0.55rem] font-bold text-[var(--background)] ring-1 ring-[var(--background)]/20 dark:bg-white/90 dark:text-black dark:ring-black/20";
+  const ACTIVE_SEGMENT_ACTION_BTN =
+    "inline-flex items-center justify-center rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60";
   const combatMetaButton = onRequestCombatStart ? (
     <button
       type="button"
@@ -3498,6 +3537,21 @@ export function GameNarration({
   // While reviewing the past (messageOffset > 0), interrupt controls are hidden and
   // the Next button is forced visible so the player can see and press "Return".
   const reviewingPast = messageOffset > 0;
+  const playerInputAvailable =
+    !scenePreparing &&
+    !reviewingPast &&
+    (narrationComplete || interruptCommitted) &&
+    !isStreaming &&
+    !partyTurnPending &&
+    !!inputSlot;
+  const activeSourceRole = activeSourceMessage?.role ?? active?.sourceRole ?? null;
+  const activeCanBranchAtInput = !!(
+    playerInputAvailable &&
+    onBranchMessage &&
+    editingContent === null &&
+    activeSourceMessageId &&
+    (activeSourceRole === "assistant" || activeSourceRole === "narrator")
+  );
   const showInterruptControls = !reviewingPast && !narrationComplete && !partyTurnPending && !!onInterruptRequest;
   const showNav = reviewingPast || (!narrationComplete && !isStreaming && !interruptPending);
   const navControls =
@@ -3562,7 +3616,286 @@ export function GameNarration({
       </div>
     );
 
-  const renderStackedLogSegment = (seg: NarrationSegment) => {
+  const handleBranchActiveBeat = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!activeCanBranchAtInput || !activeSourceMessageId) return;
+      onBranchMessage?.(activeSourceMessageId);
+    },
+    [activeCanBranchAtInput, activeSourceMessageId, onBranchMessage],
+  );
+
+  const handleSaveActiveSegmentEdit = useCallback(() => {
+    if (editingContent?.trim() && onEditSegment) {
+      const editInfo = segmentEditInfoRef.current[activeIndex];
+      if (editInfo) onEditSegment(editInfo.messageId, editInfo.segmentIndex, { content: editingContent.trim() });
+    }
+    setEditingContent(null);
+  }, [activeIndex, editingContent, onEditSegment]);
+
+  const activeBranchButton = activeCanBranchAtInput ? (
+    <button
+      type="button"
+      onClick={handleBranchActiveBeat}
+      className={cn(ACTIVE_SEGMENT_ACTION_BTN, "text-[var(--primary)]/80 hover:text-[var(--primary)]")}
+      title="Branch before this decision"
+      aria-label="Branch before this decision"
+    >
+      <GitBranch size={11} />
+    </button>
+  ) : null;
+  const activeCopyButton =
+    editingContent === null && activeCopyKey ? (
+      <button
+        type="button"
+        onClick={() => {
+          void handleCopyMessage(activeCopyKey, activeCopyText);
+        }}
+        className={ACTIVE_SEGMENT_ACTION_BTN}
+        title="Copy"
+        aria-label="Copy"
+      >
+        {copiedMessageKey === activeCopyKey ? <Check size={11} /> : <Copy size={11} />}
+      </button>
+    ) : null;
+  const activeEditButton =
+    activeCanEditSegment && editingContent === null ? (
+      <button
+        type="button"
+        onClick={() => setEditingContent(active?.content ?? "")}
+        className={cn(ACTIVE_SEGMENT_ACTION_BTN, "hidden md:inline-flex")}
+        title="Edit"
+      >
+        <Pencil size={11} />
+      </button>
+    ) : null;
+  const activeSaveButton =
+    editingContent !== null ? (
+      <button
+        type="button"
+        onClick={handleSaveActiveSegmentEdit}
+        className="inline-flex items-center justify-center rounded bg-emerald-500/20 p-1 text-emerald-300 transition-colors hover:bg-emerald-500/30"
+        title="Save"
+      >
+        <Check size={11} />
+      </button>
+    ) : null;
+  const activeSegmentActionButtons =
+    activeSaveButton || activeBranchButton || activeCopyButton || activeEditButton ? (
+      <div
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerUp={(event) => event.stopPropagation()}
+        className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
+      >
+        {activeSaveButton ?? (
+          <>
+            {activeBranchButton}
+            {activeCopyButton}
+            {activeEditButton}
+          </>
+        )}
+      </div>
+    ) : null;
+
+  const renderStackedLogSegment = (seg: NarrationSegment, entryMessageId: string) => {
+    const sourceMessageId = seg.sourceMessageId ?? entryMessageId;
+    const hasSourceSegmentIndex = seg.sourceSegmentIndex != null;
+    const sourceSegmentIndex = seg.sourceSegmentIndex ?? 0;
+    const sourceMessageRole = sourceMessageId ? (sourceMessagesById.get(sourceMessageId)?.role ?? null) : null;
+    const sourceRole = seg.sourceRole ?? sourceMessageRole;
+    const isUserAuthoredSource = sourceRole === "user" || sourceMessageRole === "user";
+    const liveSegmentIndex = segments.findIndex((candidate) => candidate.id === seg.id);
+    const canEditMessage = !!onEditMessage && !!sourceMessageId && isUserAuthoredSource;
+    const canEditSegment =
+      !!onEditSegment &&
+      !!sourceMessageId &&
+      hasSourceSegmentIndex &&
+      sourceRole !== "user" &&
+      sourceRole !== "system" &&
+      sourceMessageId !== "party-chat";
+    const canEdit = canEditMessage || canEditSegment;
+    const canDeleteMessage =
+      !!onDeleteMessage && !!sourceMessageId && (isUserAuthoredSource || sourceRole === "system");
+    const canBranchMessage = !!onBranchMessage && !!sourceMessageId && isUserAuthoredSource;
+    const canDeleteThisSegment =
+      !!onDeleteSegment &&
+      !!sourceMessageId &&
+      hasSourceSegmentIndex &&
+      sourceRole !== "user" &&
+      sourceRole !== "system" &&
+      sourceMessageId !== "party-chat";
+    const isEditingThis = editingLogSeg?.messageId === sourceMessageId && editingLogSeg?.segIndex === sourceSegmentIndex;
+    const showDeleteButton = canDeleteMessage || canDeleteThisSegment;
+    const copyKey =
+      sourceMessageId && hasSourceSegmentIndex
+        ? `log:${sourceMessageId}:${sourceSegmentIndex}`
+        : sourceMessageId
+          ? `log:${sourceMessageId}`
+          : null;
+    const copyText = seg.readableContent ?? stripGmTagsKeepReadables(seg.content);
+    const stackedActionButtonClass =
+      "rounded p-1 text-[var(--foreground)]/45 opacity-100 transition-all hover:bg-[var(--muted)]/35 hover:text-[var(--foreground)]/70 md:text-[var(--foreground)]/25 md:opacity-0 md:group-hover/logseg:opacity-100 dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white/70 dark:md:text-white/25";
+    const copyButton = copyKey ? (
+      <button
+        type="button"
+        onPointerDown={stopLogActionPointerDown}
+        onClick={(event) => handleLogCopyButtonClick(event, copyKey, copyText)}
+        className={stackedActionButtonClass}
+        title="Copy"
+      >
+        {copiedMessageKey === copyKey ? <Check size={11} /> : <Copy size={11} />}
+      </button>
+    ) : null;
+    const branchButton = canBranchMessage ? (
+      <button
+        type="button"
+        onPointerDown={stopLogActionPointerDown}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onBranchMessage?.(sourceMessageId);
+        }}
+        className={stackedActionButtonClass}
+        title="Branch from here"
+        aria-label="Branch from here"
+      >
+        <GitBranch size={11} />
+      </button>
+    ) : null;
+    const deleteButton = showDeleteButton ? (
+      <button
+        type="button"
+        onPointerDown={stopLogActionPointerDown}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          holdStackedLogHeightForDelete();
+          prepareLogDeleteNavigation(`${sourceMessageId}:${sourceSegmentIndex}`, liveSegmentIndex);
+          if (canDeleteMessage && sourceMessageId) {
+            onDeleteMessage?.(sourceMessageId);
+          } else if (canDeleteThisSegment && sourceMessageId) {
+            onDeleteSegment?.(sourceMessageId, sourceSegmentIndex);
+          }
+        }}
+        className={cn(stackedActionButtonClass, "hover:bg-red-500/20 hover:text-red-400")}
+        title={canDeleteThisSegment ? "Delete segment" : "Delete message"}
+      >
+        <Trash2 size={11} />
+      </button>
+    ) : null;
+    const editButtons = canEdit ? (
+      <>
+        {!isEditingThis && (
+          <button
+            type="button"
+            onPointerDown={stopLogActionPointerDown}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!sourceMessageId) return;
+              const initialContent = seg.type === "readable" ? (seg.readableContent ?? seg.content) : seg.content;
+              const initialSpeaker = canEditSegment && seg.type === "dialogue" ? (seg.speaker ?? "") : undefined;
+              logEditDraftRef.current = {
+                content: initialContent,
+                speaker: initialSpeaker,
+              };
+              setEditingLogSeg({
+                messageId: sourceMessageId,
+                segIndex: sourceSegmentIndex,
+                content: initialContent,
+                speaker: initialSpeaker,
+                segmentType: seg.type,
+                readableType: seg.readableType,
+              });
+            }}
+            className={stackedActionButtonClass}
+            title="Edit"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
+        {isEditingThis && (
+          <button
+            type="button"
+            onPointerDown={stopLogActionPointerDown}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              commitLogEdit({
+                sourceMessageId,
+                sourceSegmentIndex,
+                canEditMessage,
+                canEditSegment,
+                fallbackSpeaker: seg.speaker,
+              });
+            }}
+            className="rounded bg-emerald-500/20 p-1 text-emerald-300 transition-colors hover:bg-emerald-500/30"
+            title="Save"
+          >
+            <Check size={11} />
+          </button>
+        )}
+      </>
+    ) : null;
+    const actionButtons =
+      deleteButton || branchButton || copyButton || editButtons ? (
+        <div
+          onPointerDown={stopLogActionPointerDown}
+          onClick={(event) => event.stopPropagation()}
+          className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
+        >
+          {branchButton}
+          {deleteButton}
+          {copyButton}
+          {editButtons}
+        </div>
+      ) : null;
+    const editSpeakerInput =
+      isEditingThis && seg.type === "dialogue" && canEditSegment ? (
+        <input
+          key={`${sourceMessageId}:${sourceSegmentIndex}:speaker`}
+          className="mb-1 w-full rounded border border-[var(--border)] bg-[var(--background)]/55 px-2 py-1 text-[0.7rem] font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)]/45 dark:border-white/10 dark:bg-black/40 dark:text-white/90 dark:focus:border-white/30"
+          defaultValue={editingLogSeg?.speaker ?? ""}
+          placeholder="Speaker name"
+          onChange={(e) => {
+            logEditDraftRef.current = {
+              ...logEditDraftRef.current,
+              speaker: e.target.value,
+            };
+          }}
+        />
+      ) : null;
+    const editTextarea = isEditingThis ? (
+      <textarea
+        key={`${sourceMessageId}:${sourceSegmentIndex}:content`}
+        ref={logEditTextareaRef}
+        className="mt-1 w-full rounded border border-[var(--border)] bg-[var(--background)]/55 px-2 py-1 text-xs text-[var(--foreground)] outline-none focus:border-[var(--primary)]/45 dark:border-white/10 dark:bg-black/40 dark:text-white/90 dark:focus:border-white/30"
+        style={narrationFontStyle}
+        defaultValue={editingLogSeg.content}
+        rows={3}
+        autoFocus
+        onChange={(e) => {
+          logEditDraftRef.current = {
+            ...logEditDraftRef.current,
+            content: e.target.value,
+          };
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setEditingLogSeg(null);
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            commitLogEdit({
+              sourceMessageId,
+              sourceSegmentIndex,
+              canEditMessage,
+              canEditSegment,
+              fallbackSpeaker: seg.speaker,
+            });
+          }
+        }}
+      />
+    ) : null;
     const partyBadge =
       seg.partyType && seg.partyType !== "main" ? (
         <span
@@ -3647,11 +3980,14 @@ export function GameNarration({
 
     if (seg.type === "dialogue") {
       const logAvatar = seg.speaker ? findNamedMapValue(speakerAvatarInfos, seg.speaker) : null;
+      const canUploadLogPortrait = canUploadNpcPortrait(seg.speaker);
+      const canGenerateLogPortrait = canGenerateNpcPortrait(seg.speaker);
+      const logPortraitGenerating = isNpcPortraitGenerating(seg.speaker);
       return (
         <div
           key={seg.id}
           className={cn(
-            "flex gap-2 rounded-lg border px-2.5 py-2",
+            "group/logseg relative flex gap-2 rounded-lg border px-2.5 py-2 pr-20",
             seg.partyType === "thought"
               ? "border-purple-400/10 bg-purple-950/15"
               : seg.partyType === "whisper"
@@ -3661,12 +3997,64 @@ export function GameNarration({
                   : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/5 dark:bg-black/20",
           )}
         >
-          {logAvatar ? (
+          {actionButtons}
+          {canUploadLogPortrait ? (
+            <div className="group/log-avatar relative shrink-0">
+              <button
+                type="button"
+                onClick={(event) => handleNpcPortraitAvatarClick(event, seg.speaker)}
+                className="rounded-lg transition-transform hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/25 dark:focus:ring-white/20"
+                title="Upload or replace NPC portrait"
+              >
+                {logAvatar ? (
+                  <CroppedAvatar
+                    src={logAvatar.url}
+                    alt={seg.speaker || ""}
+                    crop={logAvatar.crop}
+                    className="h-7 w-7 rounded-lg border border-[var(--border)] transition-colors hover:border-[var(--primary)]/35 dark:border-white/10 dark:hover:border-white/25"
+                    onLoadError={
+                      canGenerateLogPortrait && seg.speaker
+                        ? () => onNpcPortraitLoadError?.(seg.speaker as string)
+                        : undefined
+                    }
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent)] text-[0.5rem] font-bold transition-colors hover:border-[var(--primary)]/35 dark:border-white/10 dark:hover:border-white/25">
+                    {(seg.speaker || "?")[0]}
+                  </div>
+                )}
+              </button>
+              {canGenerateLogPortrait && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    triggerNpcPortraitGenerate(seg.speaker);
+                  }}
+                  disabled={logPortraitGenerating}
+                  className={cn(
+                    "absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/75 text-[var(--primary)] opacity-0 ring-1 ring-white/15 transition-opacity disabled:cursor-wait md:group-hover/log-avatar:opacity-100",
+                    (logPortraitGenerating || isMobilePortraitActionsVisible(seg.speaker)) && "max-md:opacity-100",
+                  )}
+                  title="Generate NPC portrait"
+                >
+                  {logPortraitGenerating ? (
+                    <Loader2 size="0.6rem" className="animate-spin" />
+                  ) : (
+                    <Wand2 size="0.6rem" />
+                  )}
+                </button>
+              )}
+            </div>
+          ) : logAvatar ? (
             <CroppedAvatar
               src={logAvatar.url}
               alt={seg.speaker || ""}
               crop={logAvatar.crop}
               className="h-7 w-7 shrink-0 rounded-lg border border-[var(--border)] dark:border-white/10"
+              onLoadError={
+                canGenerateLogPortrait && seg.speaker ? () => onNpcPortraitLoadError?.(seg.speaker as string) : undefined
+              }
             />
           ) : (
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--accent)] text-[0.5rem] font-bold dark:border-white/10">
@@ -3688,14 +4076,21 @@ export function GameNarration({
               {partyBadge}
               {voiceButton}
             </div>
-            <div
-              className={cn(
-                "mt-0.5 text-xs leading-relaxed text-[var(--foreground)]/80 dark:text-white/80",
-                seg.partyType === "thought" ? "italic opacity-80" : "font-semibold",
-              )}
-              style={seg.color ? { ...narrationFontStyle, color: seg.color } : narrationFontStyle}
-              dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
-            />
+            {isEditingThis ? (
+              <>
+                {editSpeakerInput}
+                {editTextarea}
+              </>
+            ) : (
+              <div
+                className={cn(
+                  "mt-0.5 text-xs leading-relaxed text-[var(--foreground)]/80 dark:text-white/80",
+                  seg.partyType === "thought" ? "italic opacity-80" : "font-semibold",
+                )}
+                style={seg.color ? { ...narrationFontStyle, color: seg.color } : narrationFontStyle}
+                dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
+              />
+            )}
           </div>
         </div>
       );
@@ -3703,30 +4098,46 @@ export function GameNarration({
 
     if (seg.type === "system") {
       return (
-        <div key={seg.id} className="rounded-lg border border-cyan-400/15 bg-cyan-950/15 px-2.5 py-2 text-cyan-50/80">
+        <div
+          key={seg.id}
+          className="group/logseg relative rounded-lg border border-cyan-400/15 bg-cyan-950/15 px-2.5 py-2 pr-20 text-cyan-50/80"
+        >
+          {actionButtons}
           <div className="mb-1 text-[0.6rem] font-semibold uppercase tracking-wide text-cyan-200/80">System</div>
-          <div
-            className="whitespace-pre-wrap break-words text-xs leading-relaxed"
-            style={narrationFontStyle}
-            dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
-          />
+          {isEditingThis ? (
+            editTextarea
+          ) : (
+            <div
+              className="whitespace-pre-wrap break-words text-xs leading-relaxed"
+              style={narrationFontStyle}
+              dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
+            />
+          )}
         </div>
       );
     }
 
     if (seg.type === "readable") {
       return (
-        <div key={seg.id} className="rounded-lg border border-amber-400/15 bg-amber-950/15 px-2.5 py-2">
+        <div
+          key={seg.id}
+          className="group/logseg relative rounded-lg border border-amber-400/15 bg-amber-950/15 px-2.5 py-2 pr-20"
+        >
+          {actionButtons}
           <div className="mb-1 text-[0.6rem] font-semibold uppercase tracking-wide text-amber-300/80">
             {seg.readableType === "book" ? "Book" : "Note"}
           </div>
-          <div
-            className="text-xs italic leading-relaxed text-amber-200/70"
-            style={narrationFontStyle}
-            dangerouslySetInnerHTML={{
-              __html: animateTextHtml(formatNarration(seg.readableContent ?? seg.content, false)),
-            }}
-          />
+          {isEditingThis ? (
+            editTextarea
+          ) : (
+            <div
+              className="text-xs italic leading-relaxed text-amber-200/70"
+              style={narrationFontStyle}
+              dangerouslySetInnerHTML={{
+                __html: animateTextHtml(formatNarration(seg.readableContent ?? seg.content, false)),
+              }}
+            />
+          )}
         </div>
       );
     }
@@ -3734,19 +4145,24 @@ export function GameNarration({
     return (
       <div
         key={seg.id}
-        className="rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-2 dark:border-white/5 dark:bg-black/20"
+        className="group/logseg relative rounded-lg border border-[var(--border)] bg-[var(--muted)]/20 px-2.5 py-2 pr-20 dark:border-white/5 dark:bg-black/20"
       >
+        {actionButtons}
         <div className="mb-1 flex items-center">
           <span className="text-[0.6rem] font-semibold uppercase tracking-wide text-[var(--foreground)]/75 dark:text-white/80">
             Narration
           </span>
           {voiceButton}
         </div>
-        <div
-          className="text-xs leading-relaxed text-[var(--foreground)]/80 dark:text-white/80"
-          style={narrationStyle}
-          dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
-        />
+        {isEditingThis ? (
+          editTextarea
+        ) : (
+          <div
+            className="text-xs leading-relaxed text-[var(--foreground)]/80 dark:text-white/80"
+            style={narrationStyle}
+            dangerouslySetInnerHTML={{ __html: animateTextHtml(formatNarration(seg.content, false)) }}
+          />
+        )}
       </div>
     );
   };
@@ -3760,14 +4176,16 @@ export function GameNarration({
         className="relative z-10 mx-auto flex h-full max-h-[calc(100svh-7rem)] min-h-0 w-full max-w-4xl flex-col justify-end md:max-h-[calc(100svh-8rem)]"
       >
         <div className="min-h-0 flex flex-1 flex-col justify-end overflow-hidden">
-          {useStackedLogDisplay && stackedLogEntries.length > 0 && (
+          {useStackedLogDisplay && (stackedLogEntries.length > 0 || stackedLogHeldHeight !== null) && (
             <div
-              className="mb-2 rounded-2xl border border-[var(--border)] bg-[var(--card)]/70 p-2 shadow-[0_16px_38px_rgba(0,0,0,0.35)] backdrop-blur-md dark:border-white/10 dark:bg-black/40"
+              ref={stackedLogShellRef}
+              className="mb-2 rounded-2xl border border-[var(--border)] bg-[var(--card)]/70 p-2 shadow-[0_16px_38px_rgba(0,0,0,0.35)] backdrop-blur-md [overflow-anchor:none] dark:border-white/10 dark:bg-black/40"
+              style={stackedLogHeldHeight !== null ? { minHeight: `${stackedLogHeldHeight}px` } : undefined}
               data-game-skip-bg-nav="true"
             >
               <div
                 ref={stackedLogRef}
-                className="flex max-h-[22svh] min-h-0 flex-col gap-1.5 overflow-y-auto pr-1 sm:max-h-[26svh] md:max-h-[32svh]"
+                className="flex max-h-[22svh] min-h-0 flex-col gap-1.5 overflow-y-auto pr-1 [overflow-anchor:none] sm:max-h-[26svh] md:max-h-[32svh]"
                 onScroll={(e) => {
                   const el = e.currentTarget;
                   setStackedLogPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 32);
@@ -3775,7 +4193,7 @@ export function GameNarration({
               >
                 {stackedLogEntries.map((entry) => (
                   <div key={entry.messageId} className="space-y-1.5">
-                    {entry.segments.map((seg) => renderStackedLogSegment(seg))}
+                    {entry.segments.map((seg) => renderStackedLogSegment(seg, entry.messageId))}
                   </div>
                 ))}
               </div>
@@ -4070,6 +4488,7 @@ export function GameNarration({
                               : active.partyType === "whisper"
                                 ? "border-rose-400/10 bg-rose-950/20"
                                 : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/10 dark:bg-black/35",
+                            activeSegmentActionButtons && "pr-16",
                           )}
                         >
                           {editingContent !== null ? (
@@ -4108,49 +4527,7 @@ export function GameNarration({
                             />
                           )}
                         </div>
-                        {/* Edit button */}
-                        {activeCanEditSegment && (
-                          <button
-                            type="button"
-                            onClick={() => setEditingContent(active.content)}
-                            className="absolute right-1.5 top-1.5 hidden rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] md:block dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60"
-                            title="Edit"
-                          >
-                            <Pencil size={11} />
-                          </button>
-                        )}
-                        {editingContent !== null && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (editingContent.trim() && onEditSegment) {
-                                const ei = segmentEditInfoRef.current[activeIndex];
-                                if (ei)
-                                  onEditSegment(ei.messageId, ei.segmentIndex, { content: editingContent.trim() });
-                              }
-                              setEditingContent(null);
-                            }}
-                            className="absolute right-1.5 top-1.5 rounded bg-emerald-500/20 p-1 text-emerald-300 transition-colors hover:bg-emerald-500/30"
-                            title="Save"
-                          >
-                            <Check size={11} />
-                          </button>
-                        )}
-                        {editingContent === null && activeCopyKey && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleCopyMessage(activeCopyKey, activeCopyText);
-                            }}
-                            className={cn(
-                              "absolute top-1.5 hidden rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] md:block dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60",
-                              activeCanEditSegment ? "right-7" : "right-1.5",
-                            )}
-                            title="Copy"
-                          >
-                            {copiedMessageKey === activeCopyKey ? <Check size={11} /> : <Copy size={11} />}
-                          </button>
-                        )}
+                        {activeSegmentActionButtons}
                       </div>
                     </div>
                   </div>
@@ -4207,7 +4584,10 @@ export function GameNarration({
                 ref={activeSegmentScrollRef}
                 onPointerDown={(event) => handleMobileSegmentPointerDown(event, active)}
                 onPointerUp={(event) => handleMobileSegmentTapToEdit(event, active)}
-                className="relative game-narration-prose max-h-40 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-3 py-2.5 sm:max-h-48 dark:border-white/10 dark:bg-black/35"
+                className={cn(
+                  "relative game-narration-prose max-h-40 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--muted)]/20 px-3 py-2.5 sm:max-h-48 dark:border-white/10 dark:bg-black/35",
+                  activeSegmentActionButtons && "pr-16",
+                )}
               >
                 {editingContent !== null ? (
                   <textarea
@@ -4235,48 +4615,7 @@ export function GameNarration({
                     }}
                   />
                 )}
-                {/* Edit button */}
-                {activeCanEditSegment && (
-                  <button
-                    type="button"
-                    onClick={() => setEditingContent(active.content)}
-                    className="absolute right-1.5 top-1.5 hidden rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] md:block dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60"
-                    title="Edit"
-                  >
-                    <Pencil size={11} />
-                  </button>
-                )}
-                {editingContent !== null && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (editingContent.trim() && onEditSegment) {
-                        const ei = segmentEditInfoRef.current[activeIndex];
-                        if (ei) onEditSegment(ei.messageId, ei.segmentIndex, { content: editingContent.trim() });
-                      }
-                      setEditingContent(null);
-                    }}
-                    className="absolute right-1.5 top-1.5 rounded bg-emerald-500/20 p-1 text-emerald-300 transition-colors hover:bg-emerald-500/30"
-                    title="Save"
-                  >
-                    <Check size={11} />
-                  </button>
-                )}
-                {editingContent === null && activeCopyKey && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleCopyMessage(activeCopyKey, activeCopyText);
-                    }}
-                    className={cn(
-                      "absolute top-1.5 hidden rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] md:block dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60",
-                      activeCanEditSegment ? "right-7" : "right-1.5",
-                    )}
-                    title="Copy"
-                  >
-                    {copiedMessageKey === activeCopyKey ? <Check size={11} /> : <Copy size={11} />}
-                  </button>
-                )}
+                {activeSegmentActionButtons}
               </div>
 
               {doneTyping &&
@@ -4319,7 +4658,10 @@ export function GameNarration({
 
               <div
                 ref={activeSegmentScrollRef}
-                className="relative game-narration-prose max-h-40 overflow-y-auto rounded-xl border border-amber-400/20 bg-amber-950/20 px-3 py-2.5 sm:max-h-48"
+                className={cn(
+                  "relative game-narration-prose max-h-40 overflow-y-auto rounded-xl border border-amber-400/20 bg-amber-950/20 px-3 py-2.5 sm:max-h-48",
+                  activeCopyKey && "pr-9",
+                )}
               >
                 <div
                   className={cn(
@@ -4341,8 +4683,9 @@ export function GameNarration({
                     onClick={() => {
                       void handleCopyMessage(activeCopyKey, activeCopyText);
                     }}
-                    className="absolute right-1.5 top-1.5 hidden rounded p-1 text-amber-200/45 transition-colors hover:bg-amber-100/10 hover:text-amber-100/70 md:block"
+                    className="absolute right-1.5 top-1.5 rounded p-1 text-amber-200/45 transition-colors hover:bg-amber-100/10 hover:text-amber-100/70"
                     title="Copy"
+                    aria-label="Copy"
                   >
                     {copiedMessageKey === activeCopyKey ? <Check size={11} /> : <Copy size={11} />}
                   </button>
@@ -4378,12 +4721,7 @@ export function GameNarration({
               from showing in the background while the confirmation modal is still open.
               While reviewing the past via wheel-nav, the input is hidden — the player is
               looking at history, not typing. */}
-          {!scenePreparing &&
-            !reviewingPast &&
-            (narrationComplete || interruptCommitted) &&
-            !isStreaming &&
-            !partyTurnPending &&
-            inputSlot && <div className="mt-2">{inputSlot}</div>}
+          {playerInputAvailable && <div className="mt-2">{inputSlot}</div>}
 
           {/* Also show input when no narration at all (start of scene) */}
           {!scenePreparing && !active && !isStreaming && !sceneAnalysisFailed && inputSlot && (

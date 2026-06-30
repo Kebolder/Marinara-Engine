@@ -804,7 +804,7 @@ export function LorebooksPanel() {
             New Folder
           </button>
         </div>
-        {lorebookFolders.length > 0 && <p className="mari-folder-helper">Drag and drop lorebooks to folders</p>}
+        {lorebookFolders.length > 0 && <p className="mari-folder-helper">Drag and drop lorebooks to folders, double-click or double-tap to rename</p>}
       </div>
 
       {/* Filters */}
@@ -968,8 +968,8 @@ export function LorebooksPanel() {
                 role="button"
                 tabIndex={0}
                 aria-expanded={isExpanded}
-                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Press F2 to rename.`}
-                title="Double-click or press F2 to rename."
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Double-tap or press F2 to rename.`}
+                title="Double-click, double-tap, or press F2 to rename."
                 className="group relative flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 transition-all hover:bg-[var(--sidebar-accent)]/40"
                 onClick={(event) =>
                   handleFolderRenameGesture(folder.id, event, {

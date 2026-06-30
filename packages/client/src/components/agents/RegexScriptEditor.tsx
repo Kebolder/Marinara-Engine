@@ -29,10 +29,19 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
+import { ApiError } from "../../lib/api-client";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
-import { applyRegexReplacement, resolveMacros, type MacroContext, type RegexPlacement } from "@marinara-engine/shared";
+import {
+  applyRegexReplacement,
+  formatTextQuotes,
+  isPatternSafe,
+  resolveRegexPatternLiteralMacros,
+  resolveMacros,
+  type MacroContext,
+  type RegexPlacement,
+} from "@marinara-engine/shared";
 
 // ═══════════════════════════════════════════════
 //  Placement metadata
@@ -51,6 +60,29 @@ const PLACEMENT_META: Record<RegexPlacement, { label: string; description: strin
 const REGEX_FIELD_ICON_CLASS = "mari-chrome-accent-icon mari-accent-animated";
 const REGEX_ACTIVE_OPTION_CLASS =
   "mari-chrome-accent-surface mari-accent-animated ring-[var(--marinara-chat-chrome-button-border-active)]";
+type RegexApplyMode = "prompt" | "display" | "both";
+
+const APPLY_MODE_META: Record<RegexApplyMode, { label: string; description: string }> = {
+  display: {
+    label: "Only Display",
+    description: "Change what appears in chat only.",
+  },
+  prompt: {
+    label: "Only Prompt",
+    description: "Change what the model receives only.",
+  },
+  both: {
+    label: "Both",
+    description: "Change display and prompt text.",
+  },
+};
+
+function deriveRegexApplyMode(row: Pick<RegexScriptRow, "applyMode" | "promptOnly"> | null | undefined): RegexApplyMode {
+  if (row?.applyMode === "prompt" || row?.applyMode === "display" || row?.applyMode === "both") {
+    return row.applyMode;
+  }
+  return row?.promptOnly === "true" ? "prompt" : "display";
+}
 
 function createLiveTestMacroContext(input: string): MacroContext {
   return {
@@ -106,6 +138,30 @@ function parseCharacterData(value: unknown): Record<string, unknown> {
   }
 }
 
+function formatValidationIssue(issue: unknown): string | null {
+  if (!isRecord(issue)) return null;
+  const message = typeof issue.message === "string" ? issue.message : null;
+  if (!message) return null;
+  const path = Array.isArray(issue.path)
+    ? issue.path.filter((part) => typeof part === "string" || typeof part === "number").join(".")
+    : typeof issue.path === "string"
+      ? issue.path
+      : "";
+  return path ? `${path}: ${message}` : message;
+}
+
+function describeRegexEditorError(error: unknown): string {
+  if (error instanceof ApiError && isRecord(error.payload)) {
+    const details = error.payload.details ?? error.payload.issues;
+    if (Array.isArray(details)) {
+      const messages = details.map(formatValidationIssue).filter((message): message is string => !!message);
+      if (messages.length > 0) return messages.slice(0, 3).join("; ");
+    }
+  }
+  if (error instanceof Error && error.message) return error.message;
+  return "Failed to save regex script";
+}
+
 // ═══════════════════════════════════════════════
 //  Main Editor
 // ═══════════════════════════════════════════════
@@ -115,6 +171,7 @@ export function RegexScriptEditor() {
   const regexDetailReturn = useUIStore((s) => s.regexDetailReturn);
   const closeRegexDetail = useUIStore((s) => s.closeRegexDetail);
   const openRegexDetail = useUIStore((s) => s.openRegexDetail);
+  const quoteFormat = useUIStore((s) => s.quoteFormat);
 
   const { data: regexScripts } = useRegexScripts();
   const { data: characters } = useCharacters();
@@ -138,7 +195,7 @@ export function RegexScriptEditor() {
   const [localTrimStrings, setLocalTrimStrings] = useState<string[]>([]);
   const [localPlacement, setLocalPlacement] = useState<RegexPlacement[]>(["ai_output"]);
   const [localFlags, setLocalFlags] = useState("gi");
-  const [localPromptOnly, setLocalPromptOnly] = useState(false);
+  const [localApplyMode, setLocalApplyMode] = useState<RegexApplyMode>("display");
   const [localCharacterScopeEnabled, setLocalCharacterScopeEnabled] = useState(false);
   const [localTargetCharacterIds, setLocalTargetCharacterIds] = useState<string[]>([]);
   const [localOrder, setLocalOrder] = useState(0);
@@ -195,7 +252,7 @@ export function RegexScriptEditor() {
         setLocalPlacement(["ai_output"]);
       }
       setLocalFlags(dbRow.flags);
-      setLocalPromptOnly(dbRow.promptOnly === "true");
+      setLocalApplyMode(deriveRegexApplyMode(dbRow));
       const targetCharacterIds = parseStringArray(dbRow.targetCharacterIds);
       setLocalTargetCharacterIds(targetCharacterIds);
       setLocalCharacterScopeEnabled(targetCharacterIds.length > 0);
@@ -211,7 +268,7 @@ export function RegexScriptEditor() {
       setLocalTrimStrings([]);
       setLocalPlacement(["ai_output"]);
       setLocalFlags("gi");
-      setLocalPromptOnly(false);
+      setLocalApplyMode("display");
       // Pre-scope when opened from a character's scoped-regex manager.
       const defaultScope = regexDetailDefaultCharacterIds ?? [];
       setLocalTargetCharacterIds(defaultScope);
@@ -229,8 +286,14 @@ export function RegexScriptEditor() {
   const regexError = useMemo(() => {
     if (!localFindRegex) return null;
     try {
-      const findRegex = resolveLiveTestMacros(localFindRegex, createLiveTestMacroContext(testInput));
+      const macroContext = createLiveTestMacroContext(testInput);
+      const findRegex = resolveRegexPatternLiteralMacros(localFindRegex, (value) =>
+        resolveLiveTestMacros(value, macroContext),
+      );
       if (!findRegex) return null;
+      if (!isPatternSafe(findRegex)) {
+        return "Regex pattern is unsafe: avoid nested quantifiers, ambiguous quantified alternatives, and oversized patterns.";
+      }
       new RegExp(findRegex, localFlags);
       return null;
     } catch (e) {
@@ -238,13 +301,21 @@ export function RegexScriptEditor() {
     }
   }, [localFindRegex, localFlags, testInput]);
 
+  const unchangedUnsafePattern =
+    !!dbRow && dbRow.findRegex === localFindRegex && regexError?.startsWith("Regex pattern is unsafe:") === true;
+  const blockingRegexError = unchangedUnsafePattern ? null : regexError;
+  const depthRangeError =
+    localMinDepth != null && localMaxDepth != null && localMinDepth > localMaxDepth
+      ? "Minimum depth cannot be greater than maximum depth."
+      : null;
+
   // Test result
   const testResult = useMemo(() => {
     if (!testInput || !localFindRegex || regexError) return testInput;
     try {
       const macroContext = createLiveTestMacroContext(testInput);
       const resolveTestMacros = (value: string) => resolveLiveTestMacros(value, macroContext);
-      const findRegex = resolveTestMacros(localFindRegex);
+      const findRegex = resolveRegexPatternLiteralMacros(localFindRegex, resolveTestMacros);
       if (!findRegex) return testInput;
       const re = new RegExp(findRegex, localFlags);
       let result = applyRegexReplacement(testInput, re, localReplaceString, resolveTestMacros);
@@ -253,11 +324,11 @@ export function RegexScriptEditor() {
         const resolvedTrim = resolveTestMacros(trim);
         if (resolvedTrim) result = result.split(resolvedTrim).join("");
       }
-      return result;
+      return formatTextQuotes(result, quoteFormat);
     } catch {
       return testInput;
     }
-  }, [testInput, localFindRegex, localReplaceString, localFlags, localTrimStrings, regexError]);
+  }, [testInput, localFindRegex, localReplaceString, localFlags, localTrimStrings, quoteFormat, regexError]);
 
   const handleClose = useCallback(() => {
     if (dirty) {
@@ -274,8 +345,16 @@ export function RegexScriptEditor() {
       setSaveError("Choose at least one target character.");
       return;
     }
+    if (blockingRegexError) {
+      setSaveError(blockingRegexError);
+      return;
+    }
+    if (depthRangeError) {
+      setSaveError(depthRangeError);
+      return;
+    }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: localName,
       enabled: localEnabled,
       findRegex: localFindRegex,
@@ -283,16 +362,19 @@ export function RegexScriptEditor() {
       trimStrings: localTrimStrings,
       placement: localPlacement,
       flags: localFlags,
-      promptOnly: localPromptOnly,
+      promptOnly: localApplyMode === "prompt",
+      applyMode: localApplyMode,
       targetCharacterIds: localCharacterScopeEnabled ? localTargetCharacterIds : [],
-      order: localOrder,
       minDepth: localMinDepth,
       maxDepth: localMaxDepth,
     };
+    if (dbRow || localOrder !== 0) payload.order = localOrder;
 
     try {
       if (dbRow) {
-        await updateScript.mutateAsync({ id: dbRow.id, ...payload });
+        const updatePayload = { ...payload };
+        if (dbRow.findRegex === localFindRegex) delete updatePayload.findRegex;
+        await updateScript.mutateAsync({ id: dbRow.id, ...updatePayload });
       } else {
         const created = (await createScript.mutateAsync(payload)) as RegexScriptRow | undefined;
         if (created?.id) {
@@ -304,7 +386,7 @@ export function RegexScriptEditor() {
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 1500);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save regex script");
+      setSaveError(describeRegexEditorError(err));
     }
   }, [
     regexDetailId,
@@ -315,12 +397,14 @@ export function RegexScriptEditor() {
     localTrimStrings,
     localPlacement,
     localFlags,
-    localPromptOnly,
+    localApplyMode,
     localCharacterScopeEnabled,
     localTargetCharacterIds,
     localOrder,
     localMinDepth,
     localMaxDepth,
+    blockingRegexError,
+    depthRangeError,
     dbRow,
     updateScript,
     createScript,
@@ -375,7 +459,8 @@ export function RegexScriptEditor() {
         trimStrings: localTrimStrings,
         placement: localPlacement,
         flags: localFlags,
-        promptOnly: localPromptOnly,
+        promptOnly: localApplyMode === "prompt",
+        applyMode: localApplyMode,
         targetCharacterIds: localCharacterScopeEnabled ? localTargetCharacterIds : [],
         order: localOrder,
         minDepth: localMinDepth,
@@ -436,7 +521,7 @@ export function RegexScriptEditor() {
           {dirty && !saveError && <span className="mari-editor-status mr-2 text-amber-400">Unsaved</span>}
           <button
             onClick={handleSave}
-            disabled={isPending || !!regexError || !!characterScopeError}
+            disabled={isPending || !!blockingRegexError || !!characterScopeError || !!depthRangeError}
             className="mari-editor-action mari-editor-action--primary inline-flex disabled:opacity-50"
             title="Save regex script"
             aria-label="Save regex script"
@@ -546,7 +631,7 @@ export function RegexScriptEditor() {
             label="Replace With"
             icon={<Info size="0.875rem" className={REGEX_FIELD_ICON_CLASS} />}
             help={
-              "The replacement string. Supports capture groups ($1, $2), named groups ($<name>), and case transforms like \\u$1, \\U$1\\E, \\l$1, and \\L$1\\E. Leave empty to delete matched text."
+              "The replacement string. Supports capture groups ($1, $2), named groups ($<name>), and case transforms before captures like \\u$1, \\U$1\\E, \\l$1, and \\L$1\\E. Literal backslash text such as C:\\Users is preserved."
             }
           >
             <input
@@ -564,10 +649,10 @@ export function RegexScriptEditor() {
           <FieldGroup
             label="Regex Flags"
             icon={<Info size="0.875rem" className={REGEX_FIELD_ICON_CLASS} />}
-            help="Standard regex flags: g (global), i (case-insensitive), m (multiline), s (dotAll), u (unicode)."
+            help="Standard regex flags: g (global), i (case-insensitive), m (multiline), s (dotAll), u (unicode), y (sticky), d (match indices). Duplicate or unsupported flags are rejected."
           >
             <div className="flex items-center gap-2">
-              {["g", "i", "m", "s", "u"].map((flag) => {
+              {["g", "i", "m", "s", "u", "y", "d"].map((flag) => {
                 const active = localFlags.includes(flag);
                 return (
                   <button
@@ -732,22 +817,34 @@ export function RegexScriptEditor() {
             help="Fine-tune when and how the regex runs."
           >
             <div className="space-y-3">
-              {/* Prompt Only */}
-              <div className="flex items-center gap-2.5">
-                <SettingsSwitch
-                  ariaLabel="Toggle Prompt Only"
-                  checked={localPromptOnly}
-                  onChange={(checked) => {
-                    setLocalPromptOnly(checked);
-                    markDirty();
-                  }}
-                  className="shrink-0 p-0 hover:bg-transparent"
-                />
-                <div>
-                  <div className="text-xs font-medium">Prompt Only</div>
-                  <div className="text-[0.625rem] text-[var(--muted-foreground)]">
-                    Only apply in the prompt context sent to the AI, not in the displayed message.
-                  </div>
+              {/* Apply mode */}
+              <div className="space-y-2">
+                <div className="text-xs font-medium">Apply Mode</div>
+                <div className="grid grid-cols-3 gap-2 max-sm:grid-cols-1">
+                  {(Object.entries(APPLY_MODE_META) as [RegexApplyMode, { label: string; description: string }][]).map(
+                    ([mode, meta]) => {
+                      const active = localApplyMode === mode;
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => {
+                            setLocalApplyMode(mode);
+                            markDirty();
+                          }}
+                          className={cn(
+                            "flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl px-3 py-2 text-center text-xs ring-1 transition-all",
+                            active
+                              ? REGEX_ACTIVE_OPTION_CLASS
+                              : "ring-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                          )}
+                        >
+                          <span className="font-medium">{meta.label}</span>
+                          <span className="text-[0.5625rem] leading-snug opacity-70">{meta.description}</span>
+                        </button>
+                      );
+                    },
+                  )}
                 </div>
               </div>
 
@@ -800,6 +897,11 @@ export function RegexScriptEditor() {
                   message depth (empty = unlimited)
                 </span>
               </div>
+              {depthRangeError && (
+                <div className="flex items-center gap-1 text-[0.625rem] font-medium text-red-400">
+                  <AlertCircle size="0.6875rem" /> {depthRangeError}
+                </div>
+              )}
             </div>
           </FieldGroup>
 
@@ -817,6 +919,9 @@ export function RegexScriptEditor() {
                 className="w-full resize-y rounded-xl bg-[var(--secondary)] px-4 py-3 font-mono text-xs leading-relaxed ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 placeholder="Paste sample text to test…"
               />
+              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                Pattern preview only: placement, enabled state, character scope, and depth are evaluated at runtime.
+              </p>
               {testInput && (
                 <div className="rounded-xl bg-[var(--card)] p-4 ring-1 ring-[var(--border)]">
                   <div className="mb-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">Result:</div>

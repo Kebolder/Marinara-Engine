@@ -930,6 +930,7 @@ export const ChatMessage = memo(function ChatMessage({
     guideGenerations,
     boldDialogue,
     editMessageOnDoubleClick,
+    quoteFormat,
   } = useUIStore(
     useShallow((s) => ({
       chatFontSize: s.chatFontSize,
@@ -946,6 +947,7 @@ export const ChatMessage = memo(function ChatMessage({
       guideGenerations: s.guideGenerations,
       boldDialogue: s.boldDialogue ?? true,
       editMessageOnDoubleClick: s.editMessageOnDoubleClick,
+      quoteFormat: s.quoteFormat,
     })),
   );
   const isGuided = guideGenerations && hasDraftInput;
@@ -1104,9 +1106,9 @@ export const ChatMessage = memo(function ChatMessage({
       ttsService.stop();
     } else {
       if (!hasTTSContent) return;
-      void ttsService.speakSequence(ttsVoiceRequests, message.id);
+      void ttsService.speakSequence(ttsVoiceRequests, message.id, { progressive: ttsConfig?.progressivePlayback });
     }
-  }, [hasTTSContent, message.id, ttsVoiceRequests]);
+  }, [hasTTSContent, message.id, ttsConfig?.progressivePlayback, ttsVoiceRequests]);
 
   const handlePauseResumeTTS = useCallback(() => {
     if (ttsService.getActiveId() !== message.id) return;
@@ -1363,13 +1365,14 @@ export const ChatMessage = memo(function ChatMessage({
         setEditing(false);
         return;
       }
-      if (content.trim() !== message.content) {
-        onEdit?.(message.id, content.trim());
+      const formattedSource = formatTextQuotes(message.content, quoteFormat);
+      if (content.trim().length > 0 && content !== formattedSource) {
+        onEdit?.(message.id, content);
       }
       editSwipeIndexRef.current = null;
       setEditing(false);
     },
-    [message.activeSwipeIndex, message.content, message.id, onEdit],
+    [message.activeSwipeIndex, message.content, message.id, onEdit, quoteFormat],
   );
 
   const handleCancelEdit = useCallback(() => {
@@ -1408,8 +1411,9 @@ export const ChatMessage = memo(function ChatMessage({
     if (!characterMap) return null;
     if (!chatCharacterIds) return characterMap;
     const allowedIds = new Set(chatCharacterIds);
+    if (message.characterId) allowedIds.add(message.characterId);
     return new Map(Array.from(characterMap).filter(([id]) => allowedIds.has(id)));
-  }, [characterMap, chatCharacterIds]);
+  }, [characterMap, chatCharacterIds, message.characterId]);
 
   // Resolve character info from characters that actually belong to this chat.
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;
@@ -1472,7 +1476,8 @@ export const ChatMessage = memo(function ChatMessage({
       primaryCharacter: primaryCharInfo ?? { name: charName },
       characters: macroCharacters,
     };
-    const resolveDisplayMacros = createMessageMacroResolver(macroContext);
+    const macroRandomSeed = `${message.id}:${message.content}`;
+    const resolveDisplayMacros = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
     const text =
       isUser || isSystem
         ? message.content
@@ -1493,6 +1498,7 @@ export const ChatMessage = memo(function ChatMessage({
     macroCharacters,
     message.content,
     messageDepth,
+    message.id,
     personaAppearance,
     personaBackstory,
     personaDescription,
@@ -1644,7 +1650,6 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
-  const quoteFormat = useUIStore((s) => s.quoteFormat);
   const isHtmlContent = HTML_TAG_RE.test(text);
   const htmlScopeClass = useMemo(() => {
     const suffix = message.id.replace(/[^a-zA-Z0-9_-]/g, "");

@@ -275,8 +275,8 @@ export function GameJournal({
     <div
       className={
         embedded
-          ? "flex min-h-0 flex-1 flex-col bg-transparent"
-          : "absolute inset-0 z-40 flex flex-col bg-black/85 backdrop-blur-md"
+          ? "flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent"
+          : "absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-black/85 backdrop-blur-md"
       }
     >
       {/* Header */}
@@ -317,7 +317,7 @@ export function GameJournal({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch]">
         {activeTab === "all" && <TimelineView entries={visibleEntries} />}
         {activeTab === "npcs" && (
           <NpcsView

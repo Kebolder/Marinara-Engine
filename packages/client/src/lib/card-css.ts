@@ -113,6 +113,8 @@ const THEME_TOKEN_BLOCKLIST = [
   "--foreground",
   "--card",
   "--card-foreground",
+  "--popover",
+  "--popover-foreground",
   "--primary",
   "--primary-foreground",
   "--secondary",
@@ -127,6 +129,7 @@ const THEME_TOKEN_BLOCKLIST = [
   "--input",
   "--ring",
   "--radius",
+  "--sidebar",
   "--sidebar-background",
   "--sidebar-foreground",
   "--sidebar-primary",
@@ -138,14 +141,27 @@ const THEME_TOKEN_BLOCKLIST = [
   "--color-background",
   "--color-foreground",
   "--color-card",
+  "--color-card-foreground",
+  "--color-popover",
+  "--color-popover-foreground",
   "--color-primary",
+  "--color-primary-foreground",
   "--color-secondary",
+  "--color-secondary-foreground",
   "--color-muted",
+  "--color-muted-foreground",
   "--color-accent",
+  "--color-accent-foreground",
   "--color-destructive",
+  "--color-destructive-foreground",
   "--color-border",
   "--color-input",
   "--color-ring",
+  "--color-sidebar",
+  "--color-sidebar-foreground",
+  "--color-sidebar-border",
+  "--color-sidebar-accent",
+  "--color-sidebar-accent-foreground",
 ];
 
 /** Strip CSS comments */
@@ -426,6 +442,120 @@ function hashCss(input: string): string {
   return (h >>> 0).toString(36);
 }
 
+function findCssBlockStart(css: string, startIndex: number): number {
+  let quote: string | null = null;
+  let escaped = false;
+  let inComment = false;
+
+  for (let cursor = startIndex; cursor < css.length; cursor++) {
+    const ch = css[cursor]!;
+    const next = css[cursor + 1];
+    if (inComment) {
+      if (ch === "*" && next === "/") {
+        inComment = false;
+        cursor += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inComment = true;
+      cursor += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "{") return cursor;
+  }
+
+  return -1;
+}
+
+function splitCssRuleBlocks(css: string): Array<{ selector: string; body: string }> {
+  const blocks: Array<{ selector: string; body: string }> = [];
+  let cursor = 0;
+
+  while (cursor < css.length) {
+    const blockStart = findCssBlockStart(css, cursor);
+    if (blockStart === -1) break;
+
+    const selector = css.slice(cursor, blockStart).trim();
+    const bodyStart = blockStart + 1;
+    const block = findCssBlockEnd(css, bodyStart);
+    const body = css.slice(bodyStart, block.closed ? block.end - 1 : block.end);
+
+    if (selector) {
+      blocks.push({ selector, body });
+    }
+    cursor = block.end;
+  }
+
+  return blocks;
+}
+
+function scopeSanitizedCss(sanitized: string, scopeSelector: string): string {
+  const result: string[] = [];
+
+  for (const { selector, body } of splitCssRuleBlocks(sanitized)) {
+    // Skip @keyframes — already namespaced, don't prefix their contents
+    if (/^@keyframes\s/i.test(selector)) {
+      result.push(`${selector} {${body}}`);
+      continue;
+    }
+
+    // Skip @font-face — contains declarations, not nested rules
+    if (/^@font-face$/i.test(selector)) {
+      result.push(`${selector} {${body}}`);
+      continue;
+    }
+
+    // Handle @media and other at-rules that wrap rulesets, preserving any depth
+    // of nested conditional wrappers.
+    if (/^@/.test(selector)) {
+      const innerScoped = scopeSanitizedCss(body, scopeSelector);
+      result.push(`${selector} {${innerScoped}}`);
+      continue;
+    }
+
+    // Scope each selector in the comma-separated list
+    const scopedSelectors = selector.split(",").map((sel) => {
+      const s = sel.trim();
+      // :root, html, body -> scopeSelector (targets the scope element itself)
+      if (/^(:root|html|body)$/i.test(s)) return scopeSelector;
+      // Starts with :root, html, body (descendant or chained) -> replace prefix with scope
+      if (/^(:root|html|body)[\s:.[]/i.test(s)) return s.replace(/^(:root|html|body)/i, scopeSelector);
+      // [data-card-css] alone -> scopeSelector (self-reference in exclusive mode)
+      if (/^\[data-card-css\]$/i.test(s)) return scopeSelector;
+      // [data-card-css] with descendant -> replace with scope
+      if (/^\[data-card-css\]\s/i.test(s)) return s.replace(/^\[data-card-css\]/i, scopeSelector);
+      // [data-card-css] with chained pseudo-classes or attribute selectors
+      // e.g. [data-card-css]:not([data-grouped]), [data-card-css][data-grouped]
+      // In exclusive mode the scope IS the element, so chain on it.
+      // In chat mode the scope is a container, so keep as descendant (default).
+      if (/^\[data-card-css\][:[.]/.test(s) && scopeSelector.includes("[data-card-css=")) {
+        return s.replace(/^\[data-card-css\]/i, scopeSelector);
+      }
+      // Otherwise prefix
+      return `${scopeSelector} ${s}`;
+    });
+
+    result.push(`${scopedSelectors.join(", ")} {${body}}`);
+  }
+
+  return result.join("\n");
+}
+
 /**
  * Scope CSS rules under a given selector.
  * - Sanitizes input
@@ -519,60 +649,5 @@ export function scopeChatCss(css: string, scopeSelector: string): string {
     });
   }
 
-  // Split into rules and scope selectors
-  const result: string[] = [];
-  // Simple rule-level split: find selector { ... } blocks
-  const ruleRe = /([^{}]+)\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g;
-  let ruleMatch: RegExpExecArray | null;
-
-  while ((ruleMatch = ruleRe.exec(sanitized)) !== null) {
-    const selector = ruleMatch[1].trim();
-    const body = ruleMatch[2];
-
-    // Skip @keyframes — already namespaced, don't prefix their contents
-    if (/^@keyframes\s/i.test(selector)) {
-      result.push(`${selector} {${body}}`);
-      continue;
-    }
-
-    // Skip @font-face — contains declarations, not nested rules
-    if (/^@font-face$/i.test(selector)) {
-      result.push(`${selector} {${body}}`);
-      continue;
-    }
-
-    // Handle @media and other at-rules that wrap rulesets
-    if (/^@/.test(selector)) {
-      // Recursively scope the inner rules
-      const innerScoped = scopeChatCss(body, scopeSelector);
-      result.push(`${selector} {${innerScoped}}`);
-      continue;
-    }
-
-    // Scope each selector in the comma-separated list
-    const scopedSelectors = selector.split(",").map((sel) => {
-      const s = sel.trim();
-      // :root, html, body -> scopeSelector (targets the scope element itself)
-      if (/^(:root|html|body)$/i.test(s)) return scopeSelector;
-      // Starts with :root, html, body (descendant or chained) -> replace prefix with scope
-      if (/^(:root|html|body)[\s:.[]/i.test(s)) return s.replace(/^(:root|html|body)/i, scopeSelector);
-      // [data-card-css] alone -> scopeSelector (self-reference in exclusive mode)
-      if (/^\[data-card-css\]$/i.test(s)) return scopeSelector;
-      // [data-card-css] with descendant -> replace with scope
-      if (/^\[data-card-css\]\s/i.test(s)) return s.replace(/^\[data-card-css\]/i, scopeSelector);
-      // [data-card-css] with chained pseudo-classes or attribute selectors
-      // e.g. [data-card-css]:not([data-grouped]), [data-card-css][data-grouped]
-      // In exclusive mode the scope IS the element, so chain on it.
-      // In chat mode the scope is a container, so keep as descendant (default).
-      if (/^\[data-card-css\][:[.]/.test(s) && scopeSelector.includes("[data-card-css=")) {
-        return s.replace(/^\[data-card-css\]/i, scopeSelector);
-      }
-      // Otherwise prefix
-      return `${scopeSelector} ${s}`;
-    });
-
-    result.push(`${scopedSelectors.join(", ")} {${body}}`);
-  }
-
-  return result.join("\n");
+  return scopeSanitizedCss(sanitized, scopeSelector);
 }

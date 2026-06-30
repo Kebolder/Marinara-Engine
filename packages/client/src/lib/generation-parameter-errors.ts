@@ -40,7 +40,13 @@ function extractParameter(message: string, patterns: RegExp[]) {
   return null;
 }
 
+function isPrivilegedAccessError(message: string): boolean {
+  return /\b(?:ADMIN_SECRET|X-Admin-Secret|Basic Auth|privileged APIs?|privileged API|authenticated access)\b/i.test(message);
+}
+
 export function formatGenerationParameterError(message: string): string {
+  if (isPrivilegedAccessError(message)) return message;
+
   const unsupported = extractParameter(message, [
     /\bunsupported parameters?\b[:\s]+([A-Za-z0-9_.-]+)/i,
     /\bunknown parameters?\b[:\s]+([A-Za-z0-9_.-]+)/i,

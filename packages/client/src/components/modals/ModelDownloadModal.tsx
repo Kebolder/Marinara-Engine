@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   BrainCircuit,
   Check,
   ChevronDown,
@@ -22,7 +23,13 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { SidecarBackend, SidecarQuantization, SidecarRuntimePreference } from "@marinara-engine/shared";
+import {
+  SIDECAR_EMBEDDING_POOLING_TYPES,
+  type SidecarBackend,
+  type SidecarEmbeddingPooling,
+  type SidecarQuantization,
+  type SidecarRuntimePreference,
+} from "@marinara-engine/shared";
 import { Modal } from "../ui/Modal.js";
 import { useSidecarStore } from "../../stores/sidecar.store.js";
 
@@ -79,6 +86,23 @@ function describeGpuLayers(gpuLayers: number): string {
   if (gpuLayers === -1) return "Auto offload";
   if (gpuLayers === 0) return "CPU only";
   return `${gpuLayers} GPU layers`;
+}
+
+function formatEmbeddingPoolingLabel(pooling: SidecarEmbeddingPooling): string {
+  switch (pooling) {
+    case "none":
+      return "None";
+    case "mean":
+      return "Mean";
+    case "cls":
+      return "CLS";
+    case "last":
+      return "Last token";
+    case "rank":
+      return "Rank";
+    default:
+      return pooling;
+  }
 }
 
 function formatCompactTokens(value: number): string {
@@ -180,6 +204,7 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   const [temperatureInput, setTemperatureInput] = useState(String(config.temperature));
   const [topPInput, setTopPInput] = useState(String(config.topP));
   const [topKInput, setTopKInput] = useState(String(config.topK));
+  const [embeddingBatchSizeInput, setEmbeddingBatchSizeInput] = useState(String(config.embeddingBatchSize));
   const modalScrollRef = useRef<HTMLDivElement>(null);
   const previousScrollLayoutRef = useRef({ showSetupProgress: false, showRuntimeSettings: false });
 
@@ -209,6 +234,7 @@ export function ModelDownloadModal({ open, onClose }: Props) {
           formatRuntimePreferenceLabel(config.runtimePreference, platform),
           describeGpuLayers(config.gpuLayers),
           config.enableNativeToolCalls ? "native tools on" : "native tools off",
+          `${formatEmbeddingPoolingLabel(config.embeddingPooling)} pooling`,
           `${formatCompactTokens(config.contextSize)} ctx`,
           `${formatCompactTokens(config.maxTokens)} max`,
         ].join(" • ");
@@ -250,7 +276,15 @@ export function ModelDownloadModal({ open, onClose }: Props) {
     setTemperatureInput(String(config.temperature));
     setTopPInput(String(config.topP));
     setTopKInput(String(config.topK));
-  }, [config.contextSize, config.maxTokens, config.temperature, config.topP, config.topK]);
+    setEmbeddingBatchSizeInput(String(config.embeddingBatchSize));
+  }, [
+    config.contextSize,
+    config.maxTokens,
+    config.temperature,
+    config.topP,
+    config.topK,
+    config.embeddingBatchSize,
+  ]);
 
   useEffect(() => {
     if (status === "server_error" || testMessageResult) {
@@ -360,6 +394,18 @@ export function ModelDownloadModal({ open, onClose }: Props) {
     void updateConfig({ enableNativeToolCalls: !config.enableNativeToolCalls });
   };
 
+  const handleEmbeddingPoolingChange = (pooling: SidecarEmbeddingPooling) => {
+    void updateConfig({ embeddingPooling: pooling });
+  };
+
+  const handleApplyEmbeddingBatchSize = () => {
+    const parsed = Number.parseInt(embeddingBatchSizeInput, 10);
+    if (!Number.isFinite(parsed) || parsed < 128 || parsed > 32768) {
+      return;
+    }
+    void updateConfig({ embeddingBatchSize: parsed });
+  };
+
   const handleApplyCustomGpuLayers = () => {
     const parsed = Number.parseInt(gpuLayersInput, 10);
     if (!Number.isFinite(parsed) || parsed < 1 || parsed > 1024) {
@@ -408,6 +454,10 @@ export function ModelDownloadModal({ open, onClose }: Props) {
   const parsedTemperature = Number.parseFloat(temperatureInput);
   const parsedTopP = Number.parseFloat(topPInput);
   const parsedTopK = Number.parseInt(topKInput, 10);
+  const parsedEmbeddingBatchSize = Number.parseInt(embeddingBatchSizeInput, 10);
+  const embeddingBatchSizeValid =
+    Number.isFinite(parsedEmbeddingBatchSize) && parsedEmbeddingBatchSize >= 128 && parsedEmbeddingBatchSize <= 32768;
+  const embeddingBatchSizeDirty = embeddingBatchSizeInput !== String(config.embeddingBatchSize);
   const generationSettingsValid =
     Number.isFinite(parsedContextSize) &&
     parsedContextSize >= 512 &&
@@ -451,6 +501,19 @@ export function ModelDownloadModal({ open, onClose }: Props) {
                 : "Set up the runtime first, then choose either a curated Gemma preset or any GGUF from HuggingFace. Runtime device selection lives inside Runtime Settings."}
             </p>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--warning)]">
+            <AlertTriangle size="0.95rem" className="shrink-0" />
+            Local Model is for helpers, not main roleplay
+          </div>
+          <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+            The bundled model is deliberately small so it can handle tracker agents, scene analysis, and lightweight
+            background chores without stealing main-model tokens. It is not intended for main chat, roleplay, Game
+            Master narration, or Professor Mari creation/editing. Use a stronger local or API language connection for
+            those.
+          </p>
         </div>
 
         {hasModel && (
@@ -712,6 +775,71 @@ export function ModelDownloadModal({ open, onClose }: Props) {
                   </div>
                 )}
               </div>
+
+              {activeBackend !== "mlx" && (
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--card)]/50 p-4">
+                  <div className="text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">
+                    Embedding Endpoint
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-[0.6875rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">
+                        Pooling Type
+                      </span>
+                      <div className="relative">
+                        <select
+                          value={config.embeddingPooling}
+                          onChange={(event) =>
+                            handleEmbeddingPoolingChange(event.target.value as SidecarEmbeddingPooling)
+                          }
+                          className="w-full appearance-none rounded-xl border border-[var(--border)] bg-[var(--card)]/80 px-3 py-2 pr-10 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--marinara-chat-chrome-input-border-focus)] focus:ring-1 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
+                        >
+                          {SIDECAR_EMBEDDING_POOLING_TYPES.map((pooling) => (
+                            <option key={pooling} value={pooling}>
+                              {formatEmbeddingPoolingLabel(pooling)}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size="0.95rem"
+                          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]/70"
+                        />
+                      </div>
+                    </label>
+
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-[0.6875rem] font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">
+                        Physical Batch Size
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={embeddingBatchSizeInput}
+                          onChange={(event) => setEmbeddingBatchSizeInput(event.target.value.replace(/[^\d]/g, ""))}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              handleApplyEmbeddingBatchSize();
+                            }
+                          }}
+                          inputMode="numeric"
+                          placeholder="512"
+                          className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[var(--card)]/80 px-3 py-2 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--marinara-chat-chrome-input-border-focus)] focus:ring-1 focus:ring-[var(--marinara-chat-chrome-focus-ring)]"
+                        />
+                        <button
+                          onClick={handleApplyEmbeddingBatchSize}
+                          disabled={!embeddingBatchSizeValid || !embeddingBatchSizeDirty}
+                          className="flex shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--card)]/70 px-4 py-2 text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--card)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Apply
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+                  <div className="mt-3 text-xs leading-relaxed text-[var(--muted-foreground)]/70">
+                    Use Mean pooling for OpenAI-compatible lorebook embeddings. Raise the physical batch size when long
+                    entries exceed llama-server's current batch limit; Gemma commonly works with 1024.
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-xl border border-[var(--border)] bg-[var(--card)]/50 p-4">
                 <div className="text-xs font-medium uppercase tracking-wider text-[var(--muted-foreground)]/60">

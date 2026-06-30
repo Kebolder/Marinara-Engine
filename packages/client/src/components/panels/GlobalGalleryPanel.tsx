@@ -201,8 +201,8 @@ export function GlobalGalleryPanel() {
               })
           : undefined
       }
-      aria-label={renamable ? `${label}. Press F2 to rename.` : label}
-      title={renamable ? `${label}. Double-click or press F2 to rename.` : undefined}
+      aria-label={renamable ? `${label}. Double-tap or press F2 to rename.` : label}
+      title={renamable ? `${label}. Double-click, double-tap, or press F2 to rename.` : undefined}
       onDragOver={dropTarget ? (e) => e.preventDefault() : undefined}
       onDragEnter={dropTarget ? () => setDragOverFolder(key) : undefined}
       onDragLeave={dropTarget ? () => setDragOverFolder((cur) => (cur === key ? null : cur)) : undefined}

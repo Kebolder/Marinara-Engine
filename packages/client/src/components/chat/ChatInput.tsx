@@ -436,7 +436,8 @@ export const ChatInput = memo(function ChatInput({
   const lastMessageRole = lastMessage?.role ?? null;
 
   const canRetry = !isStreaming && lastMessageRole === "user";
-  const canContinue = !isStreaming && mode === "roleplay" && lastMessageRole === "assistant";
+  const canContinue =
+    !isStreaming && mode === "roleplay" && groupResponseOrder !== "manual" && lastMessageRole === "assistant";
   const pendingAttachmentReads = activeChatId ? (pendingAttachmentReadsByChat[activeChatId] ?? 0) : 0;
   const isReadingAttachments = pendingAttachmentReads > 0;
   const hasPendingAttachments = isReadingAttachments || attachments.length > 0;
@@ -557,6 +558,7 @@ export const ChatInput = memo(function ChatInput({
       characterNames: activeCharacterNames,
       characters: activeChatCharacters,
       latestAssistantMessageId: latestAssistantMessage?.id ?? null,
+      lastMessageRole,
       setSpriteExpression: onExpressionChange
         ? (characterId, expression) => onExpressionChange(characterId, expression, { immediate: true })
         : undefined,
@@ -569,6 +571,7 @@ export const ChatInput = memo(function ChatInput({
     activeCharacterNames,
     activeChatCharacters,
     latestAssistantMessage,
+    lastMessageRole,
     onExpressionChange,
     qc,
   ]);
@@ -625,13 +628,13 @@ export const ChatInput = memo(function ChatInput({
       const cached = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(activeChatId));
       const firstPage = cached?.pages?.[0];
       const lastMsg = firstPage?.[firstPage.length - 1];
-      if (lastMsg && (lastMsg.role === "user" || (lastMsg.role === "assistant" && mode === "roleplay"))) {
-        // Retry (last msg is user) or Continue (last msg is assistant, roleplay mode)
+      if (lastMsg?.role === "user" || (mode === "roleplay" && lastMsg?.role === "assistant")) {
+        // User-tail retries and assistant-tail empty sends both create a new reply.
+        // Appending onto the previous assistant message remains explicit via /continue.
         try {
           await generateWithNarrativeDirector({
             chatId: activeChatId,
             connectionId: null,
-            ...(lastMsg.role === "assistant" ? { continueMessageId: lastMsg.id } : {}),
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : "Generation failed";
@@ -784,6 +787,7 @@ export const ChatInput = memo(function ChatInput({
     }
   }, [
     activeChatId,
+    mode,
     isStreaming,
     generateWithNarrativeDirector,
     applyToUserInput,
@@ -792,7 +796,6 @@ export const ChatInput = memo(function ChatInput({
     clearInputDraft,
     attachments,
     isReadingAttachments,
-    mode,
     groupResponseOrder,
     responseQueue,
     removeFromResponseQueue,
@@ -1319,6 +1322,12 @@ export const ChatInput = memo(function ChatInput({
     [activeChatId, quoteFormat, setInputDraft, syncInputState],
   );
 
+  const ensureInputVisible = useCallback(() => {
+    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    requestAnimationFrame(scroll);
+    window.setTimeout(scroll, 260);
+  }, []);
+
   return (
     <div className="mari-chat-input chat-input-container px-3 pb-3">
       {/* Slash command autocomplete popup */}
@@ -1482,6 +1491,7 @@ export const ChatInput = memo(function ChatInput({
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onFocus={ensureInputVisible}
           placeholder={
             activeChatId
               ? mode === "roleplay"
@@ -1501,17 +1511,18 @@ export const ChatInput = memo(function ChatInput({
         />
 
         {/* Emoji picker */}
-        <div className="relative hidden sm:block">
+        <div className="relative shrink-0">
           <button
             ref={emojiButtonRef}
             onClick={() => setEmojiOpen((v) => !v)}
             className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+              "flex h-11 w-11 items-center justify-center rounded-xl transition-colors active:scale-90 sm:h-8 sm:w-8 sm:rounded-full",
               emojiOpen
                 ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
                 : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
             title="Emoji"
+            aria-label="Emoji"
           >
             <Smile size="1.125rem" />
           </button>
@@ -1572,16 +1583,14 @@ export const ChatInput = memo(function ChatInput({
         {showQuickRepliesMenu && quickReplyActions.length > 0 && (
           <QuickReplyMenu
             actions={quickReplyActions}
-            disabled={!activeChatId || isReadingAttachments || (!hasInput && attachments.length === 0)}
+            disabled={!activeChatId || isReadingAttachments}
           />
         )}
 
         {/* Send / Stop button */}
 
         <button
-          onClick={
-            isStreaming ? () => useChatStore.getState().stopGeneration(activeChatId ?? undefined) : handleSend
-          }
+          onClick={isStreaming ? () => useChatStore.getState().stopGeneration(activeChatId ?? undefined) : handleSend}
           disabled={
             (!isStreaming && isReadingAttachments) ||
             (!hasInput && !attachments.length && !isStreaming && !canRetry && !canContinue) ||

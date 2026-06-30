@@ -27,7 +27,14 @@ export function normalizeAgentPhaseForType(
   configuredPhase: unknown,
   fallback: AgentPhase = "post_processing",
 ): AgentPhase {
-  if (agentType === "prose-guardian" || agentType === "continuity") return "post_processing";
+  if (
+    agentType === "prose-guardian" ||
+    agentType === "continuity" ||
+    agentType === "expression" ||
+    agentType === "spotify"
+  ) {
+    return "post_processing";
+  }
   return normalizeAgentPhaseValue(configuredPhase, fallback);
 }
 
@@ -358,6 +365,7 @@ export interface AgentContext {
       enabled: boolean;
       attributes: Array<{ name: string; value: number }>;
       hp: { value: number; max: number };
+      pools?: import("./character.js").RPGStatPool[];
     };
   } | null;
   /** Active multiplayer participants for Discord/future shared chat entry points. */

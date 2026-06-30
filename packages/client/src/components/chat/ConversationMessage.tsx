@@ -180,8 +180,9 @@ export const ConversationMessage = memo(function ConversationMessage({
     if (!characterMap) return null;
     if (!chatCharacterIds) return characterMap;
     const allowedIds = new Set(chatCharacterIds);
+    if (message.characterId) allowedIds.add(message.characterId);
     return new Map(Array.from(characterMap).filter(([id]) => allowedIds.has(id)));
-  }, [characterMap, chatCharacterIds]);
+  }, [characterMap, chatCharacterIds, message.characterId]);
 
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;
   const fallbackChatCharacterEntry = useMemo(() => {
@@ -455,11 +456,11 @@ export const ConversationMessage = memo(function ConversationMessage({
       setEditing(false);
       return;
     }
-    const val = formatTextQuotes(editValueRef.current.trim(), quoteFormat);
-    if (val !== editSourceContent) onEdit?.(message.id, val);
+    const val = formatTextQuotes(editValueRef.current, quoteFormat);
+    if (val.trim().length > 0 && val !== formattedEditSourceContent) onEdit?.(message.id, val);
     editSwipeIndexRef.current = null;
     setEditing(false);
-  }, [editSourceContent, message.activeSwipeIndex, message.id, onEdit, quoteFormat]);
+  }, [formattedEditSourceContent, message.activeSwipeIndex, message.id, onEdit, quoteFormat]);
 
   const handleCancelEdit = useCallback(() => {
     editSwipeIndexRef.current = null;

@@ -112,6 +112,20 @@ function convertStPlacements(placement: unknown): RegexPlacement[] | null {
   return out.length > 0 ? out : null;
 }
 
+function readBooleanFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function convertStRegexApplyMode(s: Record<string, unknown>): "prompt" | "display" | "both" {
+  if (s.applyMode === "prompt" || s.applyMode === "display" || s.applyMode === "both") return s.applyMode;
+  const promptOnly = readBooleanFlag(s.promptOnly) || readBooleanFlag(s.prompt_only) || readBooleanFlag(s.onlyFormatPrompt);
+  const markdownOnly =
+    readBooleanFlag(s.markdownOnly) || readBooleanFlag(s.markdown_only) || readBooleanFlag(s.onlyFormatDisplay);
+  if (promptOnly && !markdownOnly) return "prompt";
+  if (markdownOnly && !promptOnly) return "display";
+  return "both";
+}
+
 /**
  * Convert a SillyTavern card's embedded `regex_scripts` into CreateRegexScriptInput
  * rows scoped to the imported character. ST stores the pattern as `/source/flags`
@@ -142,6 +156,7 @@ function convertStRegexScripts(
     }
     const placement = convertStPlacements(s.placement);
     if (!placement) continue;
+    const applyMode = convertStRegexApplyMode(s);
     out.push({
       name: typeof s.scriptName === "string" && s.scriptName.trim() ? s.scriptName.trim() : "Imported regex",
       enabled: s.disabled !== true,
@@ -150,7 +165,8 @@ function convertStRegexScripts(
       trimStrings: Array.isArray(s.trimStrings) ? s.trimStrings.filter((t): t is string => typeof t === "string") : [],
       placement,
       flags,
-      promptOnly: s.promptOnly === true || s.prompt_only === true || s.onlyFormatPrompt === true,
+      promptOnly: applyMode === "prompt",
+      applyMode,
       targetCharacterIds: scope === "global" ? [] : [characterId],
       // Preserve the card's authoring order so multi-script imports keep a stable
       // execution/list order (all-zero ties leave it undefined). Gaps from skipped

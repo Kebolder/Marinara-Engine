@@ -21,6 +21,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -58,7 +59,9 @@ public class MainActivity extends Activity {
     private static final String TERMUX_HOME = "/data/data/com.termux/files/home";
     private static final String TERMUX_BASH = "/data/data/com.termux/files/usr/bin/bash";
     private static final String TERMUX_EXTERNAL_APPS_COMMAND =
-            "mkdir -p ~/.termux && grep -qxF 'allow-external-apps=true' ~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps=true' >> ~/.termux/termux.properties; termux-reload-settings";
+            "mkdir -p ~/.termux; "
+                    + "grep -qxF 'allow-external-apps=true' ~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps=true' >> ~/.termux/termux.properties; "
+                    + "if command -v termux-reload-settings >/dev/null 2>&1; then termux-reload-settings; else echo 'allow-external-apps=true saved. Fully close and reopen Termux if Marinara still cannot start it.'; fi";
 
     private WebView webView;
     private View splashView;
@@ -197,6 +200,8 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setUserAgentString(settings.getUserAgentString() + " MarinaraEngine/Android");
+
+        webView.addJavascriptInterface(new MarinaraAndroidBridge(), "MarinaraAndroid");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -591,8 +596,7 @@ public class MainActivity extends Activity {
         } catch (SecurityException e) {
             showTermuxExternalAppsInstructions();
         } catch (IllegalStateException | ActivityNotFoundException e) {
-            showBootstrap("Android blocked the Termux setup launch.\nOpen Termux, run ./start-termux.sh, then return here.", false);
-            openTermux();
+            showManualTermuxSetupInstructions("Android blocked the Termux setup launch.");
         }
     }
 
@@ -626,18 +630,55 @@ public class MainActivity extends Activity {
         openTermux();
     }
 
+    private void showManualTermuxSetupInstructions(String reason) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("Marinara Termux setup", buildTermuxSetupCommand()));
+            Toast.makeText(this, "Copied Marinara setup command", Toast.LENGTH_LONG).show();
+        }
+        pauseConnectionRetryLoop();
+        showBootstrap(reason + "\nOpen Termux, paste the copied setup command, then return here.", false);
+        openTermux();
+    }
+
     private void openTermuxDownload() {
         openUri(TERMUX_DOWNLOAD_PAGE);
     }
 
-    private void openTermux() {
+    private boolean openTermux() {
         Intent launchIntent = getPackageManager().getLaunchIntentForPackage(TERMUX_PACKAGE);
         if (launchIntent != null) {
             try {
                 startActivity(launchIntent);
+                return true;
             } catch (ActivityNotFoundException ignored) {
                 // The status text already explains the next step.
             }
+        }
+        return false;
+    }
+
+    private class MarinaraAndroidBridge {
+        @JavascriptInterface
+        public void openConsole() {
+            runOnUiThread(() -> {
+                if (!isTermuxInstalled()) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Termux is not installed yet. Use Install / Start Marinara first.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+
+                if (!openTermux()) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Android could not open Termux. Open Termux from your launcher to view logs.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
         }
     }
 

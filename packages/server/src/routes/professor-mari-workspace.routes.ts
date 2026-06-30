@@ -44,6 +44,7 @@ const skillUpdateSchema = z.object({
 function privileged(request: FastifyRequest, reply: FastifyReply, loopbackOnly = false) {
   return requirePrivilegedAccess(request, reply, {
     loopbackOnly,
+    trustedNetwork: !loopbackOnly,
     feature: "Professor Mari workspace",
   });
 }
@@ -142,16 +143,16 @@ export async function professorMariWorkspaceRoutes(app: FastifyInstance) {
 
   app.post<{ Params: { id: string } }>("/approvals/:id/approve", async (req, reply) => {
     if (!privileged(req, reply)) return;
-    const result = await getMariDbService(app.db).approveAndWait(req.params.id);
-    if (!result) return reply.status(404).send({ error: "Approval not found" });
+    const result = await getMariDbService(app.db).keepAppliedReviewAndWait(req.params.id);
+    if (!result) return reply.status(404).send({ error: "Applied change review not found" });
     return { ok: true, ...result };
   });
 
   app.post<{ Params: { id: string } }>("/approvals/:id/reject", async (req, reply) => {
     if (!privileged(req, reply)) return;
-    const ok = getMariDbService(app.db).reject(req.params.id);
-    if (!ok) return reply.status(404).send({ error: "Approval not found" });
-    return { ok: true };
+    const result = await getMariDbService(app.db).restoreAppliedReview(req.params.id);
+    if (!result) return reply.status(404).send({ error: "Applied change review not found" });
+    return { ok: true, ...result, completed: true };
   });
 
   app.get("/history", async (req, reply) => {

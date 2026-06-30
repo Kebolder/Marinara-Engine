@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Schema: Custom Function Tools
 // ──────────────────────────────────────────────
-import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const customTools = sqliteTable("custom_tools", {
   id: text("id").primaryKey(),
@@ -20,6 +20,7 @@ export const customTools = sqliteTable("custom_tools", {
   /** Whether webhook/script execution receives hidden Marinara runtime context */
   includeHiddenContext: text("include_hidden_context").notNull().default("false"),
   enabled: text("enabled").notNull().default("true"),
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

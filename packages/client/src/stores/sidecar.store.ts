@@ -90,6 +90,8 @@ interface SidecarState {
         | "topK"
         | "gpuLayers"
         | "enableNativeToolCalls"
+        | "embeddingPooling"
+        | "embeddingBatchSize"
         | "runtimePreference"
       >
     >,

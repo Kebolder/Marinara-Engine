@@ -2,9 +2,9 @@
 // Routes: Chat Gallery (upload, list, delete, serve)
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import { writeFile } from "fs/promises";
 import { join, extname } from "path";
-import { pipeline } from "stream/promises";
 import { createGalleryStorage } from "../services/storage/gallery.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
@@ -12,12 +12,13 @@ import { createCharacterGalleryStorage } from "../services/storage/character-gal
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { newId } from "../utils/id-generator.js";
 import { DATA_DIR } from "../utils/data-dir.js";
-import { assertInsideDir } from "../utils/security.js";
+import { assertInsideDir, isAllowedImageBuffer } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 const SPRITES_DIR = join(DATA_DIR, "sprites");
 const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
+const GALLERY_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const SPRITE_FILE_RE = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
 
 interface ChatAssetBrowserItem {
@@ -76,6 +77,10 @@ function buildGalleryImageUrl(image: { filePath: string }, fallbackChatId: strin
   return `/api/gallery/file/${encodeURIComponent(ownerChatId)}/${encodeURIComponent(filename)}`;
 }
 
+function expectedImageExt(ext: string): string {
+  return ext === ".jpeg" ? "jpg" : ext.slice(1);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -107,7 +112,9 @@ function parseStringArray(raw: unknown): string[] {
 }
 
 function isSafeAssetSegment(value: string): boolean {
-  return value.length > 0 && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0");
+  return (
+    value.length > 0 && !value.includes("..") && !value.includes("/") && !value.includes("\\") && !value.includes("\0")
+  );
 }
 
 function getStoredFilename(filePath: string): string {
@@ -178,7 +185,11 @@ function spriteMatchesTarget(filename: string, category: "facial" | "fullbody", 
     return expression === targetBase;
   }
 
-  return expression === targetBase || expression === `full_${targetBase}` || expression.replace(/^full[_-]/, "") === targetBase;
+  return (
+    expression === targetBase ||
+    expression === `full_${targetBase}` ||
+    expression.replace(/^full[_-]/, "") === targetBase
+  );
 }
 
 export async function galleryRoutes(app: FastifyInstance) {
@@ -374,7 +385,11 @@ export async function galleryRoutes(app: FastifyInstance) {
     if (!isValidChatId(chatId)) {
       return reply.status(400).send({ error: "Invalid chatId" });
     }
-    const data = await req.file();
+    if (!(await chats.getById(chatId))) {
+      return reply.status(404).send({ error: "Chat not found" });
+    }
+
+    const data = await req.file({ limits: { fileSize: GALLERY_UPLOAD_MAX_BYTES } });
     if (!data) {
       return reply.status(400).send({ error: "No file uploaded" });
     }
@@ -393,7 +408,27 @@ export async function galleryRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Invalid path" });
     }
 
-    await pipeline(data.file, createWriteStream(filePath));
+    let buffer: Buffer;
+    try {
+      buffer = await data.toBuffer();
+    } catch (err) {
+      const truncated = (data.file as typeof data.file & { truncated?: boolean }).truncated === true;
+      const tooLarge = truncated || (err as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE";
+      logger.warn(err, "Failed to receive chat gallery upload %s", data.filename);
+      return reply.status(tooLarge ? 413 : 400).send({
+        error: tooLarge ? "Gallery image is too large" : "Failed to read uploaded image",
+      });
+    }
+    const detectedImage = isAllowedImageBuffer(buffer, ext);
+    if (!detectedImage || detectedImage.ext !== expectedImageExt(ext)) {
+      return reply.status(400).send({ error: "Unsupported or invalid image file" });
+    }
+    try {
+      await writeFile(filePath, buffer);
+    } catch (err) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+      throw err;
+    }
 
     // Parse optional metadata from fields
     const fields = data.fields as Record<string, { value?: string } | undefined>;
@@ -403,15 +438,22 @@ export async function galleryRoutes(app: FastifyInstance) {
     const width = fields?.width?.value ? parseInt(fields.width.value, 10) : undefined;
     const height = fields?.height?.value ? parseInt(fields.height.value, 10) : undefined;
 
-    const image = await storage.create({
-      chatId,
-      filePath: `${chatId}/${filename}`,
-      prompt,
-      provider,
-      model,
-      width: Number.isFinite(width) ? width : undefined,
-      height: Number.isFinite(height) ? height : undefined,
-    });
+    let image;
+    try {
+      image = await storage.create({
+        chatId,
+        filePath: `${chatId}/${filename}`,
+        prompt,
+        provider,
+        model,
+        width: Number.isFinite(width) ? width : undefined,
+        height: Number.isFinite(height) ? height : undefined,
+      });
+    } catch (err) {
+      if (existsSync(filePath)) unlinkSync(filePath);
+      logger.error(err, "Failed to persist chat gallery image %s", filename);
+      return reply.status(500).send({ error: "Failed to save image metadata" });
+    }
 
     return {
       ...image,

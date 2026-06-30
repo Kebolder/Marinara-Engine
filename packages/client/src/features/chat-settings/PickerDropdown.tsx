@@ -21,15 +21,19 @@ export function PickerDropdown({
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handler = (event: MouseEvent) => {
+    const handler = (event: PointerEvent) => {
       if (ref.current && !ref.current.contains(event.target as Node)) onClose();
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
   }, [onClose]);
 
   return (
-    <div ref={ref} className="mt-2 rounded-lg ring-1 ring-[var(--border)] bg-[var(--card)] overflow-hidden">
+    <div
+      ref={ref}
+      onPointerDown={(event) => event.stopPropagation()}
+      className="mt-2 rounded-lg ring-1 ring-[var(--border)] bg-[var(--card)] overflow-hidden"
+    >
       <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2">
         <Search size="0.75rem" className="text-[var(--muted-foreground)]" />
         <input

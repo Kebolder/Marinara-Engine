@@ -1,8 +1,8 @@
 // Static safety heuristic for user-supplied regex patterns.
 //
 // Catches the most common ReDoS shapes — nested quantifiers like (a+)+, (a*)*,
-// (a+|b)+ — plus pathological repetition counts and oversized sources, before
-// the pattern is ever handed to RegExp.
+// (a+|b)+, and ambiguous quantified alternatives like (a|ab)* — plus oversized
+// sources, before the pattern is ever handed to RegExp.
 //
 // Not a full safe-regex replacement: false negatives are possible against
 // expert-crafted patterns that pass star-height inspection but still backtrack
@@ -15,15 +15,22 @@ export interface PatternSafetyOptions {
   maxLength?: number;
   /** Reject star height greater than this. 1 allows `a+`, `(a+)`, `(a)+`; rejects `(a+)+`. Default 1. */
   maxStarHeight?: number;
-  /** Reject `{n,m}` (or `{n,}`) where m (or the unbounded upper) exceeds this. Default 100. */
+  /** Reject `{n,m}` (or `{n,}`) where m (or the unbounded upper) exceeds this. Default Infinity. */
   maxRepetition?: number;
 }
 
 const DEFAULTS: Required<PatternSafetyOptions> = {
   maxLength: 1000,
   maxStarHeight: 1,
-  maxRepetition: 100,
+  maxRepetition: Infinity,
 };
+
+const INVALID_QUANTIFIER = Symbol("invalid-quantifier");
+
+interface ConsumedQuantifier {
+  end: number;
+  addsStarHeight: boolean;
+}
 
 /**
  * Decide whether a regex source string is safe to compile and run against
@@ -40,11 +47,11 @@ export function isPatternSafe(source: string, options: PatternSafetyOptions = {}
   // Walk the source once, tracking:
   //   - whether we are inside a character class (where quantifier semantics differ)
   //   - whether the previous character is escaped
-  //   - the stack of group "has-quantifier-after-close" markers, to compute star height
+  //   - the stack of group "has-repetition-quantifier-after-close" markers, to compute star height
   //
   // Star height here is the maximum number of nested groups whose closing `)`
-  // is followed by a quantifier (`*`, `+`, `?`, `{n,m}`), counted along with
-  // immediate-quantifier atoms. A bare `a+` has star height 1; `(a+)+` has 2.
+  // is followed by a repeating quantifier (`*`, `+`, `{n,m}`), counted along with
+  // immediate repeating-quantifier atoms. A bare `a+` has star height 1; `(a+)+` has 2.
   //
   // The walker is deliberately conservative — it does not need to be a full
   // regex parser to catch the common ReDoS shapes.
@@ -53,6 +60,7 @@ export function isPatternSafe(source: string, options: PatternSafetyOptions = {}
   let groupDepth = 0;
   // For each open group, the running max star height of atoms inside it.
   const groupInnerHeight: number[] = [];
+  const groupBodyStart: number[] = [];
   let topLevelHeight = 0;
 
   const recordAtomHeight = (h: number) => {
@@ -68,22 +76,13 @@ export function isPatternSafe(source: string, options: PatternSafetyOptions = {}
     const c = source[i]!;
 
     if (c === "\\") {
-      // Escape: skip the next char (counts as one atom)
-      const next = source[i + 1];
-      if (next !== undefined) {
-        // If the escape is followed by a quantifier, atom contributes height 1
-        const after = source[i + 2];
-        const quantHeight = isQuantifierStart(after) ? 1 : 0;
-        recordAtomHeight(quantHeight);
-        i += 2;
-        if (quantHeight > 0) {
-          const consumed = consumeQuantifier(source, i, maxRepetition);
-          if (consumed === null) return false;
-          i = consumed;
-        }
-        continue;
-      }
-      return false; // Trailing backslash
+      const atomEnd = consumeEscapedAtom(source, i);
+      if (atomEnd === null) return false;
+      const consumed = consumeQuantifier(source, atomEnd, maxRepetition);
+      if (consumed === INVALID_QUANTIFIER) return false;
+      recordAtomHeight(consumed?.addsStarHeight ? 1 : 0);
+      i = consumed?.end ?? atomEnd;
+      continue;
     }
 
     if (c === "[") {
@@ -91,65 +90,46 @@ export function isPatternSafe(source: string, options: PatternSafetyOptions = {}
       // pick up any quantifier sitting after the closing `]`.
       const closeIdx = findCharClassClose(source, i);
       if (closeIdx === -1) return false;
-      const after = source[closeIdx + 1];
-      const quantHeight = isQuantifierStart(after) ? 1 : 0;
-      recordAtomHeight(quantHeight);
-      i = closeIdx + 1;
-      if (quantHeight > 0) {
-        const consumed = consumeQuantifier(source, i, maxRepetition);
-        if (consumed === null) return false;
-        i = consumed;
-      }
+      const atomEnd = closeIdx + 1;
+      const consumed = consumeQuantifier(source, atomEnd, maxRepetition);
+      if (consumed === INVALID_QUANTIFIER) return false;
+      recordAtomHeight(consumed?.addsStarHeight ? 1 : 0);
+      i = consumed?.end ?? atomEnd;
       continue;
     }
 
     if (c === "(") {
       groupDepth += 1;
       groupInnerHeight.push(0);
-      // Skip group prefix: (?:, (?=, (?!, (?<=, (?<!, (?<name>
-      if (source[i + 1] === "?") {
-        if (source[i + 2] === "<" && source[i + 3] !== "=" && source[i + 3] !== "!") {
-          // Named capture (?<name>...)
-          const close = source.indexOf(">", i + 3);
-          if (close === -1) return false;
-          i = close + 1;
-        } else {
-          i += 3; // (?: (?= (?! (?<= (?<!  — skip the prefix chars; lookbehind needs +1 more but we re-check below
-          if (source[i - 1] === "<") i += 1; // (?<=  or (?<!  — already consumed up to `<`, advance past `=`/`!`
-        }
-      } else {
-        i += 1;
-      }
+      const bodyStart = getGroupBodyStart(source, i);
+      if (bodyStart === null) return false;
+      groupBodyStart.push(bodyStart);
+      i = bodyStart;
       continue;
     }
 
     if (c === ")") {
+      if (groupDepth === 0) return false;
       const innerHeight = groupInnerHeight.pop() ?? 0;
+      const bodyStart = groupBodyStart.pop() ?? i;
       groupDepth -= 1;
-      const after = source[i + 1];
-      const quantified = isQuantifierStart(after);
+      const consumed = consumeQuantifier(source, i + 1, maxRepetition);
+      if (consumed === INVALID_QUANTIFIER) return false;
+      const quantified = consumed?.addsStarHeight === true;
+      if (quantified && hasUnsafeQuantifiedAlternation(source.slice(bodyStart, i))) return false;
       const groupHeight = innerHeight + (quantified ? 1 : 0);
       if (groupHeight > maxStarHeight) return false;
       recordAtomHeight(groupHeight);
-      i += 1;
-      if (quantified) {
-        const consumed = consumeQuantifier(source, i, maxRepetition);
-        if (consumed === null) return false;
-        i = consumed;
-      }
+      i = consumed?.end ?? i + 1;
       continue;
     }
 
     // Plain literal character: atom of height 0 unless quantified, then 1.
-    const after = source[i + 1];
-    const quantHeight = isQuantifierStart(after) ? 1 : 0;
-    recordAtomHeight(quantHeight);
-    i += 1;
-    if (quantHeight > 0) {
-      const consumed = consumeQuantifier(source, i, maxRepetition);
-      if (consumed === null) return false;
-      i = consumed;
-    }
+    const atomEnd = i + 1;
+    const consumed = consumeQuantifier(source, atomEnd, maxRepetition);
+    if (consumed === INVALID_QUANTIFIER) return false;
+    recordAtomHeight(consumed?.addsStarHeight ? 1 : 0);
+    i = consumed?.end ?? atomEnd;
   }
 
   if (groupDepth !== 0) return false; // Unbalanced
@@ -157,17 +137,21 @@ export function isPatternSafe(source: string, options: PatternSafetyOptions = {}
   return true;
 }
 
-function isQuantifierStart(ch: string | undefined): boolean {
-  return ch === "*" || ch === "+" || ch === "?" || ch === "{";
-}
-
-/** Advance past a quantifier starting at `i`, validating `{n,m}` bounds. Returns new index, or null if invalid/over budget. */
-function consumeQuantifier(source: string, i: number, maxRepetition: number): number | null {
+/** Advance past a quantifier starting at `i`. Invalid `{...}` bodies are literals in JS regex syntax. */
+function consumeQuantifier(
+  source: string,
+  i: number,
+  maxRepetition: number,
+): ConsumedQuantifier | null | typeof INVALID_QUANTIFIER {
   const c = source[i];
   if (c === "*" || c === "+" || c === "?") {
-    // Optional lazy/possessive marker
+    // JS has lazy quantifiers, not possessive quantifiers.
     const next = source[i + 1];
-    return next === "?" || next === "+" ? i + 2 : i + 1;
+    if (next === "+") return INVALID_QUANTIFIER;
+    return {
+      end: next === "?" ? i + 2 : i + 1,
+      addsStarHeight: c !== "?",
+    };
   }
   if (c === "{") {
     const close = source.indexOf("}", i + 1);
@@ -178,13 +162,38 @@ function consumeQuantifier(source: string, i: number, maxRepetition: number): nu
     const lo = Number(m[1]);
     const upperRaw = m[3];
     const hi = m[2] === undefined ? lo : upperRaw === "" || upperRaw === undefined ? Infinity : Number(upperRaw);
-    if (!Number.isFinite(lo) || lo > maxRepetition) return null;
-    if (!Number.isFinite(hi) || hi > maxRepetition) return null;
+    if (!Number.isFinite(lo) || lo > maxRepetition) return INVALID_QUANTIFIER;
+    if (Number.isFinite(hi) && hi > maxRepetition) return INVALID_QUANTIFIER;
+    if (!Number.isFinite(hi) && Number.isFinite(maxRepetition)) return INVALID_QUANTIFIER;
     let next = close + 1;
-    if (source[next] === "?" || source[next] === "+") next += 1;
-    return next;
+    if (source[next] === "+") return INVALID_QUANTIFIER;
+    if (source[next] === "?") next += 1;
+    return { end: next, addsStarHeight: true };
   }
-  return i;
+  return null;
+}
+
+function consumeEscapedAtom(source: string, i: number): number | null {
+  const next = source[i + 1];
+  if (next === undefined) return null;
+  if ((next === "p" || next === "P" || next === "u") && source[i + 2] === "{") {
+    const close = source.indexOf("}", i + 3);
+    return close === -1 ? null : close + 1;
+  }
+  return i + 2;
+}
+
+function getGroupBodyStart(source: string, openIdx: number): number | null {
+  if (source[openIdx + 1] !== "?") return openIdx + 1;
+  const kind = source[openIdx + 2];
+  if (kind === ":" || kind === "=" || kind === "!") return openIdx + 3;
+  if (kind === "<") {
+    const lookbehindKind = source[openIdx + 3];
+    if (lookbehindKind === "=" || lookbehindKind === "!") return openIdx + 4;
+    const close = source.indexOf(">", openIdx + 3);
+    return close === -1 ? null : close + 1;
+  }
+  return null;
 }
 
 function findCharClassClose(source: string, openIdx: number): number {
@@ -203,4 +212,87 @@ function findCharClassClose(source: string, openIdx: number): number {
     j += 1;
   }
   return -1;
+}
+
+function hasUnsafeQuantifiedAlternation(body: string): boolean {
+  const alternatives = splitTopLevelAlternatives(body);
+  if (alternatives.length < 2) return false;
+  const tokenized = alternatives.map(tokenizeAlternative);
+  if (tokenized.some((tokens) => tokens.length === 0)) return true;
+
+  for (let i = 0; i < tokenized.length; i += 1) {
+    for (let j = i + 1; j < tokenized.length; j += 1) {
+      const a = tokenized[i]!;
+      const b = tokenized[j]!;
+      if (isTokenPrefix(a, b) || isTokenPrefix(b, a)) return true;
+    }
+  }
+  return false;
+}
+
+function splitTopLevelAlternatives(body: string): string[] {
+  const alternatives: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let inClass = false;
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i]!;
+    if (c === "\\") {
+      i += 1;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+      continue;
+    }
+    if (c === "(") {
+      depth += 1;
+      continue;
+    }
+    if (c === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (c === "|" && depth === 0) {
+      alternatives.push(body.slice(start, i));
+      start = i + 1;
+    }
+  }
+  alternatives.push(body.slice(start));
+  return alternatives;
+}
+
+function tokenizeAlternative(alternative: string): string[] {
+  const tokens: string[] = [];
+  for (let i = 0; i < alternative.length; i += 1) {
+    const c = alternative[i]!;
+    if (c === "\\") {
+      const end = consumeEscapedAtom(alternative, i);
+      if (end === null) return tokens;
+      tokens.push(alternative.slice(i, end));
+      i = end - 1;
+      continue;
+    }
+    if (c === "[") {
+      const close = findCharClassClose(alternative, i);
+      if (close === -1) return tokens;
+      tokens.push(alternative.slice(i, close + 1));
+      i = close;
+      continue;
+    }
+    if ("(){}*+?|^$.".includes(c)) {
+      return tokens;
+    }
+    tokens.push(c);
+  }
+  return tokens;
+}
+
+function isTokenPrefix(prefix: string[], candidate: string[]): boolean {
+  if (prefix.length > candidate.length) return false;
+  return prefix.every((token, index) => candidate[index] === token);
 }

@@ -67,9 +67,9 @@ export class LocalSidecarProvider extends BaseLLMProvider {
       ...options,
       // Chat/preset Advanced Parameters are per-request and should win over the local runtime fallback.
       maxTokens: requestedMaxTokens ?? config.maxTokens,
-      temperature: structuredOutput ? 0 : config.temperature,
-      topP: structuredOutput ? 1 : config.topP,
-      topK: structuredOutput ? 0 : config.topK,
+      temperature: structuredOutput ? 0 : (options.temperature ?? config.temperature),
+      topP: structuredOutput ? 1 : (options.topP ?? config.topP),
+      topK: structuredOutput ? 0 : (options.topK ?? config.topK),
       minP: structuredOutput ? 0 : options.minP,
     };
   }

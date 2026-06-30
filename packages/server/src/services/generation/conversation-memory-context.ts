@@ -1,8 +1,8 @@
 import { logger } from "../../lib/logger.js";
+import { escapeXmlText } from "../prompt/prompt-escaping.js";
 
 type CharactersStore = {
   getById(id: string): Promise<{ data: unknown } | null>;
-  update(id: string, data: Record<string, unknown>): Promise<unknown>;
 };
 
 type CharacterMemory = {
@@ -42,13 +42,9 @@ export async function mergeConversationCharacterMemories({
     if (memories.length === 0) continue;
 
     const validMemories = memories.filter((memory) => new Date(memory.createdAt) >= today);
-    if (validMemories.length !== memories.length) {
-      const extensions = { ...(charData.extensions ?? {}), characterMemories: validMemories };
-      await chars.update(characterId, { extensions });
-    }
 
     for (const memory of validMemories) {
-      memoryLines.push(`Memory from ${memory.from}: ${memory.summary}`);
+      memoryLines.push(`Memory from ${escapeXmlText(memory.from)}: ${escapeXmlText(memory.summary)}`);
     }
   }
 

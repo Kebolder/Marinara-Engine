@@ -80,6 +80,37 @@ test("chat mode tabs and new-chat actions stay reachable", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("memory recall modal accepts clicks from chat settings", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Memory recall modal regression is covered on desktop.");
+
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "Memory Recall Menu Smoke",
+      mode: "conversation",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+
+  await page.addInitScript((chatId) => {
+    localStorage.setItem("marinara-active-chat-id", chatId);
+  }, chat.id);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Chat Settings" }).click();
+  const drawer = page.locator(".mari-chat-settings-drawer");
+  await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
+  await drawer.getByText("Memory Recall", { exact: true }).click();
+  await drawer.getByRole("button", { name: "Access memories for this chat" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Memories for This Chat" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByText("0 memory chunks").click();
+  await expect(dialog).toBeVisible();
+  await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
+});
+
 test("mobile topbar remains reachable while sidebars switch", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Mobile shell smoke only runs in the mobile project.");
 

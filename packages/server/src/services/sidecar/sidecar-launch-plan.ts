@@ -16,6 +16,8 @@ export function buildLlamaArgs(options: {
   contextSize: number;
   runtimeVariant: string;
   enableNativeToolCalls: boolean;
+  embeddingPooling: string;
+  embeddingBatchSize: number;
 }): string[] {
   // llama-server divides --ctx-size across --parallel slots; Marinara's setting is the per-request budget.
   const totalContextSize = options.contextSize * LLAMA_SERVER_PARALLEL_SLOTS;
@@ -37,7 +39,7 @@ export function buildLlamaArgs(options: {
     args.push("--jinja");
   }
 
-  args.push("--embeddings", "--pooling", "none");
+  args.push("--embeddings", "--pooling", options.embeddingPooling, "--ubatch-size", String(options.embeddingBatchSize));
 
   // Gemma 4 needs split mode disabled on CUDA multi-GPU launches,
   // but non-CUDA builds may reject the flag entirely.

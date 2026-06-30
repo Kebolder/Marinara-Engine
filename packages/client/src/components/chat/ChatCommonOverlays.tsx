@@ -1,6 +1,6 @@
-import { Suspense, lazy, useEffect, type ComponentProps } from "react";
+import { Suspense, lazy, type ComponentProps, type CSSProperties } from "react";
 import type { SpriteSide } from "@marinara-engine/shared";
-import { ChevronUp, ChevronDown, Trash2 } from "lucide-react";
+import { ChevronUp, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import type { PeekPromptData } from "./chat-area.types";
 import type { LocalSpriteVisualSettings } from "./local-sprite-visual-settings";
 
@@ -188,6 +188,37 @@ function MultiSelectBar({
   );
 }
 
+function ChatSettingsLoadingFallback({ anchor }: { anchor: ChatFloatingPanelAnchor }) {
+  const anchoredOnMobile = !!anchor && typeof window !== "undefined" && window.innerWidth < 768;
+  const panelStyle: CSSProperties | undefined = anchor
+    ? anchoredOnMobile
+      ? {
+          bottom: "auto",
+          left: "auto",
+          right: `${anchor.right}px`,
+          top: `${anchor.top}px`,
+          width: `min(34rem, calc(100vw - ${anchor.right}px - 0.75rem))`,
+        }
+      : { right: `${anchor.right}px`, top: `${anchor.top}px` }
+    : undefined;
+
+  return (
+    <div
+      data-chat-floating-panel
+      className="fixed bottom-3 right-[calc(var(--mari-chat-ui-inset-right,0px)+0.75rem)] top-14 z-[70] flex w-[min(34rem,calc(100vw-var(--mari-chat-ui-inset-left,0px)-var(--mari-chat-ui-inset-right,0px)-1.5rem))] flex-col overflow-hidden rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] text-[var(--marinara-chat-chrome-panel-text)] shadow-2xl shadow-black/40 backdrop-blur-md max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto"
+      style={panelStyle}
+    >
+      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] px-4 py-3 text-sm font-semibold">
+        <Loader2 size="0.875rem" className="animate-spin text-[var(--primary)]" />
+        Chat Settings
+      </div>
+      <div className="flex min-h-32 items-center justify-center px-4 py-8 text-xs text-[var(--muted-foreground)]">
+        Loading settings...
+      </div>
+    </div>
+  );
+}
+
 type ChatCommonOverlaysProps = {
   chat: ChatData | null | undefined;
   settingsOpen: boolean;
@@ -210,6 +241,8 @@ type ChatCommonOverlaysProps = {
   onCloseGallery: () => void;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void;
+  /** Generate and apply a background for the current scene. */
+  onGenerateBackground?: () => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onDeleteConfirm: () => void;
@@ -244,6 +277,7 @@ export function ChatCommonOverlays({
   onCloseFiles,
   onCloseGallery,
   onIllustrate,
+  onGenerateBackground,
   onWizardFinish,
   onClosePeekPrompt,
   onDeleteConfirm,
@@ -256,25 +290,10 @@ export function ChatCommonOverlays({
   onSelectAllAboveSelection,
   onSelectAllBelowSelection,
 }: ChatCommonOverlaysProps) {
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const warmSettingsDrawer = () => {
-      void preloadChatSettingsDrawer();
-    };
-
-    if ("requestIdleCallback" in window) {
-      const idleId = window.requestIdleCallback(warmSettingsDrawer, { timeout: 1500 });
-      return () => window.cancelIdleCallback(idleId);
-    }
-
-    const timeoutId = setTimeout(warmSettingsDrawer, 600);
-    return () => clearTimeout(timeoutId);
-  }, []);
-
   return (
     <>
       {chat && settingsOpen && (
-        <Suspense fallback={null}>
+        <Suspense fallback={<ChatSettingsLoadingFallback anchor={settingsAnchor} />}>
           <ChatSettingsDrawer
             chat={chat}
             open={settingsOpen}
@@ -304,6 +323,7 @@ export function ChatCommonOverlays({
               onClose={onCloseGallery}
               anchor={galleryAnchor}
               onIllustrate={onIllustrate}
+              onGenerateBackground={onGenerateBackground}
             />
           )}
         </Suspense>

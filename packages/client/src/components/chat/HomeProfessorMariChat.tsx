@@ -1,4 +1,17 @@
-import { type ChangeEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -55,13 +68,21 @@ import { cn } from "../../lib/utils";
 import { ProfessorMariWorkingWindow } from "../ui/ProfessorMariWorkingWindow";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 import { HomeFaq } from "./HomeFaq";
+import {
+  PROFESSOR_MARI_FLOATING_HIDE_EVENT,
+  PROFESSOR_MARI_FLOATING_SHOW_EVENT,
+  dispatchProfessorMariFloatingEvent,
+  rememberProfessorMariFloatingEnabled,
+} from "./professor-mari-floating-events";
 
 const MARI_AVATAR_URL = "/sprites/mari/Mari_profile.png";
 const MARI_CHIBI_URL = "/sprites/mari/chibi-professor-mari.png";
 const MARI_CONNECTION_STORAGE_KEY = "marinara:home-professor-mari-connection-id";
 const PROFESSOR_MARI_ERROR_TOAST_DURATION_MS = 120_000;
+const PROFESSOR_MARI_NO_CONNECTION_TOAST =
+  "You haven't set up a connection yet! Click the chains icon on the left side of the input box to select one.";
 const MARI_WELCOME =
-  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make local workspace changes with your approval.";
+  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make reversible local workspace changes with a Keep/Restore review.";
 const NEW_SKILL_CONTENT = `# Custom Professor Mari Skill
 
 Use this skill when the request matches a workflow you want Professor Mari to follow.
@@ -73,6 +94,8 @@ Use this skill when the request matches a workflow you want Professor Mari to fo
 - Add any checks or evidence she should collect before saying the work is done.
 `;
 const PROFESSOR_MARI_PANE_TRANSITION = { duration: 0.24, ease: [0.16, 1, 0.3, 1] } as const;
+const PROFESSOR_MARI_FLOATING_EDGE_GAP = 12;
+const PROFESSOR_MARI_FLOATING_MOBILE_TOP_GAP = 64;
 
 type WorkspaceApprovalResponse = {
   ok: boolean;
@@ -100,6 +123,20 @@ type ProfessorMariConnectionOption = {
   isDefault?: boolean;
 };
 
+type ProfessorMariChatSummary = Chat & {
+  messageCount?: number;
+};
+
+type FloatingDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
+};
+
 function readStoredConnectionId() {
   try {
     return window.localStorage.getItem(MARI_CONNECTION_STORAGE_KEY);
@@ -114,6 +151,14 @@ function rememberConnectionId(id: string) {
   } catch {
     /* ignore */
   }
+}
+
+function isProfessorMariDesktopViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches;
+}
+
+function shouldExpandHomeFaqByDefault() {
+  return isProfessorMariDesktopViewport();
 }
 
 function describeProfessorMariError(error: unknown) {
@@ -138,6 +183,18 @@ function toMessageExtra(message: Message): Message["extra"] {
     }
   }
   return message.extra;
+}
+
+function isProfessorMariChatActive(chat: ProfessorMariChatSummary) {
+  const raw = chat.metadata;
+  try {
+    const metadata =
+      typeof raw === "string" ? (JSON.parse(raw) as Record<string, unknown>) : (raw as Record<string, unknown> | null);
+    if (!metadata) return false;
+    return metadata.professorMariActive === true && metadata.professorMariArchived !== true;
+  } catch {
+    return false;
+  }
 }
 
 function createWelcomeMessage(chatId: string | null): Message {
@@ -251,7 +308,10 @@ function getToolCallId(data: Record<string, unknown> | null, name: string) {
 }
 
 function formatToolName(name: string) {
-  return name.replace(/^functions\./, "").replace(/^multi_tool_use\./, "").replace(/_/g, " ");
+  return name
+    .replace(/^functions\./, "")
+    .replace(/^multi_tool_use\./, "")
+    .replace(/_/g, " ");
 }
 
 function isWorkspaceTraceItem(value: unknown): value is MariWorkspaceTraceItem {
@@ -260,7 +320,12 @@ function isWorkspaceTraceItem(value: unknown): value is MariWorkspaceTraceItem {
   if (["text", "thinking", "status"].includes(record.type)) return typeof record.content === "string";
   if (record.type !== "tool") return false;
   const tool = asRecord(record.tool);
-  return !!tool && typeof tool.id === "string" && typeof tool.name === "string" && ["running", "done", "error"].includes(String(tool.status));
+  return (
+    !!tool &&
+    typeof tool.id === "string" &&
+    typeof tool.name === "string" &&
+    ["running", "done", "error"].includes(String(tool.status))
+  );
 }
 
 function getMessageWorkspaceTrace(message: Message): MariWorkspaceTraceItem[] | null {
@@ -487,7 +552,8 @@ function mariDbTitle(info: NonNullable<ReturnType<typeof extractMariDbCommand>>)
 }
 
 function mariDbDetail(info: NonNullable<ReturnType<typeof extractMariDbCommand>>) {
-  if (!info.target || ["status", "tables", "counts", "validate", "data-dir", "now", "new-id"].includes(info.action)) return null;
+  if (!info.target || ["status", "tables", "counts", "validate", "data-dir", "now", "new-id"].includes(info.action))
+    return null;
   return info.target === "all" ? "all tables" : humanizeIdentifier(info.target);
 }
 
@@ -526,7 +592,9 @@ function mariCodeTitle(info: NonNullable<ReturnType<typeof extractMariCodeComman
     case "health":
       return "Checking workspace health";
     case "reload":
-      return info.subaction === "request" ? `Requesting ${info.kind ?? "workspace"} reload` : "Managing workspace reload";
+      return info.subaction === "request"
+        ? `Requesting ${info.kind ?? "workspace"} reload`
+        : "Managing workspace reload";
     case "continue":
       return "Continuing workspace run";
     default:
@@ -650,14 +718,22 @@ function extractMariWikiCommand(command: string) {
   if (!tokens) return null;
   if (!isMariExecutableToken(tokens[0] ?? "") || !["wiki", "fandom"].includes(tokens[1] ?? "")) return null;
   const action = looksLikeHelpToken(tokens[2]) ? "help" : (tokens[2] ?? "help");
-  const wiki = tokenFlagValue(tokens, "--wiki") ?? (["search", "search-wiki", "pages", "category", "category-members", "site-info"].includes(action) ? tokens[3] : null);
+  const wiki =
+    tokenFlagValue(tokens, "--wiki") ??
+    (["search", "search-wiki", "pages", "category", "category-members", "site-info"].includes(action)
+      ? tokens[3]
+      : null);
   return {
     action,
     wiki,
     title: tokenFlagValue(tokens, "--title"),
     pageUrl: tokenFlagValue(tokens, "--page-url") ?? tokenFlagValue(tokens, "--pageUrl"),
     query: tokenFlagValue(tokens, "--query") ?? firstCommandValue(tokens, action === "search-in-page" ? 5 : 3),
-    category: tokenFlagValue(tokens, "--category") ?? (["category", "category-members"].includes(action) ? tokens.slice(4).find((token) => token && !token.startsWith("-")) : null),
+    category:
+      tokenFlagValue(tokens, "--category") ??
+      (["category", "category-members"].includes(action)
+        ? tokens.slice(4).find((token) => token && !token.startsWith("-"))
+        : null),
     content: tokenFlagValue(tokens, "--content"),
   };
 }
@@ -844,7 +920,10 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
   if (skillPresentation) return skillPresentation;
 
   const input = asRecord(tool.input);
-  const detail = previewValue(input?.path ?? input?.pattern ?? input?.query ?? input?.url ?? input?.command ?? tool.detail, 90);
+  const detail = previewValue(
+    input?.path ?? input?.pattern ?? input?.query ?? input?.url ?? input?.command ?? tool.detail,
+    90,
+  );
   if (/grep|find|search/i.test(name)) {
     return { eyebrow: "Search", title: name === "grep" ? "Searching text" : "Finding files", detail, tone: "search" };
   }
@@ -852,7 +931,12 @@ function inferToolPresentation(tool: WorkspaceToolCall): ToolPresentation {
     return { eyebrow: "File", title: "Reading file", detail, tone: "file" };
   }
   if (/write|edit/i.test(name)) {
-    return { eyebrow: "File change", title: name.includes("edit") ? "Editing file" : "Writing file", detail, tone: "write" };
+    return {
+      eyebrow: "File change",
+      title: name.includes("edit") ? "Editing file" : "Writing file",
+      detail,
+      tone: "write",
+    };
   }
   if (name === "ls") {
     return { eyebrow: "Files", title: "Listing folder", detail, tone: "file" };
@@ -906,7 +990,9 @@ function CompactMarkdown({ content, streaming }: { content: string; streaming?: 
   return (
     <div className="mari-message-content text-[0.8125rem] leading-[1.42] text-[var(--foreground)] [&_.mari-md-codeblock]:my-1.5 [&_.mari-md-codeblock]:max-h-44 [&_.mari-md-heading]:mb-0.5 [&_.mari-md-heading]:mt-1 [&_.mari-md-ol]:my-1 [&_.mari-md-ul]:my-1">
       {renderMarkdownBlocks(trimmed, renderCompactInline, "home-mari")}
-      {streaming && <span className="ml-1 inline-block h-3 w-1 translate-y-0.5 rounded-full bg-[var(--primary)] opacity-80 animate-pulse" />}
+      {streaming && (
+        <span className="ml-1 inline-block h-3 w-1 translate-y-0.5 rounded-full bg-[var(--primary)] opacity-80 animate-pulse" />
+      )}
     </div>
   );
 }
@@ -932,7 +1018,10 @@ function MariReasoningPanel({ thinking, live, forceOpen }: { thinking: string; l
       className="group overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--muted)]/20 text-xs text-[var(--muted-foreground)]"
     >
       <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 px-2 py-1.5 font-semibold marker:hidden [&::-webkit-details-marker]:hidden">
-        <Brain size="0.72rem" className={cn("shrink-0", live ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]")} />
+        <Brain
+          size="0.72rem"
+          className={cn("shrink-0", live ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]")}
+        />
         <span className="text-[var(--foreground)]">Reasoning</span>
         <span className="rounded-full bg-[var(--background)]/70 px-1.5 py-0.5 text-[0.58rem] font-medium uppercase tracking-[0.12em] opacity-75">
           {live ? "live" : `${lineCount} line${lineCount === 1 ? "" : "s"}`}
@@ -973,7 +1062,9 @@ function WorkspaceToolEvent({ tool }: { tool: WorkspaceToolCall }) {
         <span
           className={cn(
             "mt-0.5 flex h-5 w-5 items-center justify-center rounded-md border bg-[var(--card)] shadow-sm",
-            isError ? "border-[var(--destructive)]/40 text-[var(--destructive)]" : "border-[var(--border)]/70 text-[var(--muted-foreground)]",
+            isError
+              ? "border-[var(--destructive)]/40 text-[var(--destructive)]"
+              : "border-[var(--border)]/70 text-[var(--muted-foreground)]",
           )}
         >
           <ToolGlyph tool={tool} tone={presentation.tone} />
@@ -992,8 +1083,12 @@ function WorkspaceToolEvent({ tool }: { tool: WorkspaceToolCall }) {
           {presentation.eyebrow}
         </span>
         <span className="min-w-0 truncate font-semibold text-[var(--foreground)]">{presentation.title}</span>
-        {presentation.detail && <span className="min-w-0 truncate text-[var(--muted-foreground)]">· {presentation.detail}</span>}
-        {isError && <span className="shrink-0 text-[0.65rem] font-semibold text-[var(--destructive)]">needs attention</span>}
+        {presentation.detail && (
+          <span className="min-w-0 truncate text-[var(--muted-foreground)]">· {presentation.detail}</span>
+        )}
+        {isError && (
+          <span className="shrink-0 text-[0.65rem] font-semibold text-[var(--destructive)]">needs attention</span>
+        )}
       </div>
     </TranscriptRow>
   );
@@ -1106,7 +1201,9 @@ function CompactMariMessage({ message, thinking }: { message: Message; thinking?
 
   if (message.role === "user") {
     return (
-      <TranscriptRow marker={<span className="pt-0.5 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">You</span>}>
+      <TranscriptRow
+        marker={<span className="pt-0.5 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">You</span>}
+      >
         <CompactMarkdown content={content} />
       </TranscriptRow>
     );
@@ -1114,7 +1211,9 @@ function CompactMariMessage({ message, thinking }: { message: Message; thinking?
 
   const workspaceTrace = getMessageWorkspaceTrace(message);
   if (workspaceTrace) {
-    return <WorkspaceTimelineList items={timelineItemsFromTrace(workspaceTrace, message)} active={false} openReasoning />;
+    return (
+      <WorkspaceTimelineList items={timelineItemsFromTrace(workspaceTrace, message)} active={false} openReasoning />
+    );
   }
 
   return (
@@ -1209,24 +1308,27 @@ function WorkspaceErrorEvent({ message }: { message: string }) {
 
 function WorkspaceApprovalCard({
   approval,
-  onApprove,
-  onReject,
+  onKeep,
+  onRestore,
 }: {
   approval: MariDbPendingApproval;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  onKeep: (id: string) => void;
+  onRestore: (id: string) => void;
 }) {
   const deletedRows = approval.diffPreview.filter((change) => change.action === "delete");
 
   return (
-    <TranscriptRow marker={<ShieldAlert size="0.85rem" className="mt-1 text-amber-400" />}>
-      <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-xs text-[var(--foreground)]">
+    <TranscriptRow marker={<ShieldAlert size="0.85rem" className="mt-1 text-[var(--primary)]" />}>
+      <div className="rounded-xl border border-[var(--primary)]/30 bg-[var(--primary)]/5 p-3 text-xs text-[var(--foreground)]">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="font-semibold">Approve database change</span>
-          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-300">
-            {approval.validationStatus}
+          <span className="font-semibold">Review Mari&apos;s changes</span>
+          <span className="rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.625rem] text-[var(--primary)]">
+            saved
           </span>
         </div>
+        <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+          Mari already applied this. Keep it, or restore the previous app data snapshot.
+        </p>
         <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--background)]/80 p-2 font-mono text-[0.6875rem] text-[var(--muted-foreground)]">
           {approval.command}
         </pre>
@@ -1242,10 +1344,10 @@ function WorkspaceApprovalCard({
           <div className="mt-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 p-2 text-[0.6875rem] text-[var(--foreground)]">
             <div className="flex items-center gap-1.5 font-semibold text-[var(--destructive)]">
               <Trash2 size="0.75rem" />
-              Mari is about to delete {deletedRows.length} item{deletedRows.length === 1 ? "" : "s"}.
+              Mari deleted {deletedRows.length} item{deletedRows.length === 1 ? "" : "s"}.
             </div>
             <p className="mt-1 text-[var(--muted-foreground)]">
-              A restore copy is written to the approval journal before the delete is applied.
+              Restore will put the saved row snapshot back.
             </p>
             <div className="mt-2 space-y-2">
               {deletedRows.slice(0, 3).map((change) => (
@@ -1269,17 +1371,23 @@ function WorkspaceApprovalCard({
         <div className="mt-2 flex justify-end gap-1.5">
           <button
             type="button"
-            onClick={() => onReject(approval.id)}
+            onClick={() => onRestore(approval.id)}
             className="rounded-md border border-[var(--border)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >
-            Reject
+            <span className="inline-flex items-center gap-1">
+              <RefreshCw size="0.7rem" />
+              Restore
+            </span>
           </button>
           <button
             type="button"
-            onClick={() => onApprove(approval.id)}
+            onClick={() => onKeep(approval.id)}
             className="rounded-md bg-[var(--primary)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
           >
-            Approve
+            <span className="inline-flex items-center gap-1">
+              <Check size="0.7rem" />
+              Keep
+            </span>
           </button>
         </div>
       </div>
@@ -1330,7 +1438,7 @@ function ProfessorMariSkillsMenu({
   return (
     <section
       className={cn(
-        "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
+        "flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
         className,
       )}
     >
@@ -1376,7 +1484,13 @@ function ProfessorMariSkillsMenu({
           <FileUp size="0.78rem" />
           Upload
         </button>
-        <input ref={fileInputRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden" onChange={onFileChange} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".md,.txt,text/markdown,text/plain"
+          className="hidden"
+          onChange={onFileChange}
+        />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1406,7 +1520,9 @@ function ProfessorMariSkillsMenu({
                   >
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate text-[0.75rem] font-semibold text-[var(--foreground)]">{skill.name}</span>
+                        <span className="truncate text-[0.75rem] font-semibold text-[var(--foreground)]">
+                          {skill.name}
+                        </span>
                       </span>
                       <span className="mt-0.5 block truncate text-[0.65rem] text-[var(--muted-foreground)]">
                         {skill.description}
@@ -1504,13 +1620,27 @@ function ProfessorMariSkillsMenu({
   );
 }
 
+type HomeProfessorMariChatProps = {
+  pageActive?: boolean;
+  attachedFooter?: boolean;
+  chatWindowOpen?: boolean;
+  floatingMode?: boolean;
+  launchHidden?: boolean;
+  onChatWindowOpenChange?: (open: boolean) => void;
+  onChatWindowExitComplete?: () => void;
+  onFloatingDismiss?: () => void;
+};
+
 export function HomeProfessorMariChat({
   pageActive = true,
   attachedFooter = false,
-}: {
-  pageActive?: boolean;
-  attachedFooter?: boolean;
-}) {
+  chatWindowOpen: controlledChatWindowOpen,
+  floatingMode = false,
+  launchHidden = false,
+  onChatWindowOpenChange,
+  onChatWindowExitComplete,
+  onFloatingDismiss,
+}: HomeProfessorMariChatProps) {
   const qc = useQueryClient();
   const { data: connectionsRaw, isLoading: connectionsLoading } = useConnections();
   const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
@@ -1526,6 +1656,11 @@ export function HomeProfessorMariChat({
   const [workspaceActive, setWorkspaceActive] = useState(false);
   const [workspaceActivity, setWorkspaceActivity] = useState<string | null>(null);
   const [workspaceTimeline, setWorkspaceTimeline] = useState<WorkspaceTimelineItem[]>([]);
+  const [chatHistoryOpen, setChatHistoryOpen] = useState(false);
+  const [chatHistory, setChatHistory] = useState<ProfessorMariChatSummary[]>([]);
+  const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [skillsMenuOpen, setSkillsMenuOpen] = useState(false);
   const [skills, setSkills] = useState<MariWorkspaceSkillDetail[]>([]);
   const [skillsDiagnostics, setSkillsDiagnostics] = useState<string[]>([]);
@@ -1536,11 +1671,21 @@ export function HomeProfessorMariChat({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
-  const [faqExpanded, setFaqExpanded] = useState(false);
+  const [faqExpanded, setFaqExpanded] = useState(shouldExpandHomeFaqByDefault);
   const [faqOpenItemId, setFaqOpenItemId] = useState<string | null>(null);
+  const [internalChatWindowOpen, setInternalChatWindowOpen] = useState(
+    () => floatingMode && isProfessorMariDesktopViewport(),
+  );
   const [mobileFocusMode, setMobileFocusMode] = useState(false);
+  const [floatingSmallViewport, setFloatingSmallViewport] = useState(() => !isProfessorMariDesktopViewport());
+  const [floatingPosition, setFloatingPosition] = useState<{ x: number; y: number } | null>(null);
   const hasLoadedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const floatingSurfaceRef = useRef<HTMLDivElement>(null);
+  const floatingButtonRef = useRef<HTMLDivElement>(null);
+  const floatingDragRef = useRef<FloatingDragState | null>(null);
+  const floatingDragMovedRef = useRef(false);
+  const floatingFollowupEligibleRef = useRef(false);
   const connectionButtonRef = useRef<HTMLButtonElement>(null);
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   const skillFileInputRef = useRef<HTMLInputElement>(null);
@@ -1584,10 +1729,54 @@ export function HomeProfessorMariChat({
     [selectedSkillId, skills],
   );
   const activeSkillCount = skills.filter((skill) => skill.enabled).length;
+  const desktopChatWindowOpen = controlledChatWindowOpen ?? internalChatWindowOpen;
+  const chatWindowOpen = desktopChatWindowOpen || mobileFocusMode;
+  const setChatWindowOpen = useCallback(
+    (open: boolean) => {
+      setInternalChatWindowOpen(open);
+      onChatWindowOpenChange?.(open);
+    },
+    [onChatWindowOpenChange],
+  );
+
+  useEffect(() => {
+    if (!floatingMode) return;
+    const mediaQuery = window.matchMedia("(max-width: 639px)");
+    const syncFloatingViewport = () => {
+      setFloatingSmallViewport(mediaQuery.matches);
+      setChatWindowOpen(!mediaQuery.matches);
+      if (!mediaQuery.matches) setMobileFocusMode(false);
+    };
+    syncFloatingViewport();
+    mediaQuery.addEventListener("change", syncFloatingViewport);
+    return () => mediaQuery.removeEventListener("change", syncFloatingViewport);
+  }, [floatingMode, setChatWindowOpen]);
+
+  useLayoutEffect(() => {
+    if (floatingMode) return;
+    rememberProfessorMariFloatingEnabled(false);
+    dispatchProfessorMariFloatingEvent(PROFESSOR_MARI_FLOATING_HIDE_EVENT);
+    return () => {
+      if (floatingFollowupEligibleRef.current) {
+        rememberProfessorMariFloatingEnabled(true);
+        dispatchProfessorMariFloatingEvent(PROFESSOR_MARI_FLOATING_SHOW_EVENT);
+      }
+    };
+  }, [floatingMode]);
 
   const loadMessages = useCallback(async (id: string) => {
     const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
     setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
+  }, []);
+
+  const loadChatHistory = useCallback(async () => {
+    setChatHistoryLoading(true);
+    try {
+      const items = await api.get<ProfessorMariChatSummary[]>("/chats/internal/professor-mari/chats");
+      setChatHistory(items);
+    } finally {
+      setChatHistoryLoading(false);
+    }
   }, []);
 
   const loadSkills = useCallback(async () => {
@@ -1672,7 +1861,8 @@ export function HomeProfessorMariChat({
       !!selectedConnectionId && connectionOptions.some((connection) => connection.id === selectedConnectionId);
     ensureProfessorMariChat(storedConnectionExists ? selectedConnectionId : null)
       .then((chat) => {
-        const restoredConnectionId = typeof chat.connectionId === "string" && chat.connectionId ? chat.connectionId : null;
+        const restoredConnectionId =
+          typeof chat.connectionId === "string" && chat.connectionId ? chat.connectionId : null;
         if (restoredConnectionId) {
           setSelectedConnectionId(restoredConnectionId);
           rememberConnectionId(restoredConnectionId);
@@ -1718,6 +1908,17 @@ export function HomeProfessorMariChat({
   }, [loadSkills]);
 
   useEffect(() => {
+    if (!chatHistoryOpen) return;
+    void loadChatHistory().catch((error) => {
+      console.error("[Professor Mari] Failed to load chats", error);
+      toast.error("Professor Mari could not load her previous chats.", {
+        description: describeProfessorMariError(error),
+        duration: 12_000,
+      });
+    });
+  }, [chatHistoryOpen, loadChatHistory]);
+
+  useEffect(() => {
     if (!selectedSkill) {
       setSkillDraft({ name: "", description: "", content: "" });
       return;
@@ -1729,25 +1930,25 @@ export function HomeProfessorMariChat({
     });
   }, [selectedSkill]);
 
-  const pendingApprovals = workspaceStatus?.pendingApprovals ?? [];
-  const pendingApprovalKey = pendingApprovals.map((approval) => approval.id).join("|");
+  const pendingChangeReviews = workspaceStatus?.pendingApprovals ?? [];
+  const workspaceTimelineActive = workspaceActive || hasActiveGeneration;
+  const workspaceHasResponseText = workspaceTimeline.some((item) => item.type === "text" && item.content.trim());
+  const showDottoreSupport = workspaceTimelineActive && !workspaceHasResponseText;
+  const visiblePendingChangeReviews = !sending && !workspaceTimelineActive ? pendingChangeReviews : [];
+  const visiblePendingChangeReviewKey = visiblePendingChangeReviews.map((approval) => approval.id).join("|");
 
   useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages, workspaceTimeline, workspaceActivity, pendingApprovalKey, workspaceStatus?.error]);
+  }, [messages, workspaceTimeline, workspaceActivity, visiblePendingChangeReviewKey, workspaceStatus?.error]);
 
   const displayMessages = useMemo(() => [createWelcomeMessage(chatId), ...messages], [chatId, messages]);
-  const workspaceTimelineActive = workspaceActive || hasActiveGeneration;
-  const workspaceHasResponseText = workspaceTimeline.some((item) => item.type === "text" && item.content.trim());
-  const showDottoreSupport = workspaceTimelineActive && !workspaceHasResponseText;
 
   useEffect(() => {
     if (!mobileFocusMode) return;
     const mediaQuery = window.matchMedia("(max-width: 639px)");
     const previousOverflow = document.body.style.overflow;
-
     const syncScrollLock = () => {
       if (!mediaQuery.matches) {
         setMobileFocusMode(false);
@@ -1756,7 +1957,6 @@ export function HomeProfessorMariChat({
       }
       document.body.style.overflow = "hidden";
     };
-
     syncScrollLock();
     mediaQuery.addEventListener("change", syncScrollLock);
     return () => {
@@ -1812,42 +2012,150 @@ export function HomeProfessorMariChat({
     persistLatestConnectionSelection();
   };
 
-  const closeMobileFocusMode = useCallback(() => {
+  const closeChatWindow = useCallback(() => {
+    if (!floatingMode) {
+      floatingFollowupEligibleRef.current = false;
+      rememberProfessorMariFloatingEnabled(false);
+    }
     setConnectionMenuOpen(false);
     setSkillsMenuOpen(false);
+    setChatHistoryOpen(false);
     setMobileFocusMode(false);
+    setChatWindowOpen(false);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-  }, []);
+  }, [floatingMode, setChatWindowOpen]);
 
-  const openMobileChat = useCallback(() => {
+  const openChatWindow = useCallback(() => {
+    if (!floatingMode) {
+      floatingFollowupEligibleRef.current = true;
+      rememberProfessorMariFloatingEnabled(true);
+    }
     setSkillsMenuOpen(false);
+    setChatHistoryOpen(false);
     setConnectionMenuOpen(false);
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    setMobileFocusMode(true);
-  }, []);
+    if (window.matchMedia("(max-width: 639px)").matches) {
+      setMobileFocusMode(true);
+      return;
+    }
+    setChatWindowOpen(true);
+  }, [floatingMode, setChatWindowOpen]);
 
   const toggleSkillsMenu = useCallback(() => {
     const next = !skillsMenuOpen;
     if (next) {
       setConnectionMenuOpen(false);
+      setChatHistoryOpen(false);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     }
     setSkillsMenuOpen(next);
   }, [skillsMenuOpen]);
 
+  const toggleChatHistory = useCallback(() => {
+    if (!chatHistoryOpen && isBusy) {
+      toast.info("Wait for Professor Mari to finish before switching chats.");
+      return;
+    }
+    const next = !chatHistoryOpen;
+    if (next) {
+      setConnectionMenuOpen(false);
+      setSkillsMenuOpen(false);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }
+    setChatHistoryOpen(next);
+  }, [chatHistoryOpen, isBusy]);
+
   useEffect(() => {
-    window.addEventListener("marinara:home-professor-mari-close", closeMobileFocusMode);
-    return () => window.removeEventListener("marinara:home-professor-mari-close", closeMobileFocusMode);
-  }, [closeMobileFocusMode]);
+    window.addEventListener("marinara:home-professor-mari-close", closeChatWindow);
+    return () => window.removeEventListener("marinara:home-professor-mari-close", closeChatWindow);
+  }, [closeChatWindow]);
+
+  const clampFloatingPosition = useCallback(
+    (x: number, y: number, width: number, height: number) => {
+      if (typeof window === "undefined") return { x, y };
+      const minX = PROFESSOR_MARI_FLOATING_EDGE_GAP;
+      const minY = floatingSmallViewport ? PROFESSOR_MARI_FLOATING_MOBILE_TOP_GAP : PROFESSOR_MARI_FLOATING_EDGE_GAP;
+      const maxX = Math.max(minX, window.innerWidth - width - PROFESSOR_MARI_FLOATING_EDGE_GAP);
+      const maxY = Math.max(minY, window.innerHeight - height - PROFESSOR_MARI_FLOATING_EDGE_GAP);
+      return {
+        x: Math.min(Math.max(x, minX), maxX),
+        y: Math.min(Math.max(y, minY), maxY),
+      };
+    },
+    [floatingSmallViewport],
+  );
+
+  const beginFloatingDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-professor-mari-floating-action]")) return;
+      const surface = floatingSurfaceRef.current ?? floatingButtonRef.current ?? event.currentTarget;
+      const rect = surface.getBoundingClientRect();
+      floatingDragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        offsetX: event.clientX - rect.left,
+        offsetY: event.clientY - rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+      floatingDragMovedRef.current = false;
+      setFloatingPosition(clampFloatingPosition(rect.left, rect.top, rect.width, rect.height));
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [clampFloatingPosition],
+  );
+
+  const moveFloatingDrag = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      const drag = floatingDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (Math.abs(event.clientX - drag.startX) > 4 || Math.abs(event.clientY - drag.startY) > 4) {
+        floatingDragMovedRef.current = true;
+      }
+      setFloatingPosition(
+        clampFloatingPosition(event.clientX - drag.offsetX, event.clientY - drag.offsetY, drag.width, drag.height),
+      );
+    },
+    [clampFloatingPosition],
+  );
+
+  const endFloatingDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const drag = floatingDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    floatingDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const floatingPositionStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!floatingPosition) return undefined;
+    return { left: floatingPosition.x, top: floatingPosition.y };
+  }, [floatingPosition]);
+
+  const handleFloatingButtonClick = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (floatingDragMovedRef.current) {
+        floatingDragMovedRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      openChatWindow();
+    },
+    [openChatWindow],
+  );
 
   const handleRestart = useCallback(async () => {
-    const chat = await ensureProfessorMariChat(effectiveConnectionId);
-    const currentMessages = await api.get<Message[]>(`/chats/${chat.id}/messages`);
-    if (currentMessages.length > 0) {
-      await api.post(`/chats/${chat.id}/messages/bulk-delete`, {
-        messageIds: currentMessages.map((message) => message.id),
-      });
-    }
+    const params = new URLSearchParams();
+    if (effectiveConnectionId) params.set("connectionId", effectiveConnectionId);
+    const query = params.toString();
+    const chat = await api.post<Chat>(`/chats/internal/professor-mari/restart${query ? `?${query}` : ""}`);
+    setChatId(chat.id);
+    qc.setQueryData(chatKeys.detail(chat.id), chat);
     await api.post("/professor-mari/workspace/reset", { clearHistory: true });
     setMessages([]);
     setDraft("");
@@ -1858,9 +2166,10 @@ export function HomeProfessorMariChat({
     useChatStore.getState().setAbortController(chat.id, null);
     useChatStore.getState().setMariPhase(chat.id, "idle");
     setWorkspaceTimeline([]);
+    if (chatHistoryOpen) await loadChatHistory();
     await qc.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
-    toast.success("Professor Mari's home chat was restarted.");
-  }, [effectiveConnectionId, ensureProfessorMariChat, qc]);
+    toast.success("Professor Mari's previous chat was saved.");
+  }, [chatHistoryOpen, effectiveConnectionId, loadChatHistory, qc]);
 
   const runRestart = useCallback(async () => {
     if (isBusy) return;
@@ -1875,52 +2184,41 @@ export function HomeProfessorMariChat({
     }
   }, [handleRestart, isBusy]);
 
-  const approveWorkspaceChange = useCallback(
+  const keepWorkspaceChange = useCallback(
     async (id: string) => {
       try {
         const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/approve`);
         await refreshWorkspaceStatus().catch(() => undefined);
-        if (result.history?.status === "approved") {
-          await invalidateWorkspaceData();
-          const deletedCount = result.approval?.diffPreview.filter((change) => change.action === "delete").length ?? 0;
-          if (deletedCount > 0) {
-            toast.success(
-              `Mari deleted ${deletedCount} item${deletedCount === 1 ? "" : "s"}. A restore copy was saved to the approval journal.`,
-              { duration: 20_000 },
-            );
-          } else {
-            toast.success("Workspace change applied. App data refreshed.");
-          }
-        } else if (result.completed === false) {
-          window.setTimeout(() => {
-            void invalidateWorkspaceData();
-          }, 1500);
-        }
+        if (result.history?.status === "kept") toast.success("Kept Mari's workspace change.");
       } catch (error) {
-        console.error("[Professor Mari] Failed to approve workspace change", error);
-        toast.error("Professor Mari could not apply that workspace change.", {
-          description: describeProfessorMariError(error),
-          duration: 12_000,
-        });
-      }
-    },
-    [invalidateWorkspaceData, refreshWorkspaceStatus],
-  );
-
-  const rejectWorkspaceChange = useCallback(
-    async (id: string) => {
-      try {
-        await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
-        await refreshWorkspaceStatus().catch(() => undefined);
-      } catch (error) {
-        console.error("[Professor Mari] Failed to reject workspace change", error);
-        toast.error("Professor Mari could not reject that workspace change.", {
+        console.error("[Professor Mari] Failed to keep workspace change", error);
+        toast.error("Professor Mari could not keep that workspace change.", {
           description: describeProfessorMariError(error),
           duration: 12_000,
         });
       }
     },
     [refreshWorkspaceStatus],
+  );
+
+  const restoreWorkspaceChange = useCallback(
+    async (id: string) => {
+      try {
+        const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/reject`);
+        await refreshWorkspaceStatus().catch(() => undefined);
+        if (result.history?.status === "restored") {
+          await invalidateWorkspaceData();
+          toast.success("Restored the previous app data snapshot.");
+        }
+      } catch (error) {
+        console.error("[Professor Mari] Failed to restore workspace change", error);
+        toast.error("Professor Mari could not restore that workspace change.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [invalidateWorkspaceData, refreshWorkspaceStatus],
   );
 
   const stopWorkspace = useCallback(async () => {
@@ -1991,11 +2289,14 @@ export function HomeProfessorMariChat({
     if (!selectedSkill) return;
     setSkillsSaving(true);
     try {
-      const result = await api.put<WorkspaceSkillMutationResponse>(`/professor-mari/workspace/skills/${selectedSkill.id}`, {
-        name: skillDraft.name,
-        description: skillDraft.description,
-        content: skillDraft.content,
-      });
+      const result = await api.put<WorkspaceSkillMutationResponse>(
+        `/professor-mari/workspace/skills/${selectedSkill.id}`,
+        {
+          name: skillDraft.name,
+          description: skillDraft.description,
+          content: skillDraft.content,
+        },
+      );
       await loadSkills();
       setSelectedSkillId(result.skill.id);
       await refreshWorkspaceStatus().catch(() => undefined);
@@ -2047,6 +2348,78 @@ export function HomeProfessorMariChat({
       }
     },
     [loadSkills, refreshWorkspaceStatus, skills],
+  );
+
+  const handleSelectProfessorChat = useCallback(
+    async (id: string) => {
+      if (isBusy) {
+        toast.info("Wait for Professor Mari to finish before switching chats.");
+        return;
+      }
+      try {
+        const chat = await api.post<Chat>(`/chats/internal/professor-mari/chats/${id}/activate`);
+        setChatId(chat.id);
+        qc.setQueryData(chatKeys.detail(chat.id), chat);
+        setSkillsMenuOpen(false);
+        setChatHistoryOpen(false);
+        setWorkspaceTimeline([]);
+        useChatStore.getState().clearStreamBuffer(chat.id);
+        useChatStore.getState().clearThinkingBuffer(chat.id);
+        await loadMessages(chat.id);
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to open previous chat", error);
+        toast.error("Professor Mari could not open that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [isBusy, loadChatHistory, loadMessages, qc],
+  );
+
+  const handleRenameProfessorChat = useCallback(
+    async (id: string) => {
+      const name = renameDraft.trim();
+      if (!name) return;
+      try {
+        await api.patch(`/chats/internal/professor-mari/chats/${id}`, { name });
+        setRenamingChatId(null);
+        setRenameDraft("");
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to rename chat", error);
+        toast.error("Professor Mari could not rename that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [loadChatHistory, renameDraft],
+  );
+
+  const handleDeleteProfessorChat = useCallback(
+    async (id: string) => {
+      const item = chatHistory.find((chat) => chat.id === id);
+      if (!item) return;
+      if (!window.confirm(`Delete ${item.name || "this Professor Mari chat"}?`)) return;
+      try {
+        await api.delete(`/chats/internal/professor-mari/chats/${id}`);
+        if (id === chatId) {
+          const chat = await ensureProfessorMariChat(effectiveConnectionId);
+          setChatId(chat.id);
+          await loadMessages(chat.id);
+        }
+        await loadChatHistory();
+      } catch (error) {
+        console.error("[Professor Mari] Failed to delete chat", error);
+        toast.error("Professor Mari could not delete that chat.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [chatHistory, chatId, effectiveConnectionId, ensureProfessorMariChat, loadChatHistory, loadMessages],
   );
 
   const sendWorkspaceMessage = useCallback(
@@ -2154,7 +2527,8 @@ export function HomeProfessorMariChat({
     }
 
     if (!effectiveConnectionId) {
-      toast.error("Set up a language connection before asking Professor Mari.");
+      toast.error(PROFESSOR_MARI_NO_CONNECTION_TOAST);
+      setConnectionMenuOpen(true);
       useUIStore.getState().openRightPanel("connections");
       return;
     }
@@ -2189,358 +2563,715 @@ export function HomeProfessorMariChat({
     }
   };
 
+  const renderFloatingChatBody = () => (
+    <>
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-3 pb-4 text-left">
+        {loadingHistory ? (
+          <LoadingHistoryState />
+        ) : (
+          <>
+            {displayMessages.map((message) => (
+              <CompactMariMessage
+                key={message.id}
+                message={message}
+                thinking={message.role === "assistant" ? getMessageThinking(message) : null}
+              />
+            ))}
+            {workspaceTimeline.length === 0 && workspaceTimelineActive && !showDottoreSupport && (
+              <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
+            )}
+            {showDottoreSupport && (
+              <TranscriptRow marker={<MariAvatar active />}>
+                <ProfessorMariWorkingWindow visible className="max-w-[18rem]" />
+              </TranscriptRow>
+            )}
+            <WorkspaceTimelineList items={workspaceTimeline} active={workspaceTimelineActive} openReasoning />
+            {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
+            {visiblePendingChangeReviews.map((approval) => (
+              <WorkspaceApprovalCard
+                key={approval.id}
+                approval={approval}
+                onKeep={(id) => void keepWorkspaceChange(id)}
+                onRestore={(id) => void restoreWorkspaceChange(id)}
+              />
+            ))}
+          </>
+        )}
+      </div>
+
+      <form
+        className="border-t border-[var(--border)]/60 p-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleSubmit();
+        }}
+      >
+        <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
+          <button
+            ref={connectionButtonRef}
+            type="button"
+            onClick={() => setConnectionMenuOpen((current) => !current)}
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+              connectionMenuOpen
+                ? "bg-foreground/10 text-foreground/75"
+                : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+            )}
+            title={effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"}
+          >
+            <Link size="1rem" />
+          </button>
+
+          {connectionMenuOpen && (
+            <div
+              ref={connectionMenuRef}
+              className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
+            >
+              <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                Connections
+              </div>
+              <div className="overflow-y-auto p-1">
+                {connectionOptions.length > 0 ? (
+                  connectionOptions.map((connection) => {
+                    const isActive = effectiveConnectionId === connection.id;
+                    return (
+                      <button
+                        key={connection.id}
+                        type="button"
+                        onClick={() => handleConnectionChange(connection.id)}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
+                          isActive && "font-semibold text-[var(--foreground)]",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {connection.name || connection.id}
+                          {connection.id === LOCAL_SIDECAR_CONNECTION_ID && (
+                            <span className="ml-1 text-[0.625rem] font-normal text-[var(--muted-foreground)]">
+                              {sidecarNativeToolCalls ? "native tools" : "tools off"}
+                            </span>
+                          )}
+                        </span>
+                        {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConnectionMenuOpen(false);
+                      useUIStore.getState().openRightPanel("connections");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  >
+                    <Link size="0.875rem" />
+                    Add a connection
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <textarea
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (mobileFocusMode) event.currentTarget.scrollIntoView({ block: "end" });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void handleSubmit();
+              }
+            }}
+            rows={1}
+            placeholder="Ask Professor Mari..."
+            className="mari-chat-input-textarea h-8 min-h-8 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={isBusy}
+          />
+          <button
+            type="submit"
+            disabled={!draft.trim() || isBusy}
+            className={cn(
+              "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
+              draft.trim() && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
+            )}
+            aria-label="Send to Professor Mari"
+            title="Send"
+          >
+            <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+          </button>
+        </div>
+      </form>
+    </>
+  );
+
+  if (floatingMode) {
+    if (!chatWindowOpen) {
+      if (!floatingSmallViewport) return null;
+      return (
+        <div
+          ref={floatingButtonRef}
+          className={cn("fixed z-[95] touch-none sm:hidden", floatingPosition ? "" : "bottom-4 left-4")}
+          style={floatingPositionStyle}
+          onPointerDown={beginFloatingDrag}
+          onPointerMove={moveFloatingDrag}
+          onPointerUp={endFloatingDrag}
+          onPointerCancel={endFloatingDrag}
+        >
+          <button
+            type="button"
+            onClick={handleFloatingButtonClick}
+            className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-[var(--primary)]/40 bg-[var(--background)] shadow-lg shadow-black/35 ring-1 ring-black/20"
+            aria-label="Open Professor Mari chat"
+          >
+            <img
+              src={MARI_AVATAR_URL}
+              alt=""
+              className="h-full w-full object-cover"
+              draggable={false}
+              aria-hidden="true"
+            />
+          </button>
+          <button
+            data-professor-mari-floating-action
+            type="button"
+            onClick={onFloatingDismiss}
+            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] shadow-lg"
+            aria-label="Dismiss Professor Mari floating chat"
+            title="Dismiss"
+          >
+            <X size="0.65rem" />
+          </button>
+        </div>
+      );
+    }
+
+    if (floatingSmallViewport) {
+      return (
+        <motion.div
+          key="professor-mari-floating-mobile"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={PROFESSOR_MARI_PANE_TRANSITION}
+          className="fixed inset-x-0 top-[calc(3rem_+_env(safe-area-inset-top))] z-[95] flex h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] flex-col bg-[var(--background)] supports-[height:100dvh]:h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] supports-[height:100dvh]:max-h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] sm:hidden"
+        >
+          <div className="flex h-12 shrink-0 items-center justify-end border-b border-[var(--border)]/60 bg-[var(--card)]/80 px-2">
+            <button
+              type="button"
+              onClick={closeChatWindow}
+              className="mari-chrome-control mari-chrome-control--small mari-accent-animated inline-flex h-8 w-8 items-center justify-center rounded-md p-0"
+              aria-label="Close Professor Mari chat"
+              title="Close"
+            >
+              <X size="0.9rem" />
+            </button>
+          </div>
+          {renderFloatingChatBody()}
+        </motion.div>
+      );
+    }
+
+    return (
+      <div
+        ref={floatingSurfaceRef}
+        className={cn(
+          "fixed z-[95] flex h-[min(32rem,calc(100vh-5rem))] w-[min(25rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[var(--marinara-chat-chrome-accent)] bg-[var(--background)] shadow-2xl shadow-black/40 ring-1 ring-black/15",
+          floatingPosition ? "" : "bottom-3 left-3",
+        )}
+        style={floatingPositionStyle}
+      >
+        <div
+          className="flex h-9 shrink-0 touch-none cursor-move items-center justify-between border-b border-[var(--border)]/60 bg-[var(--card)]/85 px-2"
+          onPointerDown={beginFloatingDrag}
+          onPointerMove={moveFloatingDrag}
+          onPointerUp={endFloatingDrag}
+          onPointerCancel={endFloatingDrag}
+        >
+          <div className="min-w-0 truncate text-xs font-semibold text-[var(--marinara-chat-chrome-accent)]">
+            Ask Professor Mari
+          </div>
+          <button
+            data-professor-mari-floating-action
+            type="button"
+            onClick={onFloatingDismiss}
+            className="mari-chrome-control mari-chrome-control--small mari-accent-animated inline-flex h-7 w-7 items-center justify-center rounded-md p-0"
+            aria-label="Dismiss Professor Mari floating chat"
+            title="Dismiss"
+          >
+            <X size="0.85rem" />
+          </button>
+        </div>
+        {renderFloatingChatBody()}
+      </div>
+    );
+  }
+
   return (
     <>
       <section
         className={cn(
-          "home-professor-mari-chat mt-10 w-full max-w-3xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
+          "home-professor-mari-chat mt-10 w-full max-w-5xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
-          mobileFocusMode &&
-            "fixed inset-x-0 top-[calc(3rem_+_env(safe-area-inset-top))] z-[80] mt-0 h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-w-none overflow-hidden rounded-none border-0 bg-[var(--background)] pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:relative sm:inset-auto sm:z-auto sm:mt-0 sm:h-auto sm:max-h-none sm:max-w-3xl sm:overflow-visible sm:rounded-xl sm:border sm:bg-[var(--card)]/85 sm:pb-0 sm:pt-0 supports-[height:100dvh]:h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] supports-[height:100dvh]:max-h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))]",
+          (desktopChatWindowOpen || launchHidden) && "hidden",
+          mobileFocusMode && "hidden",
         )}
         data-paused={pageActive ? "false" : "true"}
       >
-        <div
-          className={cn(
-            "grid gap-2.5 p-2 sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:p-2.5",
-            mobileFocusMode &&
-              "h-full grid-cols-1 grid-rows-[minmax(0,1fr)] gap-0 p-0 sm:h-auto sm:grid-cols-[minmax(0,0.72fr)_minmax(0,1.45fr)] sm:gap-2.5 sm:p-2.5",
-          )}
-        >
-          <div
-            className={cn(
-              "relative flex min-w-0 flex-col items-center justify-start gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5",
-              mobileFocusMode && "hidden sm:flex",
-            )}
-          >
-            <div className="w-full max-w-[14rem] [--mari-professor-sprite-bottom:5%]">
-              <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
-            </div>
-            <div className="w-full text-center sm:hidden">
-              <div className="min-w-0">
+        <div className="grid gap-2.5 p-2 sm:p-2.5 md:grid-cols-2">
+          <div className="order-2 min-w-0 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 md:order-1 md:min-h-[24rem]">
+            <HomeFaq
+              compact
+              expanded={faqExpanded}
+              onExpandedChange={setFaqExpanded}
+              openItemId={faqOpenItemId}
+              onOpenItemIdChange={setFaqOpenItemId}
+            />
+          </div>
+
+          <div className="relative order-1 flex min-w-0 flex-col items-center gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 text-center sm:p-3 md:order-2 md:min-h-[24rem] md:justify-between md:gap-2.5">
+            <div className="flex w-full flex-col items-center gap-2">
+              <div className="w-full max-w-[10.5rem] [--mari-professor-sprite-bottom:5%] sm:max-w-[12rem] lg:max-w-[14rem] xl:max-w-[15rem]">
+                <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
+              </div>
+              <div className="w-full min-w-0">
                 <div className="truncate text-sm font-semibold text-[var(--foreground)]">Professor Mari</div>
                 <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
                   {isBusy ? "Working on it..." : "Ready to help"}
                 </div>
               </div>
-              <div className="mt-3 flex w-full items-center gap-2">
-                <button
-                  type="button"
-                  onClick={openMobileChat}
-                  className="mari-chrome-control mari-chrome-control--primary min-w-0 flex-1 gap-2 text-xs"
-                >
-                  <MessageCircle size="0.9rem" />
-                  Ask Professor Mari
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void runRestart()}
-                  disabled={isBusy}
-                  className="mari-chrome-control mari-chrome-control--small h-8 w-8 p-0"
-                  aria-label="Restart Professor Mari chat"
-                  title="Restart Professor Mari chat"
-                >
-                  <RefreshCw size="0.9rem" />
-                </button>
-              </div>
             </div>
-            <div className="hidden sm:block w-full">
-              <HomeFaq
-                compact
-                expanded={faqExpanded}
-                onExpandedChange={setFaqExpanded}
-                openItemId={faqOpenItemId}
-                onOpenItemIdChange={setFaqOpenItemId}
-              />
+            <div className="hidden min-h-0 w-full flex-1 flex-col justify-center gap-1.5 overflow-hidden px-1 text-center text-[0.625rem] leading-snug text-[var(--muted-foreground)] sm:flex sm:text-[0.6875rem] lg:text-xs">
+              {MARI_WELCOME.split("\n\n").map((paragraph, index) => (
+                <p key={paragraph} className={cn(index === 0 && "font-semibold text-[var(--foreground)]")}>
+                  {paragraph}
+                </p>
+              ))}
             </div>
+            <button
+              type="button"
+              onClick={openChatWindow}
+              className="mari-chrome-control mari-chrome-control--primary w-full justify-center gap-2 text-xs"
+            >
+              <MessageCircle size="0.9rem" />
+              Ask Professor Mari
+            </button>
           </div>
-
-          <AnimatePresence mode="wait" initial={false}>
-            {skillsMenuOpen ? (
-              <motion.div
-                key="professor-mari-skills"
-                initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
-                animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
-                exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
-                transition={PROFESSOR_MARI_PANE_TRANSITION}
-                className={cn("min-w-0", !mobileFocusMode && "hidden sm:block", mobileFocusMode && "h-full")}
-              >
-                <ProfessorMariSkillsMenu
-                  skills={skills}
-                  selectedSkill={selectedSkill}
-                  draft={skillDraft}
-                  loading={skillsLoading}
-                  saving={skillsSaving}
-                  diagnostics={skillsDiagnostics}
-                  fileInputRef={skillFileInputRef}
-                  onClose={() => setSkillsMenuOpen(false)}
-                  onNew={handleNewSkill}
-                  onUploadClick={handleSkillUploadClick}
-                  onFileChange={handleSkillFileChange}
-                  onSelect={setSelectedSkillId}
-                  onDraftChange={setSkillDraft}
-                  onSave={() => void handleSaveSkill()}
-                  onDelete={(id) => void handleDeleteSkill(id)}
-                  onToggle={(skill) => void handleToggleSkill(skill)}
-                  className={
-                    mobileFocusMode
-                      ? "h-full rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70"
-                      : undefined
-                  }
-                />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="professor-mari-chat"
-                initial={{ opacity: 0, y: 14, rotateX: 8, transformOrigin: "bottom center" }}
-                animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "bottom center" }}
-                exit={{ opacity: 0, y: -12, rotateX: -10, transformOrigin: "top center" }}
-                transition={PROFESSOR_MARI_PANE_TRANSITION}
-                className={cn("min-w-0", !mobileFocusMode && "hidden sm:block", mobileFocusMode && "h-full")}
-              >
-                <div
-                  className={cn(
-                    "flex h-[clamp(24rem,70dvh,31rem)] min-w-0 flex-col rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/70",
-                    mobileFocusMode &&
-                      "h-full min-h-0 rounded-none border-0 bg-[var(--background)] sm:h-[clamp(24rem,70dvh,31rem)] sm:rounded-lg sm:border sm:bg-[var(--background)]/70",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2",
-                      mobileFocusMode && "min-h-12 bg-[var(--card)]/80 px-2 pt-2",
-                    )}
-                  >
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                      <span className="min-w-0 text-center">
-                        <span className="block truncate text-xs font-semibold text-[var(--foreground)]">
-                          Ask Professor Mari
-                        </span>
-                      </span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={toggleSkillsMenu}
-                        className={cn(
-                          "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
-                          "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
-                        )}
-                        title="Open skills"
-                        aria-expanded={skillsMenuOpen}
-                      >
-                        <ArrowDown size="0.75rem" />
-                        <span className="max-[360px]:hidden">Skills</span>
-                        {skills.length > 0 && (
-                          <span className="mari-chrome-muted-badge px-1.5 py-0.5 text-[0.56rem]">
-                            {activeSkillCount}
-                          </span>
-                        )}
-                      </button>
-                      {(workspaceActive || hasActiveGeneration) && (
-                        <button
-                          type="button"
-                          onClick={() => void stopWorkspace()}
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--destructive)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Stop Professor Mari workspace agent"
-                        >
-                          <Square size="0.7rem" /> Stop
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void runRestart()}
-                        disabled={isBusy}
-                        className="mari-chrome-accent-text-muted mari-accent-animated inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-                        aria-label="Restart Professor Mari chat"
-                        title="Restart Professor Mari chat"
-                      >
-                        <RefreshCw size="0.75rem" />
-                        <span className="max-[380px]:hidden">Restart</span>
-                      </button>
-                      {mobileFocusMode && (
-                        <button
-                          type="button"
-                          onClick={closeMobileFocusMode}
-                          className="mari-chrome-control mari-chrome-control--small mari-accent-animated inline-flex h-8 w-8 items-center justify-center rounded-md p-0 sm:hidden"
-                          aria-label="Close Professor Mari chat"
-                          title="Close"
-                        >
-                          <X size="0.9rem" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div
-                    ref={scrollRef}
-                    className={cn(
-                      "min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-3 text-left",
-                      mobileFocusMode && "px-3 pb-4",
-                    )}
-                  >
-                    {loadingHistory ? (
-                      <LoadingHistoryState />
-                    ) : (
-                      <>
-                        {displayMessages.map((message) => (
-                          <CompactMariMessage
-                            key={message.id}
-                            message={message}
-                            thinking={message.role === "assistant" ? getMessageThinking(message) : null}
-                          />
-                        ))}
-                        {workspaceTimeline.length === 0 && workspaceTimelineActive && !showDottoreSupport && (
-                          <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
-                        )}
-                        {showDottoreSupport && (
-                          <TranscriptRow marker={<MariAvatar active />}>
-                            <ProfessorMariWorkingWindow visible className="max-w-[18rem]" />
-                          </TranscriptRow>
-                        )}
-                        <WorkspaceTimelineList
-                          items={workspaceTimeline}
-                          active={workspaceTimelineActive}
-                          openReasoning
-                        />
-                        {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
-                        {pendingApprovals.map((approval) => (
-                          <WorkspaceApprovalCard
-                            key={approval.id}
-                            approval={approval}
-                            onApprove={(id) => void approveWorkspaceChange(id)}
-                            onReject={(id) => void rejectWorkspaceChange(id)}
-                          />
-                        ))}
-                      </>
-                    )}
-                  </div>
-
-                  <form
-                    className="border-t border-[var(--border)]/60 p-2"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void handleSubmit();
-                    }}
-                  >
-                    <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
-                      <button
-                        ref={connectionButtonRef}
-                        type="button"
-                        onClick={() => setConnectionMenuOpen((current) => !current)}
-                        className={cn(
-                          "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
-                          connectionMenuOpen
-                            ? "bg-foreground/10 text-foreground/75"
-                            : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-                        )}
-                        title={
-                          effectiveConnection?.name ? `Connection: ${effectiveConnection.name}` : "Select connection"
-                        }
-                      >
-                        <Link size="1rem" />
-                      </button>
-
-                      {connectionMenuOpen && (
-                        <div
-                          ref={connectionMenuRef}
-                          className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
-                        >
-                          <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
-                            Connections
-                          </div>
-                          <div className="overflow-y-auto p-1">
-                            {connectionOptions.length > 0 ? (
-                              connectionOptions.map((connection) => {
-                                const isActive = effectiveConnectionId === connection.id;
-                                return (
-                                  <button
-                                    key={connection.id}
-                                    type="button"
-                                    onClick={() => handleConnectionChange(connection.id)}
-                                    className={cn(
-                                      "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
-                                      isActive && "font-semibold text-[var(--foreground)]",
-                                    )}
-                                  >
-                                    <span className="min-w-0 flex-1 truncate">
-                                      {connection.name || connection.id}
-                                      {connection.id === LOCAL_SIDECAR_CONNECTION_ID && (
-                                        <span className="ml-1 text-[0.625rem] font-normal text-[var(--muted-foreground)]">
-                                          {sidecarNativeToolCalls ? "native tools" : "tools off"}
-                                        </span>
-                                      )}
-                                    </span>
-                                    {isActive && <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />}
-                                  </button>
-                                );
-                              })
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setConnectionMenuOpen(false);
-                                  useUIStore.getState().openRightPanel("connections");
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                              >
-                                <Link size="0.875rem" />
-                                Add a connection
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      <textarea
-                        value={draft}
-                        onChange={(event) => {
-                          setDraft(event.target.value);
-                          if (mobileFocusMode) event.currentTarget.scrollIntoView({ block: "end" });
-                        }}
-                        onFocus={() => setMobileFocusMode(window.matchMedia("(max-width: 639px)").matches)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && !event.shiftKey) {
-                            event.preventDefault();
-                            void handleSubmit();
-                          }
-                        }}
-                        rows={1}
-                        placeholder="Ask Professor Mari..."
-                        className="mari-chat-input-textarea max-h-24 min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
-                        disabled={isBusy}
-                      />
-                      <button
-                        type="submit"
-                        disabled={!draft.trim() || isBusy}
-                        className={cn(
-                          "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
-                          draft.trim() && !isBusy
-                            ? "hover:text-white active:scale-90"
-                            : "cursor-not-allowed opacity-40",
-                        )}
-                        aria-label="Send to Professor Mari"
-                        title="Send"
-                      >
-                        <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-        <div className={cn("sm:hidden px-2 pb-2", mobileFocusMode && "hidden")}>
-          <HomeFaq
-            compact
-            expanded={faqExpanded}
-            onExpandedChange={setFaqExpanded}
-            openItemId={faqOpenItemId}
-            onOpenItemIdChange={setFaqOpenItemId}
-          />
         </div>
       </section>
+
+      <AnimatePresence onExitComplete={onChatWindowExitComplete}>
+        {chatWindowOpen && (
+          <motion.div
+            key="professor-mari-window"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={PROFESSOR_MARI_PANE_TRANSITION}
+            className="fixed inset-x-0 top-[calc(3rem_+_env(safe-area-inset-top))] z-[80] flex h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] items-stretch justify-center bg-[var(--background)] supports-[height:100dvh]:h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] supports-[height:100dvh]:max-h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] sm:static sm:z-auto sm:h-full sm:max-h-none sm:w-full sm:flex-1 sm:items-stretch sm:bg-transparent sm:p-0 sm:supports-[height:100dvh]:h-full sm:supports-[height:100dvh]:max-h-none"
+          >
+            <div className="h-full w-full max-w-none sm:min-h-0 sm:max-w-5xl">
+              <AnimatePresence mode="wait" initial={false}>
+                {chatHistoryOpen ? (
+                  <motion.div
+                    key="professor-mari-chats"
+                    initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
+                    animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
+                    exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
+                    transition={PROFESSOR_MARI_PANE_TRANSITION}
+                    className="h-full min-w-0"
+                  >
+                    <section className="flex h-full min-h-0 min-w-0 flex-col rounded-none border-0 bg-[var(--background)] sm:rounded-xl sm:border sm:border-[var(--border)]/70 sm:bg-[var(--background)] sm:shadow-2xl">
+                      <div className="flex items-center justify-between gap-2 border-b border-[var(--border)]/60 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-xs font-semibold text-[var(--foreground)]">
+                            Professor Mari Chats
+                          </div>
+                          <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                            Restart saves the current chat here.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setChatHistoryOpen(false)}
+                          className="mari-chrome-control mari-chrome-control--small h-8 w-8 p-0"
+                          aria-label="Close chats"
+                          title="Close"
+                        >
+                          <X size="0.85rem" />
+                        </button>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                        {chatHistoryLoading ? (
+                          <div className="flex h-full items-center justify-center text-xs text-[var(--muted-foreground)]">
+                            <Loader2 size="0.875rem" className="mr-2 animate-spin" />
+                            Loading chats...
+                          </div>
+                        ) : chatHistory.length === 0 ? (
+                          <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+                            No previous Professor Mari chats yet.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {chatHistory.map((item) => {
+                              const active = item.id === chatId || isProfessorMariChatActive(item);
+                              const renaming = renamingChatId === item.id;
+                              return (
+                                <div
+                                  key={item.id}
+                                  className={cn(
+                                    "rounded-lg border border-[var(--border)] bg-[var(--card)]/70 p-2",
+                                    active && "border-[var(--primary)]/50 bg-[var(--primary)]/5",
+                                  )}
+                                >
+                                  {renaming ? (
+                                    <form
+                                      className="flex items-center gap-1.5"
+                                      onSubmit={(event) => {
+                                        event.preventDefault();
+                                        void handleRenameProfessorChat(item.id);
+                                      }}
+                                    >
+                                      <input
+                                        value={renameDraft}
+                                        onChange={(event) => setRenameDraft(event.target.value)}
+                                        className="min-w-0 flex-1 rounded-md bg-[var(--background)] px-2 py-1.5 text-xs outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+                                        autoFocus
+                                      />
+                                      <button
+                                        type="submit"
+                                        className="mari-chrome-control mari-chrome-control--primary mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRenamingChatId(null);
+                                          setRenameDraft("");
+                                        }}
+                                        className="mari-chrome-control mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </form>
+                                  ) : (
+                                    <div className="flex items-start gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleSelectProfessorChat(item.id)}
+                                        disabled={isBusy}
+                                        className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        <div className="truncate text-xs font-semibold text-[var(--foreground)]">
+                                          {item.name || "Professor Mari chat"}
+                                        </div>
+                                        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                                          <span>{item.messageCount ?? 0} messages</span>
+                                          {active && <span>Active</span>}
+                                        </div>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRenamingChatId(item.id);
+                                          setRenameDraft(item.name || "");
+                                        }}
+                                        className="mari-chrome-control mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleDeleteProfessorChat(item.id)}
+                                        className="mari-chrome-control mari-chrome-control--danger mari-chrome-control--small h-8 px-2 text-[0.625rem]"
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  </motion.div>
+                ) : skillsMenuOpen ? (
+                  <motion.div
+                    key="professor-mari-skills"
+                    initial={{ opacity: 0, y: -14, rotateX: -10, transformOrigin: "top center" }}
+                    animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "top center" }}
+                    exit={{ opacity: 0, y: 12, rotateX: 8, transformOrigin: "bottom center" }}
+                    transition={PROFESSOR_MARI_PANE_TRANSITION}
+                    className="h-full min-w-0"
+                  >
+                    <ProfessorMariSkillsMenu
+                      skills={skills}
+                      selectedSkill={selectedSkill}
+                      draft={skillDraft}
+                      loading={skillsLoading}
+                      saving={skillsSaving}
+                      diagnostics={skillsDiagnostics}
+                      fileInputRef={skillFileInputRef}
+                      onClose={() => setSkillsMenuOpen(false)}
+                      onNew={handleNewSkill}
+                      onUploadClick={handleSkillUploadClick}
+                      onFileChange={handleSkillFileChange}
+                      onSelect={setSelectedSkillId}
+                      onDraftChange={setSkillDraft}
+                      onSave={() => void handleSaveSkill()}
+                      onDelete={(id) => void handleDeleteSkill(id)}
+                      onToggle={(skill) => void handleToggleSkill(skill)}
+                      className="h-full rounded-none border-0 bg-[var(--background)] sm:rounded-xl sm:border sm:bg-[var(--background)] sm:shadow-2xl"
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="professor-mari-chat"
+                    initial={{ opacity: 0, y: 14, rotateX: 8, transformOrigin: "bottom center" }}
+                    animate={{ opacity: 1, y: 0, rotateX: 0, transformOrigin: "bottom center" }}
+                    exit={{ opacity: 0, y: -12, rotateX: -10, transformOrigin: "top center" }}
+                    transition={PROFESSOR_MARI_PANE_TRANSITION}
+                    className="h-full min-w-0"
+                  >
+                    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-none border-0 bg-[var(--background)] sm:rounded-xl sm:border sm:border-[var(--border)]/70 sm:bg-[var(--background)] sm:shadow-2xl">
+                      <div className="flex min-h-12 items-center justify-end gap-2 border-b border-[var(--border)]/60 bg-[var(--card)]/80 px-2 pt-2 sm:px-3 sm:py-2">
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={toggleChatHistory}
+                            disabled={isBusy && !chatHistoryOpen}
+                            className={cn(
+                              "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                              "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                            )}
+                            title="Open previous Professor Mari chats"
+                            aria-expanded={chatHistoryOpen}
+                          >
+                            <BookOpen size="0.75rem" />
+                            <span className="max-[360px]:hidden">Chats</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={toggleSkillsMenu}
+                            className={cn(
+                              "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
+                              "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                            )}
+                            title="Open skills"
+                            aria-expanded={skillsMenuOpen}
+                          >
+                            <ArrowDown size="0.75rem" />
+                            <span className="max-[360px]:hidden">Skills</span>
+                            {skills.length > 0 && (
+                              <span className="mari-chrome-muted-badge px-1.5 py-0.5 text-[0.56rem]">
+                                {activeSkillCount}
+                              </span>
+                            )}
+                          </button>
+                          {(workspaceActive || hasActiveGeneration) && (
+                            <button
+                              type="button"
+                              onClick={() => void stopWorkspace()}
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] text-[var(--destructive)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                              title="Stop Professor Mari workspace agent"
+                            >
+                              <Square size="0.7rem" /> Stop
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void runRestart()}
+                            disabled={isBusy}
+                            className="mari-chrome-accent-text-muted mari-accent-animated inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.6875rem] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                            aria-label="Restart Professor Mari chat"
+                            title="Restart Professor Mari chat"
+                          >
+                            <RefreshCw size="0.75rem" />
+                            <span className="max-[380px]:hidden">Restart</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={closeChatWindow}
+                            className="mari-chrome-control mari-chrome-control--small mari-accent-animated inline-flex h-8 w-8 items-center justify-center rounded-md p-0"
+                            aria-label="Close Professor Mari chat"
+                            title="Close"
+                          >
+                            <X size="0.9rem" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        ref={scrollRef}
+                        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-3 pb-4 text-left"
+                      >
+                        {loadingHistory ? (
+                          <LoadingHistoryState />
+                        ) : (
+                          <>
+                            {displayMessages.map((message) => (
+                              <CompactMariMessage
+                                key={message.id}
+                                message={message}
+                                thinking={message.role === "assistant" ? getMessageThinking(message) : null}
+                              />
+                            ))}
+                            {workspaceTimeline.length === 0 && workspaceTimelineActive && !showDottoreSupport && (
+                              <WorkspaceStatusEvent content={workspaceActivity ?? "Thinking..."} />
+                            )}
+                            {showDottoreSupport && (
+                              <TranscriptRow marker={<MariAvatar active />}>
+                                <ProfessorMariWorkingWindow visible className="max-w-[18rem]" />
+                              </TranscriptRow>
+                            )}
+                            <WorkspaceTimelineList
+                              items={workspaceTimeline}
+                              active={workspaceTimelineActive}
+                              openReasoning
+                            />
+                            {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
+                            {visiblePendingChangeReviews.map((approval) => (
+                              <WorkspaceApprovalCard
+                                key={approval.id}
+                                approval={approval}
+                                onKeep={(id) => void keepWorkspaceChange(id)}
+                                onRestore={(id) => void restoreWorkspaceChange(id)}
+                              />
+                            ))}
+                          </>
+                        )}
+                      </div>
+
+                      <form
+                        className="border-t border-[var(--border)]/60 p-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleSubmit();
+                        }}
+                      >
+                        <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
+                          <button
+                            ref={connectionButtonRef}
+                            type="button"
+                            onClick={() => setConnectionMenuOpen((current) => !current)}
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+                              connectionMenuOpen
+                                ? "bg-foreground/10 text-foreground/75"
+                                : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+                            )}
+                            title={
+                              effectiveConnection?.name
+                                ? `Connection: ${effectiveConnection.name}`
+                                : "Select connection"
+                            }
+                          >
+                            <Link size="1rem" />
+                          </button>
+
+                          {connectionMenuOpen && (
+                            <div
+                              ref={connectionMenuRef}
+                              className="absolute bottom-full left-2 z-20 mb-2 flex max-h-72 min-w-[15rem] max-w-[20rem] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] text-left shadow-2xl"
+                            >
+                              <div className="border-b border-[var(--border)] px-3 py-2 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                                Connections
+                              </div>
+                              <div className="overflow-y-auto p-1">
+                                {connectionOptions.length > 0 ? (
+                                  connectionOptions.map((connection) => {
+                                    const isActive = effectiveConnectionId === connection.id;
+                                    return (
+                                      <button
+                                        key={connection.id}
+                                        type="button"
+                                        onClick={() => handleConnectionChange(connection.id)}
+                                        className={cn(
+                                          "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]",
+                                          isActive && "font-semibold text-[var(--foreground)]",
+                                        )}
+                                      >
+                                        <span className="min-w-0 flex-1 truncate">
+                                          {connection.name || connection.id}
+                                          {connection.id === LOCAL_SIDECAR_CONNECTION_ID && (
+                                            <span className="ml-1 text-[0.625rem] font-normal text-[var(--muted-foreground)]">
+                                              {sidecarNativeToolCalls ? "native tools" : "tools off"}
+                                            </span>
+                                          )}
+                                        </span>
+                                        {isActive && (
+                                          <Check size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConnectionMenuOpen(false);
+                                      useUIStore.getState().openRightPanel("connections");
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                                  >
+                                    <Link size="0.875rem" />
+                                    Add a connection
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          <textarea
+                            value={draft}
+                            onChange={(event) => {
+                              setDraft(event.target.value);
+                              if (mobileFocusMode) event.currentTarget.scrollIntoView({ block: "end" });
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && !event.shiftKey) {
+                                event.preventDefault();
+                                void handleSubmit();
+                              }
+                            }}
+                            rows={1}
+                            placeholder="Ask Professor Mari..."
+                            className="mari-chat-input-textarea h-8 min-h-8 flex-1 resize-none overflow-y-auto bg-transparent px-1 py-1.5 text-sm leading-normal text-foreground/90 outline-none placeholder:text-foreground/30 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={isBusy}
+                          />
+                          <button
+                            type="submit"
+                            disabled={!draft.trim() || isBusy}
+                            className={cn(
+                              "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
+                              draft.trim() && !isBusy
+                                ? "hover:text-white active:scale-90"
+                                : "cursor-not-allowed opacity-40",
+                            )}
+                            aria-label="Send to Professor Mari"
+                            title="Send"
+                          >
+                            <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
+}
+
+export function ProfessorMariFloatingAssistant({ onDismiss }: { onDismiss: () => void }) {
+  return <HomeProfessorMariChat pageActive floatingMode onFloatingDismiss={onDismiss} />;
 }

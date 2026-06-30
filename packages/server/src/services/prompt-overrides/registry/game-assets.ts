@@ -81,7 +81,7 @@ export interface GameBackgroundCtx extends Record<string, string | number | unde
 
 export const GAME_BACKGROUND: PromptOverrideKeyDef<GameBackgroundCtx> = {
   key: "game.background",
-  description: "Location background image prompt (in-game, on first visit to a new place).",
+  description: "Location background image prompt for reusable Roleplay/Game scene backgrounds.",
   variables: [
     {
       name: "sceneDescription",
@@ -96,7 +96,7 @@ export const GAME_BACKGROUND: PromptOverrideKeyDef<GameBackgroundCtx> = {
     },
   ],
   defaultBuilder: (ctx) =>
-    `${ctx.sceneDescription}. ${ctx.styleLine} SD/Illustrious tags: scenery, environment, wide shot, landscape, full-frame background, no humans. Wide-angle landscape, detailed environment, single full-frame background, scenery only, no characters, no text, no UI, no panels, no collage, game background art, high quality`,
+    `${ctx.sceneDescription}. ${ctx.styleLine} SD/Illustrious tags: scenery, environment, wide shot, landscape, full-frame background, background-only location art. Wide-angle landscape, detailed environment, readable spatial layout, single full-frame background, no foreground characters, no main characters, no named characters, no posed character focus. Small distant crowds, shopkeepers, silhouettes, or background figures are allowed only when they make the location feel lived-in. No text, no UI, no panels, no collage, game background art, high quality`,
   exampleContext: {
     sceneDescription: "moonlit graveyard with crumbling tombstones",
     styleLine:

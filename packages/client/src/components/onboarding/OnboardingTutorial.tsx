@@ -175,6 +175,12 @@ const MOBILE_BREAKPOINT = 640;
 const TOPBAR_FALLBACK_HEIGHT = 48;
 const TUTORIAL_TOP_GAP = 12;
 const TUTORIAL_DESKTOP_WIDTH = 340;
+const TUTORIAL_CARD_CLASS =
+  "mari-chrome-token-scope pointer-events-auto overflow-x-hidden overflow-y-auto rounded-2xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] p-5 shadow-2xl ring-1 ring-[var(--marinara-chat-chrome-focus-ring)]";
+const TUTORIAL_SECONDARY_BUTTON_CLASS =
+  "rounded-lg px-3 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-panel-text)]";
+const TUTORIAL_PRIMARY_BUTTON_CLASS =
+  "flex items-center gap-1.5 rounded-lg border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-4 py-1.5 text-xs font-medium text-[var(--marinara-chat-chrome-button-text-active)] shadow-sm transition-all hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:scale-95";
 
 function getTargetRect(target: string): Rect | null {
   const el = document.querySelector(`[data-tour="${target}"]`);
@@ -417,16 +423,16 @@ function TourCardContent({
 
       {/* Header */}
       <div className="mb-3">
-        <h3 className="text-sm font-semibold text-[var(--foreground)]">{currentStep.title}</h3>
+        <h3 className="text-sm font-semibold text-[var(--marinara-chat-chrome-panel-title)]">{currentStep.title}</h3>
       </div>
 
       {/* Body */}
-      <p className="mb-4 break-words text-xs leading-relaxed text-[var(--muted-foreground)]">
+      <p className="mb-4 break-words text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-muted)]">
         {currentStep.body.split("\n").map((line, i, arr) => (
           <span key={i}>
             {line.split(/(\*\*[^*]+\*\*)/).map((part, j) =>
               part.startsWith("**") && part.endsWith("**") ? (
-                <strong key={j} className="font-semibold text-[var(--foreground)]">
+                <strong key={j} className="font-semibold text-[var(--marinara-chat-chrome-panel-text)]">
                   {part.slice(2, -2)}
                 </strong>
               ) : (
@@ -445,10 +451,10 @@ function TourCardContent({
             key={i}
             className={`h-1.5 rounded-full transition-all duration-300 ${
               i === step
-                ? "w-4 bg-[var(--primary)]"
+                ? "w-4 bg-[var(--marinara-chat-chrome-button-text-active)]"
                 : i < step
-                  ? "w-1.5 bg-[var(--primary)]/40"
-                  : "w-1.5 bg-[var(--muted-foreground)]/20"
+                  ? "w-1.5 bg-[var(--marinara-chat-chrome-button-text-active)]/40"
+                  : "w-1.5 bg-[var(--marinara-chat-chrome-panel-muted)]/25"
             }`}
           />
         ))}
@@ -458,13 +464,13 @@ function TourCardContent({
       <div className="flex items-center justify-between">
         <button
           onClick={onSkip}
-          className="rounded-lg px-3 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)]"
+          className={TUTORIAL_SECONDARY_BUTTON_CLASS}
         >
           {step === 0 ? "Skip Tutorial" : "Skip"}
         </button>
         <button
           onClick={onNext}
-          className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:opacity-90 active:scale-95"
+          className={TUTORIAL_PRIMARY_BUTTON_CLASS}
         >
           {isLast ? "Get Started" : "Next"}
           {!isLast && <ChevronRight size="0.75rem" />}
@@ -578,17 +584,17 @@ function OnboardingTutorialInner() {
   const centeredCardMaxHeight = Math.max(220, getViewportHeight() - centeredTopOffset - 16);
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[9999]">
+    <div className="mari-chrome-token-scope pointer-events-none fixed inset-0 z-[9999]">
       {/* Pulsing highlight ring around the target element */}
       {!isMobileViewport && targetRect && (
         <div
-          className="pointer-events-none fixed rounded-xl ring-2 ring-[var(--primary)] animate-pulse"
+          className="pointer-events-none fixed animate-pulse rounded-xl ring-2 ring-[var(--marinara-chat-chrome-focus-ring)]"
           style={{
             top: targetRect.top - PAD,
             left: targetRect.left - PAD,
             width: targetRect.width + PAD * 2,
             height: targetRect.height + PAD * 2,
-            boxShadow: "0 0 16px 4px color-mix(in srgb, var(--primary) 40%, transparent)",
+            boxShadow: "0 0 16px 4px color-mix(in srgb, var(--marinara-chat-chrome-focus-ring) 40%, transparent)",
           }}
         />
       )}
@@ -606,7 +612,7 @@ function OnboardingTutorialInner() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.96 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="pointer-events-auto overflow-x-hidden overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--popover)] p-5 shadow-2xl ring-1 ring-[var(--primary)]/20"
+              className={TUTORIAL_CARD_CLASS}
               style={{ width: Math.min(380, getViewportWidth() - 32), maxHeight: centeredCardMaxHeight }}
             >
               <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} />
@@ -621,7 +627,7 @@ function OnboardingTutorialInner() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.96 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="pointer-events-auto rounded-2xl border border-[var(--border)] bg-[var(--popover)] p-5 shadow-2xl ring-1 ring-[var(--primary)]/20"
+            className={TUTORIAL_CARD_CLASS}
             style={computeTooltipStyle(targetRect!, currentStep)}
           >
             <TourCardContent step={step} currentStep={currentStep} isLast={isLast} onNext={next} onSkip={finish} />

@@ -32,7 +32,7 @@ import {
   getPrivilegedActionErrorMessage,
 } from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
-import { normalizeThemeCss } from "../../lib/theme-css";
+import { normalizeThemeCss, sanitizeAppCss } from "../../lib/theme-css";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
 import React, { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -48,6 +48,7 @@ import {
   type ImagePromptMode,
   type ImageStyleProfile,
   type ImageStyleProfileSettings,
+  type InstalledExtension,
   type QuoteFormat,
   type Theme,
 } from "@marinara-engine/shared";
@@ -97,6 +98,7 @@ import {
   ScrollText,
   UserCheck,
   WandSparkles,
+  Terminal,
 } from "lucide-react";
 import { useClearAllData, useExpungeData, useUpdateChatMetadata, type ExpungeScope } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
@@ -162,6 +164,42 @@ const SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS =
   "mari-chrome-control mari-chrome-control--compact mari-chrome-control--selected text-[0.625rem]";
 const SETTINGS_INLINE_ACCENT_BUTTON_CLASS =
   "shrink-0 rounded-md border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-1.5 py-0.5 text-[0.5625rem] font-semibold text-[var(--marinara-chat-chrome-button-text-active)] transition-colors hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45";
+
+type MarinaraAndroidBridge = {
+  openConsole?: () => void;
+};
+
+function getMarinaraAndroidBridge(): MarinaraAndroidBridge | null {
+  if (typeof window === "undefined") return null;
+  const nativeWindow = window as Window & { MarinaraAndroid?: MarinaraAndroidBridge };
+  return nativeWindow.MarinaraAndroid ?? null;
+}
+
+function isMarinaraAndroidShell(): boolean {
+  return typeof navigator !== "undefined" && /\bMarinaraEngine\/Android\b/u.test(navigator.userAgent);
+}
+
+function isStandaloneIosInstall(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const isIos = /\b(iPad|iPhone|iPod)\b/u.test(nav.userAgent);
+  const isStandalone = nav.standalone === true || window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+  return isIos && isStandalone;
+}
+
+function getNativeConsoleShortcutHelp(): string {
+  const bridge = getMarinaraAndroidBridge();
+  if (typeof bridge?.openConsole === "function") {
+    return "Opens Termux from the Android APK so you can view Marinara server logs while Debug mode is enabled.";
+  }
+  if (isMarinaraAndroidShell()) {
+    return "This Android APK build cannot expose the Termux console shortcut yet. Update Marinara, or open Termux manually.";
+  }
+  if (isStandaloneIosInstall()) {
+    return "iPhone installations do not expose a native console shortcut yet. Use the host server logs or Safari Web Inspector.";
+  }
+  return "Available in packaged Android/iPhone installations only. Browser and desktop users should use the server terminal or browser developer tools.";
+}
 
 const SETTINGS_COMPONENTS: Record<(typeof TABS)[number]["id"], React.FC> = {
   general: React.memo(GeneralSettings),
@@ -1101,11 +1139,11 @@ export function SettingsPanel() {
             tabIndex={settingsTab === tab.id ? 0 : -1}
             onClick={() => setSettingsTab(tab.id)}
             className={cn(
-              "mari-chrome-control mari-settings-tab-button min-h-[2.5rem] w-full min-w-0 px-2 py-2 text-[0.6875rem] leading-tight sm:text-xs",
+              "mari-chrome-control mari-settings-tab-button min-h-[2.5rem] w-full min-w-0 px-2 py-2 text-[0.625rem] leading-tight sm:text-[0.6875rem]",
               settingsTab === tab.id && "mari-chrome-control--selected",
             )}
           >
-            <span className="mari-settings-tab-label min-w-0 max-w-full truncate text-center">{tab.label}</span>
+            <span className="mari-settings-tab-label min-w-0 max-w-full text-center">{tab.label}</span>
           </button>
         ))}
       </div>
@@ -1250,7 +1288,7 @@ function GeneralSettings() {
       >
         <div className="flex flex-col gap-2.5">
           <ToggleSetting
-            label="Enable streaming responses"
+            label="Enable streaming"
             checked={enableStreaming}
             onChange={setEnableStreaming}
             help="When on, AI responses appear word-by-word as they're generated. When off, the full response appears at once after completion."
@@ -1291,6 +1329,7 @@ function GeneralSettings() {
 
           <label className="flex flex-wrap items-center gap-2.5 rounded-lg p-1 transition-colors hover:bg-[var(--secondary)]/50">
             <span className="text-xs">Messages per page</span>
+            <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
             <DraftNumberInput
               value={messagesPerPage}
               min={0}
@@ -1299,7 +1338,6 @@ function GeneralSettings() {
               onCommit={(nextValue) => setMessagesPerPage(Math.max(0, Math.min(500, nextValue)))}
               className="w-16 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
             />
-            <HelpTooltip text="How many messages to load at a time. Click 'Load More' in the chat to see older messages. Set to 0 to load all messages at once." />
           </label>
         </div>
       </SettingsSection>
@@ -1550,7 +1588,7 @@ function ImageGenerationSettings() {
 
         <ImageDimensionRow
           label="Backgrounds"
-          help="Used for Game mode generated backgrounds."
+          help="Used for Roleplay and Game generated scene backgrounds."
           width={imageBackgroundWidth}
           height={imageBackgroundHeight}
           onCommit={setImageBackgroundDimensions}
@@ -1675,10 +1713,10 @@ function GameAssetsSettings() {
       icon={<FolderOpen size="0.875rem" />}
     >
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2">
           <button
             onClick={openGameAssetsBrowser}
-            className="mari-chrome-control mari-chrome-control--primary text-[0.6875rem]"
+            className="mari-chrome-control mari-chrome-control--primary w-full gap-2 text-xs"
             title="Open Asset Browser"
           >
             <Image size="0.75rem" />
@@ -1690,11 +1728,14 @@ function GameAssetsSettings() {
                 .then(() => toast.success("Game assets rescanned."))
                 .catch(() => toast.error("Failed to rescan game assets."));
             }}
-            className={SETTINGS_BUTTON_CLASS}
+            className={cn(SETTINGS_BUTTON_CLASS, "w-full justify-center")}
           >
             <RefreshCw size="0.75rem" />
             Rescan
           </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
           {GAME_ASSET_CATEGORIES.map((folder) => (
             <button
               key={folder.id}
@@ -1788,6 +1829,8 @@ function AppearanceSettings() {
   const setAppAccentPulseMode = useUIStore((s) => s.setAppAccentPulseMode);
   const appAccentRgbMode = useUIStore((s) => s.appAccentRgbMode);
   const setAppAccentRgbMode = useUIStore((s) => s.setAppAccentRgbMode);
+  const customCursorEnabled = useUIStore((s) => s.customCursorEnabled);
+  const setCustomCursorEnabled = useUIStore((s) => s.setCustomCursorEnabled);
   const defaultAppBackgroundColor = getDefaultAppBackgroundColor(theme);
   const displayedAppBackgroundColor =
     appBackgroundColor.trim().toLowerCase() === defaultAppBackgroundColor.toLowerCase() ? "" : appBackgroundColor;
@@ -2086,6 +2129,13 @@ function AppearanceSettings() {
             </select>
           </label>
 
+          <ToggleSetting
+            label="Custom Mouse Pointer"
+            checked={customCursorEnabled}
+            onChange={setCustomCursorEnabled}
+            help="Uses Marinara's accent-colored cursor across the app. Turn this off to use the system cursor or let a custom CSS theme control cursor styles."
+          />
+
           <ColorPicker
             value={displayedAppBackgroundColor}
             onChange={handleAppBackgroundColorChange}
@@ -2114,7 +2164,7 @@ function AppearanceSettings() {
             label="Accent Pulse"
             checked={appAccentPulseMode}
             onChange={handleAppAccentPulseModeChange}
-            help="Animates the selected Accent Color. Solid colors gently brighten and darken; gradients cycle through their selected colors. Reduced-motion preferences are respected."
+            help="Animates the selected Accent Color. Solid colors gently brighten and darken; gradients cycle through their selected colors. Custom CSS themes can also request it with --marinara-theme-accent-pulse: enabled. Reduced-motion preferences are respected."
           />
 
           <ToggleSetting
@@ -3353,7 +3403,7 @@ function ThemesSettings() {
       style = document.createElement("style");
       style.id = "marinara-css-editor-preview";
     }
-    style.textContent = normalizeThemeCss(themeCss);
+    style.textContent = sanitizeAppCss(themeCss);
     // Always (re-)append so it's the last <style> in <head>,
     // overriding the active-theme injector's saved CSS.
     document.head.appendChild(style);
@@ -3407,21 +3457,40 @@ function ThemesSettings() {
       let imported = 0;
       let skipped = 0;
       let failed = 0;
+      const skipMessages: string[] = [];
+      const failureMessages: string[] = [];
+
+      const recordSkippedTheme = (message: string) => {
+        skipped++;
+        skipMessages.push(message);
+      };
 
       if (file.name.endsWith(".json")) {
         const parsed = parseThemeJsonWithControlCharFallback(text);
         const entries = getFolderImportEntries(parsed, ["themes"]);
-        for (const entry of entries) {
+        for (const [index, entry] of entries.entries()) {
           const source = getFolderManifestConfig(entry);
-          if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+          if (!source || typeof source !== "object" || Array.isArray(source)) {
+            recordSkippedTheme(`Entry ${index + 1} is not a theme object.`);
+            continue;
+          }
           const record = source as Record<string, unknown>;
           const importedThemeName =
-            typeof record.name === "string" && record.name.trim() ? record.name : file.name.replace(/\.json$/, "");
-          const importedThemeCss = typeof record.css === "string" ? normalizeThemeCss(record.css) : "";
-          if (!importedThemeCss.trim()) continue;
+            typeof record.name === "string" && record.name.trim()
+              ? record.name.trim()
+              : file.name.replace(/\.json$/i, "");
+          if (typeof record.css !== "string") {
+            recordSkippedTheme(`"${importedThemeName}" is missing a css field.`);
+            continue;
+          }
+          const importedThemeCss = normalizeThemeCss(record.css);
+          if (!importedThemeCss.trim()) {
+            recordSkippedTheme(`"${importedThemeName}" has empty css.`);
+            continue;
+          }
           const duplicate = findDuplicateTheme(workingThemes, importedThemeName, importedThemeCss);
           if (duplicate) {
-            skipped++;
+            recordSkippedTheme(`"${importedThemeName}" is already synced.`);
             continue;
           }
           try {
@@ -3434,6 +3503,9 @@ function ThemesSettings() {
             imported++;
           } catch (err) {
             failed++;
+            failureMessages.push(
+              err instanceof Error ? `"${importedThemeName}" failed: ${err.message}` : `"${importedThemeName}" failed.`,
+            );
             console.warn("[ThemesSettings] Failed to import theme entry:", importedThemeName, err);
           }
         }
@@ -3442,7 +3514,7 @@ function ThemesSettings() {
         const importedThemeCss = normalizeThemeCss(text);
         const duplicate = findDuplicateTheme(workingThemes, importedThemeName, importedThemeCss);
         if (duplicate) {
-          skipped++;
+          recordSkippedTheme(`"${importedThemeName}" is already synced.`);
         } else {
           const created = await createTheme.mutateAsync({
             name: importedThemeName,
@@ -3457,18 +3529,24 @@ function ThemesSettings() {
       if (imported > 0 || skipped > 0 || failed > 0) {
         const summary = [
           imported > 0 ? `${imported} imported` : null,
-          skipped > 0 ? `${skipped} already synced` : null,
+          skipped > 0 ? `${skipped} skipped` : null,
           failed > 0 ? `${failed} failed` : null,
         ].filter(Boolean);
         const message = `Theme import: ${summary.join(", ")}`;
-        if (failed > 0) toast.warning(message);
+        const description = [...failureMessages, ...skipMessages].slice(0, 3).join(" ");
+        if (failed > 0) toast.warning(message, { description, duration: 12_000 });
+        else if (skipped > 0) toast.warning(message, { description, duration: 12_000 });
         else toast.success(message);
       } else {
         toast.error("No valid themes found in file.");
       }
     } catch (err) {
       console.error("[ThemesSettings] Failed to import theme:", err);
-      toast.error("Failed to import theme. Ensure it's a valid CSS or JSON file.");
+      toast.error(
+        err instanceof SyntaxError
+          ? "Failed to import theme. The JSON could not be parsed."
+          : getPrivilegedActionErrorMessage(err, "Failed to import theme. Ensure it's a valid CSS or JSON file."),
+      );
     }
   };
   // ── CSS Editor View ──
@@ -3694,6 +3772,13 @@ function ThemesSettings() {
                 <button
                   onClick={() => {
                     void (async () => {
+                      const confirmed = await showConfirmDialog({
+                        title: "Delete Theme",
+                        message: `Delete "${t.name}"? This permanently removes the saved theme CSS from this server.`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      });
+                      if (!confirmed) return;
                       try {
                         await deleteTheme.mutateAsync(t.id);
                         toast.success(`Theme "${t.name}" removed`);
@@ -3730,6 +3815,7 @@ function ThemesSettings() {
             <code className="rounded bg-[var(--secondary)] px-1">--background</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--primary</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-app-accent-solid</code>,{" "}
+            <code className="rounded bg-[var(--secondary)] px-1">--marinara-theme-accent-pulse</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-accent-gradient</code>,{" "}
             <code className="rounded bg-[var(--secondary)] px-1">--marinara-chat-chrome-surface-bg</code>) or add custom
@@ -3755,6 +3841,8 @@ const CSS_TEMPLATE = `/* ══════════════════�
   /* --primary-foreground: #fff; */
   /* --marinara-app-accent-solid: var(--primary); */
   /* --marinara-app-accent-gradient: linear-gradient(90deg, var(--marinara-app-accent-solid), color-mix(in srgb, var(--marinara-app-accent-solid) 76%, var(--foreground) 24%), var(--marinara-app-accent-solid)); */
+  /* --marinara-theme-accent-pulse: enabled; */
+  /* --marinara-theme-accent-pulse-source: #a78bfa; */
 
   /* ── Surface Colors ── */
   /* --card: #111118; */
@@ -3850,7 +3938,7 @@ function normalizeExtensionImportEntry(entry: FolderPackageImportEntry, fallback
     description: typeof record.description === "string" ? record.description : "",
     css: cssFromFiles ?? (typeof record.css === "string" ? record.css : null),
     js: jsFromFiles ?? (typeof record.js === "string" ? record.js : null),
-    enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+    enabled: typeof record.enabled === "boolean" ? record.enabled : false,
   };
 }
 
@@ -3874,7 +3962,7 @@ function createLooseExtensionFolderImportEntries(
         description: "Extension imported from folder",
         css: css || null,
         js: js || null,
-        enabled: true,
+        enabled: false,
       },
       fallbackName || "extension",
     ),
@@ -3985,14 +4073,14 @@ function ExtensionsSettings() {
       const more = failureMessages.length > 1 ? ` (+${failureMessages.length - 1} more)` : "";
       toast.error(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
-          : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
+          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
+          : `Failed to import ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
         { duration: 12_000 },
       );
     } else if (skipped > 0) {
       toast.warning(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.`
+          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`
           : `Skipped ${skipped} extension entr${skipped === 1 ? "y" : "ies"}.`,
         {
           description: failureMessages[0],
@@ -4000,7 +4088,7 @@ function ExtensionsSettings() {
         },
       );
     } else {
-      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}`);
+      toast.success(`Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`);
     }
   };
 
@@ -4036,13 +4124,13 @@ function ExtensionsSettings() {
             name,
             description: "JS extension imported from file",
             js: text,
-            enabled: true,
+            enabled: false,
             installedAt,
           });
         } catch (err) {
           throw new Error(describeExtensionImportError(err, name));
         }
-        toast.success(`Extension "${name}" installed`);
+        toast.success(`Extension "${name}" imported and left disabled for review`);
       } else if (lowerName.endsWith(".css")) {
         const text = await file.text();
         const name = file.name.replace(/\.css$/i, "");
@@ -4051,13 +4139,13 @@ function ExtensionsSettings() {
             name,
             description: "CSS extension imported from file",
             css: text,
-            enabled: true,
+            enabled: false,
             installedAt,
           });
         } catch (err) {
           throw new Error(describeExtensionImportError(err, name));
         }
-        toast.success(`Extension "${name}" installed`);
+        toast.success(`Extension "${name}" imported and left disabled for review`);
       } else {
         toast.error("Only .zip, .json, .css, and .js extension files are supported.");
       }
@@ -4085,9 +4173,45 @@ function ExtensionsSettings() {
     }
   };
 
+  const handleToggleExtension = async (ext: InstalledExtension) => {
+    const nextEnabled = !ext.enabled;
+    if (nextEnabled && ext.js?.trim()) {
+      const confirmed = await showConfirmDialog({
+        title: "Enable Extension",
+        message: `Enable "${ext.name}"? This runs the extension's JavaScript inside Marinara Engine.`,
+        confirmLabel: "Enable",
+        tone: "destructive",
+      });
+      if (!confirmed) return;
+    }
+
+    try {
+      await updateExtension.mutateAsync({ id: ext.id, enabled: nextEnabled });
+    } catch (err) {
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to update extension."));
+    }
+  };
+
+  const handleDeleteExtension = async (ext: InstalledExtension) => {
+    const confirmed = await showConfirmDialog({
+      title: "Delete Extension",
+      message: `Delete "${ext.name}"? This permanently removes its saved CSS and JavaScript from this server.`,
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+
+    try {
+      await deleteExtension.mutateAsync(ext.id);
+      toast.success(`Extension "${ext.name}" removed`);
+    } catch (err) {
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to remove extension."));
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
-      <SettingsIntro>Install browser-local extensions to add custom behavior or styling.</SettingsIntro>
+      <SettingsIntro>Install extensions to add custom behavior or styling.</SettingsIntro>
 
       <SettingsSection
         title="Extension Library"
@@ -4138,7 +4262,7 @@ function ExtensionsSettings() {
                 )}
               >
                 <button
-                  onClick={() => updateExtension.mutate({ id: ext.id, enabled: !ext.enabled })}
+                  onClick={() => void handleToggleExtension(ext)}
                   className={cn(
                     "rounded p-0.5 transition-colors",
                     ext.enabled
@@ -4176,7 +4300,7 @@ function ExtensionsSettings() {
                   <Upload size="0.6875rem" />
                 </button>
                 <button
-                  onClick={() => deleteExtension.mutate(ext.id)}
+                  onClick={() => void handleDeleteExtension(ext)}
                   className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
                   title="Remove extension"
                 >
@@ -4482,52 +4606,6 @@ function ImportSettings() {
     return () => window.clearInterval(timer);
   }, [profileImportBusy]);
 
-  const handleMarinaraImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const head = file.size >= 4 ? new Uint8Array(await file.slice(0, 4).arrayBuffer()) : new Uint8Array();
-      const isZip = head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
-      let res: Response;
-      if (isZip) {
-        const form = new FormData();
-        form.append("file", file, file.name);
-        res = await fetch("/api/import/marinara-package", { method: "POST", body: form });
-      } else {
-        let envelope: unknown;
-        try {
-          envelope = JSON.parse(await file.text());
-        } catch {
-          throw new Error("parse");
-        }
-        res = await fetch("/api/import/marinara", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(envelope),
-        });
-      }
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        name?: string;
-        type?: string;
-        error?: string;
-      };
-      if (res.ok && data.success) {
-        qc.invalidateQueries();
-        toast.success(`Imported ${data.name ?? data.type} successfully!`);
-      } else {
-        toast.error(`Import failed: ${data.error ?? res.statusText ?? "Unknown error"}`);
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message === "parse") {
-        toast.error("Import failed. Make sure this is a valid .marinara or .json file.");
-      } else {
-        toast.error(`Import failed: ${err instanceof Error ? err.message : "network/server error"}`);
-      }
-    }
-    e.target.value = "";
-  };
-
   const handleProfileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -4751,7 +4829,8 @@ function ImportSettings() {
         <div className="flex flex-col gap-2.5">
           <label
             className={cn(
-              "flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-500/15 px-3 py-3 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-500/30 transition-all hover:bg-emerald-500/20 active:scale-[0.98] dark:text-emerald-300",
+              SETTINGS_PRIMARY_BUTTON_CLASS,
+              "w-full cursor-pointer gap-2",
               profileImportBusy && "pointer-events-none opacity-75",
             )}
           >
@@ -4855,12 +4934,6 @@ function ImportSettings() {
               )}
             </div>
           )}
-
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-3 text-xs font-semibold ring-1 ring-[var(--border)] transition-all hover:bg-[var(--accent)] active:scale-[0.98]">
-            <Download size="1rem" />
-            Import Marinara File (.marinara / .json)
-            <input type="file" accept=".json,.marinara" onChange={handleMarinaraImport} className="hidden" />
-          </label>
         </div>
       </SettingsSection>
 
@@ -4991,8 +5064,6 @@ function ImportButton({
 }
 
 function AdvancedSettings() {
-  const messageGrouping = useUIStore((s) => s.messageGrouping);
-  const setMessageGrouping = useUIStore((s) => s.setMessageGrouping);
   const showTimestamps = useUIStore((s) => s.showTimestamps);
   const setShowTimestamps = useUIStore((s) => s.setShowTimestamps);
   const showModelName = useUIStore((s) => s.showModelName);
@@ -5011,6 +5082,8 @@ function AdvancedSettings() {
   const setShowQuickReplyGuide = useUIStore((s) => s.setShowQuickReplyGuide);
   const showQuickReplyImpersonate = useUIStore((s) => s.showQuickReplyImpersonate);
   const setShowQuickReplyImpersonate = useUIStore((s) => s.setShowQuickReplyImpersonate);
+  const includeReasoningInExports = useUIStore((s) => s.includeReasoningInExports);
+  const setIncludeReasoningInExports = useUIStore((s) => s.setIncludeReasoningInExports);
   const debugMode = useUIStore((s) => s.debugMode);
   const setDebugMode = useUIStore((s) => s.setDebugMode);
   const clearAllData = useClearAllData();
@@ -5022,11 +5095,25 @@ function AdvancedSettings() {
   const [refreshingSpa, setRefreshingSpa] = useState(false);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
   const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
+  const nativeConsoleBridge = getMarinaraAndroidBridge();
+  const canOpenNativeConsole = typeof nativeConsoleBridge?.openConsole === "function";
+  const nativeConsoleHelp = getNativeConsoleShortcutHelp();
 
   const handleQuickRepliesMenuChange = (enabled: boolean) => {
     setShowQuickRepliesMenu(enabled);
     if (enabled) setQuickRepliesDrawerOpen(true);
   };
+
+  const handleOpenNativeConsole = useCallback(() => {
+    const bridge = getMarinaraAndroidBridge();
+    if (typeof bridge?.openConsole !== "function") {
+      toast.info(getNativeConsoleShortcutHelp());
+      return;
+    }
+
+    bridge.openConsole();
+    toast.info("Opening Termux console…");
+  }, []);
 
   type ProfileExportFormat = "native" | "compatible" | "zip";
   const profileExportFallbackNames: Record<ProfileExportFormat, string> = {
@@ -5217,10 +5304,21 @@ function AdvancedSettings() {
     }
   }, [adminSecret]);
 
+  type UpdateChannelId = "stable" | "staging";
+  const [updateChannel, setUpdateChannel] = useState<UpdateChannelId>("stable");
   const updateCheck = useQuery<{
     currentVersion: string;
     currentCommit: string | null;
     currentBuild: string;
+    channel: UpdateChannelId;
+    channelLabel: string;
+    channels: Array<{
+      id: UpdateChannelId;
+      label: string;
+      branch: string;
+      targetRef: string;
+      warning?: string | null;
+    }>;
     targetRef: string;
     targetCommit: string | null;
     latestVersion: string;
@@ -5243,8 +5341,8 @@ function AdvancedSettings() {
     manualUpdateCommand?: string | null;
     manualUpdateHint?: string | null;
   }>({
-    queryKey: ["update-check"],
-    queryFn: () => api.get("/updates/check"),
+    queryKey: ["update-check", updateChannel],
+    queryFn: () => api.get(`/updates/check?channel=${encodeURIComponent(updateChannel)}`),
     enabled: false,
     retry: false,
   });
@@ -5253,6 +5351,7 @@ function AdvancedSettings() {
     mutationFn: () =>
       api.post<{ status: string; message: string }>("/updates/apply", {
         confirm: true,
+        channel: updateChannel,
         currentVersion: updateCheck.data?.currentVersion ?? health.data?.version ?? APP_VERSION,
         currentCommit: updateCheck.data?.currentCommit ?? health.data?.commit ?? null,
         currentBuild: updateCheck.data?.currentBuild ?? health.data?.build ?? null,
@@ -5281,6 +5380,17 @@ function AdvancedSettings() {
     },
   });
 
+  const updateChannelOptions = updateCheck.data?.channels ?? [
+    { id: "stable" as const, label: "Latest Stable", branch: "main", targetRef: "origin/main", warning: null },
+    {
+      id: "staging" as const,
+      label: "Staging/UAT",
+      branch: "staging",
+      targetRef: "origin/staging",
+      warning: "Staging builds are pre-release tester builds. Back up your app data before applying them.",
+    },
+  ];
+  const selectedUpdateChannel = updateChannelOptions.find((channel) => channel.id === updateChannel);
   const currentReleaseLabel = `v${health.data?.version ?? updateCheck.data?.currentVersion ?? APP_VERSION}`;
   const currentCommit = health.data?.commit ?? updateCheck.data?.currentCommit ?? null;
   const currentBuildLabel = currentCommit ? `Build: ${currentCommit.slice(0, 7)}` : "Build: unavailable";
@@ -5343,18 +5453,18 @@ function AdvancedSettings() {
         description="Save the browser-side admin secret for protected maintenance actions."
         icon={<Power size="0.875rem" />}
       >
-        <div className="flex min-w-0 flex-wrap gap-2">
+        <div className="flex min-w-0 flex-col gap-2">
           <input
             type="password"
             value={adminSecret}
             onChange={(e) => setAdminSecret(e.target.value)}
             placeholder="ADMIN_SECRET"
-            className="min-w-0 flex-[1_1_12rem] rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
+            className="w-full min-w-0 rounded-lg bg-[var(--background)] px-3 py-2 text-xs outline-none ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]"
           />
           <button
             type="button"
             onClick={saveAdminSecret}
-            className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "max-w-full shrink-0 whitespace-nowrap")}
+            className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "w-full gap-2 whitespace-nowrap")}
           >
             <span className="flex min-w-0 items-center justify-center gap-1.5">
               <Save size="0.75rem" className="shrink-0" />
@@ -5370,11 +5480,25 @@ function AdvancedSettings() {
         icon={<RefreshCw size="0.875rem" />}
       >
         <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2">
+            <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+              Release Channel
+              <select
+                value={updateChannel}
+                onChange={(event) => setUpdateChannel(event.target.value as UpdateChannelId)}
+                className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs font-medium normal-case tracking-normal text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
+              >
+                {updateChannelOptions.map((channel) => (
+                  <option key={channel.id} value={channel.id}>
+                    {channel.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               onClick={() => updateCheck.refetch()}
               disabled={updateCheck.isFetching}
-              className={SETTINGS_PRIMARY_BUTTON_CLASS}
+              className={cn(SETTINGS_PRIMARY_BUTTON_CLASS, "w-full gap-2")}
             >
               {updateCheck.isFetching ? (
                 <>
@@ -5388,17 +5512,26 @@ function AdvancedSettings() {
                 </>
               )}
             </button>
-            <div className="flex flex-col text-[0.6875rem] text-[var(--muted-foreground)]">
+            <div className="flex flex-col px-1 text-[0.6875rem] text-[var(--muted-foreground)]">
               <span>Release: {currentReleaseLabel}</span>
               <span>{currentBuildLabel}</span>
             </div>
           </div>
 
+          {selectedUpdateChannel?.warning && (
+            <div className="flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2.5 py-2 text-[0.6875rem] text-amber-700 ring-1 ring-amber-500/30 dark:text-amber-200">
+              <AlertTriangle size="0.8125rem" className="mt-0.5 shrink-0" />
+              <span>{selectedUpdateChannel.warning}</span>
+            </div>
+          )}
+
           {updateCheck.data && !updateCheck.data.updateAvailable && (
             <div className="flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-2 ring-1 ring-[var(--border)]">
               <Check size="0.8125rem" className="text-green-500 shrink-0" />
               <div className="flex flex-col gap-0.5">
-                <span className="text-xs">You're on the latest release ({currentReleaseLabel})</span>
+                <span className="text-xs">
+                  You're on the latest {updateCheck.data.channelLabel ?? "release"} target ({currentReleaseLabel})
+                </span>
                 <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{currentBuildLabel}</span>
               </div>
             </div>
@@ -5548,9 +5681,9 @@ function AdvancedSettings() {
 
       <ImageGenerationSettings />
       <PromptOverridesEditor
-        title="Game Image Prompt Templates"
-        description="Edit the reusable templates Game Mode uses for NPC portraits, backgrounds, and scene illustrations."
-        help="These templates render before Game Mode sends recurring image-generation requests. One-off prompt review edits still only affect the current request."
+        title="Image Prompt Templates"
+        description="Edit the reusable templates used for NPC portraits, scene backgrounds, and scene illustrations."
+        help="These templates render before recurring Game image requests and manual Gallery background generation. One-off prompt review edits still only affect the current request."
         keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
         preferredKey="game.npcPortrait"
       />
@@ -5709,12 +5842,6 @@ function AdvancedSettings() {
             )}
           </div>
           <ToggleSetting
-            label="Group consecutive messages"
-            checked={messageGrouping}
-            onChange={setMessageGrouping}
-            help="Combines multiple messages from the same sender into a visual group, reducing clutter in the chat."
-          />
-          <ToggleSetting
             label="Show message timestamps"
             checked={showTimestamps}
             onChange={setShowTimestamps}
@@ -5745,11 +5872,31 @@ function AdvancedSettings() {
             help="Uses the current draft as direction when regenerating a message or manually triggering a character response."
           />
           <ToggleSetting
+            label="Include reasoning in exports"
+            checked={includeReasoningInExports}
+            onChange={setIncludeReasoningInExports}
+            help="Includes saved hidden thinking/reasoning metadata in JSONL and text chat exports. Keep this off when sharing transcripts."
+          />
+          <ToggleSetting
             label="Debug mode"
             checked={debugMode}
             onChange={setDebugMode}
             help="Logs the prompt and response payloads sent to the model in the server console for debugging."
           />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1" title={nativeConsoleHelp}>
+              <button
+                type="button"
+                onClick={handleOpenNativeConsole}
+                disabled={!canOpenNativeConsole}
+                className={cn(SETTINGS_BUTTON_CLASS, "w-full justify-center gap-1.5 px-3 py-2 text-xs")}
+              >
+                <Terminal size="0.8125rem" className="shrink-0" />
+                <span>Open Console</span>
+              </button>
+            </div>
+            <HelpTooltip side="bottom" text={nativeConsoleHelp} />
+          </div>
         </div>
       </SettingsSection>
 
@@ -5856,20 +6003,20 @@ function AdvancedSettings() {
               );
             })}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2">
             <button
               onClick={() =>
                 setSelectedScopes(isAllScopesSelected ? [] : EXPUNGE_SCOPE_OPTIONS.map((scope) => scope.id))
               }
               disabled={isClearing}
-              className="rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               {isAllScopesSelected ? "Clear Selection" : "Select All"}
             </button>
             <button
               onClick={() => setConfirmAction("selected")}
               disabled={selectedScopes.length === 0 || isClearing}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)]/85 px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               <Trash2 size="0.8125rem" />
               Clear Selected Data
@@ -5877,7 +6024,7 @@ function AdvancedSettings() {
             <button
               onClick={() => setConfirmAction("all")}
               disabled={isClearing}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+              className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
             >
               <Trash2 size="0.8125rem" />
               Clear All Data
@@ -5891,18 +6038,18 @@ function AdvancedSettings() {
                   ? "Delete all supported data categories except Professor Mari? There is no undo."
                   : `Delete ${selectedScopes.length} selected data categor${selectedScopes.length === 1 ? "y" : "ies"}? There is no undo.`}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2">
                 <button
                   onClick={() => setConfirmAction(null)}
                   disabled={isClearing}
-                  className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-xs font-medium transition-all hover:bg-[var(--secondary)] active:scale-95 disabled:opacity-50"
+                  className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => runExpunge(confirmAction)}
                   disabled={isClearing}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--destructive)] px-3 py-2 text-xs font-medium text-white transition-all hover:opacity-90 active:scale-95 disabled:opacity-50"
+                  className={cn(SETTINGS_BUTTON_CLASS, "w-full px-3 py-2 text-xs")}
                 >
                   {isClearing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
                   Confirm Delete

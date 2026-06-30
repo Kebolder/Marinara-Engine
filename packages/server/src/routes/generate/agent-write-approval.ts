@@ -83,7 +83,7 @@ export function parseLorebookWriteApprovalText(text: string): Array<Record<strin
   const headingPattern = /^###\s+(.+)$/gm;
   const headings = [...trimmed.matchAll(headingPattern)];
   if (headings.length === 0) {
-    return [{ action: "update", name: "Approved Agent Lore", content: trimmed, keys: [], tag: "" }];
+    return [{ action: "append", name: "Approved Agent Lore", content: trimmed, keys: [], tag: "" }];
   }
 
   const updates: Array<Record<string, unknown>> = [];
@@ -132,7 +132,7 @@ export function parseLorebookWriteApprovalText(text: string): Array<Record<strin
     const content = lines.slice(contentStart).join("\n").trim();
     if (!name || !content) continue;
     updates.push({
-      action: "update",
+      action: "append",
       name,
       content,
       keys: Array.from(new Set(keys)),

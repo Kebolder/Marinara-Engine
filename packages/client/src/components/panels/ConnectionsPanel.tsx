@@ -41,6 +41,7 @@ import {
   Download,
   Search,
   ArrowUpDown,
+  AlertTriangle,
   Shuffle,
   ExternalLink,
   X,
@@ -268,6 +269,16 @@ function SidecarCard() {
             {expanded ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
           </button>
         </div>
+      </div>
+      <div className="mt-2.5 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2.5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--warning)]">
+          <AlertTriangle size="0.875rem" className="shrink-0" />
+          Local Model is not for roleplay
+        </div>
+        <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+          The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
+          background tasks only.
+        </p>
       </div>
       {/* Local model actions (only when model is downloaded) */}
       {expanded && (
@@ -648,7 +659,7 @@ function ConnectionRow({
           </div>
         )}
       </button>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 pr-24">
         <div className="truncate text-sm font-medium" title={conn.name}>
           {conn.name}
         </div>
@@ -794,8 +805,8 @@ function ConnectionFolderRow({
         role="button"
         tabIndex={0}
         aria-expanded={isExpanded}
-        aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Press F2 to rename.`}
-        title="Double-click or press F2 to rename."
+        aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Double-tap or press F2 to rename.`}
+        title="Double-click, double-tap, or press F2 to rename."
         onClick={(event) =>
           handleFolderRenameGesture(folder.id, event, {
             onSingleClick: () => onToggleCollapse(folder),
@@ -1294,7 +1305,7 @@ export function ConnectionsPanel() {
         </div>
 
         {sortedFolders.length > 0 && (
-          <p className="mari-folder-helper">Drag and drop connections to folders</p>
+          <p className="mari-folder-helper">Drag and drop connections to folders, double-click or double-tap to rename</p>
         )}
       </div>
 

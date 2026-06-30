@@ -33,6 +33,19 @@ function resolveNativePosition(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2 ? value : 0;
 }
 
+function normalizeDefaultChoices(value: unknown): Record<string, string | string[]> {
+  if (!isJsonRecord(value)) return {};
+  const normalized: Record<string, string | string[]> = {};
+  for (const [key, choice] of Object.entries(value)) {
+    if (typeof choice === "string") {
+      normalized[key] = choice;
+    } else if (Array.isArray(choice) && choice.every((item): item is string => typeof item === "string")) {
+      normalized[key] = choice;
+    }
+  }
+  return normalized;
+}
+
 // Decode a base64 data URL into validated image bytes. Returns null if the
 // payload is missing, malformed, or not a recognized image type — so callers
 // can treat optional images as "skip this one" rather than failing the whole
@@ -427,9 +440,13 @@ async function importLorebook(data: unknown, db: DB) {
       category: (lb.category as any) ?? "uncategorized",
       scanDepth: Number(lb.scanDepth ?? 2),
       tokenBudget: Number(lb.tokenBudget ?? 2048),
+      entryLimit: Number(lb.entryLimit ?? 100),
       recursiveScanning: Boolean(lb.recursiveScanning),
       maxRecursionDepth: Number(lb.maxRecursionDepth ?? 3),
       excludeFromVectorization: Boolean(lb.excludeFromVectorization),
+      vectorQueryDepth: Number(lb.vectorQueryDepth ?? 10),
+      vectorScoreThreshold: Number(lb.vectorScoreThreshold ?? 0.3),
+      vectorMaxResults: Number(lb.vectorMaxResults ?? 10),
       characterId: typeof lb.characterId === "string" ? lb.characterId : null,
       characterIds: Array.isArray(lb.characterIds)
         ? lb.characterIds.filter((value): value is string => typeof value === "string")
@@ -644,7 +661,12 @@ async function importPreset(data: unknown, db: DB) {
   const newSectionOrder = oldSectionOrder.map((sid) => sectionMap.get(sid)).filter(Boolean) as string[];
   const oldGroupOrder = safeParseJson(p.groupOrder, []) as string[];
   const newGroupOrder = oldGroupOrder.map((gid) => groupMap.get(gid)).filter(Boolean) as string[];
-  await storage.update(newPreset.id, { sectionOrder: newSectionOrder, groupOrder: newGroupOrder });
+  const defaultChoices = safeParseJson<unknown>(p.defaultChoices, {});
+  await storage.update(newPreset.id, {
+    sectionOrder: newSectionOrder,
+    groupOrder: newGroupOrder,
+    defaultChoices: normalizeDefaultChoices(defaultChoices),
+  });
 
   return {
     success: true,

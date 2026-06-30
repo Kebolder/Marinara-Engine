@@ -81,21 +81,28 @@ type ParsedMutationRequest = {
   activate?: boolean;
   cwd?: string;
   apply: boolean;
+  requiresApproval?: boolean;
   cascade: boolean;
   reason: string | null;
   generatedIds?: string[];
 };
-type ApprovalDecision = "approved" | "rejected" | "cancelled" | "timed_out";
 type PendingRecord = MariDbPendingApproval & {
   plan: Plan;
   command: string;
-  resolve: (decision: ApprovalDecision) => void;
+  historyId: string | null;
+  journalPath: string | null;
   timer: NodeJS.Timeout;
 };
 
 type MariCliEnvelope = {
   argv?: string[];
   command?: string;
+  cwd?: string;
+  sessionId?: string;
+};
+
+type MariAppDataActionEnvelope = Row & {
+  action?: unknown;
   cwd?: string;
   sessionId?: string;
 };
@@ -130,10 +137,6 @@ const THEME_TABLE = "custom_themes";
 const THEME_ACTIVE_TRUE = "true";
 const THEME_ACTIVE_FALSE = "false";
 const BOOLEAN_FLAGS = new Set(["active", "activate", "apply", "cascade", "dry-run", "jsonl", "parsed", "raw", "strict"]);
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function truncateOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): { text: string; truncated: boolean } {
   if (value.length <= limit) return { text: value, truncated: false };
@@ -635,6 +638,165 @@ function hasFlag(flags: Map<string, string | boolean>, name: string): boolean {
   return flags.has(name) && flags.get(name) !== false;
 }
 
+function normalizeAppDataActionName(action: string): string {
+  let key = action.trim().toLowerCase().replace(/[-_\s]+/g, "");
+  key = key
+    .replace(/^characters\./, "character.")
+    .replace(/^personas\./, "persona.")
+    .replace(/^lorebooks\./, "lorebook.")
+    .replace(/^themes\./, "theme.");
+  const aliases: Record<string, string> = {
+    "lorebook.entry.add": "lorebook.addentry",
+    "lorebook.entry.create": "lorebook.addentry",
+    "lorebook.entries.add": "lorebook.addentry",
+    "lorebook.entries.create": "lorebook.addentry",
+    "lorebook.entry.update": "lorebook.updateentry",
+    "lorebook.entries.update": "lorebook.updateentry",
+    "theme.set": "theme.setactive",
+    "theme.activate": "theme.setactive",
+  };
+  return aliases[key] ?? key;
+}
+
+function firstString(source: Row, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function requiredString(source: Row, keys: string[], label: string): string {
+  const value = firstString(source, keys);
+  if (!value) throw new Error(`${label} is required`);
+  return value;
+}
+
+function firstBoolean(source: Row, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes", "on", "enabled"].includes(normalized)) return true;
+      if (["false", "0", "no", "off", "disabled"].includes(normalized)) return false;
+    }
+  }
+  return undefined;
+}
+
+function appDataCreateApply(source: Row): boolean {
+  return firstBoolean(source, ["apply"]) !== false;
+}
+
+function firstNumber(source: Row, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function stringListValue(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return value.map((entry) => (typeof entry === "string" ? entry.trim() : String(entry).trim())).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[,|]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+  return undefined;
+}
+
+function firstStringList(source: Row, keys: string[]): string[] | undefined {
+  for (const key of keys) {
+    const value = stringListValue(source[key]);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function collectActionRecords(source: Row, keys: string[]): Row {
+  const out: Row = {};
+  for (const key of keys) {
+    const value = source[key];
+    if (isRecord(value)) Object.assign(out, clone(value));
+  }
+  return out;
+}
+
+function actionDataWithTopLevel(source: Row, recordKeys: string[], scalarKeys: string[]): Row {
+  const out = collectActionRecords(source, recordKeys);
+  for (const key of scalarKeys) {
+    if (source[key] !== undefined) out[key] = source[key];
+  }
+  return out;
+}
+
+function normalizeCharacterActionData(input: Row): Row {
+  const out: Row = { ...input };
+  if (out.firstMes !== undefined && out.first_mes === undefined) out.first_mes = out.firstMes;
+  if (out.creatorNotes !== undefined && out.creator_notes === undefined) out.creator_notes = out.creatorNotes;
+  const extensions = isRecord(out.extensions) ? { ...(out.extensions as Row) } : {};
+  if (typeof out.backstory === "string") {
+    extensions.backstory = out.backstory;
+    delete out.backstory;
+  }
+  if (typeof out.appearance === "string") {
+    extensions.appearance = out.appearance;
+    delete out.appearance;
+  }
+  if (Object.keys(extensions).length > 0) out.extensions = extensions;
+  return out;
+}
+
+function actionCommandPayload(envelope: MariAppDataActionEnvelope): Row {
+  const out: Row = {};
+  for (const [key, value] of Object.entries(envelope)) {
+    if (key === "cwd" || key === "sessionId") continue;
+    out[key] = typeof value === "string" && value.length > 600 ? truncateStr(value, 600) : value;
+  }
+  return out;
+}
+
+function formatAppDataActionCommand(action: string, envelope: MariAppDataActionEnvelope): string {
+  return `app_data ${action} ${stableJson(actionCommandPayload(envelope))}`;
+}
+
+function assignStringField(target: Row, source: Row, sourceKeys: string[], targetKey: string): boolean {
+  const value = firstString(source, sourceKeys);
+  if (value === undefined) return false;
+  target[targetKey] = value;
+  return true;
+}
+
+function assignNumberField(target: Row, source: Row, sourceKeys: string[], targetKey: string): boolean {
+  const value = firstNumber(source, sourceKeys);
+  if (value === undefined) return false;
+  target[targetKey] = value;
+  return true;
+}
+
+function assignListField(target: Row, source: Row, sourceKeys: string[], targetKey: string): boolean {
+  const value = firstStringList(source, sourceKeys);
+  if (value === undefined) return false;
+  target[targetKey] = value;
+  return true;
+}
+
+function assignBooleanTextField(target: Row, source: Row, sourceKeys: string[], targetKey: string): boolean {
+  const value = firstBoolean(source, sourceKeys);
+  if (value === undefined) return false;
+  target[targetKey] = value ? "true" : "false";
+  return true;
+}
+
 function createRequestIdAllocator(request: ParsedMutationRequest): () => string {
   let index = 0;
   return () => {
@@ -717,6 +879,9 @@ function summarizeLorebookRow(row: Row): Row {
     enabled: row.enabled !== "false",
     scanDepth: row.scanDepth,
     tokenBudget: row.tokenBudget,
+    vectorQueryDepth: row.vectorQueryDepth,
+    vectorScoreThreshold: row.vectorScoreThreshold,
+    vectorMaxResults: row.vectorMaxResults,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -976,6 +1141,726 @@ export class MariDbService {
     }
   }
 
+  async executeAction(envelope: MariAppDataActionEnvelope): Promise<MariDbCommandResult> {
+    let command = "app_data";
+    try {
+      const action = requiredString(envelope, ["action", "type"], "app_data action");
+      command = formatAppDataActionCommand(action, envelope);
+      const context = {
+        command,
+        sessionId: typeof envelope.sessionId === "string" && envelope.sessionId.trim() ? envelope.sessionId.trim() : "mari-app-data",
+        cwd: typeof envelope.cwd === "string" ? envelope.cwd : undefined,
+      };
+      const key = normalizeAppDataActionName(action);
+      if (key.startsWith("character.")) return await this.executeCharacterAction(key.slice("character.".length), envelope, context);
+      if (key.startsWith("persona.")) return await this.executePersonaAction(key.slice("persona.".length), envelope, context);
+      if (key.startsWith("lorebook.")) return await this.executeLorebookAction(key.slice("lorebook.".length), envelope, context);
+      if (key.startsWith("theme.")) return await this.executeThemeAction(key.slice("theme.".length), envelope, context);
+      return {
+        ok: false,
+        mode: "read",
+        command,
+        error:
+          "Unsupported app_data action. Use character.*, persona.*, lorebook.*, or theme.* actions for structured no-shell app-data work.",
+      };
+    } catch (err) {
+      logger.warn(err, "[mari-db] structured app_data action failed");
+      return { ok: false, mode: "read", command, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private async executeCharacterAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const search = firstString(args, ["search", "query"])?.toLowerCase();
+        const rows = (await this.rawRows("characters")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        const summaries = rows
+          .map(summarizeCharacterRow)
+          .filter((summary) => !search || JSON.stringify(summary).toLowerCase().includes(search));
+        return { ok: true, mode: "read", command: context.command, output: summaries.slice(0, limit) };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "characterId"], "character id");
+        const row = await this.getRawById(getMeta("characters"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseRow("characters", row) : null };
+      }
+      case "search": {
+        const query = requiredString(args, ["query", "search"], "character search query").toLowerCase();
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("characters"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(summarizeCharacterRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const data = normalizeCharacterActionData(
+          actionDataWithTopLevel(args, ["data", "card", "character"], [
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "first_mes",
+            "firstMes",
+            "mes_example",
+            "creator_notes",
+            "creatorNotes",
+            "backstory",
+            "appearance",
+            "tags",
+            "comment",
+          ]),
+        );
+        const name = requiredString(data, ["name"], "character name");
+        const comment = firstString(data, ["comment"]) ?? "";
+        delete data.comment;
+        const timestamp = now();
+        const id = firstString(args, ["id", "characterId"]) ?? newId();
+        const row: Row = {
+          id,
+          data: buildMinimalCharacterData(name, data, new Map()),
+          comment,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        return this.executeMutation(
+          {
+            kind: "insert",
+            table: "characters",
+            id,
+            row,
+            apply: appDataCreateApply(args),
+            requiresApproval: false,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "update": {
+        const id = requiredString(args, ["id", "characterId"], "character id");
+        const existing = await this.getRawById(getMeta("characters"), id);
+        if (!existing) throw new Error(`Character ${id} not found`);
+        const existingDataRaw = tryParseJsonColumn(existing, "data");
+        const existingData = isRecord(existingDataRaw) ? existingDataRaw : {};
+        const patchData = normalizeCharacterActionData(
+          actionDataWithTopLevel(args, ["patch", "data", "card", "character"], [
+            "name",
+            "description",
+            "personality",
+            "scenario",
+            "first_mes",
+            "firstMes",
+            "mes_example",
+            "creator_notes",
+            "creatorNotes",
+            "backstory",
+            "appearance",
+            "tags",
+            "comment",
+          ]),
+        );
+        const comment = firstString(patchData, ["comment"]) ?? (typeof existing.comment === "string" ? existing.comment : "");
+        delete patchData.comment;
+        if (Object.keys(patchData).length === 0 && comment === (typeof existing.comment === "string" ? existing.comment : "")) {
+          throw new Error("character.update needs a patch field such as name, description, personality, scenario, firstMes, creatorNotes, backstory, appearance, tags, or comment");
+        }
+        const name = firstString(patchData, ["name"]) ?? (typeof existingData.name === "string" ? existingData.name : "");
+        const row: Row = {
+          id,
+          data: buildMinimalCharacterData(name, deepMerge(existingData, patchData) as Row, new Map()),
+          comment,
+          avatarPath: existing.avatarPath ?? null,
+          spriteFolderPath: existing.spriteFolderPath ?? null,
+          createdAt: existing.createdAt,
+          updatedAt: now(),
+        };
+        return this.executeMutation(
+          {
+            kind: "replace",
+            table: "characters",
+            id,
+            row,
+            apply: firstBoolean(args, ["apply"]) === true,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported character app_data action." };
+    }
+  }
+
+  private async executePersonaAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("personas")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizePersonaRow) };
+      }
+      case "active": {
+        const row = (await this.rawRows("personas")).find((candidate) => candidate.isActive === "true") ?? null;
+        return { ok: true, mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "personaId"], "persona id");
+        const row = await this.getRawById(getMeta("personas"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseRow("personas", row) : null };
+      }
+      case "search": {
+        const query = requiredString(args, ["query", "search"], "persona search query").toLowerCase();
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("personas"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(summarizePersonaRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const data = actionDataWithTopLevel(args, ["data", "persona", "row"], [
+          "name",
+          "description",
+          "personality",
+          "scenario",
+          "backstory",
+          "appearance",
+          "comment",
+          "creator",
+          "creatorNotes",
+          "creator_notes",
+          "tags",
+        ]);
+        const name = requiredString(data, ["name"], "persona name");
+        const timestamp = now();
+        const id = firstString(args, ["id", "personaId"]) ?? newId();
+        const row: Row = {
+          id,
+          name,
+          comment: firstString(data, ["comment"]) ?? "",
+          creator: firstString(data, ["creator"]) ?? "",
+          personaVersion: firstString(data, ["personaVersion", "persona_version"]) ?? "1.0",
+          creatorNotes: firstString(data, ["creatorNotes", "creator_notes", "creator-notes"]) ?? "",
+          description: firstString(data, ["description"]) ?? "",
+          personality: firstString(data, ["personality"]) ?? "",
+          scenario: firstString(data, ["scenario"]) ?? "",
+          backstory: firstString(data, ["backstory"]) ?? "",
+          appearance: firstString(data, ["appearance"]) ?? "",
+          isActive: "false",
+          nameColor: "",
+          dialogueColor: "",
+          boxColor: "",
+          trackerCardColors: { mode: "chat" },
+          personaStats: "",
+          tags: firstStringList(data, ["tags"]) ?? [],
+          savedStatusOptions: [],
+          avatarCrop: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        return this.executeMutation(
+          {
+            kind: "insert",
+            table: "personas",
+            id,
+            row,
+            apply: appDataCreateApply(args),
+            requiresApproval: false,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "update": {
+        const id = requiredString(args, ["id", "personaId"], "persona id");
+        const data = actionDataWithTopLevel(args, ["patch", "data", "persona"], [
+          "name",
+          "description",
+          "personality",
+          "scenario",
+          "backstory",
+          "appearance",
+          "comment",
+          "creator",
+          "creatorNotes",
+          "creator_notes",
+          "tags",
+        ]);
+        const patch: Row = { updatedAt: now() };
+        assignStringField(patch, data, ["name"], "name");
+        assignStringField(patch, data, ["description"], "description");
+        assignStringField(patch, data, ["personality"], "personality");
+        assignStringField(patch, data, ["scenario"], "scenario");
+        assignStringField(patch, data, ["backstory"], "backstory");
+        assignStringField(patch, data, ["appearance"], "appearance");
+        assignStringField(patch, data, ["comment"], "comment");
+        assignStringField(patch, data, ["creator"], "creator");
+        assignStringField(patch, data, ["creatorNotes", "creator_notes", "creator-notes"], "creatorNotes");
+        assignListField(patch, data, ["tags"], "tags");
+        if (Object.keys(patch).length <= 1) {
+          throw new Error("persona.update needs a patch field such as name, description, personality, scenario, backstory, appearance, tags, comment, creator, or creatorNotes");
+        }
+        return this.executeMutation(
+          {
+            kind: "patch",
+            table: "personas",
+            id,
+            patch,
+            apply: firstBoolean(args, ["apply"]) === true,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported persona app_data action." };
+    }
+  }
+
+  private assignLorebookActionFields(target: Row, source: Row): boolean {
+    let changed = false;
+    changed = assignStringField(target, source, ["name"], "name") || changed;
+    changed = assignStringField(target, source, ["description"], "description") || changed;
+    changed = assignStringField(target, source, ["category"], "category") || changed;
+    changed = assignListField(target, source, ["tags"], "tags") || changed;
+    changed = assignBooleanTextField(target, source, ["isGlobal", "global"], "isGlobal") || changed;
+    changed = assignBooleanTextField(target, source, ["enabled"], "enabled") || changed;
+    if (firstBoolean(source, ["enable"]) === true) {
+      target.enabled = "true";
+      changed = true;
+    }
+    if (firstBoolean(source, ["disable"]) === true) {
+      target.enabled = "false";
+      changed = true;
+    }
+    changed = assignNumberField(target, source, ["scanDepth", "scan_depth"], "scanDepth") || changed;
+    changed = assignNumberField(target, source, ["tokenBudget", "token_budget"], "tokenBudget") || changed;
+    changed = assignNumberField(target, source, ["entryLimit", "entry_limit"], "entryLimit") || changed;
+    changed = assignBooleanTextField(target, source, ["recursiveScanning", "recursive"], "recursiveScanning") || changed;
+    changed = assignNumberField(target, source, ["maxRecursionDepth", "max_recursion_depth"], "maxRecursionDepth") || changed;
+    changed = assignBooleanTextField(target, source, ["excludeFromVectorization", "vectorsDisabled"], "excludeFromVectorization") || changed;
+    changed = assignNumberField(target, source, ["vectorQueryDepth", "vector_query_depth"], "vectorQueryDepth") || changed;
+    changed =
+      assignNumberField(target, source, ["vectorScoreThreshold", "vector_score_threshold"], "vectorScoreThreshold") ||
+      changed;
+    changed = assignNumberField(target, source, ["vectorMaxResults", "vector_max_results"], "vectorMaxResults") || changed;
+    if (isRecord(source.scope)) {
+      target.scope = clone(source.scope);
+      changed = true;
+    }
+    return changed;
+  }
+
+  private assignLorebookEntryActionFields(target: Row, source: Row): boolean {
+    let changed = false;
+    changed = assignStringField(target, source, ["name"], "name") || changed;
+    changed = assignStringField(target, source, ["content"], "content") || changed;
+    changed = assignStringField(target, source, ["description"], "description") || changed;
+    changed = assignListField(target, source, ["keys"], "keys") || changed;
+    changed = assignListField(target, source, ["secondaryKeys", "secondary_keys"], "secondaryKeys") || changed;
+    changed = assignBooleanTextField(target, source, ["enabled"], "enabled") || changed;
+    if (firstBoolean(source, ["enable"]) === true) {
+      target.enabled = "true";
+      changed = true;
+    }
+    if (firstBoolean(source, ["disable"]) === true) {
+      target.enabled = "false";
+      changed = true;
+    }
+    changed = assignBooleanTextField(target, source, ["constant"], "constant") || changed;
+    changed = assignNumberField(target, source, ["order"], "order") || changed;
+    changed = assignNumberField(target, source, ["position"], "position") || changed;
+    changed = assignNumberField(target, source, ["depth"], "depth") || changed;
+    changed = assignStringField(target, source, ["role"], "role") || changed;
+    changed = assignStringField(target, source, ["group"], "group") || changed;
+    return changed;
+  }
+
+  private async executeLorebookAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const globalOnly = firstBoolean(args, ["global", "isGlobal"]) === true;
+        const rows = (await this.rawRows("lorebooks"))
+          .filter((row) => !globalOnly || row.isGlobal === "true")
+          .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizeLorebookRow) };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "lorebookId"], "lorebook id");
+        const row = await this.getRawById(getMeta("lorebooks"), id);
+        if (!row) return { ok: false, mode: "read", command: context.command, output: null };
+        const entryCount = (await this.rawRows("lorebook_entries")).filter((entry) => entry.lorebookId === id).length;
+        return { ok: true, mode: "read", command: context.command, output: { ...parseRow("lorebooks", row), entryCount } };
+      }
+      case "entries": {
+        const lorebookId = requiredString(args, ["lorebookId", "id"], "lorebook id");
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 100, 2000);
+        const entries = (await this.rawRows("lorebook_entries"))
+          .filter((entry) => entry.lorebookId === lorebookId)
+          .sort((a, b) => Number(a.order ?? 100) - Number(b.order ?? 100))
+          .slice(0, limit)
+          .map((row) => {
+            const parsed = parseRow("lorebook_entries", row);
+            return {
+              id: parsed.id,
+              lorebookId: parsed.lorebookId,
+              name: parsed.name,
+              enabled: parsed.enabled,
+              constant: parsed.constant,
+              keys: parsed.keys,
+              content: typeof parsed.content === "string" ? truncateStr(parsed.content, 200) : "",
+              order: parsed.order,
+              createdAt: parsed.createdAt,
+              updatedAt: parsed.updatedAt,
+            };
+          });
+        return { ok: true, mode: "read", command: context.command, output: entries };
+      }
+      case "search": {
+        const query = requiredString(args, ["query", "search"], "lorebook search query").toLowerCase();
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("lorebooks"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(summarizeLorebookRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const data = actionDataWithTopLevel(args, ["data", "lorebook", "row"], [
+          "name",
+          "description",
+          "category",
+          "tags",
+          "global",
+          "isGlobal",
+          "enabled",
+          "scanDepth",
+          "tokenBudget",
+          "entryLimit",
+          "recursiveScanning",
+          "recursive",
+          "maxRecursionDepth",
+          "excludeFromVectorization",
+          "vectorQueryDepth",
+          "vectorScoreThreshold",
+          "vectorMaxResults",
+          "scope",
+        ]);
+        const name = requiredString(data, ["name"], "lorebook name");
+        const timestamp = now();
+        const id = firstString(args, ["id", "lorebookId"]) ?? newId();
+        const row: Row = {
+          id,
+          name,
+          description: "",
+          category: "uncategorized",
+          isGlobal: "false",
+          enabled: "true",
+          scanDepth: 2,
+          tokenBudget: 2048,
+          entryLimit: 100,
+          recursiveScanning: "false",
+          maxRecursionDepth: 3,
+          excludeFromVectorization: "false",
+          vectorQueryDepth: 10,
+          vectorScoreThreshold: 0.3,
+          vectorMaxResults: 10,
+          scope: { mode: "all", chatIds: [] },
+          tags: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        this.assignLorebookActionFields(row, data);
+        return this.executeMutation(
+          {
+            kind: "insert",
+            table: "lorebooks",
+            id,
+            row,
+            apply: appDataCreateApply(args),
+            requiresApproval: false,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "update": {
+        const id = requiredString(args, ["id", "lorebookId"], "lorebook id");
+        const data = actionDataWithTopLevel(args, ["patch", "data", "lorebook"], [
+          "name",
+          "description",
+          "category",
+          "tags",
+          "global",
+          "isGlobal",
+          "enabled",
+          "enable",
+          "disable",
+          "scanDepth",
+          "tokenBudget",
+          "entryLimit",
+          "recursiveScanning",
+          "recursive",
+          "maxRecursionDepth",
+          "excludeFromVectorization",
+          "vectorQueryDepth",
+          "vectorScoreThreshold",
+          "vectorMaxResults",
+          "scope",
+        ]);
+        const patch: Row = { updatedAt: now() };
+        this.assignLorebookActionFields(patch, data);
+        if (Object.keys(patch).length <= 1) {
+          throw new Error("lorebook.update needs a patch field such as name, description, category, tags, enabled, global, scanDepth, tokenBudget, entryLimit, recursiveScanning, excludeFromVectorization, vectorQueryDepth, vectorScoreThreshold, or vectorMaxResults");
+        }
+        return this.executeMutation(
+          {
+            kind: "patch",
+            table: "lorebooks",
+            id,
+            patch,
+            apply: firstBoolean(args, ["apply"]) === true,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "addentry":
+      case "createentry": {
+        const lorebookId = requiredString(args, ["lorebookId"], "lorebook id");
+        const lorebookExists = await this.getRawById(getMeta("lorebooks"), lorebookId);
+        if (!lorebookExists) throw new Error(`Lorebook ${lorebookId} not found`);
+        const data = actionDataWithTopLevel(args, ["data", "entry", "row"], [
+          "name",
+          "content",
+          "description",
+          "keys",
+          "secondaryKeys",
+          "enabled",
+          "constant",
+          "order",
+          "position",
+          "depth",
+          "role",
+          "group",
+        ]);
+        const entryName = requiredString(data, ["name"], "lorebook entry name");
+        const timestamp = now();
+        const id = firstString(args, ["entryId", "id"]) ?? newId();
+        const row: Row = {
+          id,
+          lorebookId,
+          name: entryName,
+          content: "",
+          description: "",
+          keys: [],
+          secondaryKeys: [],
+          enabled: "true",
+          constant: "false",
+          selective: "false",
+          selectiveLogic: "and",
+          matchWholeWords: "false",
+          caseSensitive: "false",
+          useRegex: "false",
+          characterFilterMode: "any",
+          characterFilterIds: [],
+          characterTagFilterMode: "any",
+          characterTagFilters: [],
+          generationTriggerFilterMode: "any",
+          generationTriggerFilters: [],
+          additionalMatchingSources: [],
+          position: 0,
+          depth: 4,
+          order: 100,
+          role: "system",
+          group: "",
+          relationships: {},
+          dynamicState: {},
+          activationConditions: [],
+          preventRecursion: "true",
+          excludeRecursion: "false",
+          delayUntilRecursion: "false",
+          excludeFromVectorization: "false",
+          locked: "false",
+          tag: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        this.assignLorebookEntryActionFields(row, data);
+        return this.executeMutation(
+          {
+            kind: "insert",
+            table: "lorebook_entries",
+            id,
+            row,
+            apply: appDataCreateApply(args),
+            requiresApproval: false,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      case "updateentry": {
+        const entryId = requiredString(args, ["entryId", "id"], "lorebook entry id");
+        const entryExists = await this.getRawById(getMeta("lorebook_entries"), entryId);
+        if (!entryExists) throw new Error(`Lorebook entry ${entryId} not found`);
+        const data = actionDataWithTopLevel(args, ["patch", "data", "entry"], [
+          "name",
+          "content",
+          "description",
+          "keys",
+          "secondaryKeys",
+          "enabled",
+          "enable",
+          "disable",
+          "constant",
+          "order",
+          "position",
+          "depth",
+          "role",
+          "group",
+        ]);
+        const patch: Row = { updatedAt: now() };
+        this.assignLorebookEntryActionFields(patch, data);
+        if (Object.keys(patch).length <= 1) {
+          throw new Error("lorebook.updateEntry needs entryId plus a patch field such as name, content, keys, description, enabled, constant, or order");
+        }
+        return this.executeMutation(
+          {
+            kind: "patch",
+            table: "lorebook_entries",
+            id: entryId,
+            patch,
+            apply: firstBoolean(args, ["apply"]) === true,
+            cascade: false,
+            reason: firstString(args, ["reason"]) ?? null,
+            cwd: context.cwd,
+          },
+          context.command,
+          context.sessionId,
+        );
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported lorebook app_data action." };
+    }
+  }
+
+  private async executeThemeAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const activeOnly = firstBoolean(args, ["active"]) === true;
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows(THEME_TABLE))
+          .filter((row) => !activeOnly || row.isActive === THEME_ACTIVE_TRUE)
+          .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
+        return { ok: true, mode: "read", command: context.command, output: rows.slice(0, limit).map(summarizeThemeRow) };
+      }
+      case "active": {
+        const row = (await this.rawRows(THEME_TABLE)).find((candidate) => candidate.isActive === THEME_ACTIVE_TRUE) ?? null;
+        return { ok: true, mode: "read", command: context.command, output: row ? parseThemeRow(row) : null };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "themeId"], "theme id");
+        const row = await this.getRawById(getMeta(THEME_TABLE), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseThemeRow(row) : null };
+      }
+      case "create": {
+        const data = actionDataWithTopLevel(args, ["data", "theme", "row"], ["name", "css", "activate", "active", "installedAt"]);
+        const id = firstString(args, ["id", "themeId"]) ?? newId();
+        const activate = firstBoolean(data, ["activate", "active"]) === true;
+        const request: ParsedMutationRequest = {
+          kind: "theme-create",
+          table: THEME_TABLE,
+          id,
+          name: requiredString(data, ["name"], "theme name"),
+          css: requiredString(data, ["css"], "theme css"),
+          installedAt: firstString(data, ["installedAt", "installed_at"]) ?? now(),
+          activate,
+          apply: appDataCreateApply(args),
+          requiresApproval: activate ? undefined : false,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const data = actionDataWithTopLevel(args, ["patch", "data", "theme"], ["name", "css"]);
+        const request: ParsedMutationRequest = {
+          kind: "theme-update",
+          table: THEME_TABLE,
+          id: requiredString(args, ["id", "themeId"], "theme id"),
+          name: firstString(data, ["name"]),
+          css: firstString(data, ["css"]),
+          apply: firstBoolean(args, ["apply"]) === true,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        if (request.name === undefined && request.css === undefined) throw new Error("theme.update needs a patch with name or css");
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "setactive": {
+        const rawId = firstString(args, ["id", "themeId"]);
+        const id = rawId && !["default", "none", "null", "off"].includes(rawId.toLowerCase()) ? rawId : undefined;
+        const request: ParsedMutationRequest = {
+          kind: "theme-set-active",
+          table: THEME_TABLE,
+          id,
+          apply: firstBoolean(args, ["apply"]) === true,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported theme app_data action." };
+    }
+  }
+
   getPendingApprovals(): MariDbPendingApproval[] {
     return Array.from(this.pending.values()).map((record) => this.pendingView(record));
   }
@@ -1006,39 +1891,44 @@ export class MariDbService {
     await writeFile(this.historyPath(), "", "utf8");
   }
 
-  async approveAndWait(id: string, timeoutMs = 15_000): Promise<{ approval: MariDbPendingApproval; history: MariDbHistoryEntry | null; completed: boolean } | null> {
+  async keepAppliedReviewAndWait(id: string): Promise<{ approval: MariDbPendingApproval; history: MariDbHistoryEntry | null; completed: boolean } | null> {
     const record = this.pending.get(id);
     if (!record) return null;
     const approval = this.pendingView(record);
-    const ok = this.approve(id);
-    if (!ok) return null;
-
-    const deadline = Date.now() + timeoutMs;
-    let history = this.findApprovalCompletion(approval);
-    while (!history && Date.now() < deadline) {
-      await sleep(100);
-      history = this.findApprovalCompletion(approval);
-    }
-
-    return { approval, history, completed: !!history };
+    const history = await this.keepAppliedReview(id);
+    return { approval, history, completed: true };
   }
 
-  approve(id: string): boolean {
+  async keepAppliedReview(id: string): Promise<MariDbHistoryEntry | null> {
     const record = this.pending.get(id);
-    if (!record) return false;
+    if (!record) return null;
     clearTimeout(record.timer);
     this.pending.delete(id);
-    record.resolve("approved");
-    return true;
+    const history = await this.recordHistory({
+      plan: record.plan,
+      command: record.command,
+      sessionId: record.sessionId,
+      status: "kept",
+      journalPath: record.journalPath,
+    });
+    return history;
   }
 
-  reject(id: string): boolean {
+  async restoreAppliedReview(id: string): Promise<{ approval: MariDbPendingApproval; history: MariDbHistoryEntry } | null> {
     const record = this.pending.get(id);
-    if (!record) return false;
+    if (!record) return null;
+    const approval = this.pendingView(record);
     clearTimeout(record.timer);
     this.pending.delete(id);
-    record.resolve("rejected");
-    return true;
+    await this.restorePlan(record.plan);
+    const history = await this.recordHistory({
+      plan: record.plan,
+      command: record.command,
+      sessionId: record.sessionId,
+      status: "restored",
+      journalPath: record.journalPath,
+    });
+    return { approval, history };
   }
 
   async validate(table?: string | null): Promise<MariDbValidationResult> {
@@ -2354,56 +3244,57 @@ export class MariDbService {
       };
     }
 
-    const decision = await this.requestApproval(plan, command, sessionId);
-    if (decision !== "approved") {
-      await this.recordHistory({ plan, command, sessionId, status: decision, journalPath: null });
+    if (request.requiresApproval === false) {
+      try {
+        const journalPath = await this.applyPlan(plan);
+        await this.recordHistory({ plan, command, sessionId, status: "approved", journalPath });
+        return {
+          ok: true,
+          mode: "apply",
+          command,
+          summary: plan.summary,
+          validation: plan.validation,
+          approval: { status: "not_required", operationHash: plan.operationHash },
+          journalPath,
+        };
+      } catch (err) {
+        logger.error(err, "[mari-db] approval-free apply failed");
+        await this.recordHistory({ plan, command, sessionId, status: "failed", journalPath: null });
+        return {
+          ok: false,
+          mode: "apply",
+          command,
+          summary: plan.summary,
+          validation: plan.validation,
+          approval: { status: "not_required", operationHash: plan.operationHash },
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }
+
+    try {
+      const journalPath = await this.applyPlan(plan);
+      const history = await this.recordHistory({ plan, command, sessionId, status: "approved", journalPath });
+      const review = this.createAppliedReview(plan, command, sessionId, journalPath, history.id);
+      return {
+        ok: true,
+        mode: "apply",
+        command,
+        summary: plan.summary,
+        validation: plan.validation,
+        approval: { status: "pending", id: review.id, operationHash: plan.operationHash },
+        journalPath,
+      };
+    } catch (err) {
+      logger.error(err, "[mari-db] apply failed");
+      await this.recordHistory({ plan, command, sessionId, status: "failed", journalPath: null });
       return {
         ok: false,
         mode: "apply",
         command,
         summary: plan.summary,
         validation: plan.validation,
-        approval: { status: decision, operationHash: plan.operationHash },
-        error: `Mutation ${decision}`,
-      };
-    }
-
-    const current = await this.planMutation(request, command, planTimestamp);
-    if (current.operationHash !== plan.operationHash) {
-      await this.recordHistory({ plan: current, command, sessionId, status: "state_changed", journalPath: null });
-      return {
-        ok: false,
-        mode: "apply",
-        command,
-        summary: current.summary,
-        validation: current.validation,
-        approval: { status: "state_changed", operationHash: current.operationHash },
-        error: "Database state changed before approval was applied; rerun the dry-run.",
-      };
-    }
-
-    try {
-      const journalPath = await this.applyPlan(current);
-      await this.recordHistory({ plan: current, command, sessionId, status: "approved", journalPath });
-      return {
-        ok: true,
-        mode: "apply",
-        command,
-        summary: current.summary,
-        validation: current.validation,
-        approval: { status: "approved", operationHash: current.operationHash },
-        journalPath,
-      };
-    } catch (err) {
-      logger.error(err, "[mari-db] apply failed");
-      await this.recordHistory({ plan: current, command, sessionId, status: "failed", journalPath: null });
-      return {
-        ok: false,
-        mode: "apply",
-        command,
-        summary: current.summary,
-        validation: current.validation,
-        approval: { status: "approved", operationHash: current.operationHash },
+        approval: { status: "not_required", operationHash: plan.operationHash },
         error: err instanceof Error ? err.message : String(err),
       };
     }
@@ -2818,6 +3709,51 @@ export class MariDbService {
     return journalPath;
   }
 
+  private async restorePlan(plan: Plan): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const insertedRows = [...plan.changes].reverse().filter((change) => change.action === "insert");
+      for (const change of insertedRows) {
+        const meta = getMeta(change.table);
+        const pk = getPrimary(meta);
+        await tx.delete(meta.table as any).where(eq(meta.byKey.get(pk)!.column as any, change.id));
+      }
+
+      const updatedRows = plan.changes.filter((change) => change.action === "update" || change.action === "replace");
+      for (const change of updatedRows) {
+        if (!change.beforeRaw) continue;
+        const meta = getMeta(change.table);
+        const pk = getPrimary(meta);
+        await tx
+          .update(meta.table as any)
+          .set(knownColumnPatch(meta, change.beforeRaw))
+          .where(eq(meta.byKey.get(pk)!.column as any, change.id));
+      }
+
+      const deletedRows = plan.changes.filter((change) => change.action === "delete");
+      for (const change of [...deletedRows].reverse()) {
+        const meta = getMeta(change.table);
+        const pk = getPrimary(meta);
+        await tx.delete(meta.table as any).where(eq(meta.byKey.get(pk)!.column as any, change.id));
+      }
+      for (const change of deletedRows) {
+        if (!change.beforeRaw) continue;
+        const meta = getMeta(change.table);
+        await tx.insert(meta.table as any).values(knownColumnPatch(meta, change.beforeRaw));
+      }
+    });
+
+    const validation = await this.validate();
+    if (validation.status === "blocked") {
+      const touchedRows = new Set(plan.changes.map((change) => `${change.table}:${change.id}`));
+      const touchedErrors = validation.errors.filter((issue) => issue.table && issue.id != null && touchedRows.has(`${issue.table}:${String(issue.id)}`));
+      if (touchedErrors.length > 0) {
+        throw new Error(`Post-restore validation failed: ${touchedErrors.map((issue) => issue.message).join("; ")}`);
+      }
+      logger.warn("[mari-db] post-restore validation still reports unrelated errors: %s", validation.errors.map((issue) => issue.message).join("; "));
+    }
+    await flushDB();
+  }
+
   private async writeJournal(operationId: string, plan: Plan): Promise<string> {
     const dir = this.journalDir();
     await mkdir(dir, { recursive: true });
@@ -2839,56 +3775,46 @@ export class MariDbService {
     return path;
   }
 
-  private async requestApproval(plan: Plan, command: string, sessionId: string): Promise<ApprovalDecision> {
+  private createAppliedReview(
+    plan: Plan,
+    command: string,
+    sessionId: string,
+    journalPath: string | null,
+    historyId: string | null,
+  ): MariDbPendingApproval {
     const id = newId();
     const requestedAt = now();
     const expiresAt = new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString();
-    return new Promise<ApprovalDecision>((resolveDecision) => {
-      const timer = setTimeout(() => {
-        const record = this.pending.get(id);
-        if (!record) return;
-        this.pending.delete(id);
-        resolveDecision("timed_out");
-      }, APPROVAL_TIMEOUT_MS);
-      timer.unref?.();
-      const record: PendingRecord = {
-        id,
-        sessionId,
-        command,
-        reason: plan.reason,
-        operationHash: plan.operationHash,
-        requestedAt,
-        expiresAt,
-        affectedTables: plan.summary.affectedTables,
-        affectedRows: plan.summary.affectedRows,
-        validationStatus: plan.validation.status,
-        diffPreview: plan.summary.preview,
-        diffTruncated: plan.summary.truncated,
-        plan,
-        resolve: resolveDecision,
-        timer,
-      };
-      this.pending.set(id, record);
-    });
+    const timer = setTimeout(() => {
+      this.pending.delete(id);
+    }, APPROVAL_TIMEOUT_MS);
+    timer.unref?.();
+    const record: PendingRecord = {
+      kind: "applied_review",
+      id,
+      sessionId,
+      command,
+      reason: plan.reason,
+      operationHash: plan.operationHash,
+      requestedAt,
+      expiresAt,
+      affectedTables: plan.summary.affectedTables,
+      affectedRows: plan.summary.affectedRows,
+      validationStatus: plan.validation.status,
+      diffPreview: plan.summary.preview,
+      diffTruncated: plan.summary.truncated,
+      plan,
+      historyId,
+      journalPath,
+      timer,
+    };
+    this.pending.set(id, record);
+    return this.pendingView(record);
   }
 
   private pendingView(record: PendingRecord): MariDbPendingApproval {
-    const { plan: _plan, resolve: _resolve, timer: _timer, ...view } = record;
+    const { plan: _plan, historyId: _historyId, journalPath: _journalPath, timer: _timer, ...view } = record;
     return view;
-  }
-
-  private findApprovalCompletion(approval: MariDbPendingApproval): MariDbHistoryEntry | null {
-    return (
-      [...this.history]
-        .reverse()
-        .find(
-          (entry) =>
-            entry.operationHash === approval.operationHash &&
-            entry.sessionId === approval.sessionId &&
-            entry.command === approval.command &&
-            entry.status !== "dry-run",
-        ) ?? null
-    );
   }
 
   private async recordHistory(args: { plan: Plan; command: string; sessionId: string; status: MariDbHistoryEntry["status"]; journalPath: string | null }) {
@@ -2915,6 +3841,7 @@ export class MariDbService {
         await appendFile(this.historyPath(), JSON.stringify(entry) + "\n", "utf8");
       });
     await this.writeQueue.catch((err) => logger.warn(err, "[mari-db] failed to write history"));
+    return entry;
   }
 
   private async rawRows(table: string): Promise<Row[]> {
@@ -2952,11 +3879,11 @@ export class MariDbService {
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
       "Creative data:       mari characters list|get|search|create|update|delete",
       "Creative data:       mari personas list|active|get|search|create|update|delete",
-      "Creative data:       mari lorebooks list|get|entries|search|create|update|add-entry|update-entry|delete-entry|link-character|unlink-character|delete",
+      "Creative data:       mari lorebooks list|get|entries <lorebook-id>|search|create|update <lorebook-id>|add-entry <lorebook-id>|update-entry <entry-id>|delete-entry <entry-id>|link-character|unlink-character|delete",
       "Chats (read-only):   mari chats list|get|messages|search",
       "Fandom/wiki reads:   mari wiki find-wikis|search-all|search|get-page|sections|category|site-info",
       "Discovery:           mari <group> --help or mari <group> <command> --help",
-      "Writes dry-run by default where supported; --apply requests browser approval.",
+      "Writes dry-run by default where supported; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");
   }
 
@@ -2970,7 +3897,7 @@ export class MariDbService {
       "       --backstory and --appearance write to data.extensions.backstory / data.extensions.appearance",
       "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--json '<data_json>' | --json-file <path>] [--apply] [--reason <text>]",
       "Write: delete <id> [--apply] [--reason <text>]",
-      "Writes dry-run by default; --apply requests browser approval.",
+      "Writes dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");
   }
 
@@ -2984,7 +3911,7 @@ export class MariDbService {
       "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
       "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
       "Write: delete <id> [--apply] [--reason <text>]",
-      "Writes dry-run by default; --apply requests browser approval.",
+      "Writes dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");
   }
 
@@ -3003,7 +3930,7 @@ export class MariDbService {
       "Write: link-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
       "Write: unlink-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
       "Write: delete <id> [--cascade] [--apply] [--reason <text>]",
-      "Writes dry-run by default; --apply requests browser approval.",
+      "Writes dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");
   }
 
@@ -3051,7 +3978,7 @@ export class MariDbService {
       "Write: create --name <name> (--css <css> | --css-file <path>) [--activate] [--apply] [--reason <text>]",
       "Write: update <id> [--name <name>] [--css <css> | --css-file <path>] [--apply] [--reason <text>]",
       "Write: set-active <id|none> [--apply] [--reason <text>]",
-      "Writes dry-run by default; --apply requests browser approval.",
+      "Writes dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");
   }
 
@@ -3060,7 +3987,7 @@ export class MariDbService {
       "Usage: mari db <command>",
       "Discovery: status, tables, schema <table>, counts, data-dir, now, new-id",
       "Read: list <table>, get <table> <id>, select <table> --where <expr>, search <table|all> <query>, validate [--table <table>]",
-      "Write: insert|patch|replace|delete|transform ... (dry-run by default; --apply requests browser approval)",
+      "Write: insert|patch|replace|delete|transform ... (dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card)",
       `Known tables: ${FILE_BACKED_TABLES.slice(0, 8).join(", ")} ... (${FILE_BACKED_TABLES.length})`,
       `Journal directory: ${this.journalDir()} (${basename(getFileStorageDir())})`,
     ].join("\n");

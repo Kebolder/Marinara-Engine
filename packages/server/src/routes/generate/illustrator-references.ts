@@ -40,6 +40,19 @@ export type IllustratorReferenceResolution = {
   appearanceBlock: string | null;
 };
 
+export function isNovelAiImageConnection(args: {
+  model?: unknown;
+  baseUrl?: unknown;
+  imageService?: unknown;
+  imageGenerationSource?: unknown;
+}): boolean {
+  return [args.model, args.baseUrl, args.imageService, args.imageGenerationSource].some((value) => {
+    if (typeof value !== "string") return false;
+    const normalized = value.trim().toLowerCase();
+    return normalized === "novelai" || normalized.includes("novelai.net") || /^nai-diffusion-/i.test(normalized);
+  });
+}
+
 const MAX_ILLUSTRATOR_REFERENCE_IMAGES = 6;
 const MAX_ILLUSTRATOR_APPEARANCE_CHARS = 1400;
 const NAME_STOPWORDS = new Set(["the", "a", "an", "il", "la", "le", "de", "van", "von", "dr", "mr", "ms"]);
@@ -129,7 +142,7 @@ function characterRowToSource(row: CharacterRowLike, sourceOrder: number): Chara
 }
 
 function readBestReferenceImage(characterId: string | null | undefined, avatarPath: string | null | undefined) {
-  return readPreferredFullBodySpriteBase64(characterId)?.base64 ?? readAvatarBase64(avatarPath);
+  return readAvatarBase64(avatarPath) ?? readPreferredFullBodySpriteBase64(characterId)?.base64;
 }
 
 export async function resolveIllustratorCharacterReferences(args: {
