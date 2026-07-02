@@ -422,9 +422,21 @@ export function ChatSidebar() {
     return result;
   }, [chats, filtered, sort]);
 
+  // Detect if active chat belongs to a group so its group row highlights and stays mounted.
+  const activeChat = chats?.find((c) => c.id === activeChatId);
+  const activeGroupId = activeChat?.groupId ?? null;
+  const activeDisplayChatIndex = useMemo(
+    () =>
+      displayChats.findIndex(
+        (entry) => activeChatId === entry.chat.id || (activeGroupId != null && entry.chat.groupId === activeGroupId),
+      ),
+    [activeChatId, activeGroupId, displayChats],
+  );
+  const effectiveVisibleChatLimit =
+    activeDisplayChatIndex >= 0 ? Math.max(visibleChatLimit, activeDisplayChatIndex + 1) : visibleChatLimit;
   const visibleDisplayChats = useMemo(
-    () => displayChats.slice(0, visibleChatLimit),
-    [displayChats, visibleChatLimit],
+    () => displayChats.slice(0, effectiveVisibleChatLimit),
+    [displayChats, effectiveVisibleChatLimit],
   );
   const hasMoreDisplayChats = visibleDisplayChats.length < displayChats.length;
 
@@ -469,10 +481,6 @@ export function ChatSidebar() {
     if (!folders) return;
     setLocalFolderOrder(modeFolders.map((f) => f.id));
   }, [folders, modeFolders]);
-
-  // Detect if active chat belongs to a group (so its group row highlights)
-  const activeChat = chats?.find((c) => c.id === activeChatId);
-  const activeGroupId = activeChat?.groupId ?? null;
 
   useEffect(() => {
     const allChats = chats ?? [];

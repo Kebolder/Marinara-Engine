@@ -34,6 +34,7 @@ import {
 import { useUIStore, type LorebookPanelCategory, type LorebookPanelSort } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import {
+  fetchAllLorebookPages,
   flattenLorebookPages,
   useLorebookPages,
   useCreateLorebook,
@@ -241,8 +242,8 @@ export function LorebooksPanel() {
         return;
       }
       try {
-        if (!lorebooks) return;
-        const affected = (lorebooks as Lorebook[]).filter((lb) => parseTags(lb).includes(tag));
+        const allLorebooks = await fetchAllLorebookPages({ sort });
+        const affected = allLorebooks.filter((lb) => parseTags(lb).includes(tag));
         for (const lb of affected) {
           const newTags = parseTags(lb).filter((t) => t !== tag);
           await updateLorebook.mutateAsync({ id: lb.id, tags: newTags });
@@ -252,7 +253,7 @@ export function LorebooksPanel() {
         toast.error("Failed to remove tag from some lorebooks");
       }
     },
-    [lorebooks, updateLorebook, activeTag, setActiveTag],
+    [sort, updateLorebook, activeTag, setActiveTag],
   );
 
   // Filter by search

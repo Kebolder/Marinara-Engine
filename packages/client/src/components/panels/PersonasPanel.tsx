@@ -4,6 +4,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import {
+  fetchAllPersonaPages,
   flattenPersonaPages,
   usePersonaPages,
   useDeletePersona,
@@ -224,7 +225,8 @@ export function PersonasPanel() {
         return;
       }
       try {
-        const affected = rawList.filter((p) => parseTags(p).includes(tag));
+        const allPersonas = (await fetchAllPersonaPages({ sort })) as PersonaRow[];
+        const affected = allPersonas.filter((p) => parseTags(p).includes(tag));
         for (const p of affected) {
           const newTags = parseTags(p).filter((t) => t !== tag);
           await updatePersona.mutateAsync({ id: p.id, tags: JSON.stringify(newTags) });
@@ -234,7 +236,7 @@ export function PersonasPanel() {
         toast.error("Failed to remove tag from some personas");
       }
     },
-    [rawList, updatePersona, activeTag],
+    [sort, updatePersona, activeTag],
   );
 
   const personaMap = useMemo(() => {

@@ -35,6 +35,16 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; label: string; logoMod
     },
   };
 
+function parseRecentChatCharacterIds(value: Chat["characterIds"]): string[] {
+  let rawIds: unknown = [];
+  try {
+    rawIds = value ? (typeof value === "string" ? (JSON.parse(value) as unknown) : value) : [];
+  } catch {
+    rawIds = [];
+  }
+  return Array.isArray(rawIds) ? rawIds.filter((id): id is string => typeof id === "string") : [];
+}
+
 export function RecentChats() {
   const { data: chats } = useChats();
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
@@ -46,20 +56,7 @@ export function RecentChats() {
   const recentCharacterIds = useMemo(() => {
     const ids = new Set<string>();
     for (const chat of recentChats) {
-      let rawIds: unknown = [];
-      try {
-        rawIds = chat.characterIds
-          ? typeof chat.characterIds === "string"
-            ? (JSON.parse(chat.characterIds) as unknown)
-            : chat.characterIds
-          : [];
-      } catch {
-        rawIds = [];
-      }
-      if (!Array.isArray(rawIds)) continue;
-      for (const id of rawIds) {
-        if (typeof id === "string") ids.add(id);
-      }
+      for (const id of parseRecentChatCharacterIds(chat.characterIds)) ids.add(id);
     }
     return Array.from(ids);
   }, [recentChats]);
@@ -112,10 +109,7 @@ function RecentChatChip({
 }) {
   const mode = MODE_BADGE[chat.mode] ?? MODE_BADGE.conversation;
 
-  const charIds: string[] = useMemo(() => {
-    if (!chat.characterIds) return [];
-    return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : chat.characterIds;
-  }, [chat.characterIds]);
+  const charIds = useMemo(() => parseRecentChatCharacterIds(chat.characterIds), [chat.characterIds]);
 
   const firstAvatar = useMemo(() => {
     for (const id of charIds) {

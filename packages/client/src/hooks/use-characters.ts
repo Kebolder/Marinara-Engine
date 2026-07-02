@@ -3,7 +3,13 @@
 // ──────────────────────────────────────────────
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import { flattenPaginatedItems, getNextPageOffset, LIBRARY_PAGE_SIZE, type PaginatedList } from "../lib/list-pagination";
+import {
+  collectAllPaginatedItems,
+  flattenPaginatedItems,
+  getNextPageOffset,
+  LIBRARY_PAGE_SIZE,
+  type PaginatedList,
+} from "../lib/list-pagination";
 import { achievementKeys, trackAchievementEvent } from "./use-achievements";
 import {
   parseTrackerCardColorConfig,
@@ -123,6 +129,27 @@ export function useCharacterPages(options: {
 
 export function flattenCharacterPages(data: { pages?: Array<PaginatedList<Record<string, unknown>>> } | undefined) {
   return flattenPaginatedItems(data?.pages);
+}
+
+export function fetchAllCharacterPages(options: {
+  includeBuiltIn?: boolean;
+  search?: string;
+  sort?: string;
+} = {}) {
+  const includeBuiltIn = options.includeBuiltIn === true;
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return collectAllPaginatedItems<Record<string, unknown>>((offset) => {
+    const params = new URLSearchParams({
+      limit: String(LIBRARY_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (includeBuiltIn) params.set("includeBuiltIn", "true");
+    if (search) params.set("search", search);
+    if (sort) params.set("sort", sort);
+    return api.get<PaginatedList<Record<string, unknown>>>(`/characters?${params.toString()}`);
+  });
 }
 
 export function useCharacterSummaries(ids: string[], enabled = true) {
@@ -606,6 +633,21 @@ export function usePersonaPages(options: { enabled?: boolean; search?: string; s
 
 export function flattenPersonaPages(data: { pages?: Array<PaginatedList<unknown>> } | undefined) {
   return flattenPaginatedItems(data?.pages);
+}
+
+export function fetchAllPersonaPages(options: { search?: string; sort?: string } = {}) {
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return collectAllPaginatedItems<Record<string, unknown>>((offset) => {
+    const params = new URLSearchParams({
+      limit: String(LIBRARY_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (search) params.set("search", search);
+    if (sort) params.set("sort", sort);
+    return api.get<PaginatedList<Record<string, unknown>>>(`/characters/personas/list?${params.toString()}`);
+  });
 }
 
 export function usePersona(id: string | null) {

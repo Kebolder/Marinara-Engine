@@ -240,16 +240,16 @@ function likePattern(value: string | undefined) {
 function lorebookOrder(sort: string | undefined) {
   switch (sort) {
     case "name-desc":
-      return desc(lorebooks.name);
+      return [desc(lorebooks.name), asc(lorebooks.id)];
     case "newest":
-      return desc(lorebooks.createdAt);
+      return [desc(lorebooks.createdAt), asc(lorebooks.id)];
     case "oldest":
-      return asc(lorebooks.createdAt);
+      return [asc(lorebooks.createdAt), asc(lorebooks.id)];
     case "tokens":
-      return desc(lorebooks.tokenBudget);
+      return [desc(lorebooks.tokenBudget), asc(lorebooks.id)];
     case "name-asc":
     default:
-      return asc(lorebooks.name);
+      return [asc(lorebooks.name), asc(lorebooks.id)];
   }
 }
 
@@ -431,13 +431,13 @@ export function createLorebooksStorage(db: DB) {
             .select()
             .from(lorebooks)
             .where(whereClause)
-            .orderBy(lorebookOrder(options.sort))
+            .orderBy(...lorebookOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset)
         : db
             .select()
             .from(lorebooks)
-            .orderBy(lorebookOrder(options.sort))
+            .orderBy(...lorebookOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset));
       const items = await hydrateLorebookRows(db, rows.slice(0, options.limit), { includeLinkedNames: true });

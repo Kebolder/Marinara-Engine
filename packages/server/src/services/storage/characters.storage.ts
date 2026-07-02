@@ -90,25 +90,25 @@ function likePattern(value: string | undefined) {
 function characterOrder(sort: string | undefined) {
   switch (sort) {
     case "oldest":
-      return asc(characters.createdAt);
+      return [asc(characters.createdAt), asc(characters.id)];
     case "newest":
-      return desc(characters.createdAt);
+      return [desc(characters.createdAt), asc(characters.id)];
     default:
-      return desc(characters.updatedAt);
+      return [desc(characters.updatedAt), asc(characters.id)];
   }
 }
 
 function personaOrder(sort: string | undefined) {
   switch (sort) {
     case "name-desc":
-      return desc(personas.name);
+      return [desc(personas.name), asc(personas.id)];
     case "newest":
-      return desc(personas.createdAt);
+      return [desc(personas.createdAt), asc(personas.id)];
     case "oldest":
-      return asc(personas.createdAt);
+      return [asc(personas.createdAt), asc(personas.id)];
     case "name-asc":
     default:
-      return asc(personas.name);
+      return [asc(personas.name), asc(personas.id)];
   }
 }
 
@@ -212,13 +212,13 @@ export function createCharactersStorage(db: DB) {
             .select()
             .from(characters)
             .where(whereClause)
-            .orderBy(characterOrder(options.sort))
+            .orderBy(...characterOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset)
         : db
             .select()
             .from(characters)
-            .orderBy(characterOrder(options.sort))
+            .orderBy(...characterOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset));
       return toPaginatedList(rows, options.limit, options.offset);
@@ -461,13 +461,13 @@ export function createCharactersStorage(db: DB) {
             .select()
             .from(personas)
             .where(whereClause)
-            .orderBy(personaOrder(options.sort))
+            .orderBy(...personaOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset)
         : db
             .select()
             .from(personas)
-            .orderBy(personaOrder(options.sort))
+            .orderBy(...personaOrder(options.sort))
             .limit(options.limit + 1)
             .offset(options.offset));
       return toPaginatedList(rows, options.limit, options.offset);

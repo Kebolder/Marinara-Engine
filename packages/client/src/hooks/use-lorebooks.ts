@@ -6,7 +6,13 @@ import { api, ApiError } from "../lib/api-client";
 import type { Lorebook, LorebookEntry, LorebookFolder } from "@marinara-engine/shared";
 import { characterKeys } from "./use-characters";
 import { achievementKeys, trackAchievementEvent } from "./use-achievements";
-import { flattenPaginatedItems, getNextPageOffset, LIBRARY_PAGE_SIZE, type PaginatedList } from "../lib/list-pagination";
+import {
+  collectAllPaginatedItems,
+  flattenPaginatedItems,
+  getNextPageOffset,
+  LIBRARY_PAGE_SIZE,
+  type PaginatedList,
+} from "../lib/list-pagination";
 
 export const lorebookKeys = {
   all: ["lorebooks"] as const,
@@ -88,6 +94,40 @@ export function useLorebookPages(options: {
 
 export function flattenLorebookPages(data: { pages?: Array<PaginatedList<LorebookListItem>> } | undefined) {
   return flattenPaginatedItems(data?.pages);
+}
+
+export function fetchAllLorebookPages(options: {
+  category?: string;
+  search?: string;
+  sort?: string;
+  active?: {
+    lorebookIds: string[];
+    characterIds: string[];
+    personaId?: string | null;
+    chatId?: string | null;
+  };
+} = {}) {
+  const category = options.category ?? "";
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return collectAllPaginatedItems<LorebookListItem>((offset) => {
+    const params = new URLSearchParams({
+      limit: String(LIBRARY_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (category) params.set("category", category);
+    if (search) params.set("search", search);
+    if (sort) params.set("sort", sort);
+    if (options.active) {
+      params.set("active", "true");
+      if (options.active.lorebookIds.length > 0) params.set("activeLorebookIds", options.active.lorebookIds.join(","));
+      if (options.active.characterIds.length > 0) params.set("characterIds", options.active.characterIds.join(","));
+      if (options.active.personaId) params.set("personaId", options.active.personaId);
+      if (options.active.chatId) params.set("chatId", options.active.chatId);
+    }
+    return api.get<PaginatedList<LorebookListItem>>(`/lorebooks?${params.toString()}`);
+  });
 }
 
 export function useLorebook(id: string | null) {

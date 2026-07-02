@@ -4,6 +4,7 @@
 import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef, type UIEvent } from "react";
 import { toast } from "sonner";
 import {
+  fetchAllCharacterPages,
   flattenCharacterPages,
   useCharacterPages,
   useDeleteCharacter,
@@ -76,6 +77,15 @@ function parseDroppedCharacterIds(payload: string): unknown {
 
 function getCharacterTags(char: ParsedCharacterRow): string[] {
   return Array.isArray(char.parsed.tags) ? (char.parsed.tags as string[]).filter(Boolean) : [];
+}
+
+function parseCharacterRow(char: CharacterRow): ParsedCharacterRow {
+  try {
+    const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
+    return { ...char, parsed: (parsed as ParsedCharacterRow["parsed"]) ?? {} };
+  } catch {
+    return { ...char, parsed: { name: "Unknown", description: "" } };
+  }
 }
 
 function parseCharacterSearchQuery(value: string) {
@@ -185,14 +195,7 @@ export function CharactersPanel() {
   // Parse character data and filter by search
   const parsedCharacters = useMemo(() => {
     if (!characters) return [];
-    return (characters as CharacterRow[]).map((char) => {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        return { ...char, parsed };
-      } catch {
-        return { ...char, parsed: { name: "Unknown", description: "" } };
-      }
-    });
+    return (characters as CharacterRow[]).map(parseCharacterRow);
   }, [characters]) as ParsedCharacterRow[];
 
   const charMap = useMemo(() => {
@@ -283,7 +286,10 @@ export function CharactersPanel() {
         return;
       }
       try {
-        const affected = parsedCharacters.filter((c) => getCharacterTags(c).includes(tag));
+        const allCharacters = (await fetchAllCharacterPages({ sort })).map((char) =>
+          parseCharacterRow(char as CharacterRow),
+        );
+        const affected = allCharacters.filter((c) => getCharacterTags(c).includes(tag));
         for (const c of affected) {
           const newTags = getCharacterTags(c).filter((t) => t !== tag);
           await updateCharacter.mutateAsync({ id: c.id, data: { tags: newTags } });
@@ -303,7 +309,7 @@ export function CharactersPanel() {
       }
     },
     [
-      parsedCharacters,
+      sort,
       updateCharacter,
       includedTags,
       excludedTags,
