@@ -18,6 +18,7 @@ import {
   canReparentFolder,
   type CreateLorebookEntryInput,
   type LorebookEntryTimingState,
+  type Lorebook,
   type LorebookEntry,
   type LorebookFolder,
 } from "@marinara-engine/shared";
@@ -27,7 +28,8 @@ import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createGameStateStorage } from "../services/storage/game-state.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
-import { processLorebooks } from "../services/lorebook/index.js";
+import { filterRelevantLorebooks, processLorebooks } from "../services/lorebook/index.js";
+import { buildLorebookSemanticEmbeddingsById } from "../services/lorebook/embeddings.js";
 import { resolveLorebookScopeExclusions } from "../services/lorebook/game-lorebook-scope.js";
 import {
   buildPromptMacroContext,
@@ -41,6 +43,7 @@ import {
 } from "../services/lorebook/character-book-sync.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
+import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-embedding.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../utils/security.js";
@@ -984,6 +987,37 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         scanMessages.map((message) => `${message.role}\u001e${message.content}`).join("\u001f"),
       ].join("\u001d"),
     );
+    const lorebookScopeFilters = {
+      chatId,
+      characterIds,
+      personaId,
+      activeLorebookIds,
+      excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
+      excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
+    };
+    let chatEmbedding: number[] | null = null;
+    let semanticEmbeddingsByLorebookId: Map<string, number[] | null> | undefined;
+    try {
+      const activeEntries = (await storage.listActiveEntries(lorebookScopeFilters)) as unknown as LorebookEntry[];
+      if (activeEntries.some((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0)) {
+        const allLorebooks = (await storage.list()) as unknown as Lorebook[];
+        const relevantLorebooks = filterRelevantLorebooks(allLorebooks, lorebookScopeFilters) as Lorebook[];
+        const embeddingSource = await resolveMemoryRecallEmbeddingSource(app.db, {
+          chatMetadata: chatMeta,
+          connectionId: typeof chat?.connectionId === "string" ? chat.connectionId : null,
+        });
+        const semanticEmbeddings = await buildLorebookSemanticEmbeddingsById({
+          lorebooks: relevantLorebooks,
+          entries: activeEntries,
+          scanMessages,
+          embeddingSource,
+        });
+        chatEmbedding = semanticEmbeddings.defaultEmbedding;
+        semanticEmbeddingsByLorebookId = semanticEmbeddings.embeddingsByLorebookId;
+      }
+    } catch (err) {
+      logger.debug(err, "[lorebooks] Semantic scan preview failed; falling back to keyword-only preview");
+    }
 
     const result = await processLorebooks(app.db, scanMessages, gameStateForScan, {
       chatId,
@@ -992,6 +1026,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       activeLorebookIds,
       excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
       excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
+      chatEmbedding,
+      semanticEmbeddingsByLorebookId,
       tokenBudget: typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,
       entryStateOverrides,
       entryTimingStates,

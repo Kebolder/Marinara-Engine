@@ -191,7 +191,6 @@ export function ChatConversationSurface({
         settingsOpen={settingsOpen}
         settingsAnchor={settingsAnchor}
         settingsInitialSection={settingsInitialSection}
-        filesOpen={false}
         galleryOpen={galleryOpen}
         galleryAnchor={galleryAnchor}
         wizardOpen={wizardOpen}
@@ -209,7 +208,6 @@ export function ChatConversationSurface({
           onSpriteSideChange,
         }}
         onCloseSettings={onCloseSettings}
-        onCloseFiles={() => undefined}
         onCloseGallery={onCloseGallery}
         onIllustrate={onIllustrate}
         onWizardFinish={onWizardFinish}

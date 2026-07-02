@@ -17,6 +17,7 @@ import {
 } from "../../packages/shared/src/index.js";
 import { renderAgentPromptTemplate } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
+import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
@@ -38,6 +39,8 @@ import {
   shouldInjectIdentityFallback,
   type SimpleMessage,
 } from "../../packages/server/src/routes/generate/generate-route-utils.js";
+import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/routes/generate/prompt-preset-selection.js";
+import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 
@@ -1044,6 +1047,111 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
 
       assert.equal(promptText.includes("old user anchor"), false);
       assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
+    },
+  },
+  {
+    name: "automatic summary cadence counts real user messages when anchor is missing",
+    run() {
+      const messages = [
+        { id: "u1", role: "user" },
+        { id: "a1", role: "assistant" },
+        { id: "u2", role: "user" },
+        { id: "a2", role: "assistant" },
+      ];
+
+      assert.equal(countUserMessagesAfterSummaryAnchor(messages, null), 2);
+      assert.equal(countUserMessagesAfterSummaryAnchor(messages, "missing"), 2);
+      assert.equal(countUserMessagesAfterSummaryAnchor(messages, "a1"), 1);
+    },
+  },
+  {
+    name: "chat prompt preset defaults fill missing chat preset choices",
+    run() {
+      assert.deepEqual(
+        resolveGenerationPromptPresetChoices({
+          presetSource: "chat",
+          selectedPresetDiffersFromChat: false,
+          presetDefaultChoices: { tone: "tender", format: "prose" },
+          chatPresetChoices: { format: "dialogue" },
+        }),
+        { tone: "tender", format: "dialogue" },
+      );
+      assert.deepEqual(
+        resolveGenerationPromptPresetChoices({
+          presetSource: "connection",
+          selectedPresetDiffersFromChat: true,
+          presetDefaultChoices: { tone: "formal" },
+          chatPresetChoices: { tone: "casual" },
+        }),
+        { tone: "formal" },
+      );
+    },
+  },
+  {
+    name: "off image style profile leaves positive prompt untouched",
+    run() {
+      const compiled = compileImagePrompt({
+        kind: "illustration",
+        prompt: "1girl, blue dress",
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "off",
+      });
+
+      assert.equal(compiled.prompt, "1girl, blue dress");
+      assert.equal(compiled.negativePrompt, "");
+      assert.equal(compiled.profile.id, "off");
+    },
+  },
+  {
+    name: "semantic lorebook scan can activate keyless vector entries",
+    run() {
+      const entry = {
+        id: "entry-semantic",
+        lorebookId: "book-semantic",
+        enabled: true,
+        constant: false,
+        selective: false,
+        keys: [],
+        secondaryKeys: [],
+        selectiveLogic: "and",
+        useRegex: false,
+        matchWholeWords: false,
+        caseSensitive: false,
+        locked: false,
+        preventRecursion: false,
+        excludeRecursion: false,
+        delayUntilRecursion: false,
+        excludeFromVectorization: false,
+        embedding: [1, 0],
+        order: 0,
+        group: null,
+        groupWeight: 100,
+        probability: 100,
+        sticky: null,
+        cooldown: null,
+        delay: null,
+        activationConditions: [],
+        schedule: null,
+        characterFilterMode: "any",
+        characterFilterIds: [],
+        characterTagFilterMode: "any",
+        characterTagFilters: [],
+        generationTriggerFilterMode: "any",
+        generationTriggerFilters: [],
+        additionalMatchingSources: [],
+        scanDepth: null,
+        content: "semantic content",
+        name: "Semantic Entry",
+      };
+
+      const activated = scanForActivatedEntries([{ role: "user", content: "nearby query" }], [entry as any], {
+        chatEmbedding: [1, 0],
+        semanticThresholdByLorebookId: new Map([["book-semantic", 0.9]]),
+      });
+
+      assert.equal(activated.length, 1);
+      assert.equal(activated[0]?.entry.id, "entry-semantic");
+      assert.match(activated[0]?.matchedKeys[0] ?? "", /^\[semantic:/);
     },
   },
 ];

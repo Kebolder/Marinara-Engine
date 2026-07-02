@@ -18,11 +18,6 @@ export function preloadChatSettingsDrawer() {
 
 const ChatSettingsDrawer = lazy(preloadChatSettingsDrawer);
 
-const ChatFilesDrawer = lazy(async () => {
-  const module = await import("./ChatFilesDrawer");
-  return { default: module.ChatFilesDrawer };
-});
-
 const ChatGalleryDrawer = lazy(async () => {
   const module = await import("./ChatGalleryDrawer");
   return { default: module.ChatGalleryDrawer };
@@ -224,7 +219,6 @@ type ChatCommonOverlaysProps = {
   settingsOpen: boolean;
   settingsAnchor: ChatFloatingPanelAnchor;
   settingsInitialSection?: ChatSettingsInitialSection;
-  filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ChatFloatingPanelAnchor;
   wizardOpen: boolean;
@@ -237,7 +231,6 @@ type ChatCommonOverlaysProps = {
   selectedMessageCount: number;
   sceneSettings: SharedSceneSettingsProps;
   onCloseSettings: () => void;
-  onCloseFiles: () => void;
   onCloseGallery: () => void;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void;
@@ -261,7 +254,6 @@ export function ChatCommonOverlays({
   settingsOpen,
   settingsAnchor,
   settingsInitialSection,
-  filesOpen,
   galleryOpen,
   galleryAnchor,
   wizardOpen,
@@ -274,7 +266,6 @@ export function ChatCommonOverlays({
   selectedMessageCount,
   sceneSettings,
   onCloseSettings,
-  onCloseFiles,
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
@@ -307,11 +298,6 @@ export function ChatCommonOverlays({
             spriteVisualSettings={sceneSettings.spriteVisualSettings}
             onSpriteVisualSettingsChange={sceneSettings.onSpriteVisualSettingsChange}
           />
-        </Suspense>
-      )}
-      {chat && (
-        <Suspense fallback={null}>
-          {filesOpen && <ChatFilesDrawer chat={chat} open={filesOpen} onClose={onCloseFiles} />}
         </Suspense>
       )}
       {chat && (

@@ -178,6 +178,8 @@ type JournalReadable = ReadableTag & {
 type GameAssetGenerationPayload = {
   chatId: string;
   backgroundTag?: string;
+  backgroundDescription?: string;
+  forceBackground?: boolean;
   npcsNeedingAvatars?: Array<{ name: string; description: string; gender?: string | null; pronouns?: string | null }>;
   forceNpcAvatarNames?: string[];
   illustration?: import("@marinara-engine/shared").SceneIllustrationRequest;
@@ -200,13 +202,6 @@ type GameAssetGenerationResult = {
   fallbackBackground?: string | null;
   generatedIllustration: { tag: string; segment?: number } | null;
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
-};
-
-type GeneratedSceneBackgroundResponse = {
-  success: boolean;
-  filename: string;
-  url: string;
-  tag: string;
 };
 
 const GAME_TOP_ICON_BUTTON = getChatToolbarButtonClass();
@@ -4849,40 +4844,50 @@ function GameSurfaceComponent({
       return;
     }
 
+    const slugBase = backgroundOptionKey(
+      [gameSnapshot?.location || chat.name, msg?.id, Date.now().toString(36)].filter(Boolean).join("-"),
+    ).slice(0, 72);
+    const assetPayload: GameAssetGenerationPayload = {
+      chatId: activeChatId,
+      backgroundTag: slugBase || `manual-background-${Date.now().toString(36)}`,
+      backgroundDescription: sceneDescription,
+      forceBackground: true,
+      debugMode: useUIStore.getState().debugMode,
+    };
+
     setManualBackgroundGenerating(true);
+    setPendingAssetGeneration(assetPayload);
+    setAssetGenerationBlocksScene(false);
     setAssetGenerationFailed(false);
     try {
-      const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
-        chatId: activeChatId,
-        sceneDescription,
-        locationSlug: gameSnapshot?.location || chat.name,
-        reason: "Manual Gallery background request",
-        debugMode: useUIStore.getState().debugMode,
-      });
-      await fetchManifest();
-      useGameAssetStore.getState().setCurrentBackground(result.tag);
-      api.patch(`/chats/${activeChatId}/metadata`, { gameSceneBackground: result.tag }).catch(() => {});
-      queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
+      const result = await runGameAssetGeneration(assetPayload, { allowPromptReview: true });
+      setPendingAssetGeneration(null);
+      if (!result?.generatedBackground) {
+        toast.error("Illustrator did not return a background for this scene.");
+        return;
+      }
+      await applyGeneratedAssets(result);
       toast.success("Background generated.", { duration: 1800 });
     } catch (error) {
       setAssetGenerationFailed(true);
       toast.error(error instanceof Error ? error.message : "Background generation failed.");
     } finally {
       setManualBackgroundGenerating(false);
+      setAssetGenerationBlocksScene(false);
     }
   }, [
     activeChatId,
+    applyGeneratedAssets,
     chatMeta.gameSetupConfig,
     chatMeta.gameWorldOverview,
     chat.name,
-    fetchManifest,
     gameImageGenerationEnabled,
     gameSnapshot?.location,
     gameSnapshot?.time,
     gameSnapshot?.weather,
     manualBackgroundGenerating,
     metaTime,
-    queryClient,
+    runGameAssetGeneration,
   ]);
 
   const handleManualSceneIllustration = useCallback(async () => {

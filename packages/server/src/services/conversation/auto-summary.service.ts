@@ -16,6 +16,18 @@ export interface ConversationSummaryMessage {
   createdAt?: string | null;
 }
 
+export function countUserMessagesAfterSummaryAnchor(
+  messages: Array<{ id?: string | null; role: string }>,
+  anchorMessageId: string | null | undefined,
+): number {
+  const countAllUserMessages = () => messages.filter((message) => message.role === "user").length;
+  const anchor = typeof anchorMessageId === "string" && anchorMessageId.trim() ? anchorMessageId.trim() : null;
+  if (!anchor) return countAllUserMessages();
+  const anchorIndex = messages.findIndex((message) => message.id === anchor);
+  if (anchorIndex < 0) return countAllUserMessages();
+  return messages.slice(anchorIndex + 1).filter((message) => message.role === "user").length;
+}
+
 export interface ConversationSummaryRunResult {
   daySummaries: Record<string, DaySummaryEntry>;
   weekSummaries: Record<string, WeekSummaryEntry>;

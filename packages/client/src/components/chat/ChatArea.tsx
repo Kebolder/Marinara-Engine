@@ -107,6 +107,7 @@ import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
 import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
+import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "../ui/ImagePromptReviewModal";
 
 export type { CharacterMap };
 
@@ -146,6 +147,16 @@ type GeneratedSceneBackgroundResponse = {
   filename: string;
   url: string;
   tag: string;
+};
+
+type GenerateSceneBackgroundPayload = {
+  chatId: string;
+  sceneDescription: string;
+  locationSlug: string;
+  reason: string;
+  force: boolean;
+  debugMode: boolean;
+  promptOverrides?: ImagePromptOverride[];
 };
 
 function buildRoleplayBackgroundSceneDescription(args: {
@@ -456,7 +467,6 @@ export function ChatArea() {
   const hasAnimatedRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<ChatSettingsInitialSection>(null);
-  const [filesOpen, setFilesOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsAnchor, setSettingsAnchor] = useState<FloatingPanelAnchor>(null);
   const [galleryAnchor, setGalleryAnchor] = useState<FloatingPanelAnchor>(null);
@@ -543,7 +553,6 @@ export function ChatArea() {
     setSettingsOpen(false);
     setSettingsAnchor(null);
     setSettingsInitialSection(null);
-    setFilesOpen(false);
     setGalleryOpen(false);
     setGalleryAnchor(null);
     setPeekPromptData(null);
@@ -946,6 +955,34 @@ export function ChatArea() {
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
+  const [roleplayBackgroundReviewItems, setRoleplayBackgroundReviewItems] = useState<ImagePromptReviewItem[]>([]);
+  const [roleplayBackgroundReviewSubmitting, setRoleplayBackgroundReviewSubmitting] = useState(false);
+  const roleplayBackgroundReviewResolveRef = useRef<((overrides: ImagePromptOverride[] | null) => void) | null>(null);
+
+  const openRoleplayBackgroundPromptReview = useCallback((items: ImagePromptReviewItem[]) => {
+    return new Promise<ImagePromptOverride[] | null>((resolve) => {
+      roleplayBackgroundReviewResolveRef.current = resolve;
+      setRoleplayBackgroundReviewSubmitting(false);
+      setRoleplayBackgroundReviewItems(items);
+    });
+  }, []);
+
+  const closeRoleplayBackgroundPromptReview = useCallback((overrides: ImagePromptOverride[] | null) => {
+    const resolve = roleplayBackgroundReviewResolveRef.current;
+    roleplayBackgroundReviewResolveRef.current = null;
+    setRoleplayBackgroundReviewSubmitting(false);
+    setRoleplayBackgroundReviewItems([]);
+    resolve?.(overrides);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const resolve = roleplayBackgroundReviewResolveRef.current;
+      roleplayBackgroundReviewResolveRef.current = null;
+      resolve?.(null);
+    };
+  }, []);
+
   const handleGenerateRoleplayBackground = useCallback(async () => {
     if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
     const sceneDescription = buildRoleplayBackgroundSceneDescription({
@@ -958,18 +995,49 @@ export function ChatArea() {
       return;
     }
 
-    const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
+    const locationSlug = [chat.name, messages?.[messages.length - 1]?.id, Date.now().toString(36)]
+      .filter(Boolean)
+      .join("-");
+    const payload: GenerateSceneBackgroundPayload = {
       chatId: activeChatId,
       sceneDescription,
-      locationSlug: chat.name,
+      locationSlug,
       reason: "Manual Gallery background request",
+      force: true,
       debugMode: useUIStore.getState().debugMode,
-    });
-    useUIStore.getState().setChatBackground(result.url);
-    updateMeta.mutate({ id: activeChatId, background: result.filename });
-    queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
-    toast.success("Background generated.", { duration: 1800 });
-  }, [activeChatId, characterNames, chat, chatMode, messages, queryClient, updateMeta]);
+    };
+
+    try {
+      if (useUIStore.getState().reviewImagePromptsBeforeSend) {
+        const preview = await api.post<{ items: ImagePromptReviewItem[] }>("/backgrounds/generate-scene/preview", payload);
+        if (preview.items.length > 0) {
+          const overrides = await openRoleplayBackgroundPromptReview(preview.items);
+          if (!overrides) return;
+          setRoleplayBackgroundReviewSubmitting(true);
+          payload.promptOverrides = overrides;
+        }
+      }
+
+      const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", payload);
+      useUIStore.getState().setChatBackground(result.url);
+      updateMeta.mutate({ id: activeChatId, background: result.filename });
+      queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
+      toast.success("Background generated.", { duration: 1800 });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Background generation failed.");
+    } finally {
+      setRoleplayBackgroundReviewSubmitting(false);
+    }
+  }, [
+    activeChatId,
+    characterNames,
+    chat,
+    chatMode,
+    messages,
+    openRoleplayBackgroundPromptReview,
+    queryClient,
+    updateMeta,
+  ]);
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -1683,7 +1751,6 @@ export function ChatArea() {
 
   const intuitiveSwipeBlocked =
     settingsOpen ||
-    filesOpen ||
     galleryOpen ||
     wizardOpen ||
     spriteArrangeMode ||
@@ -2475,7 +2542,6 @@ export function ChatArea() {
             chat={chat}
             settingsOpen={settingsOpen}
             settingsAnchor={settingsAnchor}
-            filesOpen={filesOpen}
             galleryOpen={galleryOpen}
             galleryAnchor={galleryAnchor}
             wizardOpen={wizardOpen}
@@ -2495,7 +2561,6 @@ export function ChatArea() {
               onSpriteVisualSettingsChange: patchLocalSpriteVisualSettings,
             }}
             onCloseSettings={handleCloseSettingsPanel}
-            onCloseFiles={() => setFilesOpen(false)}
             onCloseGallery={handleCloseGalleryPanel}
             onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
             onWizardFinish={() => {
@@ -2658,7 +2723,6 @@ export function ChatArea() {
           settingsOpen={settingsOpen}
           settingsAnchor={settingsAnchor}
           settingsInitialSection={settingsInitialSection}
-          filesOpen={filesOpen}
           galleryOpen={galleryOpen}
           galleryAnchor={galleryAnchor}
           wizardOpen={wizardOpen}
@@ -2695,7 +2759,6 @@ export function ChatArea() {
           onOpenSettings={handleOpenSettingsPanel}
           onOpenGallery={handleOpenGalleryPanel}
           onCloseSettings={handleCloseSettingsPanel}
-          onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
           onGenerateBackground={handleGenerateRoleplayBackground}
@@ -2733,6 +2796,13 @@ export function ChatArea() {
           onClose={handleCloseAgentInjectionReview}
         />
       )}
+      <ImagePromptReviewModal
+        open={roleplayBackgroundReviewItems.length > 0}
+        items={roleplayBackgroundReviewItems}
+        isSubmitting={roleplayBackgroundReviewSubmitting}
+        onCancel={() => closeRoleplayBackgroundPromptReview(null)}
+        onConfirm={(overrides) => closeRoleplayBackgroundPromptReview(overrides)}
+      />
       {pendingNewChatMode && (
         <NewChatConnectionGate
           mode={pendingNewChatMode}

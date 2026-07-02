@@ -66,7 +66,7 @@ import { createCustomStickersStorage } from "../services/storage/custom-stickers
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { localEmbed, isLocalEmbedderAvailable } from "../services/local-embedder.js";
-import { cosineSimilarity } from "../services/lorebook/embeddings.js";
+import { buildLorebookSemanticEmbeddingsById, cosineSimilarity } from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
@@ -168,6 +168,7 @@ import {
   toZonedWallClockDate,
 } from "../services/conversation/timezone.js";
 import {
+  countUserMessagesAfterSummaryAnchor,
   formatConversationDateKey,
   generateMissingConversationSummaries,
   parseConversationDateKey,
@@ -273,6 +274,7 @@ import {
 import { normalizeContextInjections } from "./generate/agent-normalizers.js";
 import {
   buildGenerationPromptPresetCandidates,
+  resolveGenerationPromptPresetChoices,
   type PromptPresetCandidateSource,
 } from "./generate/prompt-preset-selection.js";
 import {
@@ -422,8 +424,6 @@ type LorebookScanSnapshot = {
   totalEntries: number;
 };
 
-type MemoryRecallEmbeddingSource = Awaited<ReturnType<typeof resolveMemoryRecallEmbeddingSource>>;
-
 function emptyLorebookScanSnapshot(): LorebookScanSnapshot {
   return {
     activatedEntries: [],
@@ -440,82 +440,6 @@ function toLorebookScanSnapshot(result: LorebookScanResult | null | undefined): 
     budgetSkippedEntries: result.budgetSkippedEntries,
     totalTokensEstimate: result.totalTokensEstimate,
     totalEntries: result.totalEntries,
-  };
-}
-
-function normalizeLorebookVectorQueryDepth(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT;
-  return Math.max(0, Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Math.trunc(parsed)));
-}
-
-function selectLorebookVectorQueryText(messages: Array<{ content: string }>, depth: number): string {
-  const selectedMessages = depth > 0 ? messages.slice(-depth) : messages;
-  return selectedMessages.map((message) => message.content).join("\n").trim();
-}
-
-async function buildLorebookSemanticEmbeddingsById({
-  lorebooks,
-  entries,
-  scanMessages,
-  embeddingSource,
-  signal,
-}: {
-  lorebooks: Lorebook[];
-  entries: LorebookEntry[];
-  scanMessages: Array<{ content: string }>;
-  embeddingSource: MemoryRecallEmbeddingSource | null;
-  signal: AbortSignal;
-}): Promise<{ defaultEmbedding: number[] | null; embeddingsByLorebookId?: Map<string, number[] | null> }> {
-  if (!embeddingSource) return { defaultEmbedding: null };
-  const lorebookIdsWithVectors = new Set(
-    entries
-      .filter(
-        (entry) =>
-          !entry.excludeFromVectorization &&
-          Array.isArray(entry.embedding) &&
-          entry.embedding.length > 0,
-      )
-      .map((entry) => entry.lorebookId),
-  );
-  if (lorebookIdsWithVectors.size === 0) return { defaultEmbedding: null };
-
-  const vectorLorebooks = lorebooks.filter(
-    (lorebook) => !lorebook.excludeFromVectorization && lorebookIdsWithVectors.has(lorebook.id),
-  );
-  if (vectorLorebooks.length === 0) return { defaultEmbedding: null };
-
-  const depths = Array.from(
-    new Set(vectorLorebooks.map((lorebook) => normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth))),
-  );
-  const embeddingsByDepth = new Map<number, number[] | null>();
-  for (const depth of depths) {
-    const queryText = selectLorebookVectorQueryText(scanMessages, depth);
-    if (!queryText) {
-      embeddingsByDepth.set(depth, null);
-      continue;
-    }
-    const embeddings = await embedMemoryRecallTexts([queryText], {
-      embeddingSource,
-      signal,
-    });
-    embeddingsByDepth.set(depth, embeddings[0] ?? null);
-  }
-
-  const embeddingsByLorebookId = new Map<string, number[] | null>();
-  for (const lorebook of vectorLorebooks) {
-    embeddingsByLorebookId.set(
-      lorebook.id,
-      embeddingsByDepth.get(normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth)) ?? null,
-    );
-  }
-
-  return {
-    defaultEmbedding:
-      embeddingsByDepth.get(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT) ??
-      Array.from(embeddingsByDepth.values()).find((embedding) => embedding && embedding.length > 0) ??
-      null,
-    embeddingsByLorebookId,
   };
 }
 
@@ -759,13 +683,6 @@ function withoutRetiredChatSummaryAgentIds(chatMetadata: Record<string, unknown>
   return chatMetadata.activeAgentIds.filter((agentId): agentId is string => {
     return typeof agentId === "string" && agentId !== RETIRED_CHAT_SUMMARY_AGENT_ID;
   });
-}
-
-function countUserMessagesAfterAnchor(messages: Array<{ id: string; role: string }>, anchorMessageId: string | null) {
-  if (!anchorMessageId) return Number.POSITIVE_INFINITY;
-  const anchorIndex = messages.findIndex((message) => message.id === anchorMessageId);
-  if (anchorIndex < 0) return Number.POSITIVE_INFINITY;
-  return messages.slice(anchorIndex + 1).filter((message) => message.role === "user").length;
 }
 
 function resolveChatSummaryPromptFromMetadata(chatMetadata: Record<string, unknown>): string {
@@ -1847,12 +1764,15 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
       const selectedPresetDiffersFromChat = !!resolvedPreset && !!presetId && presetId !== chatPromptPresetId;
-      const overrideDefaultChoices =
-        selectedPresetDiffersFromChat && presetSource !== "chat"
-          ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {})
-          : null;
+      const resolvedPresetDefaultChoices =
+        resolvedPreset ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {}) : {};
       const chatChoices: Record<string, string | string[]> =
-        overrideDefaultChoices ?? ((chatMeta.presetChoices ?? {}) as Record<string, string | string[]>);
+        resolveGenerationPromptPresetChoices({
+          presetSource,
+          selectedPresetDiffersFromChat,
+          presetDefaultChoices: resolvedPresetDefaultChoices,
+          chatPresetChoices: (chatMeta.presetChoices ?? {}) as Record<string, string | string[]>,
+        });
       let groupHistoryCharacterNamesByIdPromise: Promise<Map<string, string>> | null = null;
       const getGroupHistoryCharacterNamesById = () => {
         groupHistoryCharacterNamesByIdPromise ??= resolveCharacterNameMap(allCharacterIds, (id) => chars.getById(id));
@@ -7499,7 +7419,10 @@ export async function generateRoutes(app: FastifyInstance) {
             typeof chatMeta.lastAutomaticSummaryMessageId === "string" && chatMeta.lastAutomaticSummaryMessageId.trim()
               ? chatMeta.lastAutomaticSummaryMessageId.trim()
               : null;
-          const messagesSinceLastSummary = countUserMessagesAfterAnchor(freshMessages, lastAutomaticSummaryMessageId);
+          const messagesSinceLastSummary = countUserMessagesAfterSummaryAnchor(
+            freshMessages,
+            lastAutomaticSummaryMessageId,
+          );
           const interval = clampRoleplaySummaryInterval(chatMeta.summaryRunInterval);
           if (messagesSinceLastSummary < interval) return;
 

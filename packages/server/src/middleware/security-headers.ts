@@ -29,7 +29,7 @@ const CONTENT_SECURITY_POLICY = [
   "script-src 'self' blob: https://sdk.scdn.co https://www.youtube.com https://s.ytimg.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
-  "media-src 'self' blob: https:",
+  "media-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' http: https: ws: wss:",
   "frame-src 'self' https://sdk.scdn.co https://accounts.spotify.com https://www.youtube.com https://www.youtube-nocookie.com",
