@@ -5106,6 +5106,7 @@ export function ChatSettingsDrawer({
                   </div>
                 </button>
                 <DiscordMirrorControls
+                  className="space-y-2"
                   webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
                   onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
                 />
@@ -5302,6 +5303,7 @@ export function ChatSettingsDrawer({
                       : "Lorebook and summary updates can be committed automatically. Character card edits still ask first."
                   }
                   enabled={agentWriteApprovalRequired}
+                  surface="secondary"
                   onToggle={() =>
                     updateMeta.mutate({
                       id: chat.id,
@@ -7135,6 +7137,12 @@ export function ChatSettingsDrawer({
               connections={chatGenerationConnectionsList as Record<string, unknown>[]}
               contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
               excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
+              imageCaptioningEnabled={metadata.imageCaptioningEnabled as boolean | undefined}
+              imageCaptioningConnectionId={
+                typeof metadata.imageCaptioningConnectionId === "string"
+                  ? metadata.imageCaptioningConnectionId
+                  : null
+              }
               onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
               onContextMessageLimitChange={(contextMessageLimit) =>
                 updateMeta.mutate({ id: chat.id, contextMessageLimit })
@@ -7142,6 +7150,7 @@ export function ChatSettingsDrawer({
               onExcludePastReasoningChange={(excludePastReasoning) =>
                 updateMeta.mutate({ id: chat.id, excludePastReasoning })
               }
+              onImageCaptioningChange={(patch) => updateMeta.mutate({ id: chat.id, ...patch })}
             />
           </div>
 
@@ -7875,11 +7884,13 @@ function AgentSettingsToggle({
   description,
   enabled,
   onToggle,
+  surface = "card",
 }: {
   label: string;
   description: string;
   enabled: boolean;
   onToggle: () => void;
+  surface?: "card" | "secondary";
 }) {
   return (
     <button
@@ -7890,7 +7901,9 @@ function AgentSettingsToggle({
         "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
         enabled
           ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-          : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+          : surface === "secondary"
+            ? "bg-[var(--secondary)] hover:bg-[var(--accent)]"
+            : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
       )}
     >
       <span className="min-w-0 flex-1">

@@ -537,8 +537,10 @@ const CREATE_TABLES: string[] = [
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    runtime TEXT NOT NULL DEFAULT 'client',
     css TEXT,
     js TEXT,
+    server_js TEXT,
     enabled TEXT NOT NULL DEFAULT 'true',
     installed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -974,6 +976,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "choice_blocks",
     column: "option_sort",
     definition: "TEXT NOT NULL DEFAULT 'manual'",
+  },
+  {
+    table: "installed_extensions",
+    column: "runtime",
+    definition: "TEXT NOT NULL DEFAULT 'client'",
+  },
+  {
+    table: "installed_extensions",
+    column: "server_js",
+    definition: "TEXT",
   },
 ];
 

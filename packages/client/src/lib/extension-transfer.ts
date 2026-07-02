@@ -5,8 +5,10 @@ import { reservePackageFolderSegment } from "./folder-package-transfer";
 export type ExtensionTransferConfig = {
   name: string;
   description?: string | null;
+  runtime?: "client" | "server";
   css?: string | null;
   js?: string | null;
+  serverJs?: string | null;
   enabled: boolean;
 };
 
@@ -15,19 +17,32 @@ export function createExtensionFolderPackageFiles(extensions: ExtensionTransferC
   const entries = extensions.map((extension) => {
     const segment = reservePackageFolderSegment(extension.name, "extension", usedSegments);
     const folderPath = `Extensions/${segment}`;
+    const runtime = extension.runtime === "server" ? "server" : "client";
     const css = extension.css ?? null;
     const js = extension.js ?? null;
-    const config = {
-      name: extension.name,
-      description: extension.description ?? "",
-      css,
-      js,
-      enabled: extension.enabled,
-      ...(css ? { cssPath: "extension.css" } : {}),
-      ...(js ? { jsPath: "extension.js" } : {}),
-    };
+    const serverJs = extension.serverJs ?? null;
+    const config =
+      runtime === "server"
+        ? {
+            name: extension.name,
+            description: extension.description ?? "",
+            runtime,
+            serverJs,
+            enabled: extension.enabled,
+            ...(serverJs ? { serverJsPath: "server-extension.js" } : {}),
+          }
+        : {
+            name: extension.name,
+            description: extension.description ?? "",
+            runtime,
+            css,
+            js,
+            enabled: extension.enabled,
+            ...(css ? { cssPath: "extension.css" } : {}),
+            ...(js ? { jsPath: "extension.js" } : {}),
+          };
     const manifest = {
-      kind: "marinara.extension",
+      kind: runtime === "server" ? "marinara.server-extension" : "marinara.extension",
       version: 1 as const,
       config,
     };
@@ -54,8 +69,11 @@ export function createExtensionFolderPackageFiles(extensions: ExtensionTransferC
     { path: "marinara-extensions.json", content: JSON.stringify(envelope, null, 2) },
     ...entries.flatMap(({ folderPath, manifest, config }) => [
       { path: `${folderPath}/manifest.json`, content: JSON.stringify(manifest, null, 2) },
-      ...(config.css ? [{ path: `${folderPath}/extension.css`, content: config.css }] : []),
-      ...(config.js ? [{ path: `${folderPath}/extension.js`, content: config.js }] : []),
+      ...("css" in config && config.css ? [{ path: `${folderPath}/extension.css`, content: config.css }] : []),
+      ...("js" in config && config.js ? [{ path: `${folderPath}/extension.js`, content: config.js }] : []),
+      ...("serverJs" in config && config.serverJs
+        ? [{ path: `${folderPath}/server-extension.js`, content: config.serverJs }]
+        : []),
     ]),
   ];
 }

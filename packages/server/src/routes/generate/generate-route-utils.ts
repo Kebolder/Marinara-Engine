@@ -75,6 +75,11 @@ export type PromptAttachment = {
   name?: string | null;
   prompt?: string | null;
   galleryId?: string | null;
+  imageCaption?: string | null;
+  imageCaptionConnectionId?: string | null;
+  imageCaptionModel?: string | null;
+  imageCaptionProvider?: string | null;
+  imageCaptionedAt?: string | null;
 };
 
 export function createLocalSidecarGenerationConnection(): LocalSidecarGenerationConnection {

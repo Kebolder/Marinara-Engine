@@ -39,6 +39,7 @@ import {
 import { corsDelegate } from "./config/cors-config.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
 import { startServerAutonomousScheduler } from "./services/conversation/server-autonomous-scheduler.service.js";
+import { serverExtensionRuntime } from "./services/extensions/server-extension-runtime.js";
 
 const isLite = process.env.MARINARA_LITE === "true" || process.env.MARINARA_LITE === "1";
 const REVALIDATE_FILES = new Set(["index.html"]);
@@ -76,9 +77,10 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
   app.decorate("db", db);
   app.addHook("onClose", async () => {
     try {
+      await serverExtensionRuntime.stop();
       await sidecarProcessService.stop();
     } catch (err) {
-      app.log.error(err, "Failed to stop sidecar during shutdown");
+      app.log.error(err, "Failed to stop server runtime services during shutdown");
     } finally {
       await closeDB();
     }
@@ -142,6 +144,9 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
 
   // ── Routes ──
   await registerRoutes(app);
+
+  // ── Server extensions ──
+  await serverExtensionRuntime.start(app, db);
 
   // ── Server-side autonomous conversation scheduler ──
   startServerAutonomousScheduler(app);

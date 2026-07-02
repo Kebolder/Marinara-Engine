@@ -541,10 +541,7 @@ function ActionsGroup({
   const btnRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const echoChamberOpen = useUIStore((s) => s.echoChamberOpen);
-  const toggleEchoChamber = useUIStore((s) => s.toggleEchoChamber);
   const echoMessages = useAgentStore((s) => s.echoMessages);
-  const showEcho = enabledAgentTypes.has("echo-chamber");
   const { data: customAgentRuns = [], isLoading: customAgentRunsLoading } = useCustomAgentRuns(chatId, agentsOpen);
 
   const computeActionsPosition = useCallback(() => {
@@ -637,10 +634,6 @@ function ActionsGroup({
             customAgentRunsLoading={customAgentRunsLoading}
             agentConfigs={agentConfigs}
             enabledAgentTypes={enabledAgentTypes}
-            showEcho={showEcho}
-            echoChamberOpen={echoChamberOpen}
-            toggleEchoChamber={toggleEchoChamber}
-            echoMessageCount={echoMessages.length}
             clearGameState={clearGameState}
             onRetriggerTrackers={onRetriggerTrackers}
             onRetryFailedAgents={onRetryFailedAgents}

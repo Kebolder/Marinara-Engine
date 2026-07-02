@@ -99,7 +99,7 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
-import { yieldToEventLoop, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
+import { yieldToEventLoop, type BaseLLMProvider, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -202,8 +202,8 @@ import {
   findTrackerContextInsertIndex,
   appendReadableAttachmentsToContent,
   extractFileAttachmentInputs,
+  getAttachmentFilename,
   buildUserMessageRegenerationPromptFromSource,
-  buildUserMessageRegenerationSourceMessage,
   buildLockedPlayerStatsArrayPatch,
   buildLockedPersonaTrackerPatch,
   createLocalSidecarGenerationConnection,
@@ -1024,6 +1024,193 @@ function conversationPromptHistoryContent(
   return typeof message.content === "string" ? message.content : "";
 }
 
+type ImageCaptionConnection = {
+  id?: string | null;
+  name?: string | null;
+  provider: string;
+  apiKey: string;
+  model: string;
+  maxContext?: number | null;
+  openrouterProvider?: string | null;
+  maxTokensOverride?: number | null;
+  claudeFastMode?: string | null;
+  treatAsLocalEndpoint?: string | null;
+};
+
+type ImageCaptioningRuntime = {
+  enabled: boolean;
+  connectionId: string | null;
+  connection: ImageCaptionConnection | null;
+  provider: BaseLLMProvider | null;
+};
+
+type PromptAttachmentResolution = {
+  content: string;
+  images: string[];
+  files: Array<{ type: string; data: string; filename: string }>;
+  updatedAttachments: PromptAttachment[] | null;
+};
+
+const DISABLED_IMAGE_CAPTIONING: ImageCaptioningRuntime = {
+  enabled: false,
+  connectionId: null,
+  connection: null,
+  provider: null,
+};
+const IMAGE_CAPTION_MAX_TOKENS = 700;
+const IMAGE_CAPTION_MAX_CHARS = 4_000;
+
+function escapePromptXmlAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function normalizePromptAttachments(extra: unknown): PromptAttachment[] | undefined {
+  const rawAttachments = parseExtra(extra).attachments;
+  if (!Array.isArray(rawAttachments)) return undefined;
+  const attachments = rawAttachments.filter(
+    (attachment): attachment is PromptAttachment =>
+      !!attachment && typeof attachment === "object" && !Array.isArray(attachment),
+  );
+  return attachments.length ? attachments : undefined;
+}
+
+function normalizeImageCaptionText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value
+    .replace(/^```(?:\w+)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+  if (!text) return null;
+  return text.length > IMAGE_CAPTION_MAX_CHARS ? `${text.slice(0, IMAGE_CAPTION_MAX_CHARS).trim()}...` : text;
+}
+
+function readCachedImageCaption(
+  attachment: PromptAttachment,
+  imageCaptioning: ImageCaptioningRuntime,
+): string | null {
+  const caption = normalizeImageCaptionText(attachment.imageCaption);
+  if (!caption || !imageCaptioning.connection) return null;
+  if (attachment.imageCaptionConnectionId !== imageCaptioning.connectionId) return null;
+  if (attachment.imageCaptionModel !== imageCaptioning.connection.model) return null;
+  if (attachment.imageCaptionProvider !== imageCaptioning.connection.provider) return null;
+  return caption;
+}
+
+function formatImageCaptionBlock(attachment: PromptAttachment, caption: string): string {
+  const name = getAttachmentFilename(attachment);
+  const type = typeof attachment.type === "string" && attachment.type.trim() ? attachment.type.trim() : "image";
+  return [
+    `<attached_image name="${escapePromptXmlAttribute(name)}" type="${escapePromptXmlAttribute(type)}">`,
+    caption,
+    `</attached_image>`,
+  ].join("\n");
+}
+
+function appendImageCaptionBlocksToContent(content: string, blocks: string[]): string {
+  if (blocks.length === 0) return content;
+  return `${content}${content.trim() ? "\n\n" : ""}${blocks.join("\n\n")}`;
+}
+
+async function generateImageCaptionForAttachment(
+  attachment: PromptAttachment,
+  imageDataUrl: string,
+  imageCaptioning: ImageCaptioningRuntime,
+  signal: AbortSignal,
+): Promise<string | null> {
+  if (!imageCaptioning.provider || !imageCaptioning.connection) return null;
+  const filename = getAttachmentFilename(attachment);
+  try {
+    const result = await imageCaptioning.provider.chatComplete(
+      [
+        {
+          role: "system",
+          content:
+            "You describe image attachments for a downstream chat model that may not support vision. " +
+            "Write a faithful, concise description of the visible content, including readable text, subjects, setting, style, and any details important for conversation continuity. " +
+            "Do not answer the chat and do not add speculation beyond what is visible.",
+        },
+        {
+          role: "user",
+          content: `Describe this image attachment named "${filename}" for use inside a chat prompt. Return only the description.`,
+          images: [imageDataUrl],
+        },
+      ],
+      {
+        model: imageCaptioning.connection.model,
+        temperature: 0.2,
+        maxTokens: applyProviderMaxTokensOverride(imageCaptioning.provider, IMAGE_CAPTION_MAX_TOKENS),
+        stream: false,
+        signal,
+      },
+    );
+    return normalizeImageCaptionText(result.content);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    logger.warn(error, "[image-captioning] Failed to caption image attachment %s", filename);
+    return null;
+  }
+}
+
+async function resolvePromptAttachmentInputs(args: {
+  content: string;
+  attachments: PromptAttachment[] | undefined;
+  imageCaptioning: ImageCaptioningRuntime;
+  signal: AbortSignal;
+}): Promise<PromptAttachmentResolution> {
+  const { attachments, imageCaptioning, signal } = args;
+  const files = extractFileAttachmentInputs(attachments);
+  let content = appendReadableAttachmentsToContent(args.content, attachments);
+
+  if (!imageCaptioning.enabled || !imageCaptioning.provider || !imageCaptioning.connection) {
+    return {
+      content,
+      images: extractImageAttachmentDataUrls(attachments),
+      files,
+      updatedAttachments: null,
+    };
+  }
+
+  const captionBlocks: string[] = [];
+  const fallbackImages: string[] = [];
+  let updatedAttachments: PromptAttachment[] | null = null;
+
+  for (let index = 0; index < (attachments?.length ?? 0); index++) {
+    const attachment = attachments![index]!;
+    const imageDataUrl = extractImageAttachmentDataUrls([attachment])[0];
+    if (!imageDataUrl) continue;
+
+    let caption = readCachedImageCaption(attachment, imageCaptioning);
+    if (!caption) {
+      caption = await generateImageCaptionForAttachment(attachment, imageDataUrl, imageCaptioning, signal);
+      if (caption) {
+        updatedAttachments ??= attachments!.map((item) => ({ ...item }));
+        updatedAttachments[index] = {
+          ...updatedAttachments[index]!,
+          imageCaption: caption,
+          imageCaptionConnectionId: imageCaptioning.connectionId,
+          imageCaptionModel: imageCaptioning.connection.model,
+          imageCaptionProvider: imageCaptioning.connection.provider,
+          imageCaptionedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (caption) {
+      captionBlocks.push(formatImageCaptionBlock(updatedAttachments?.[index] ?? attachment, caption));
+    } else {
+      fallbackImages.push(imageDataUrl);
+    }
+  }
+
+  content = appendImageCaptionBlocksToContent(content, captionBlocks);
+  return {
+    content,
+    images: fallbackImages,
+    files,
+    updatedAttachments,
+  };
+}
+
 /**
  * Build the Conversation-mode system-prompt block that tells the responding
  * character(s) which custom emojis they may use (`:name:`). A character gets its
@@ -1428,6 +1615,71 @@ export async function generateRoutes(app: FastifyInstance) {
       normalizePromptTimeZone(chatMeta.promptTimeZone) ?? normalizePromptTimeZone(input.userTimeZone);
     const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
     const excludePastReasoning = chatMeta.excludePastReasoning !== false;
+    const imageCaptioningRuntime: ImageCaptioningRuntime = await (async () => {
+      if (chatMeta.imageCaptioningEnabled !== true) return DISABLED_IMAGE_CAPTIONING;
+      try {
+        const configuredConnectionId =
+          typeof chatMeta.imageCaptioningConnectionId === "string" && chatMeta.imageCaptioningConnectionId.trim()
+            ? chatMeta.imageCaptioningConnectionId.trim()
+            : null;
+        const fallbackCaptionConnectionId = configuredConnectionId ?? connId;
+        if (!fallbackCaptionConnectionId) return DISABLED_IMAGE_CAPTIONING;
+        let captionConnectionId = fallbackCaptionConnectionId;
+        if (captionConnectionId === "random") {
+          const pool = await connections.listRandomPool();
+          if (!pool.length) {
+            logger.warn("[image-captioning] Random captioning connection requested but random pool is empty");
+            return DISABLED_IMAGE_CAPTIONING;
+          }
+          const randomCaptionConnectionId = pool[Math.floor(Math.random() * pool.length)]?.id;
+          if (!randomCaptionConnectionId) {
+            logger.warn("[image-captioning] Random captioning connection resolved without an id");
+            return DISABLED_IMAGE_CAPTIONING;
+          }
+          captionConnectionId = randomCaptionConnectionId;
+        }
+
+        const captionConnection =
+          captionConnectionId === LOCAL_SIDECAR_CONNECTION_ID
+            ? createLocalSidecarGenerationConnection()
+            : await connections.getWithKey(captionConnectionId);
+        if (!captionConnection?.model) {
+          logger.warn("[image-captioning] Captioning connection %s was not found", captionConnectionId);
+          return DISABLED_IMAGE_CAPTIONING;
+        }
+
+        let captionProvider: BaseLLMProvider;
+        if (captionConnectionId === LOCAL_SIDECAR_CONNECTION_ID) {
+          captionProvider = getLocalSidecarProvider();
+        } else {
+          const captionBaseUrl = resolveBaseUrl(captionConnection);
+          if (!captionBaseUrl) {
+            logger.warn("[image-captioning] Captioning connection %s has no base URL", captionConnectionId);
+            return DISABLED_IMAGE_CAPTIONING;
+          }
+          captionProvider = createLLMProvider(
+            captionConnection.provider,
+            captionBaseUrl,
+            captionConnection.apiKey,
+            captionConnection.maxContext,
+            captionConnection.openrouterProvider,
+            captionConnection.maxTokensOverride,
+            captionConnection.claudeFastMode === "true",
+            captionConnection.treatAsLocalEndpoint === "true",
+          );
+        }
+
+        return {
+          enabled: true,
+          connectionId: captionConnectionId,
+          connection: captionConnection,
+          provider: captionProvider,
+        };
+      } catch (error) {
+        logger.warn(error, "[image-captioning] Failed to resolve captioning connection; sending images normally");
+        return DISABLED_IMAGE_CAPTIONING;
+      }
+    })();
     let memoryRecallEmbeddingSource: Awaited<ReturnType<typeof resolveMemoryRecallEmbeddingSource>> | null = null;
     try {
       memoryRecallEmbeddingSource = await resolveMemoryRecallEmbeddingSource(app.db, {
@@ -1577,7 +1829,26 @@ export async function generateRoutes(app: FastifyInstance) {
           return;
         }
         if (regenMsg.role === "user") {
-          regenerateUserSourceMessage = buildUserMessageRegenerationSourceMessage(regenMsg);
+          const attachments = normalizePromptAttachments(regenMsg.extra);
+          const attachmentInputs = await resolvePromptAttachmentInputs({
+            content: typeof regenMsg.content === "string" ? regenMsg.content : "",
+            attachments,
+            imageCaptioning: imageCaptioningRuntime,
+            signal: abortController.signal,
+          });
+          if (typeof regenMsg.id === "string" && attachmentInputs.updatedAttachments) {
+            try {
+              await chats.updateMessageExtra(regenMsg.id, { attachments: attachmentInputs.updatedAttachments });
+            } catch (error) {
+              logger.warn(error, "[image-captioning] Failed to cache image captions for message %s", regenMsg.id);
+            }
+          }
+          regenerateUserSourceMessage = {
+            role: "user",
+            content: attachmentInputs.content,
+            ...(attachmentInputs.images.length ? { images: attachmentInputs.images } : {}),
+            ...(attachmentInputs.files.length ? { files: attachmentInputs.files } : {}),
+          };
         }
         chatMessages = chatMessages.filter((m: any) => m.id !== input.regenerateMessageId);
         lorebookKeeperMessages = lorebookKeeperMessages.filter((m: any) => m.id !== input.regenerateMessageId);
@@ -1612,12 +1883,20 @@ export async function generateRoutes(app: FastifyInstance) {
       }
 
       const isGoogleProvider = conn.provider === "google" || conn.provider === "google_vertex";
-
-      const mappedMessages = chatMessages.map((m: any) => {
+      const persistPromptAttachmentCaptions = async (
+        messageId: string | null,
+        updatedAttachments: PromptAttachment[] | null,
+      ) => {
+        if (!messageId || !updatedAttachments) return;
+        try {
+          await chats.updateMessageExtra(messageId, { attachments: updatedAttachments });
+        } catch (error) {
+          logger.warn(error, "[image-captioning] Failed to cache image captions for message %s", messageId);
+        }
+      };
+      const mapChatHistoryMessageForPrompt = async (m: any): Promise<GenerationPromptMessage> => {
         const extra = parseExtra(m.extra);
-        const attachments = extra.attachments as PromptAttachment[] | undefined;
-        const images = extractImageAttachmentDataUrls(attachments);
-        const files = extractFileAttachmentInputs(attachments);
+        const attachments = normalizePromptAttachments(m.extra);
         const providerMetadata: Record<string, unknown> = {};
         // For Google connections, carry stored Gemini parts (thought signatures) on assistant messages
         if (!excludePastReasoning && isGoogleProvider && m.role === "assistant" && extra.geminiParts) {
@@ -1637,7 +1916,17 @@ export async function generateRoutes(app: FastifyInstance) {
         // so the model is aware it sent a photo in prior turns.
         // Skip illustration/selfie attachments (type "image") — those are generated
         // by agents and should be invisible to the main model.
-        let content = appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), attachments);
+        const attachmentInputs = await resolvePromptAttachmentInputs({
+          content: conversationPromptHistoryContent(m, chatMode),
+          attachments,
+          imageCaptioning: imageCaptioningRuntime,
+          signal: abortController.signal,
+        });
+        await persistPromptAttachmentCaptions(
+          typeof m.id === "string" ? m.id : null,
+          attachmentInputs.updatedAttachments,
+        );
+        let content = attachmentInputs.content;
         const userUploadedImages = attachments?.filter((a) => a.type?.startsWith("image/"));
         if (m.role === "assistant" && userUploadedImages?.length) {
           const photoName = userUploadedImages[0]?.filename ?? userUploadedImages[0]?.name;
@@ -1650,15 +1939,20 @@ export async function generateRoutes(app: FastifyInstance) {
           content,
           contextKind: "history" as const,
           characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
-          ...(images?.length ? { images } : {}),
-          ...(files.length ? { files } : {}),
+          ...(attachmentInputs.images.length ? { images: attachmentInputs.images } : {}),
+          ...(attachmentInputs.files.length ? { files: attachmentInputs.files } : {}),
           ...(Object.keys(providerMetadata).length ? { providerMetadata } : {}),
         };
-      });
+      };
+
+      const mappedMessages: GenerationPromptMessage[] = [];
+      for (const message of chatMessages) {
+        mappedMessages.push(await mapChatHistoryMessageForPrompt(message));
+      }
 
       // Attach current request's provider inputs to the last user message (they're already saved in extra,
       // but the message was just created and may be the last in mappedMessages)
-      if (input.attachments?.length && !input.impersonate) {
+      if (!imageCaptioningRuntime.enabled && input.attachments?.length && !input.impersonate) {
         const imageAttachments = extractImageAttachmentDataUrls(input.attachments);
         const fileAttachments = extractFileAttachmentInputs(input.attachments);
         if (imageAttachments.length || fileAttachments.length) {
@@ -2469,20 +2763,10 @@ export async function generateRoutes(app: FastifyInstance) {
               if (contextMessageLimit && contextMessageLimit > 0 && chatMessages.length > contextMessageLimit) {
                 chatMessages = chatMessages.slice(-contextMessageLimit);
               }
-              finalMessages = chatMessages.map((m: any) => {
-                const ex = parseExtra(m.extra);
-                const att = ex.attachments as PromptAttachment[] | undefined;
-                const imgs = extractImageAttachmentDataUrls(att);
-                const files = extractFileAttachmentInputs(att);
-                return {
-                  role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
-                  content: appendReadableAttachmentsToContent(conversationPromptHistoryContent(m, chatMode), att),
-                  contextKind: "history" as const,
-                  characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
-                  ...(imgs?.length ? { images: imgs } : {}),
-                  ...(files.length ? { files } : {}),
-                };
-              });
+              finalMessages = [];
+              for (const message of chatMessages) {
+                finalMessages.push(await mapChatHistoryMessageForPrompt(message));
+              }
               finalMessages = resolveHistoryMessageMacros(finalMessages);
             }
             // Send "typing" event — client switches to "X is typing..."
