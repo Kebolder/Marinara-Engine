@@ -818,20 +818,32 @@ export function PresetsPanel() {
                 </div>
               )}
             </div>
-            <div className={cn("min-w-0 flex-1", !selectionMode && "pr-32")}>
-              <div className="flex items-center gap-1.5">
-                <span className="truncate text-sm font-medium">{preset.name}</span>
+            <div
+              className={cn(
+                "min-w-0 flex-1",
+                !selectionMode &&
+                  "pr-0 transition-[padding] max-md:pr-32 [@media(pointer:coarse)]:pr-32 [@media(pointer:fine)]:group-hover:pr-32",
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium leading-5" title={preset.name}>
+                  {preset.name}
+                </span>
                 {isDefault && (
                   <span className="mari-chrome-muted-badge shrink-0 rounded px-1 py-0.5 text-[0.5625rem]">DEFAULT</span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-[0.6875rem] text-[var(--muted-foreground)]">
-                <span className="flex items-center gap-0.5">
+              <div className="flex min-w-0 items-center gap-2 text-[0.6875rem] leading-4 text-[var(--muted-foreground)]">
+                <span className="flex shrink-0 items-center gap-0.5">
                   {wrapFormat === "xml" ? <Code2 size="0.5625rem" /> : <Hash size="0.5625rem" />}
                   {wrapFormat.toUpperCase()}
                 </span>
-                <span>{sectionCount} sections</span>
-                {preset.author && <span className="truncate">by {preset.author}</span>}
+                <span className="shrink-0">{sectionCount} sections</span>
+                {preset.author && (
+                  <span className="min-w-0 truncate" title={`by ${preset.author}`}>
+                    by {preset.author}
+                  </span>
+                )}
               </div>
             </div>
           </div>

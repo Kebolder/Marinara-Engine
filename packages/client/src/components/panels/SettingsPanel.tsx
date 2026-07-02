@@ -1905,6 +1905,69 @@ function AppearanceSettings() {
   const currentGradient = convoGradient[activeGradientScheme];
   const [draftFrom, setDraftFrom] = useState(currentGradient.from);
   const [draftTo, setDraftTo] = useState(currentGradient.to);
+  const pendingGradientChangeRef = useRef<{
+    scheme: "dark" | "light";
+    field: "from" | "to";
+    value: string;
+  } | null>(null);
+  const pendingGradientFrameRef = useRef<number | null>(null);
+
+  const flushPendingGradientChange = useCallback(() => {
+    if (pendingGradientFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingGradientFrameRef.current);
+      pendingGradientFrameRef.current = null;
+    }
+
+    const pending = pendingGradientChangeRef.current;
+    pendingGradientChangeRef.current = null;
+    if (pending) {
+      setConvoGradientField(pending.scheme, pending.field, pending.value);
+    }
+  }, [setConvoGradientField]);
+
+  const cancelPendingGradientChange = useCallback(() => {
+    if (pendingGradientFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingGradientFrameRef.current);
+      pendingGradientFrameRef.current = null;
+    }
+    pendingGradientChangeRef.current = null;
+  }, []);
+
+  useEffect(
+    () => () => {
+      flushPendingGradientChange();
+    },
+    [flushPendingGradientChange],
+  );
+
+  const commitConvoGradientField = useCallback(
+    (scheme: "dark" | "light", field: "from" | "to", value: string, defer = false) => {
+      if (!defer) {
+        cancelPendingGradientChange();
+        setConvoGradientField(scheme, field, value);
+        return;
+      }
+
+      pendingGradientChangeRef.current = { scheme, field, value };
+      if (pendingGradientFrameRef.current !== null) return;
+      pendingGradientFrameRef.current = window.requestAnimationFrame(() => {
+        pendingGradientFrameRef.current = null;
+        const pending = pendingGradientChangeRef.current;
+        pendingGradientChangeRef.current = null;
+        if (pending) {
+          setConvoGradientField(pending.scheme, pending.field, pending.value);
+        }
+      });
+    },
+    [cancelPendingGradientChange, setConvoGradientField],
+  );
+
+  const handleGradientColorInput = useCallback(
+    (field: "from" | "to", value: string) => {
+      commitConvoGradientField(activeGradientScheme, field, value, true);
+    },
+    [activeGradientScheme, commitConvoGradientField],
+  );
 
   // Sync draft inputs when switching between scheme tabs so the text fields
   // always reflect the stored value for the active scheme.
@@ -2816,10 +2879,11 @@ function AppearanceSettings() {
                   <input
                     type="color"
                     value={currentGradient.from}
-                    onChange={(e) => {
-                      setConvoGradientField(activeGradientScheme, "from", e.target.value);
-                      setDraftFrom(e.target.value);
-                    }}
+                    onInput={(e) => handleGradientColorInput("from", e.currentTarget.value)}
+                    onChange={(e) => handleGradientColorInput("from", e.currentTarget.value)}
+                    onBlur={flushPendingGradientChange}
+                    onPointerUp={flushPendingGradientChange}
+                    onKeyUp={flushPendingGradientChange}
                     className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
                   />
                   <input
@@ -2828,7 +2892,7 @@ function AppearanceSettings() {
                     onChange={(e) => {
                       setDraftFrom(e.target.value);
                       if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                        setConvoGradientField(activeGradientScheme, "from", e.target.value);
+                        commitConvoGradientField(activeGradientScheme, "from", e.target.value);
                     }}
                     onBlur={() => setDraftFrom(currentGradient.from)}
                     className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
@@ -2840,10 +2904,11 @@ function AppearanceSettings() {
                   <input
                     type="color"
                     value={currentGradient.to}
-                    onChange={(e) => {
-                      setConvoGradientField(activeGradientScheme, "to", e.target.value);
-                      setDraftTo(e.target.value);
-                    }}
+                    onInput={(e) => handleGradientColorInput("to", e.currentTarget.value)}
+                    onChange={(e) => handleGradientColorInput("to", e.currentTarget.value)}
+                    onBlur={flushPendingGradientChange}
+                    onPointerUp={flushPendingGradientChange}
+                    onKeyUp={flushPendingGradientChange}
                     className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
                   />
                   <input
@@ -2852,7 +2917,7 @@ function AppearanceSettings() {
                     onChange={(e) => {
                       setDraftTo(e.target.value);
                       if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                        setConvoGradientField(activeGradientScheme, "to", e.target.value);
+                        commitConvoGradientField(activeGradientScheme, "to", e.target.value);
                     }}
                     onBlur={() => setDraftTo(currentGradient.to)}
                     className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
@@ -2867,8 +2932,8 @@ function AppearanceSettings() {
                   activeGradientScheme === "dark"
                     ? { from: "#0a0a0e", to: "#1c2133" }
                     : { from: "#f2eff7", to: "#eae6f0" };
-                setConvoGradientField(activeGradientScheme, "from", defaults.from);
-                setConvoGradientField(activeGradientScheme, "to", defaults.to);
+                commitConvoGradientField(activeGradientScheme, "from", defaults.from);
+                commitConvoGradientField(activeGradientScheme, "to", defaults.to);
                 setDraftFrom(defaults.from);
                 setDraftTo(defaults.to);
               }}

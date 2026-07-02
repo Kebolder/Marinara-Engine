@@ -661,11 +661,11 @@ function ConnectionRow({
           </div>
         )}
       </button>
-      <div className="min-w-0 flex-1 pr-24">
-        <div className="truncate text-sm font-medium" title={conn.name}>
+      <div className="min-w-0 flex-1 pr-0 transition-[padding] max-md:pr-24 [@media(pointer:coarse)]:pr-24 [@media(pointer:fine)]:group-hover:pr-24">
+        <div className="truncate text-sm font-medium leading-5" title={conn.name}>
           {conn.name}
         </div>
-        <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+        <div className="truncate text-[0.6875rem] leading-4 text-[var(--muted-foreground)]">
           {conn.provider} • {conn.model || "No model set"}
         </div>
       </div>
