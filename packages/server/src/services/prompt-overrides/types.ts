@@ -12,6 +12,8 @@ export interface PromptVariable {
 
 export interface PromptOverrideKeyDef<TCtx extends Record<string, string | number | undefined>> {
   key: string;
+  /** Older persisted keys that should still be read when the canonical key has no override. */
+  legacyKeys?: readonly string[];
   description: string;
   variables: readonly PromptVariable[];
   /** The hardcoded behavior used when no override exists or when an override fails. */

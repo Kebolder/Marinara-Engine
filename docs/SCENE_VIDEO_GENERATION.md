@@ -69,11 +69,13 @@ The relevant keys are:
 | --- | --- |
 | `game.narrationSummarizer` | Converts completed Game Mode narration into a concise illustration request before scene illustration prompting. |
 | `game.sceneIllustration` | Builds the still visual novel/game scene illustration prompt. |
-| `game.omniVideo` | Builds the motion/camera/timing prompt for scene-video generation. |
+| `game.video` | Builds the motion/camera/timing prompt for scene-video generation. |
 
-`game.omniVideo` receives variables such as scene title, narration summary, source illustration prompt, characters, setting, art style, duration seconds, aspect ratio, and a reminder that the source illustration is used as the first frame/reference. Editing this template is the main way to prompt-engineer different motion outcomes without changing code.
+`game.video` receives variables such as scene title, narration summary, source illustration prompt, characters, setting, art style, duration seconds, aspect ratio, and a reminder that the source illustration is used as the first frame/reference. Editing this template is the main way to prompt-engineer different motion outcomes without changing code.
 
-The same template key is used for Gemini Omni and xAI scene videos today. The wording still mentions Omni because the original implementation was built around Gemini Omni's image-to-video workflow, but the rendered prompt is provider-agnostic enough for both supported services.
+Before rendering the template, Marinara compacts the video prompt context. The narration variable is a short visible story beat, not the full assistant message, and the illustration prompt variable is a filtered excerpt that drops common still-image boilerplate. xAI receives a stricter final prompt budget than Gemini because its video API rejects prompts over its maximum length.
+
+The same template key is used for Gemini Omni and xAI scene videos today. Existing saved `game.omniVideo` overrides are still read as a legacy fallback until you save the new `game.video` template.
 
 ## Storage And Safety
 
@@ -102,3 +104,7 @@ The preview should stay open while copying. If it closes, update to a build that
 ### xAI video requests take a while
 
 xAI starts a video job and then polls for completion. The default polling interval is controlled by `XAI_VIDEO_POLL_INTERVAL_MS` and the overall timeout by `VIDEO_GEN_TIMEOUT_MS`.
+
+### xAI rejects a long prompt
+
+xAI has a smaller video prompt limit than Gemini. Marinara automatically summarizes narration, excerpts the source illustration prompt, and caps the final rendered prompt for xAI requests. If you heavily customize `game.video`, keep the template concise so provider-specific safety room remains available.

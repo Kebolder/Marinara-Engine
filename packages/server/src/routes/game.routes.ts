@@ -157,7 +157,14 @@ import {
   createPromptOverridesStorage,
   type PromptOverridesStorage,
 } from "../services/storage/prompt-overrides.storage.js";
-import { GAME_NARRATION_SUMMARIZER, GAME_OMNI_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
+import { GAME_NARRATION_SUMMARIZER, GAME_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
+import {
+  compactVideoPromptText,
+  excerptIllustrationPromptForVideo,
+  getSceneVideoPromptLimits,
+  limitSceneVideoPromptForProvider,
+  summarizeVideoNarration,
+} from "../services/video/prompt-context.js";
 import { now } from "../utils/id-generator.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { assertInsideDir } from "../utils/security.js";
@@ -859,13 +866,6 @@ function readOmniReferenceImage(path: string): VideoReferenceImage {
   return { base64: readFileSync(path).toString("base64"), mimeType };
 }
 
-function compactOmniTemplateText(value: unknown, maxLength = 1800): string {
-  if (typeof value !== "string") return "";
-  const clean = stripGmCommandTags(value).replace(/\s+/g, " ").trim();
-  if (clean.length <= maxLength) return clean;
-  return `${clean.slice(0, Math.max(0, maxLength - 20)).trim()}...`;
-}
-
 function titleCaseSlug(value: string): string {
   return value
     .split(/[-_:\s]+/)
@@ -882,7 +882,7 @@ function sceneTitleFromIllustrationTag(tag: string): string {
 }
 
 function sceneTitleFromGalleryImage(image: ChatGalleryImageRow): string {
-  const promptTitle = compactOmniTemplateText(image.prompt, 96);
+  const promptTitle = excerptIllustrationPromptForVideo(image.prompt, 96);
   if (promptTitle) return promptTitle;
   const filename = basename(image.filePath).replace(/\.[^.]+$/, "");
   return titleCaseSlug(filename) || "Selected illustration";
@@ -907,14 +907,17 @@ async function galleryImageBelongsToGameScope(
   return sessions.some((session) => session.mode === "game" && session.id === imageChatId);
 }
 
-function latestNarrationSummary(messages: Array<{ role?: string | null; content?: string | null }>): string {
+function latestNarrationSummary(
+  messages: Array<{ role?: string | null; content?: string | null }>,
+  maxLength: number,
+): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message || message.role === "user") continue;
-    const summary = compactOmniTemplateText(message.content, 2000);
+    const summary = summarizeVideoNarration(stripGmCommandTags(message.content ?? ""), maxLength);
     if (summary) return summary;
   }
-  return "Animate the latest illustrated game scene while preserving its core mood, composition, and character action.";
+  return "Animate the latest illustrated game scene with motion that fits the reference image.";
 }
 
 function collectOmniCharacterNames(meta: Record<string, unknown>, latestState: unknown): string[] {
@@ -942,6 +945,7 @@ function buildOmniSettingLine(
   setupConfig: Record<string, unknown> | null,
   latestState: unknown,
   meta: Record<string, unknown>,
+  maxPartLength: number,
 ): string {
   const state = latestState && typeof latestState === "object" ? (latestState as Record<string, unknown>) : {};
   const parts = [
@@ -951,7 +955,10 @@ function buildOmniSettingLine(
     optionalTrimmedString(state.time),
     optionalTrimmedString(meta.gameSceneBackground),
   ].filter((part): part is string => Boolean(part));
-  return parts.length ? Array.from(new Set(parts)).join("; ") : "Current game scene.";
+  const compactParts = Array.from(
+    new Set(parts.map((part) => compactVideoPromptText(part, maxPartLength)).filter(Boolean)),
+  );
+  return compactParts.length ? compactParts.join("; ") : "Current game scene.";
 }
 
 function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
@@ -8531,6 +8538,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const baseUrl = videoConn.baseUrl || (isXaiVideo ? DEFAULT_XAI_VIDEO_BASE_URL : DEFAULT_GEMINI_OMNI_BASE_URL);
     const model = videoConn.model || (isXaiVideo ? DEFAULT_XAI_VIDEO_MODEL : DEFAULT_GEMINI_OMNI_MODEL);
     const resolution = isXaiVideo ? videoDefaults.xai.resolution : undefined;
+    const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
 
     const latestState = await createGameStateStorage(app.db)
       .getLatest(input.chatId)
@@ -8540,22 +8548,28 @@ export async function gameRoutes(app: FastifyInstance) {
     const galleryItems = await gallery.listByChatId(input.chatId).catch(() => []);
     const latestIllustrationPrompt =
       sourceIllustrationPrompt ||
-      (!requestedGalleryImageId ? galleryItems.find((item) => item.provider === "game_scene_illustration")?.prompt : "") ||
+      (!requestedGalleryImageId
+        ? galleryItems.find((item) => item.provider === "game_scene_illustration")?.prompt
+        : "") ||
       "";
     const characterNames = collectOmniCharacterNames(meta, latestState);
-    const prompt = await loadPrompt(promptOverridesStorage, GAME_OMNI_VIDEO, {
-      sceneTitle: sourceTitle,
-      narrationSummary: latestNarrationSummary(messages),
+    const promptDraft = await loadPrompt(promptOverridesStorage, GAME_VIDEO, {
+      sceneTitle: compactVideoPromptText(sourceTitle, promptLimits.title),
+      narrationSummary: latestNarrationSummary(messages, promptLimits.narrationSummary),
       illustrationPrompt:
-        compactOmniTemplateText(latestIllustrationPrompt, 2200) ||
+        excerptIllustrationPromptForVideo(latestIllustrationPrompt, promptLimits.illustrationPrompt) ||
         `Use the supplied first-frame illustration for ${sourceDescription}.`,
-      charactersLine: characterNames.length ? characterNames.join(", ") : "No named characters are required.",
-      settingLine: buildOmniSettingLine(setupConfig, latestState, meta),
-      artStyleLine: compactOmniTemplateText(setupConfig?.artStylePrompt, 800) || "Match the supplied illustration.",
+      charactersLine: characterNames.length
+        ? characterNames.join(", ")
+        : "preserve any visible characters from the reference image",
+      settingLine: buildOmniSettingLine(setupConfig, latestState, meta, promptLimits.artStyle),
+      artStyleLine:
+        compactVideoPromptText(setupConfig?.artStylePrompt, promptLimits.artStyle) || "match the supplied illustration",
       durationSeconds,
       aspectRatio,
       sourceIllustrationLine: `Use ${sourceDescription} as the first frame/reference image.`,
     });
+    const prompt = limitSceneVideoPromptForProvider(promptDraft, promptLimits.finalPrompt);
 
     logger.info(
       "[game/generate-scene-video] request: chatId=%s connection=%s source=%s model=%s duration=%d aspect=%s illustration=%s",

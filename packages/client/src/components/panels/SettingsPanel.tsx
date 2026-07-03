@@ -424,7 +424,7 @@ const GAME_IMAGE_PROMPT_TEMPLATE_KEYS = [
   "game.background",
   "game.sceneIllustration",
   "game.narrationSummarizer",
-  "game.omniVideo",
+  "game.video",
 ] as const;
 
 type GameAssetCategoryId = (typeof GAME_ASSET_CATEGORIES)[number]["id"];

@@ -258,9 +258,9 @@ export const GAME_NARRATION_SUMMARIZER: PromptOverrideKeyDef<GameNarrationSummar
   },
 };
 
-// ── Omni video prompt (scene illustration -> animated clip) ──
+// ── Game video prompt (scene illustration -> animated clip) ──
 
-export interface GameOmniVideoCtx extends Record<string, string | number | undefined> {
+export interface GameVideoCtx extends Record<string, string | number | undefined> {
   sceneTitle: string;
   narrationSummary: string;
   illustrationPrompt: string;
@@ -272,22 +272,27 @@ export interface GameOmniVideoCtx extends Record<string, string | number | undef
   sourceIllustrationLine: string;
 }
 
-export const GAME_OMNI_VIDEO: PromptOverrideKeyDef<GameOmniVideoCtx> = {
-  key: "game.omniVideo",
-  description: "Gemini Omni video prompt for animating a generated Game Mode scene illustration.",
+export const GAME_VIDEO: PromptOverrideKeyDef<GameVideoCtx> = {
+  key: "game.video",
+  legacyKeys: ["game.omniVideo"],
+  description: "Game video prompt for animating a generated Game Mode or Gallery illustration.",
   variables: [
     { name: "sceneTitle", description: "Short scene title or visual subject.", example: "Moonlit duel aftermath" },
     {
       name: "narrationSummary",
-      description: "Short summary of the latest visible scene narration.",
+      description: "Compact story beat from the latest visible scene narration.",
       example: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
     },
     {
       name: "illustrationPrompt",
-      description: "Prompt used for the source scene illustration.",
+      description: "Excerpt from the prompt used for the source scene illustration.",
       example: "Visual novel CG, moonlit graveyard, rain, dramatic duel aftermath...",
     },
-    { name: "charactersLine", description: "Pre-formatted visible character line.", example: "Characters: Lyra, Korr." },
+    {
+      name: "charactersLine",
+      description: "Pre-formatted visible character line.",
+      example: "Characters: Lyra, Korr.",
+    },
     {
       name: "settingLine",
       description: "Pre-formatted setting/location line.",
@@ -306,24 +311,26 @@ export const GAME_OMNI_VIDEO: PromptOverrideKeyDef<GameOmniVideoCtx> = {
       example: "Use the provided scene illustration as the first frame/reference image.",
     },
   ],
-  defaultBuilder: (ctx) =>
-    [
-      `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} cinematic animated game scene from the provided first-frame illustration.`,
+  defaultBuilder: (ctx) => {
+    const charactersLine = labelVideoPromptLine("Characters", ctx.charactersLine);
+    const settingLine = labelVideoPromptLine("Setting", ctx.settingLine);
+    const artStyleLine = labelVideoPromptLine("Art style", ctx.artStyleLine);
+    return [
+      `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} animated game scene from the provided first-frame illustration.`,
       ctx.sourceIllustrationLine,
-      ctx.sceneTitle ? `Scene title: ${ctx.sceneTitle}.` : "",
-      ctx.narrationSummary ? `Narration summary: ${ctx.narrationSummary}` : "",
-      ctx.charactersLine,
-      ctx.settingLine,
-      ctx.artStyleLine,
-      ctx.illustrationPrompt ? `Source illustration prompt: ${ctx.illustrationPrompt}` : "",
-      "Preserve the core composition, character identities, costumes, faces, lighting, and environment from the reference image.",
-      "Animate only plausible in-scene motion: breathing, clothing and hair movement, rain, drifting dust, firelight, subtle facial emotion, and environmental parallax.",
-      "Camera direction: slow cinematic push-in with slight handheld drift; no hard cuts, no montage, no new viewpoint, no sudden character repositioning.",
-      `Timing: seconds 0-3 establish the held first-frame composition; seconds 3-7 add gentle character and environment motion; seconds 7-${ctx.durationSeconds} end on a readable dramatic pose.`,
-      "Avoid: captions, subtitles, UI, logos, watermarks, speech bubbles, text overlays, extra characters, duplicated faces, warped hands, melted anatomy, heavy camera shake, jump cuts, and unrelated action.",
+      ctx.sceneTitle ? `Scene: ${ctx.sceneTitle}.` : "",
+      ctx.narrationSummary ? `Story beat: ${ctx.narrationSummary}` : "",
+      charactersLine,
+      settingLine,
+      artStyleLine,
+      ctx.illustrationPrompt ? `Reference prompt excerpt: ${ctx.illustrationPrompt}` : "",
+      "Use the reference image as the visual anchor. Keep recognizable characters, setting, and mood while adding motion that feels natural for this moment.",
+      "You may choose the most cinematic camera drift, focus shift, gestures, atmospheric movement, and ending pose that fit the scene.",
+      "Avoid subtitles, captions, UI, logos, watermarks, unrelated new characters, distorted anatomy, and abrupt cuts.",
     ]
       .filter(Boolean)
-      .join("\n"),
+      .join("\n");
+  },
   exampleContext: {
     sceneTitle: "Moonlit duel aftermath",
     narrationSummary: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
@@ -336,3 +343,10 @@ export const GAME_OMNI_VIDEO: PromptOverrideKeyDef<GameOmniVideoCtx> = {
     sourceIllustrationLine: "Use the provided scene illustration as the first frame/reference image.",
   },
 };
+
+function labelVideoPromptLine(label: string, value: string | number | undefined): string {
+  const clean = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+  if (!clean) return "";
+  if (/^[A-Z][A-Za-z ]{1,30}:\s/.test(clean)) return clean;
+  return `${label}: ${clean.replace(/[.]?$/, ".")}`;
+}

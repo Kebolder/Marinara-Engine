@@ -14,7 +14,7 @@ export {
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
   GAME_NARRATION_SUMMARIZER,
-  GAME_OMNI_VIDEO,
+  GAME_VIDEO,
   CONVERSATION_SELFIE,
   getPromptOverrideDef,
   listPromptOverrideKeys,
@@ -30,6 +30,6 @@ export type {
   GameBackgroundCtx,
   GameSceneIllustrationCtx,
   GameNarrationSummarizerCtx,
-  GameOmniVideoCtx,
+  GameVideoCtx,
   ConversationSelfieCtx,
 } from "./registry.js";
