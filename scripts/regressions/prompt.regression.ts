@@ -35,6 +35,7 @@ import type { DB } from "../../packages/server/src/db/connection.js";
 import { escapeXmlText } from "../../packages/server/src/services/prompt/prompt-escaping.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
+  appendReadableAttachmentsToContent,
   buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
   shouldEnableAgentsForGeneration,
@@ -79,6 +80,25 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "readable text attachments are not pre-truncated before context fitting",
+    run() {
+      const repeated = "0123456789".repeat(7_000);
+      const encoded = Buffer.from(repeated, "utf8").toString("base64");
+      const content = appendReadableAttachmentsToContent("Please read this.", [
+        {
+          type: "text/plain",
+          data: `data:text/plain;base64,${encoded}`,
+          filename: "long.txt",
+        },
+      ]);
+
+      assert.match(content, /<attached_file name="long.txt" type="text\/plain">/);
+      assert.match(content, /Please read this\./);
+      assert.equal(content.includes("[Attachment truncated after"), false);
+      assert.ok(content.includes(repeated));
+    },
+  },
   {
     name: "post-history system messages are folded into user turns",
     run() {
