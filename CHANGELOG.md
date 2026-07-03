@@ -10,6 +10,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed readable text-file attachments being pre-truncated to 60,000 characters before prompt context fitting, so large uploaded text files can use the selected model's actual context window.
 - Fixed Termux dependency refreshes so Android installs that add the `wasm32` optional-dependency architecture run `pnpm install --force`, allowing `@img/sharp-wasm32` to be linked for sprite generation and other sharp-backed image processing (#3167).
 
 ## [2.1.0]

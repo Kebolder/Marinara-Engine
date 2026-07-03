@@ -149,7 +149,6 @@ function createEmptyPlayerStats(): PlayerStats {
   return { stats: [], attributes: null, skills: {}, inventory: [], activeQuests: [], status: "" };
 }
 
-const TEXT_ATTACHMENT_CHAR_LIMIT = 60_000;
 const IMAGE_ATTACHMENT_PROVIDER_BYTE_LIMIT = 6 * 1024 * 1024;
 const FILE_ATTACHMENT_PROVIDER_BYTE_LIMIT = 20 * 1024 * 1024;
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
@@ -1059,15 +1058,11 @@ export function buildReadableAttachmentBlocks(attachments: PromptAttachment[] | 
 
     const filename = getAttachmentFilename(attachment);
     const type = typeof attachment.type === "string" && attachment.type.trim() ? attachment.type.trim() : "text/plain";
-    const trimmed =
-      decoded.length > TEXT_ATTACHMENT_CHAR_LIMIT
-        ? `${decoded.slice(0, TEXT_ATTACHMENT_CHAR_LIMIT)}\n\n[Attachment truncated after ${TEXT_ATTACHMENT_CHAR_LIMIT} characters.]`
-        : decoded;
 
     return [
       [
         `<attached_file name="${escapeXmlAttribute(filename)}" type="${escapeXmlAttribute(type)}">`,
-        trimmed,
+        decoded,
         `</attached_file>`,
       ].join("\n"),
     ];
