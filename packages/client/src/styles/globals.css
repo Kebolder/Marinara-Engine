@@ -211,6 +211,19 @@
   --marinara-shell-edge-border: color-mix(in srgb, var(--foreground) 14%, var(--background) 86%);
   --marinara-music-player-shell-bg: var(--marinara-topbar-surface);
   --marinara-music-player-shell-border: var(--marinara-topbar-border);
+  --marinara-music-player-text: #f7f3ef;
+  --marinara-music-player-muted: #b3b3b3;
+  --marinara-music-player-icon: #b3b3b3;
+  --marinara-music-player-icon-hover: #f7f3ef;
+  --marinara-music-player-button-bg: color-mix(in srgb, #f7f3ef 5%, transparent);
+  --marinara-music-player-button-bg-hover: color-mix(in srgb, #f7f3ef 10%, transparent);
+  --marinara-music-player-button-border: color-mix(in srgb, #f7f3ef 15%, transparent);
+  --marinara-music-player-button-border-hover: color-mix(in srgb, #f7f3ef 30%, transparent);
+  --marinara-music-player-tile-bg: color-mix(in srgb, #f7f3ef 5%, transparent);
+  --marinara-music-player-tile-ring: color-mix(in srgb, #f7f3ef 10%, transparent);
+  --marinara-music-player-action-bg: #f7f3ef;
+  --marinara-music-player-action-text: #191414;
+  --marinara-music-player-progress-bg: color-mix(in srgb, #f7f3ef 15%, transparent);
   --mari-logo-cyan: #4de5dd;
   --mari-logo-cyan-deep: #3ab8b1;
   --mari-logo-orange: #eb8951;
@@ -449,6 +462,21 @@
   --sidebar-accent-foreground: #d4acfb;
   --glow-primary: color-mix(in srgb, var(--primary) 12%, transparent);
   --glow-accent: rgba(212, 173, 252, 0.08);
+  --marinara-music-player-shell-bg: color-mix(in srgb, var(--card) 94%, var(--secondary) 6%);
+  --marinara-music-player-shell-border: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --marinara-music-player-text: color-mix(in srgb, var(--foreground) 96%, var(--primary) 4%);
+  --marinara-music-player-muted: color-mix(in srgb, var(--foreground) 62%, transparent);
+  --marinara-music-player-icon: color-mix(in srgb, var(--foreground) 70%, transparent);
+  --marinara-music-player-icon-hover: var(--foreground);
+  --marinara-music-player-button-bg: color-mix(in srgb, var(--secondary) 82%, var(--card) 18%);
+  --marinara-music-player-button-bg-hover: color-mix(in srgb, var(--primary) 14%, var(--secondary) 86%);
+  --marinara-music-player-button-border: color-mix(in srgb, var(--foreground) 16%, transparent);
+  --marinara-music-player-button-border-hover: color-mix(in srgb, var(--foreground) 28%, transparent);
+  --marinara-music-player-tile-bg: color-mix(in srgb, var(--secondary) 78%, var(--card) 22%);
+  --marinara-music-player-tile-ring: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --marinara-music-player-action-bg: color-mix(in srgb, var(--foreground) 88%, var(--primary) 12%);
+  --marinara-music-player-action-text: var(--background);
+  --marinara-music-player-progress-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
   --tracker-card-neutral-surface-top: color-mix(in srgb, var(--card) 84%, var(--accent) 16%);
   --tracker-card-neutral-surface-bottom: color-mix(in srgb, var(--secondary) 86%, var(--primary) 14%);
   --tracker-card-neutral-material: color-mix(in srgb, var(--secondary) 88%, var(--primary) 12%);
@@ -2051,7 +2079,7 @@ input[type="range"].mari-spotify-volume-slider {
   --range-thumb-color: #1db954;
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #191414;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: #1db954;
 }
@@ -2088,7 +2116,7 @@ input[type="range"].mari-youtube-volume-slider {
   --range-thumb-color: #ff0000;
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #0f0f0f;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: #ff0000;
 }
@@ -2125,7 +2153,7 @@ input[type="range"].mari-local-music-volume-slider {
   --range-thumb-color: var(--primary);
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #0f0f0f;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: var(--primary);
 }

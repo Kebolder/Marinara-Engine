@@ -46,7 +46,7 @@ export function MusicSourceButton({ source, className }: { source: MusicPlayerSo
     custom: "Custom",
   };
   const sourceClasses = cn(
-    "border-[#f7f3ef]/15 bg-[#f7f3ef]/5 hover:border-[#f7f3ef]/30 hover:bg-[#f7f3ef]/10",
+    "border-[var(--marinara-music-player-button-border)] bg-[var(--marinara-music-player-button-bg)] hover:border-[var(--marinara-music-player-button-border-hover)] hover:bg-[var(--marinara-music-player-button-bg-hover)]",
     source === "spotify" && "text-[#1DB954]",
     source === "youtube" && "text-[#FF0000]",
     source === "custom" && "text-[var(--primary)]",
