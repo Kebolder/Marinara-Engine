@@ -164,7 +164,7 @@ type SpritePromptPlan = {
 };
 
 const SPRITE_GENERATION_TIMEOUT_MS = Number(
-  process.env.SPRITE_GENERATION_TIMEOUT_MS ?? process.env.IMAGE_GEN_TIMEOUT_MS ?? 300_000,
+  process.env.SPRITE_GENERATION_TIMEOUT_MS ?? process.env.IMAGE_GEN_TIMEOUT_MS ?? 1_800_000,
 );
 
 class SpriteGenerationTimeoutError extends Error {

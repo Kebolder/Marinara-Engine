@@ -66,6 +66,9 @@ export interface AgentExecConfig {
   settings: Record<string, unknown>;
   customParameters?: Record<string, unknown>;
   maxOutputTokens?: number | null;
+  enableCaching?: boolean;
+  anthropicExtendedCacheTtl?: boolean;
+  cachingAtDepth?: number;
 }
 
 /** Optional tool context for agents that need function calling. */
@@ -494,6 +497,9 @@ export async function executeAgent(
       model,
       temperature,
       maxTokens,
+      enableCaching: config.enableCaching,
+      anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+      cachingAtDepth: config.cachingAtDepth,
       customParameters,
       stream: streamResponses,
       onToken: streamResponses
@@ -537,6 +543,9 @@ export async function executeAgent(
         model,
         temperature,
         maxTokens,
+        enableCaching: config.enableCaching,
+        anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+        cachingAtDepth: config.cachingAtDepth,
         customParameters,
         stream: streamResponses,
         onToken: streamResponses
@@ -632,6 +641,9 @@ async function executeAgentWithTools(
       model,
       temperature,
       maxTokens,
+      enableCaching: config.enableCaching,
+      anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+      cachingAtDepth: config.cachingAtDepth,
       customParameters,
       stream: streamResponses,
       tools: toolContext.tools,
@@ -713,6 +725,9 @@ async function executeAgentWithTools(
     model,
     temperature,
     maxTokens,
+    enableCaching: config.enableCaching,
+    anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+    cachingAtDepth: config.cachingAtDepth,
     customParameters,
     stream: streamResponses,
     signal: toolLoopSignal,
@@ -749,7 +764,7 @@ async function executeAgentWithTools(
 
 /**
  * Execute multiple agents in a single LLM call.
- * Combines all agent prompts into one request using XML-delimited sections,
+ * Combines all agent prompts into one request and asks for a raw JSON map,
  * then parses the combined response back into individual AgentResults.
  *
  * All agents in the batch MUST share the same provider+model.
@@ -826,6 +841,9 @@ export async function executeAgentBatch(
   const perAgentTokens = configs.map((c) => normalizeAgentMaxTokens(c.settings.maxTokens));
   const temperature = Math.min(...configs.map((c) => normalizeAgentTemperature(c.settings.temperature)));
   const customParameters = agentCustomParameters(configs[0]!);
+  const enableCaching = configs[0]!.enableCaching;
+  const anthropicExtendedCacheTtl = configs[0]!.anthropicExtendedCacheTtl;
+  const cachingAtDepth = configs[0]!.cachingAtDepth;
   const rawBatchMaxTokens = perAgentTokens.reduce((sum, tokens) => sum + tokens, 0);
   const modelMaxOutput = configs[0]!.maxOutputTokens;
   const batchMaxTokens = applyAgentMaxTokensCaps(provider, rawBatchMaxTokens, modelMaxOutput);
@@ -845,19 +863,19 @@ export async function executeAgentBatch(
 
     // Each agent reserves its own configured output budget. The context fitter
     // may still reduce this further if the prompt needs more room.
-  const streamResponses = context.streaming !== false;
-  const capDetails = [
-    provider.maxTokensOverrideValue !== null ? `connection cap=${provider.maxTokensOverrideValue}` : null,
-    modelMaxOutput ? `model cap=${modelMaxOutput}` : null,
-  ].filter(Boolean);
-  const capSuffix = capDetails.length ? `, ${capDetails.join(", ")}` : "";
-  logger.info(
-    "[agent-batch] maxTokens: %d (sum=%d from [%s]%s)",
-    batchMaxTokens,
-    rawBatchMaxTokens,
-    perAgentTokens.join(", "),
-    capSuffix,
-  );
+    const streamResponses = context.streaming !== false;
+    const capDetails = [
+      provider.maxTokensOverrideValue !== null ? `connection cap=${provider.maxTokensOverrideValue}` : null,
+      modelMaxOutput ? `model cap=${modelMaxOutput}` : null,
+    ].filter(Boolean);
+    const capSuffix = capDetails.length ? `, ${capDetails.join(", ")}` : "";
+    logger.info(
+      "[agent-batch] maxTokens: %d (sum=%d from [%s]%s)",
+      batchMaxTokens,
+      rawBatchMaxTokens,
+      perAgentTokens.join(", "),
+      capSuffix,
+    );
 
     logger.debug(`\n[agent-batch] ═══ BATCH PROMPT — [${configs.map((c) => c.type).join(", ")}] — ${model} ═══`);
     for (const msg of messages) {
@@ -885,6 +903,9 @@ export async function executeAgentBatch(
       model,
       temperature,
       maxTokens: batchMaxTokens,
+      enableCaching,
+      anthropicExtendedCacheTtl,
+      cachingAtDepth,
       customParameters,
       stream: streamResponses,
       onToken: streamResponses
@@ -998,7 +1019,7 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
     `You are a collection of ${configs.length} specialized agents. Fulfill all tasks and return all requested outputs.`,
   );
   parts.push(
-    `You MUST wrap each task's output in a <result> tag with the agent ID. Output ALL ${configs.length} result blocks.`,
+    `You MUST return one valid JSON object with one property per agent ID. Output ALL ${configs.length} agent properties.`,
   );
   parts.push(`</role>`);
 
@@ -1037,22 +1058,23 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   // ── Output format ──
   parts.push(``);
   parts.push(`─── REQUIRED OUTPUT FORMAT ───`);
-  for (const config of configs) {
-    const isJson = agentResponseIsJson(config);
-    parts.push(
-      `<result agent="${escapeXmlAttribute(config.type)}">`,
-      isJson ? `{ ... valid JSON ... }` : `... your text output ...`,
-      `</result>`,
-    );
-  }
+  parts.push(
+    `Return ONLY one valid JSON object using this property layout; replace each null with that agent's output:`,
+  );
+  parts.push(`{`);
+  configs.forEach((config, index) => {
+    const comma = index === configs.length - 1 ? "" : ",";
+    parts.push(`  ${JSON.stringify(config.type)}: null${comma}`);
+  });
+  parts.push(`}`);
   parts.push(``);
-  const escapedAgentIds = configs.map((config) => escapeXml(config.type)).join(", ");
+  const quotedAgentIds = configs.map((config) => JSON.stringify(config.type)).join(", ");
   parts.push(
     [
-      `CRITICAL: Output ALL ${configs.length} result blocks.`,
-      `Use exact agent IDs: ${escapedAgentIds}.`,
-      "JSON agents must output valid JSON (no markdown fences).",
-      "No text outside <result> blocks.",
+      `CRITICAL: Output ALL ${configs.length} agent properties.`,
+      `Use exact JSON property names: ${quotedAgentIds}.`,
+      "When an agent asks for JSON, put that requested JSON directly as that agent property's value.",
+      "Do not use XML tags, markdown fences, commentary, explanations, or text outside the JSON object.",
     ].join(" "),
   );
 
@@ -1061,7 +1083,8 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
 
 /**
  * Parse a batched LLM response into individual AgentResults.
- * Looks for <result agent="type">...</result> blocks.
+ * Prefers the raw JSON map requested by buildBatchSystemPrompt, with legacy
+ * result-tag parsing kept only as a fallback for older/stale responses.
  */
 function parseBatchResponse(
   configs: AgentExecConfig[],
@@ -1074,16 +1097,23 @@ function parseBatchResponse(
   const parsed: AgentResult[] = [];
   const failed: AgentExecConfig[] = [];
   const expectedAgentTypes = new Set(configs.map((config) => config.type));
+  const jsonResults = extractBatchJsonResults(configs, responseText);
   const resultBlocks = extractResultBlocks(responseText);
   const explicitResults = new Map<string, string>();
   for (const block of resultBlocks) {
     if (!expectedAgentTypes.has(block.agent) || explicitResults.has(block.agent)) continue;
     explicitResults.set(block.agent, block.content.trim());
   }
-  const residualText = removeSpans(responseText, resultBlocks.map((block) => [block.start, block.end] as const));
+  const residualText = removeSpans(
+    responseText,
+    resultBlocks.map((block) => [block.start, block.end] as const),
+  );
 
   for (const config of configs) {
-    const matchedOutput = explicitResults.get(config.type) ?? matchLegacyResultTag(config.type, residualText);
+    const matchedOutput =
+      jsonResults?.get(config.type) ??
+      explicitResults.get(config.type) ??
+      matchLegacyResultTag(config.type, residualText);
 
     if (matchedOutput !== null) {
       const parsedResult = parseAgentResponse(config, matchedOutput);
@@ -1113,6 +1143,25 @@ function parseBatchResponse(
   }
 
   return { parsed, failed };
+}
+
+function extractBatchJsonResults(configs: AgentExecConfig[], responseText: string): Map<string, string> | null {
+  try {
+    const parsed = JSON.parse(extractJson(responseText)) as unknown;
+    const container = isRecord(parsed) && isRecord(parsed.results) ? parsed.results : parsed;
+    if (!isRecord(container)) return null;
+
+    const results = new Map<string, string>();
+    for (const config of configs) {
+      if (!Object.prototype.hasOwnProperty.call(container, config.type)) continue;
+      const value = container[config.type];
+      if (value === null || value === undefined) continue;
+      results.set(config.type, typeof value === "string" ? value : JSON.stringify(value));
+    }
+    return results.size > 0 ? results : null;
+  } catch {
+    return null;
+  }
 }
 
 type ExtractedResultBlock = {
@@ -1490,10 +1539,7 @@ function normalizeCustomMusicFolder(value: unknown): string {
 }
 
 function formatLocalMusicTrackName(name: string): string {
-  return name
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return name.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function encodeLocalMusicPath(path: string): string {
@@ -1877,7 +1923,9 @@ function buildAgentMessages(
 
   if (context.mainResponse) {
     finalParts.push(`<assistant_response>`);
-    finalParts.push(options.preserveAssistantResponseMarkup ? context.mainResponse : stripHtmlTags(context.mainResponse));
+    finalParts.push(
+      options.preserveAssistantResponseMarkup ? context.mainResponse : stripHtmlTags(context.mainResponse),
+    );
     finalParts.push(`</assistant_response>`);
   }
 
@@ -2131,6 +2179,12 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`</spotify_dj_constraints>`);
   }
 
+  if (agentTypes.includes("spotify") && context.memory._spotifyDjCurrentPlayback) {
+    parts.push(`<spotify_current_playback>`);
+    parts.push(JSON.stringify(context.memory._spotifyDjCurrentPlayback));
+    parts.push(`</spotify_current_playback>`);
+  }
+
   if (agentTypes.includes("youtube") && context.memory._youtubeDjConstraints) {
     parts.push(`<youtube_dj_constraints>`);
     parts.push(JSON.stringify(context.memory._youtubeDjConstraints));
@@ -2268,6 +2322,7 @@ const AGENT_RESULT_TYPE_MAP: Record<string, AgentResultType> = {
   "character-tracker": "character_tracker_update",
   "persona-stats": "persona_stats_update",
   "custom-tracker": "custom_tracker_update",
+  html: "text_rewrite",
   spotify: "spotify_control",
   "knowledge-retrieval": "context_injection",
   haptic: "haptic_command",
@@ -2309,6 +2364,7 @@ const TEXT_RESULT_TYPES = new Set<AgentResultType>(["context_injection", "direct
 export function resolveAgentResultType(config: Pick<AgentExecConfig, "type" | "settings">): AgentResultType {
   if (musicDjUsesYoutube(config)) return "youtube_control";
   if (musicDjUsesCustom(config)) return "local_music_control";
+  if (config.type === "html") return "text_rewrite";
   const configured = config.settings?.resultType;
   if (typeof configured === "string" && AGENT_RESULT_TYPES.has(configured as AgentResultType)) {
     return configured as AgentResultType;
@@ -2317,6 +2373,7 @@ export function resolveAgentResultType(config: Pick<AgentExecConfig, "type" | "s
 }
 
 function agentResponseIsJson(config: Pick<AgentExecConfig, "type" | "settings">): boolean {
+  if (config.type === "html") return true;
   const resultType = resolveAgentResultType(config);
   return JSON_AGENTS.has(config.type) || !TEXT_RESULT_TYPES.has(resultType);
 }
@@ -2338,6 +2395,7 @@ const JSON_AGENTS = new Set([
   "character-tracker",
   "persona-stats",
   "custom-tracker",
+  "html",
   "spotify",
   "haptic",
   "cyoa",

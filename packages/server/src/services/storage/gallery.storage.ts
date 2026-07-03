@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Chat Gallery Images
 // ──────────────────────────────────────────────
-import { eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { chatImages } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
@@ -54,6 +54,10 @@ export function createGalleryStorage(db: DB) {
 
     async remove(id: string) {
       await db.delete(chatImages).where(eq(chatImages.id, id));
+    },
+
+    async removeByChatAndFilePath(chatId: string, filePath: string) {
+      await db.delete(chatImages).where(and(eq(chatImages.chatId, chatId), eq(chatImages.filePath, filePath)));
     },
 
     async removeAllForChat(chatId: string) {

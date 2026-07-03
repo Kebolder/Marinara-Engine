@@ -16,6 +16,21 @@ If you see an error like `EPERM: operation not permitted, open 'C:\Program Files
 
 ---
 
+## Linux: `ERR_PNPM_ENAMETOOLONG` During Install
+
+If Linux fails while adding a package tarball to pnpm's store, the dependency tree may have been created with an older, longer virtual-store path. Current Marinara checkouts keep pnpm's store in `.pnpm-store/` and its virtual store in `.pnpm/` with shorter package directory names.
+
+From the Marinara repo root, clear the partial install and run the launcher again:
+
+```bash
+rm -rf node_modules .pnpm .pnpm-store
+./start.sh
+```
+
+If you run commands manually, use `pnpm install` again after removing those folders.
+
+---
+
 ## Data Seems Missing After an Update
 
 If your chats or presets appear to be missing after updating, **do not delete any data folders yet**. Marinara v1.5.7 stores live user data in `DATA_DIR/storage`, and older installs may also have a legacy `marinara-engine.db` file that can be imported.

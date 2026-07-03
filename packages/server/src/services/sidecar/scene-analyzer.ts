@@ -165,7 +165,7 @@ function widgetStateSummary(w: HudWidget): string {
 }
 
 function compactImagePromptInstructions(value: string | null | undefined): string {
-  return (value ?? "").trim().replace(/\s+/g, " ").slice(0, 1200);
+  return (value ?? "").trim().replace(/\s+/g, " ").slice(0, 5000);
 }
 
 function compactPromptLabel(value: string | null | undefined): string {
@@ -298,7 +298,7 @@ export function buildSceneAnalyzerUserPrompt(
   parts.push(
     ``,
     `TASK: You are the scene director for a visual novel game. Read the narration above and decide:`,
-    `1. SCENE SETTING — Pick the BEST overall background, weather, and time of day that fit the narration. The top-level "background" is the DEFAULT background for this turn. Change it from the current state only if the scene warrants it (new location, mood shift). Use null to keep unchanged. For timeOfDay, use null unless the narration explicitly says time changed or a meaningful amount of time passed.`,
+    `1. SCENE SETTING — Pick the BEST overall background, weather, and time of day that fit the narration. The top-level "background" is the DEFAULT background for this turn. Change it from the current state only if the scene warrants it (new location, mood shift). Use null to keep unchanged. For timeOfDay, use null unless the narration explicitly says time changed or a meaningful amount of time passed, such as sunset, nightfall, sleeping until morning, resting overnight, or a stated time skip.`,
     ...(useSpotifyMusic
       ? [
           `2. AUDIO DIRECTION — Choose locationKind for ambient scoring, and set spotifyTrack to ONE Spotify URI from SPOTIFY TRACK OPTIONS that best fits the just-finished turn. Use null only if there are no suitable options. Do NOT output musicGenre or musicIntensity.`,
@@ -343,7 +343,7 @@ export function buildSceneAnalyzerUserPrompt(
           `- Do not include spotifyTrack when Spotify music is disabled.`,
         ]),
     `- locationKind describes the physical space for ambience: interior, exterior, underground, urban, or nature. Use null if unclear.`,
-    `- timeOfDay is calendar time, not lighting mood. Do NOT change it for indoor shadows, lamps, dark rooms, or atmosphere; keep null unless the story clearly moved to a new time of day.`,
+    `- timeOfDay is calendar time, not lighting mood. Do NOT change it for indoor shadows, lamps, dark rooms, or atmosphere; keep null unless the story clearly moved to a new time of day. Use morning after an overnight sleep/wake-up, evening for sunset/dusk, night for nightfall, and midnight only for the middle of the night.`,
     `- segmentEffects can be an EMPTY array [] when nothing changed.`,
     `- Cinematic directions are spice, not punctuation. Use at most 2 total directions per turn, and never more than 1 direction in any 3-beat span. Prefer none for routine dialogue.`,
     `- Use directions for real visual beats: a door slamming, a blade impact, thunder, a memory fracture, a kiss/reveal close-up, a panic spike, a scene transition, or a major emotional turn. Do not attach directions to every line.`,
@@ -407,7 +407,7 @@ export function buildSceneAnalyzerUserPrompt(
     `{`,
     `  "background": "<one BACKGROUND OPTIONS value | null>",`,
     `  "weather": "<clear | cloudy | foggy | rainy | stormy | snowy | windy | frost | null>",`,
-    `  "timeOfDay": "<dawn | morning | noon | afternoon | evening | night | midnight | null>",`,
+    `  "timeOfDay": "<dawn | morning | afternoon | evening | night | midnight | null>",`,
     `  "locationKind": "<${locationKindOptions}>",`,
     ...(useSpotifyMusic
       ? [

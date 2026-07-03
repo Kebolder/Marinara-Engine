@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Game: Map Wrapper (switches between grid and node)
 // ──────────────────────────────────────────────
-import { useState, useCallback, useEffect, useRef, type PointerEvent, type RefObject } from "react";
+import { useState, useCallback, useEffect, useRef, type FocusEvent, type PointerEvent, type RefObject } from "react";
 import { motion } from "framer-motion";
 import type { GameMap, GameActiveState } from "@marinara-engine/shared";
 import { GameGridMap } from "./GameGridMap";
@@ -44,7 +44,10 @@ const GAME_MAP_FIELD_CLASS =
 const GAME_MAP_ACTION_ITEM_CLASS =
   "text-[var(--marinara-chat-chrome-button-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] disabled:cursor-not-allowed disabled:opacity-35";
 
-type TimePhase = "midnight" | "night" | "dawn" | "morning" | "noon" | "afternoon" | "evening";
+type EditableTimePhase = "dawn" | "morning" | "afternoon" | "evening" | "night" | "midnight";
+type TimePhase = EditableTimePhase | "noon";
+
+const EDITABLE_TIME_PHASES: EditableTimePhase[] = ["dawn", "morning", "afternoon", "evening", "night", "midnight"];
 
 function extractHour(timeOfDay: string): number | null {
   const explicitTime = timeOfDay.match(/\b(\d{1,2})[:.h](\d{2})\b/);
@@ -215,6 +218,7 @@ interface DayTimeIndicatorProps {
   day?: number | null;
   timeOfDay?: string | null;
   onDayChange?: (day: number) => void;
+  onTimeChange?: (timeOfDay: EditableTimePhase) => void;
   size?: "desktop" | "mobile";
   className?: string;
 }
@@ -230,11 +234,20 @@ function getTimeOfDayStatusLabel(timeOfDay?: string | null): string {
   return phase ? `Time of day: ${getTimePhaseLabel(phase)}` : "Time of day unknown";
 }
 
-function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", className }: DayTimeIndicatorProps) {
+function DayTimeIndicator({
+  day,
+  timeOfDay,
+  onDayChange,
+  onTimeChange,
+  size = "desktop",
+  className,
+}: DayTimeIndicatorProps) {
   const safeDay = Math.max(1, Math.floor(day ?? 1));
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(safeDay));
   const skipCommitRef = useRef(false);
+  const selectedPhase = normalizeTimePhase(timeOfDay);
+  const editableTimeValue = selectedPhase && selectedPhase !== "noon" ? selectedPhase : "";
   const timeLabel = getTimeOfDayStatusLabel(timeOfDay);
   const rootClassName = cn(
     "inline-flex shrink-0 items-stretch overflow-hidden rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text-hover)] shadow-[0_2px_8px_rgba(0,0,0,0.2)]",
@@ -275,12 +288,22 @@ function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", class
     if (next !== safeDay) onDayChange?.(next);
   }, [draft, onDayChange, safeDay]);
 
+  const handleEditorBlur = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+      commit();
+    },
+    [commit],
+  );
+
   if (editing) {
     return (
       <div
         className={cn(rootClassName, "focus-within:ring-2 focus-within:ring-[var(--marinara-chat-chrome-focus-ring)]")}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
+        onBlur={handleEditorBlur}
         title={`Day ${safeDay}. ${timeLabel}.`}
         aria-label={`Day ${safeDay}. ${timeLabel}.`}
       >
@@ -291,7 +314,6 @@ function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", class
           max={9999}
           value={draft}
           onChange={(event) => setDraft(event.target.value.replace(/[^\d]/g, "").slice(0, 4))}
-          onBlur={commit}
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.key === "Escape") {
@@ -300,7 +322,7 @@ function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", class
               setEditing(false);
             } else if (event.key === "Enter") {
               event.preventDefault();
-              event.currentTarget.blur();
+              commit();
             }
           }}
           className={cn(
@@ -310,7 +332,30 @@ function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", class
           aria-label="Edit game day"
         />
         <span className={dividerClassName} aria-hidden="true" />
-        <TimeOfDayIndicator timeOfDay={timeOfDay} size={size} className={timeClassName} />
+        <select
+          value={editableTimeValue}
+          onChange={(event) => {
+            const next = event.target.value as EditableTimePhase;
+            if (next) onTimeChange?.(next);
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          className={cn(
+            "h-full rounded-r-lg border-0 bg-transparent px-1 text-[0.625rem] font-semibold capitalize text-[var(--marinara-chat-chrome-panel-title)] outline-none",
+            size === "mobile" ? "w-[5.4rem]" : "w-[4.8rem]",
+          )}
+          aria-label="Edit game time of day"
+        >
+          <option value="" disabled>
+            Time
+          </option>
+          {EDITABLE_TIME_PHASES.map((phase) => (
+            <option key={phase} value={phase}>
+              {getTimePhaseLabel(phase)}
+            </option>
+          ))}
+        </select>
       </div>
     );
   }
@@ -327,8 +372,8 @@ function DayTimeIndicator({ day, timeOfDay, onDayChange, size = "desktop", class
         rootClassName,
         "transition-colors hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]",
       )}
-      title={`Day ${safeDay}. ${timeLabel}. Tap to edit day.`}
-      aria-label={`Day ${safeDay}. ${timeLabel}. Tap to edit day.`}
+      title={`Day ${safeDay}. ${timeLabel}. Tap to edit day and time.`}
+      aria-label={`Day ${safeDay}. ${timeLabel}. Tap to edit day and time.`}
     >
       <span className={dayClassName}>Day {safeDay}</span>
       <span className={dividerClassName} aria-hidden="true" />
@@ -439,6 +484,8 @@ interface GameMapProps {
   day?: number | null;
   /** Called when the user edits the visible day number. */
   onDayChange?: (day: number) => void;
+  /** Called when the user manually chooses a time of day. */
+  onTimeChange?: (timeOfDay: EditableTimePhase) => void;
 }
 
 interface MapGenerateButtonProps {
@@ -495,6 +542,7 @@ export function GameMapPanel({
   timeOfDay,
   day,
   onDayChange,
+  onTimeChange,
   chatId,
   constraintsRef,
 }: GameMapPanelProps) {
@@ -587,7 +635,12 @@ export function GameMapPanel({
                 )}
               </span>
             )}
-            <DayTimeIndicator day={day} timeOfDay={timeOfDay} onDayChange={onDayChange} />
+            <DayTimeIndicator
+              day={day}
+              timeOfDay={timeOfDay}
+              onDayChange={onDayChange}
+              onTimeChange={onTimeChange}
+            />
           </div>
         )}
         <span className="block min-w-0 flex-1 overflow-hidden text-center font-semibold text-[var(--marinara-chat-chrome-panel-title)]">
@@ -674,6 +727,7 @@ interface MobileMapButtonProps {
   timeOfDay?: string | null;
   day?: number | null;
   onDayChange?: (day: number) => void;
+  onTimeChange?: (timeOfDay: EditableTimePhase) => void;
 }
 
 /** Mobile-only: map icon button in top-left that opens a compact anchored popover. */
@@ -692,6 +746,7 @@ export function MobileMapButton({
   timeOfDay,
   day,
   onDayChange,
+  onTimeChange,
 }: MobileMapButtonProps) {
   const [open, setOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -807,7 +862,13 @@ export function MobileMapButton({
             {/* Header */}
             <div className={cn("flex items-center gap-2 border-b px-2.5 py-2", GAME_MAP_DIVIDER_CLASS)}>
               <StateIcon size={14} className={stateCfg?.color ?? "text-[var(--marinara-chat-chrome-panel-muted)]"} />
-              <DayTimeIndicator day={day} timeOfDay={timeOfDay} onDayChange={onDayChange} size="mobile" />
+              <DayTimeIndicator
+                day={day}
+                timeOfDay={timeOfDay}
+                onDayChange={onDayChange}
+                onTimeChange={onTimeChange}
+                size="mobile"
+              />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <p className="block overflow-hidden whitespace-nowrap text-xs font-bold text-[var(--marinara-chat-chrome-panel-title)]">
                   {(map?.name || "Map").length > 18 ? (

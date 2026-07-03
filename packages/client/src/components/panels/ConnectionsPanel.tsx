@@ -270,29 +270,29 @@ function SidecarCard() {
           </button>
         </div>
       </div>
-      <div className="mt-2.5 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2.5">
-        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--warning)]">
-          <AlertTriangle size="0.875rem" className="shrink-0" />
-          Local Model is not for roleplay
-        </div>
-        <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
-          The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
-          background tasks only.
-        </p>
-      </div>
       {/* Local model actions (only when model is downloaded) */}
       {expanded && (
         <>
+          <div className="mt-2.5 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[var(--warning)]">
+              <AlertTriangle size="0.875rem" className="shrink-0" />
+              Local Model is not for roleplay
+            </div>
+            <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+              The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
+              background tasks only.
+            </p>
+          </div>
           {isDownloaded && (
             <div className="mt-2.5 flex flex-col gap-1.5 border-t border-sky-400/10 pt-2.5">
               <button
                 type="button"
-	                onClick={() => void handleAssignTrackersToLocal()}
-	                disabled={assigningTrackers}
-	                className="mari-chrome-control w-full justify-between gap-3 px-3 py-2 text-left"
-	              >
+                onClick={() => void handleAssignTrackersToLocal()}
+                disabled={assigningTrackers}
+                className="mari-chrome-control w-full justify-between gap-3 px-3 py-2 text-left"
+              >
                 <div className="min-w-0 flex-1">
-	                  <div className="text-xs font-medium">Use local model for all tracker agents</div>
+                  <div className="text-xs font-medium">Use local model for all tracker agents</div>
                   <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
                     Assigns the built-in local model as the connection override for every built-in tracker agent.
                   </div>
@@ -327,17 +327,17 @@ function SidecarCard() {
             <div className="mt-2.5 flex flex-col gap-2 border-t border-sky-400/10 pt-2.5">
               <button
                 type="button"
-	                onClick={handleDownloadNow}
-	                disabled={isDownloading}
-	                className="mari-chrome-control w-full px-3 py-2 text-xs"
-	              >
+                onClick={handleDownloadNow}
+                disabled={isDownloading}
+                className="mari-chrome-control w-full px-3 py-2 text-xs"
+              >
                 {isDownloading ? "Downloading..." : "Download now"}
               </button>
               <button
                 type="button"
-	                onClick={openLocalModelSettings}
-	                className="mari-chrome-control mari-chrome-control--compact w-full text-center"
-	              >
+                onClick={openLocalModelSettings}
+                className="mari-chrome-control mari-chrome-control--compact w-full text-center"
+              >
                 Choose model options
               </button>
             </div>
@@ -355,10 +355,10 @@ function SidecarCard() {
               )}
               <button
                 onClick={() => {
-	                  openLocalModelSettings();
-	                }}
-	                className="mari-chrome-control mari-chrome-control--small mt-2 text-[0.6875rem]"
-	              >
+                  openLocalModelSettings();
+                }}
+                className="mari-chrome-control mari-chrome-control--small mt-2 text-[0.6875rem]"
+              >
                 Open Local AI Model
               </button>
             </div>
@@ -380,6 +380,7 @@ type ConnectionRowData = {
   isDefault?: boolean | string;
   defaultForAgents?: boolean | string;
   enableCaching?: boolean | string;
+  anthropicExtendedCacheTtl?: boolean | string;
   cachingAtDepth?: number;
   embeddingModel?: string | null;
   embeddingBaseUrl?: string | null;
@@ -600,8 +601,8 @@ function ConnectionRow({
   ) : (
     <Link size="1rem" />
   );
-  const iconClasses = cn(
-    "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br text-white shadow-sm",
+  const iconFrameClasses = cn(
+    "relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br text-white shadow-sm",
     conn.imagePath ? "bg-[var(--muted)]" : `${colors.from} ${colors.to}`,
   );
 
@@ -638,20 +639,22 @@ function ConnectionRow({
           onImagePick();
         }}
         className={cn(
-          iconClasses,
+          "relative flex h-10 w-10 shrink-0 items-center justify-center overflow-visible rounded-xl text-white",
           "transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]",
         )}
         title={conn.imagePath ? "Replace connection picture" : "Upload connection picture"}
         aria-label={conn.imagePath ? "Replace connection picture" : "Upload connection picture"}
       >
-        {iconContent}
-        <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
-          <Camera size="0.875rem" />
+        <span className={iconFrameClasses}>
+          {iconContent}
+          <span className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity group-hover:opacity-100">
+            <Camera size="0.875rem" />
+          </span>
         </span>
         {(selectionMode ? isBulkSelected : isSelected) && (
           <div
             className={cn(
-              "absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-md shadow-sm",
+              "pointer-events-none absolute -right-1 -top-1 z-10 flex h-4 w-4 items-center justify-center rounded-md shadow-sm ring-1 ring-[var(--sidebar)]",
               colors.badge,
             )}
           >
@@ -659,11 +662,11 @@ function ConnectionRow({
           </div>
         )}
       </button>
-      <div className="min-w-0 flex-1 pr-24">
-        <div className="truncate text-sm font-medium" title={conn.name}>
+      <div className="min-w-0 flex-1 pr-0 transition-[padding] max-md:pr-24 [@media(pointer:coarse)]:pr-24 [@media(pointer:fine)]:group-hover:pr-24">
+        <div className="truncate text-sm font-medium leading-5" title={conn.name}>
           {conn.name}
         </div>
-        <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+        <div className="truncate text-[0.6875rem] leading-4 text-[var(--muted-foreground)]">
           {conn.provider} • {conn.model || "No model set"}
         </div>
       </div>
@@ -1019,13 +1022,16 @@ export function ConnectionsPanel() {
     setSelectedConnectionIds(new Set());
   }, []);
 
-  const handleDropConnectionsToFolder = useCallback((connectionIds: string[], folderId: string | null) => {
-    const ids = Array.from(new Set(connectionIds.filter(Boolean)));
-    for (const connectionId of ids) {
-      moveConnectionMut.mutate({ connectionId, folderId });
-    }
-    setDraggedConnectionId(null);
-  }, [moveConnectionMut]);
+  const handleDropConnectionsToFolder = useCallback(
+    (connectionIds: string[], folderId: string | null) => {
+      const ids = Array.from(new Set(connectionIds.filter(Boolean)));
+      for (const connectionId of ids) {
+        moveConnectionMut.mutate({ connectionId, folderId });
+      }
+      setDraggedConnectionId(null);
+    },
+    [moveConnectionMut],
+  );
 
   const finishConnectionTouchDrag = useCallback(
     (connectionId: string, x: number, y: number) => {
@@ -1305,7 +1311,9 @@ export function ConnectionsPanel() {
         </div>
 
         {sortedFolders.length > 0 && (
-          <p className="mari-folder-helper">Drag and drop connections to folders, double-click or double-tap to rename</p>
+          <p className="mari-folder-helper">
+            Drag and drop connections to folders, double-click or double-tap to rename
+          </p>
         )}
       </div>
 
@@ -1369,10 +1377,7 @@ export function ConnectionsPanel() {
               <ExternalLink size="0.75rem" />
               Visit LinkAPI
             </a>
-            <button
-              onClick={dismissLinkApiBanner}
-              className="mari-chrome-control mari-chrome-control--small text-xs"
-            >
+            <button onClick={dismissLinkApiBanner} className="mari-chrome-control mari-chrome-control--small text-xs">
               <X size="0.75rem" />
               Dismiss permanently
             </button>

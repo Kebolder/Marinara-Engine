@@ -18,11 +18,6 @@ export function preloadChatSettingsDrawer() {
 
 const ChatSettingsDrawer = lazy(preloadChatSettingsDrawer);
 
-const ChatFilesDrawer = lazy(async () => {
-  const module = await import("./ChatFilesDrawer");
-  return { default: module.ChatFilesDrawer };
-});
-
 const ChatGalleryDrawer = lazy(async () => {
   const module = await import("./ChatGalleryDrawer");
   return { default: module.ChatGalleryDrawer };
@@ -205,14 +200,14 @@ function ChatSettingsLoadingFallback({ anchor }: { anchor: ChatFloatingPanelAnch
   return (
     <div
       data-chat-floating-panel
-      className="fixed bottom-3 right-[calc(var(--mari-chat-ui-inset-right,0px)+0.75rem)] top-14 z-[70] flex w-[min(34rem,calc(100vw-var(--mari-chat-ui-inset-left,0px)-var(--mari-chat-ui-inset-right,0px)-1.5rem))] flex-col overflow-hidden rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] text-[var(--marinara-chat-chrome-panel-text)] shadow-2xl shadow-black/40 backdrop-blur-md max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto"
+      className="mari-chrome-token-scope fixed bottom-3 right-[calc(var(--mari-chat-ui-inset-right,0px)+0.75rem)] top-14 z-[70] flex w-[min(34rem,calc(100vw-var(--mari-chat-ui-inset-left,0px)-var(--mari-chat-ui-inset-right,0px)-1.5rem))] flex-col overflow-hidden rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] text-[var(--marinara-chat-chrome-panel-text)] shadow-2xl shadow-black/40 backdrop-blur-md max-md:inset-x-2 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] max-md:top-[calc(3.5rem+env(safe-area-inset-top))] max-md:w-auto"
       style={panelStyle}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] px-4 py-3 text-sm font-semibold">
-        <Loader2 size="0.875rem" className="animate-spin text-[var(--primary)]" />
+      <div className="mari-chrome-text-strong flex shrink-0 items-center gap-2 border-b border-[var(--marinara-chat-chrome-panel-divider)] px-4 py-3 text-sm font-semibold">
+        <Loader2 size="0.875rem" className="mari-chrome-accent-icon animate-spin" />
         Chat Settings
       </div>
-      <div className="flex min-h-32 items-center justify-center px-4 py-8 text-xs text-[var(--muted-foreground)]">
+      <div className="mari-chrome-text-muted flex min-h-32 items-center justify-center px-4 py-8 text-xs">
         Loading settings...
       </div>
     </div>
@@ -224,7 +219,6 @@ type ChatCommonOverlaysProps = {
   settingsOpen: boolean;
   settingsAnchor: ChatFloatingPanelAnchor;
   settingsInitialSection?: ChatSettingsInitialSection;
-  filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ChatFloatingPanelAnchor;
   wizardOpen: boolean;
@@ -237,7 +231,6 @@ type ChatCommonOverlaysProps = {
   selectedMessageCount: number;
   sceneSettings: SharedSceneSettingsProps;
   onCloseSettings: () => void;
-  onCloseFiles: () => void;
   onCloseGallery: () => void;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void;
@@ -261,7 +254,6 @@ export function ChatCommonOverlays({
   settingsOpen,
   settingsAnchor,
   settingsInitialSection,
-  filesOpen,
   galleryOpen,
   galleryAnchor,
   wizardOpen,
@@ -274,7 +266,6 @@ export function ChatCommonOverlays({
   selectedMessageCount,
   sceneSettings,
   onCloseSettings,
-  onCloseFiles,
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
@@ -307,11 +298,6 @@ export function ChatCommonOverlays({
             spriteVisualSettings={sceneSettings.spriteVisualSettings}
             onSpriteVisualSettingsChange={sceneSettings.onSpriteVisualSettingsChange}
           />
-        </Suspense>
-      )}
-      {chat && (
-        <Suspense fallback={null}>
-          {filesOpen && <ChatFilesDrawer chat={chat} open={filesOpen} onClose={onCloseFiles} />}
         </Suspense>
       )}
       {chat && (

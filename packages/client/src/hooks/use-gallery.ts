@@ -91,8 +91,29 @@ export function useDeleteGalleryImage(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (imageId: string) => api.delete(`/gallery/${imageId}`),
-    onSuccess: () => {
+    onMutate: async (imageId) => {
+      await Promise.all([
+        qc.cancelQueries({ queryKey: galleryKeys.chat(chatId) }),
+        qc.cancelQueries({ queryKey: galleryKeys.assets(chatId) }),
+      ]);
+
+      const previousImages = qc.getQueryData<ChatImage[]>(galleryKeys.chat(chatId));
+      const previousAssets = qc.getQueryData<ChatAssetBrowserItem[]>(galleryKeys.assets(chatId));
+
+      qc.setQueryData<ChatImage[]>(galleryKeys.chat(chatId), (old) => old?.filter((image) => image.id !== imageId));
+      qc.setQueryData<ChatAssetBrowserItem[]>(galleryKeys.assets(chatId), (old) =>
+        old?.filter((asset) => asset.id !== imageId && asset.id !== `chat-gallery:${imageId}`),
+      );
+
+      return { previousImages, previousAssets };
+    },
+    onError: (_error, _imageId, context) => {
+      if (context?.previousImages) qc.setQueryData(galleryKeys.chat(chatId), context.previousImages);
+      if (context?.previousAssets) qc.setQueryData(galleryKeys.assets(chatId), context.previousAssets);
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: galleryKeys.chat(chatId) });
+      qc.invalidateQueries({ queryKey: galleryKeys.assets(chatId) });
     },
   });
 }

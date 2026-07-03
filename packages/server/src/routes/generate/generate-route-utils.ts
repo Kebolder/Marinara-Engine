@@ -9,11 +9,13 @@ import {
   normalizeTextForMatch,
   normalizeThinkingTagPairs,
   parseTrackerFieldLocks,
+  resolveMacros,
   type CharacterStat,
   type GameState,
   type GenerationParameterSendMap,
   type GenerationParameters,
   type InventoryItem,
+  type MacroContext,
   type PlayerStats,
 } from "@marinara-engine/shared";
 import { LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
@@ -46,6 +48,7 @@ export type LocalSidecarGenerationConnection = {
   isDefault: "false";
   useForRandom: "false";
   enableCaching: "false";
+  anthropicExtendedCacheTtl: "false";
   cachingAtDepth: number;
   defaultForAgents: "false";
   embeddingModel: string;
@@ -75,7 +78,33 @@ export type PromptAttachment = {
   name?: string | null;
   prompt?: string | null;
   galleryId?: string | null;
+  imageCaption?: string | null;
+  imageCaptionConnectionId?: string | null;
+  imageCaptionModel?: string | null;
+  imageCaptionProvider?: string | null;
+  imageCaptionedAt?: string | null;
 };
+
+export function buildGenerationGuideInstruction(
+  generationGuide: unknown,
+  promptMacroContext: MacroContext,
+): string | null {
+  const rawGenerationGuide = typeof generationGuide === "string" ? generationGuide.trim() : "";
+  if (!rawGenerationGuide) return null;
+
+  const normalizedGenerationGuide = resolveMacros(
+    rawGenerationGuide,
+    {
+      ...promptMacroContext,
+      variables: { ...promptMacroContext.variables },
+    },
+    { trimResult: false },
+  ).trim();
+
+  return normalizedGenerationGuide
+    ? `Take the following into special consideration for your next message: ${normalizedGenerationGuide}`
+    : null;
+}
 
 export function createLocalSidecarGenerationConnection(): LocalSidecarGenerationConnection {
   const config = sidecarModelService.getConfig();
@@ -92,6 +121,7 @@ export function createLocalSidecarGenerationConnection(): LocalSidecarGeneration
     isDefault: "false",
     useForRandom: "false",
     enableCaching: "false",
+    anthropicExtendedCacheTtl: "false",
     cachingAtDepth: 5,
     defaultForAgents: "false",
     embeddingModel: "",
@@ -1017,7 +1047,7 @@ function decodeDataUrlText(dataUrl: string): string | null {
   }
 }
 
-function escapeXmlAttribute(value: string): string {
+export function escapeXmlAttribute(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 

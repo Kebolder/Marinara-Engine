@@ -4,7 +4,9 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import {
-  usePersonas,
+  fetchAllPersonaPages,
+  flattenPersonaPages,
+  usePersonaPages,
   useDeletePersona,
   useActivatePersona,
   useUploadPersonaAvatar,
@@ -126,7 +128,6 @@ function useTouchSafePersonaDragMode() {
 }
 
 export function PersonasPanel() {
-  const { data: personas, isLoading } = usePersonas();
   const deletePersona = useDeletePersona();
   const duplicatePersona = useDuplicatePersona();
   const updatePersona = useUpdatePersona();
@@ -149,6 +150,18 @@ export function PersonasPanel() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<Set<string>>(new Set());
   const [exportingSelected, setExportingSelected] = useState(false);
+  const clientOnlyPersonaFilterActive = favFilter !== "all" || activeTag !== null;
+  const [completeFilteredPersonas, setCompleteFilteredPersonas] = useState<PersonaRow[] | null>(null);
+  const [completePersonasLoading, setCompletePersonasLoading] = useState(false);
+  const personaPages = usePersonaPages({ search, sort });
+  const pagedPersonas = useMemo(() => flattenPersonaPages(personaPages.data), [personaPages.data]);
+  const personas = useMemo(
+    () => (clientOnlyPersonaFilterActive ? (completeFilteredPersonas ?? []) : pagedPersonas),
+    [clientOnlyPersonaFilterActive, completeFilteredPersonas, pagedPersonas],
+  );
+  const isLoading =
+    personaPages.isLoading ||
+    (clientOnlyPersonaFilterActive && completePersonasLoading && completeFilteredPersonas === null);
 
   const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -160,6 +173,36 @@ export function PersonasPanel() {
   const nativePersonaDragEnabled = !touchSafePersonaDragMode;
 
   const isActive = (p: PersonaRow) => p.isActive === true || p.isActive === "true";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!clientOnlyPersonaFilterActive) {
+      setCompleteFilteredPersonas(null);
+      setCompletePersonasLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setCompletePersonasLoading(true);
+    fetchAllPersonaPages({ search, sort })
+      .then((rows) => {
+        if (!cancelled) setCompleteFilteredPersonas(rows as PersonaRow[]);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCompleteFilteredPersonas(null);
+          toast.error("Failed to load all matching personas");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCompletePersonasLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientOnlyPersonaFilterActive, search, sort]);
 
   const handleCreate = () => {
     openModal("create-persona");
@@ -221,7 +264,8 @@ export function PersonasPanel() {
         return;
       }
       try {
-        const affected = rawList.filter((p) => parseTags(p).includes(tag));
+        const allPersonas = (await fetchAllPersonaPages({ sort })) as PersonaRow[];
+        const affected = allPersonas.filter((p) => parseTags(p).includes(tag));
         for (const p of affected) {
           const newTags = parseTags(p).filter((t) => t !== tag);
           await updatePersona.mutateAsync({ id: p.id, tags: JSON.stringify(newTags) });
@@ -231,7 +275,7 @@ export function PersonasPanel() {
         toast.error("Failed to remove tag from some personas");
       }
     },
-    [rawList, updatePersona, activeTag],
+    [sort, updatePersona, activeTag],
   );
 
   const personaMap = useMemo(() => {
@@ -1119,6 +1163,17 @@ export function PersonasPanel() {
           );
         })}
       </div>
+
+      {!clientOnlyPersonaFilterActive && personaPages.hasNextPage && (
+        <button
+          type="button"
+          onClick={() => void personaPages.fetchNextPage()}
+          disabled={personaPages.isFetchingNextPage}
+          className="mari-chrome-control mari-chrome-control--primary justify-center text-xs"
+        >
+          {personaPages.isFetchingNextPage ? "Loading..." : `Load more (${rawList.length} loaded)`}
+        </button>
+      )}
 
       {selectionMode && (
         <SelectionActionBar

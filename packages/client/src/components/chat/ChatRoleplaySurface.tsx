@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
@@ -200,10 +201,11 @@ function useIsMobileToolbarViewport() {
 }
 
 function WeatherEffectsConnected() {
-  const gs = useGameStateStore((s) => s.current);
+  const weather = useGameStateStore((s) => s.current?.weather ?? null);
+  const timeOfDay = useGameStateStore((s) => s.current?.time ?? null);
   return (
     <Suspense fallback={null}>
-      <WeatherEffects weather={gs?.weather ?? null} timeOfDay={gs?.time ?? null} />
+      <WeatherEffects weather={weather} timeOfDay={timeOfDay} />
     </Suspense>
   );
 }
@@ -422,7 +424,9 @@ function resolveChatSummaryInjectionHint(
     return isMarker && readMarkerConfig(section.markerConfig)?.type === "chat_summary";
   });
   const enabledSummarySections = summarySections.filter((section) => promptEnabled(section.enabled));
-  const activeSummarySections = enabledSummarySections.filter((section) => groupPathEnabled(section.groupId, groupsById));
+  const activeSummarySections = enabledSummarySections.filter((section) =>
+    groupPathEnabled(section.groupId, groupsById),
+  );
 
   if (summarySections.length === 0) {
     return "Enabled summaries will be added at the end of the system prompt. Add an enabled Chat Summary marker to the active preset to choose a specific position.";
@@ -608,7 +612,9 @@ function ActiveContextLinksButton({
                       >
                         <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusStyle.dot)} />
                         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                        <span className={cn("shrink-0 rounded px-1 py-0.5 text-[0.5rem] font-semibold", statusStyle.badge)}>
+                        <span
+                          className={cn("shrink-0 rounded px-1 py-0.5 text-[0.5rem] font-semibold", statusStyle.badge)}
+                        >
                           {statusStyle.label}
                         </span>
                         <span className="shrink-0 text-foreground/40">#{entry.order}</span>
@@ -943,73 +949,75 @@ function AuthorNotesButton({
       </button>
       {open &&
         renderPanel &&
-        (useMobilePanel ? (
-          mobileFrame &&
-          createPortal(
-            <div
-              ref={panelRef}
-              className={cn(ROLEPLAY_POPOVER_SHELL, ROLEPLAY_POPOVER_SCROLL_AREA, "fixed z-[9999] overflow-y-auto p-3")}
-              style={{
-                top: mobileFrame.top,
-                left: mobileFrame.left,
-                width: mobileFrame.width,
-                maxHeight: mobileFrame.maxHeight,
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              onTouchStart={(e) => e.stopPropagation()}
-            >
-              <Suspense
-                fallback={
-                  <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
-                    <Loader2 size="0.75rem" className="animate-spin" />
-                    Loading author's notes...
-                  </div>
-                }
+        (useMobilePanel
+          ? mobileFrame &&
+            createPortal(
+              <div
+                ref={panelRef}
+                className={cn(
+                  ROLEPLAY_POPOVER_SHELL,
+                  ROLEPLAY_POPOVER_SCROLL_AREA,
+                  "fixed z-[9999] overflow-y-auto p-3",
+                )}
+                style={{
+                  top: mobileFrame.top,
+                  left: mobileFrame.left,
+                  width: mobileFrame.width,
+                  maxHeight: mobileFrame.maxHeight,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
               >
-                <AuthorNotesPanel
-                  key={chatId}
-                  chatId={chatId}
-                  chatMeta={chatMeta}
-                  onClose={() => onOpenChange(false)}
-                />
-              </Suspense>
-            </div>,
-            document.body,
-          )
-        ) : (
-          desktopAnchor &&
-          createPortal(
-            <div
-              ref={panelRef}
-              data-chat-floating-panel
-              className={cn(ROLEPLAY_POPOVER_SHELL, "fixed z-[70] w-72 p-3")}
-              style={{
-                right: `${desktopAnchor.right}px`,
-                top: `${desktopAnchor.top}px`,
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              <Suspense
-                fallback={
-                  <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
-                    <Loader2 size="0.75rem" className="animate-spin" />
-                    Loading author's notes...
-                  </div>
-                }
+                <Suspense
+                  fallback={
+                    <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                      Loading author's notes...
+                    </div>
+                  }
+                >
+                  <AuthorNotesPanel
+                    key={chatId}
+                    chatId={chatId}
+                    chatMeta={chatMeta}
+                    onClose={() => onOpenChange(false)}
+                  />
+                </Suspense>
+              </div>,
+              document.body,
+            )
+          : desktopAnchor &&
+            createPortal(
+              <div
+                ref={panelRef}
+                data-chat-floating-panel
+                className={cn(ROLEPLAY_POPOVER_SHELL, "fixed z-[70] w-72 p-3")}
+                style={{
+                  right: `${desktopAnchor.right}px`,
+                  top: `${desktopAnchor.top}px`,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
               >
-                <AuthorNotesPanel
-                  key={chatId}
-                  chatId={chatId}
-                  chatMeta={chatMeta}
-                  onClose={() => onOpenChange(false)}
-                />
-              </Suspense>
-            </div>,
-            document.body,
-          )
-        ))}
+                <Suspense
+                  fallback={
+                    <div className="flex items-center gap-2 py-4 text-xs text-[var(--muted-foreground)]">
+                      <Loader2 size="0.75rem" className="animate-spin" />
+                      Loading author's notes...
+                    </div>
+                  }
+                >
+                  <AuthorNotesPanel
+                    key={chatId}
+                    chatId={chatId}
+                    chatMeta={chatMeta}
+                    onClose={() => onOpenChange(false)}
+                  />
+                </Suspense>
+              </div>,
+              document.body,
+            ))}
     </div>
   );
 }
@@ -1052,6 +1060,7 @@ type RoleplaySurfaceProps = {
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   isStreaming: boolean;
+  agentProcessing: boolean;
   regenerateMessageId: string | null;
   shouldAnimateMessages: boolean;
   summaryContextSize: number;
@@ -1060,7 +1069,6 @@ type RoleplaySurfaceProps = {
   settingsOpen: boolean;
   settingsAnchor: ComponentProps<typeof ChatCommonOverlays>["settingsAnchor"];
   settingsInitialSection?: ComponentProps<typeof ChatCommonOverlays>["settingsInitialSection"];
-  filesOpen: boolean;
   galleryOpen: boolean;
   galleryAnchor: ComponentProps<typeof ChatCommonOverlays>["galleryAnchor"];
   wizardOpen: boolean;
@@ -1097,7 +1105,6 @@ type RoleplaySurfaceProps = {
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
   onCloseSettings: () => void;
-  onCloseFiles: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
   onGenerateBackground?: () => void | Promise<void>;
@@ -1162,6 +1169,7 @@ export function ChatRoleplaySurface({
   hasNextPage,
   isFetchingNextPage,
   isStreaming,
+  agentProcessing,
   regenerateMessageId,
   shouldAnimateMessages,
   summaryContextSize,
@@ -1170,7 +1178,6 @@ export function ChatRoleplaySurface({
   settingsOpen,
   settingsAnchor,
   settingsInitialSection,
-  filesOpen,
   galleryOpen,
   galleryAnchor,
   wizardOpen,
@@ -1207,7 +1214,6 @@ export function ChatRoleplaySurface({
   onOpenSettings,
   onOpenGallery,
   onCloseSettings,
-  onCloseFiles,
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
@@ -1232,6 +1238,7 @@ export function ChatRoleplaySurface({
   onSelectAllBelowSelection,
   isGrouped,
 }: RoleplaySurfaceProps) {
+  useRenderTimer("rp-surface"); // [#3104 diagnostic]
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(activeChatId));
   const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const hasLiveStream = isStreaming && !isStreamCommitted;
@@ -1247,12 +1254,41 @@ export function ChatRoleplaySurface({
   const pendingPostProcessingKeysRef = useRef<Set<string>>(new Set());
   const topChromeRef = useRef<HTMLDivElement>(null);
   const inputChromeRef = useRef<HTMLDivElement>(null);
+  const composerScrollTopRef = useRef(0);
   const [chromeHeights, setChromeHeights] = useState({ top: 0, bottom: 0 });
+  const [mobileHistoryComposerCollapsed, setMobileHistoryComposerCollapsed] = useState(false);
   const [authorNotesOpenOwner, setAuthorNotesOpenOwner] = useState<"expanded" | "compact" | null>(null);
   const isMobileToolbarViewport = useIsMobileToolbarViewport();
   const compactToolbarOwnsAuthorNotes = centerCompact || isMobileToolbarViewport;
   const expandedAuthorNotesOpen = authorNotesOpenOwner === "expanded";
   const compactAuthorNotesOpen = authorNotesOpenOwner === "compact";
+  const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
+
+  useEffect(() => {
+    if (shouldKeepMobileComposerOpen) setMobileHistoryComposerCollapsed(false);
+  }, [shouldKeepMobileComposerOpen]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const nearBottom = distFromBottom < 150;
+      const currentTop = el.scrollTop;
+      const previousTop = composerScrollTopRef.current;
+      const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+      if (!isMobile || shouldKeepMobileComposerOpen || nearBottom) {
+        setMobileHistoryComposerCollapsed(false);
+      } else if (currentTop > previousTop + 18) {
+        setMobileHistoryComposerCollapsed(false);
+      } else if (currentTop < previousTop - 12 && distFromBottom > 180) {
+        setMobileHistoryComposerCollapsed(true);
+      }
+      composerScrollTopRef.current = currentTop;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [scrollRef, shouldKeepMobileComposerOpen]);
   const setExpandedAuthorNotesOpen = useCallback(
     (open: boolean) => {
       setAuthorNotesOpenOwner(open ? "expanded" : null);
@@ -1265,8 +1301,7 @@ export function ChatRoleplaySurface({
     },
     [],
   );
-  const hideEchoChamberOnMobile =
-    sidebarOpen || rightPanelOpen || settingsOpen || filesOpen || galleryOpen || wizardOpen;
+  const hideEchoChamberOnMobile = sidebarOpen || rightPanelOpen || settingsOpen || galleryOpen || wizardOpen;
   const showSpriteOverlay = expressionAgentEnabled && spriteCharacterIds.length > 0 && spriteDisplayModes.length > 0;
 
   useLayoutEffect(() => {
@@ -1901,11 +1936,7 @@ export function ChatRoleplaySurface({
               ref={inputChromeRef}
               className={cn("pointer-events-none absolute inset-x-0 bottom-0 z-30", TRACKER_FOREGROUND_AVOIDANCE_CLASS)}
             >
-              <div
-                className={cn(
-                  "mari-roleplay-input-column pointer-events-auto relative mx-auto px-3 md:px-0",
-                )}
-              >
+              <div className={cn("mari-roleplay-input-column pointer-events-auto relative mx-auto px-3 md:px-0")}>
                 {chatMeta.sceneStatus === "active" && (
                   <EndSceneBar
                     sceneChatId={activeChatId}
@@ -1919,6 +1950,8 @@ export function ChatRoleplaySurface({
                 <ChatInput
                   key={activeChatId}
                   mode={isRoleplay ? "roleplay" : "conversation"}
+                  mobileHistoryCollapsed={mobileHistoryComposerCollapsed}
+                  onMobileHistoryCollapsedChange={setMobileHistoryComposerCollapsed}
                   combatAgentEnabled={combatAgentEnabled}
                   onStartEncounter={onStartEncounter}
                   characterNames={characterNames}
@@ -1940,6 +1973,7 @@ export function ChatRoleplaySurface({
                     })}
                   onExpressionChange={onExpressionChange}
                   onPeekPrompt={onPeekPrompt}
+                  interactionsLocked={agentProcessing}
                 />
               </div>
             </div>
@@ -1957,7 +1991,6 @@ export function ChatRoleplaySurface({
         settingsOpen={settingsOpen}
         settingsAnchor={settingsAnchor}
         settingsInitialSection={settingsInitialSection}
-        filesOpen={filesOpen}
         galleryOpen={galleryOpen}
         galleryAnchor={galleryAnchor}
         wizardOpen={wizardOpen}
@@ -1977,7 +2010,6 @@ export function ChatRoleplaySurface({
           onSpriteVisualSettingsChange,
         }}
         onCloseSettings={onCloseSettings}
-        onCloseFiles={onCloseFiles}
         onCloseGallery={onCloseGallery}
         onIllustrate={onIllustrate}
         onGenerateBackground={onGenerateBackground}

@@ -604,6 +604,8 @@ export interface BackgroundGenRequest {
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
+  /** When true, overwrite an existing generated background for this slug instead of reusing it. */
+  force?: boolean;
   /** Optional request-scoped abort signal. */
   signal?: AbortSignal;
 }
@@ -645,6 +647,8 @@ export interface SceneIllustrationGenRequest {
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
+  /** Receives the exact compiled prompt passed to the image provider. */
+  onCompiledPrompt?: (compiled: CompiledGameImagePrompt) => void;
   /** Optional request-scoped abort signal. */
   signal?: AbortSignal;
 }
@@ -726,7 +730,7 @@ async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest)
   const narrativePurpose = cleanSceneIllustrationContext(req.reason);
   const meaningfulNarrativePurpose = isGenericSceneMomentLabel(narrativePurpose) ? "" : narrativePurpose;
   const imagePromptInstructionsLine = req.imagePromptInstructions?.trim()
-    ? `User image instructions: ${req.imagePromptInstructions.trim().replace(/\s+/g, " ").slice(0, 1200)}`
+    ? `User image instructions: ${req.imagePromptInstructions.trim().replace(/\s+/g, " ").slice(0, 5000)}`
     : "";
   const sceneIllustrationVars = {
     sceneTitleLine: sceneTitle ? `${sceneTitle}.` : "",
@@ -795,7 +799,7 @@ export async function buildSceneIllustrationProviderPrompt(
     req,
     "illustration",
     await buildSceneIllustrationRawPrompt(req),
-    2200,
+    7000,
     GAME_ILLUSTRATION_NEGATIVE_PROMPT,
   );
 }
@@ -819,7 +823,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
   const tag = `backgrounds:${subcategory}:${slug}`;
 
   // Skip if already generated
-  if (existingGeneratedBackgroundPath(targetDir, slug)) {
+  if (!req.force && existingGeneratedBackgroundPath(targetDir, slug)) {
     return tag;
   }
 
@@ -889,7 +893,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
   const slug = `generated-${baseSlug}`;
   if (!existsSync(CHAT_BACKGROUND_DIR)) mkdirSync(CHAT_BACKGROUND_DIR, { recursive: true });
 
-  const existingPath = existingGeneratedBackgroundPath(CHAT_BACKGROUND_DIR, slug);
+  const existingPath = !req.force ? existingGeneratedBackgroundPath(CHAT_BACKGROUND_DIR, slug) : null;
   if (existingPath) return basename(existingPath);
 
   const compiled = await buildBackgroundProviderPrompt(req);
@@ -959,6 +963,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
 
   const compiled = await buildSceneIllustrationProviderPrompt(req);
   const prompt = compiled.prompt;
+  req.onCompiledPrompt?.(compiled);
   const size = resolvedSize(req.size, DEFAULT_GAME_BACKGROUND_SIZE);
   req.debugLog?.(
     "[debug/game/image-generation] scene illustration request slug=%s model=%s source=%s targetSize=%dx%d refs=%d prompt:\n%s",

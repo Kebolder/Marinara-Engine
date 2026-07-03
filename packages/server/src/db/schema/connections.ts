@@ -34,6 +34,8 @@ export const apiConnections = sqliteTable("api_connections", {
   useForRandom: text("use_for_random").notNull().default("false"),
   /** Whether to enable Anthropic prompt caching */
   enableCaching: text("enable_caching").notNull().default("false"),
+  /** Anthropic: use 1-hour prompt-cache TTL instead of the default 5-minute TTL. */
+  anthropicExtendedCacheTtl: text("anthropic_extended_cache_ttl").notNull().default("false"),
   /** Anthropic prompt caching breakpoint depth from the newest message */
   cachingAtDepth: integer("caching_at_depth").notNull().default(5),
   /** Whether this connection is the default for all agents (only one allowed) */

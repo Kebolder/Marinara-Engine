@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Routes: Chat Backgrounds (upload, list, delete, serve, tags, rename)
 // ──────────────────────────────────────────────
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "fs";
 import { writeFile } from "fs/promises";
 import { join, extname, basename, parse as parsePath } from "path";
@@ -16,7 +16,7 @@ import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createGameStateStorage } from "../services/storage/game-state.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
-import { generateChatBackground } from "../services/game/game-asset-generation.js";
+import { buildBackgroundProviderPrompt, generateChatBackground } from "../services/game/game-asset-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 
@@ -60,6 +60,17 @@ const generateSceneBackgroundSchema = z.object({
   sceneDescription: z.string().min(1).max(1200),
   locationSlug: z.string().max(180).optional(),
   reason: z.string().max(300).optional(),
+  force: z.boolean().optional().default(false),
+  promptOverrides: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(200),
+        prompt: z.string().min(1).max(7000),
+        negativePrompt: z.string().max(7000).optional(),
+      }),
+    )
+    .max(1)
+    .optional(),
   debugMode: z.boolean().optional().default(false),
 });
 
@@ -139,6 +150,11 @@ async function resolveSceneBackgroundImageConnection(
 
 function backgroundTagForFilename(filename: string): string {
   return `backgrounds:user:${parsePath(filename).name}`;
+}
+
+function sceneBackgroundPromptReviewId(input: { chatId: string; locationSlug?: string; reason?: string }): string {
+  const suffix = input.locationSlug?.trim() || input.reason?.trim() || "current-scene";
+  return `background:${input.chatId}:${suffix}`.slice(0, 200);
 }
 
 export async function backgroundsRoutes(app: FastifyInstance) {
@@ -238,19 +254,20 @@ export async function backgroundsRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/generate-scene", async (req, reply) => {
-    const input = generateSceneBackgroundSchema.parse(req.body);
+  async function resolveSceneBackgroundRequest(input: z.infer<typeof generateSceneBackgroundSchema>, reply: FastifyReply) {
     const debugOverrideEnabled = input.debugMode === true || isDebugAgentsEnabled();
     const debugLog = (message: string, ...args: any[]) => {
       logDebugOverride(debugOverrideEnabled, message, ...args);
     };
     const chats = createChatsStorage(app.db);
     const chat = await chats.getById(input.chatId);
-    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+    if (!chat) return { response: reply.status(404).send({ error: "Chat not found" }) };
 
     const mode = String(chat.mode ?? "");
     if (!SCENE_BACKGROUND_MODES.has(mode)) {
-      return reply.status(400).send({ error: "Scene background generation is available in Roleplay and Game modes." });
+      return {
+        response: reply.status(400).send({ error: "Scene background generation is available in Roleplay and Game modes." }),
+      };
     }
 
     const metadata = parseRecord(chat.metadata);
@@ -258,10 +275,12 @@ export async function backgroundsRoutes(app: FastifyInstance) {
     const agents = createAgentsStorage(app.db);
     const imgConn = await resolveSceneBackgroundImageConnection(connections, agents, mode, metadata);
     if (!imgConn) {
-      return reply.status(400).send({
-        error:
-          "Choose an image generation connection for the Background/Illustrator agent, or mark an image generation connection as the default for agents.",
-      });
+      return {
+        response: reply.status(400).send({
+          error:
+            "Choose an image generation connection for the Background/Illustrator agent, or mark an image generation connection as the default for agents.",
+        }),
+      };
     }
 
     const setupConfig = parseRecord(metadata.gameSetupConfig);
@@ -274,32 +293,109 @@ export async function backgroundsRoutes(app: FastifyInstance) {
     const imageSettings = await loadImageGenerationUserSettings(app.db);
     const styleProfileId =
       readTrimmedString(setupConfig.imageStyleProfileId) ?? readTrimmedString(metadata.imageStyleProfileId);
+    const locationSlug = input.locationSlug?.trim() || input.reason?.trim() || chat.name || "current-scene";
+    const promptOverride = (input.promptOverrides ?? []).find((item) => item.id === sceneBackgroundPromptReviewId(input));
+
+    return {
+      context: {
+        chat,
+        metadata,
+        mode,
+        imageSettings,
+        imgConn,
+        gameState,
+        setupConfig,
+        styleProfileId,
+        locationSlug,
+        promptOverride,
+        debugLog,
+      },
+    };
+  }
+
+  app.post("/generate-scene/preview", async (req, reply) => {
+    const input = generateSceneBackgroundSchema.parse(req.body);
+    const resolved = await resolveSceneBackgroundRequest(input, reply);
+    if ("response" in resolved) return resolved.response;
+    const { context } = resolved;
+
+    const compiled = await buildBackgroundProviderPrompt({
+      chatId: input.chatId,
+      locationSlug: context.locationSlug,
+      sceneDescription: input.sceneDescription.trim(),
+      genre: readTrimmedString(context.setupConfig.genre) ?? undefined,
+      setting: readTrimmedString(context.setupConfig.setting) ?? undefined,
+      currentLocation: context.gameState?.location ?? null,
+      currentWeather: context.gameState?.weather ?? null,
+      currentTimeOfDay: context.gameState?.time ?? null,
+      worldOverview: readTrimmedString(context.metadata.gameWorldOverview),
+      artStyle: readTrimmedString(context.setupConfig.artStylePrompt) ?? undefined,
+      imgModel: context.imgConn.model || "",
+      imgBaseUrl: context.imgConn.baseUrl || "https://image.pollinations.ai",
+      imgApiKey: context.imgConn.apiKey || "",
+      imgSource: (context.imgConn as any).imageGenerationSource || context.imgConn.model || "",
+      imgService: context.imgConn.imageService || (context.imgConn as any).imageGenerationSource || "",
+      imgEndpointId: context.imgConn.imageEndpointId || undefined,
+      imgComfyWorkflow: context.imgConn.comfyuiWorkflow || undefined,
+      imgDefaults: resolveConnectionImageDefaults(context.imgConn),
+      styleProfiles: context.imageSettings.styleProfiles,
+      styleProfileId: context.styleProfileId,
+      promptOverridesStorage: createPromptOverridesStorage(app.db),
+      size: context.imageSettings.background,
+      promptOverride: context.promptOverride?.prompt,
+      negativePromptOverride: context.promptOverride?.negativePrompt,
+    });
+
+    return {
+      items: [
+        {
+          id: sceneBackgroundPromptReviewId(input),
+          kind: "background",
+          title: "Scene background",
+          prompt: compiled.prompt,
+          negativePrompt: compiled.negativePrompt,
+          width: context.imageSettings.background.width,
+          height: context.imageSettings.background.height,
+        },
+      ],
+    };
+  });
+
+  app.post("/generate-scene", async (req, reply) => {
+    const input = generateSceneBackgroundSchema.parse(req.body);
+    const resolved = await resolveSceneBackgroundRequest(input, reply);
+    if ("response" in resolved) return resolved.response;
+    const { context } = resolved;
+
     const filename = await generateChatBackground({
       chatId: input.chatId,
-      locationSlug: input.locationSlug?.trim() || input.reason?.trim() || chat.name || "current-scene",
+      locationSlug: context.locationSlug,
       sceneDescription: input.sceneDescription.trim(),
-      genre: readTrimmedString(setupConfig.genre) ?? undefined,
-      setting: readTrimmedString(setupConfig.setting) ?? undefined,
-      currentLocation: gameState?.location ?? null,
-      currentWeather: gameState?.weather ?? null,
-      currentTimeOfDay: gameState?.time ?? null,
-      worldOverview: readTrimmedString(metadata.gameWorldOverview),
-      artStyle: readTrimmedString(setupConfig.artStylePrompt) ?? undefined,
+      genre: readTrimmedString(context.setupConfig.genre) ?? undefined,
+      setting: readTrimmedString(context.setupConfig.setting) ?? undefined,
+      currentLocation: context.gameState?.location ?? null,
+      currentWeather: context.gameState?.weather ?? null,
+      currentTimeOfDay: context.gameState?.time ?? null,
+      worldOverview: readTrimmedString(context.metadata.gameWorldOverview),
+      artStyle: readTrimmedString(context.setupConfig.artStylePrompt) ?? undefined,
       reason: input.reason?.trim() || "Manual Gallery background request",
-      sourceMode: mode === "game" ? "game" : mode === "visual_novel" ? "visual_novel" : "roleplay",
-      imgModel: imgConn.model || "",
-      imgBaseUrl: imgConn.baseUrl || "https://image.pollinations.ai",
-      imgApiKey: imgConn.apiKey || "",
-      imgSource: (imgConn as any).imageGenerationSource || imgConn.model || "",
-      imgService: imgConn.imageService || (imgConn as any).imageGenerationSource || "",
-      imgEndpointId: imgConn.imageEndpointId || undefined,
-      imgComfyWorkflow: imgConn.comfyuiWorkflow || undefined,
-      imgDefaults: resolveConnectionImageDefaults(imgConn),
-      styleProfiles: imageSettings.styleProfiles,
-      styleProfileId,
-      debugLog,
+      sourceMode: context.mode === "game" ? "game" : context.mode === "visual_novel" ? "visual_novel" : "roleplay",
+      imgModel: context.imgConn.model || "",
+      imgBaseUrl: context.imgConn.baseUrl || "https://image.pollinations.ai",
+      imgApiKey: context.imgConn.apiKey || "",
+      imgSource: (context.imgConn as any).imageGenerationSource || context.imgConn.model || "",
+      imgService: context.imgConn.imageService || (context.imgConn as any).imageGenerationSource || "",
+      imgEndpointId: context.imgConn.imageEndpointId || undefined,
+      imgComfyWorkflow: context.imgConn.comfyuiWorkflow || undefined,
+      imgDefaults: resolveConnectionImageDefaults(context.imgConn),
+      styleProfiles: context.imageSettings.styleProfiles,
+      styleProfileId: context.styleProfileId,
+      debugLog: context.debugLog,
       promptOverridesStorage: createPromptOverridesStorage(app.db),
-      size: imageSettings.background,
+      size: context.imageSettings.background,
+      force: input.force,
+      promptOverride: context.promptOverride?.prompt,
+      negativePromptOverride: context.promptOverride?.negativePrompt,
     });
 
     if (!filename) {

@@ -5,7 +5,7 @@
 // HUD widget position (top/left/right), and the top bar.
 // ──────────────────────────────────────────────
 import { useRef, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { X, Trash2, RefreshCw } from "lucide-react";
+import { Trash2, RefreshCw } from "lucide-react";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
 import type { EchoChamberSide } from "../../stores/ui.store";
@@ -141,15 +141,15 @@ function CornerPicker({ current, onChange }: { current: EchoChamberSide; onChang
 }
 
 export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelProps) {
-  const echoChamberOpen = useUIStore((s) => s.echoChamberOpen);
   const echoChamberSide = useUIStore((s) => s.echoChamberSide);
-  const toggleEchoChamber = useUIStore((s) => s.toggleEchoChamber);
   const setEchoChamberSide = useUIStore((s) => s.setEchoChamberSide);
   const echoMessages = useAgentStore((s) => s.echoMessages);
-  const isAgentProcessing = useAgentStore((s) => s.isProcessing);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeChatId = useChatStore((s) => s.activeChatId);
+  const isAgentProcessing = useAgentStore((s) =>
+    activeChatId ? s.processingChatIds.includes(activeChatId) : s.isProcessing,
+  );
   const isStreaming = useChatStore((s) => s.isStreaming);
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const { data: chat } = useChat(activeChatId);
@@ -160,7 +160,12 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const echoEnabled = useMemo(() => {
     if (!chat) return false;
     const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
-    const meta = typeof raw === "string" ? JSON.parse(raw) : ((raw ?? {}) as Record<string, unknown>);
+    let meta: Record<string, unknown>;
+    try {
+      meta = typeof raw === "string" ? JSON.parse(raw) : ((raw ?? {}) as Record<string, unknown>);
+    } catch {
+      return false;
+    }
     if (!meta.enableAgents) return false;
     const activeAgentIds: string[] = Array.isArray(meta.activeAgentIds) ? meta.activeAgentIds : [];
     return activeAgentIds.includes("echo-chamber");
@@ -267,7 +272,7 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   useEffect(() => {
-    if (!echoChamberOpen) return;
+    if (!echoEnabled) return;
     // On mobile, position below the HUD bar.
     if (typeof window !== "undefined" && window.innerWidth < 768) {
       const update = () => {
@@ -341,10 +346,10 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
       discoveryObserver?.disconnect();
       window.removeEventListener("resize", scheduleUpdate);
     };
-  }, [echoChamberOpen, echoChamberSide]);
+  }, [echoEnabled, echoChamberSide]);
 
   useEffect(() => {
-    if (!echoChamberOpen || !echoEnabled || (isMobile && hiddenOnMobile)) return;
+    if (!echoEnabled || (isMobile && hiddenOnMobile)) return;
 
     let frame = window.requestAnimationFrame(() => {
       frame = window.requestAnimationFrame(() => {
@@ -355,9 +360,9 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [echoChamberOpen, echoEnabled, hiddenOnMobile, isMobile]);
+  }, [echoEnabled, hiddenOnMobile, isMobile]);
 
-  if (!echoChamberOpen || !echoEnabled || (isMobile && hiddenOnMobile)) return null;
+  if (!echoEnabled || (isMobile && hiddenOnMobile)) return null;
   const visibleMessages = echoMessages.slice(0, visibleCount);
 
   return (
@@ -418,12 +423,6 @@ export function EchoChamberPanel({ hiddenOnMobile = false }: EchoChamberPanelPro
           <span className="hidden md:inline-flex">
             <CornerPicker current={echoChamberSide} onChange={setEchoChamberSide} />
           </span>
-          <button
-            onClick={toggleEchoChamber}
-            className="rounded p-0.5 text-[var(--marinara-chat-chrome-button-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]"
-          >
-            <X size="0.625rem" />
-          </button>
         </div>
       </div>
 

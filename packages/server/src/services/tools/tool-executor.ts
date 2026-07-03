@@ -291,7 +291,10 @@ async function executeSingleTool(
 
 // ── Custom Tool Execution ──
 
-function getCustomToolHiddenContext(tool: CustomToolDef, context?: ToolExecutionContext): CustomToolHiddenContext | undefined {
+function getCustomToolHiddenContext(
+  tool: CustomToolDef,
+  context?: ToolExecutionContext,
+): CustomToolHiddenContext | undefined {
   if (tool.includeHiddenContext !== true) return undefined;
   return context?.hiddenContext ?? {};
 }
@@ -745,11 +748,7 @@ async function webSearch(args: Record<string, unknown>): Promise<Record<string, 
 function normalizeLorebookEntryKeys(value: unknown, fallbackName: string): string[] {
   const raw = Array.isArray(value) ? value : [];
   const keys = Array.from(
-    new Set(
-      raw
-        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-        .filter((entry) => entry.length > 0),
-    ),
+    new Set(raw.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter((entry) => entry.length > 0)),
   ).slice(0, MAX_LOREBOOK_ENTRY_KEYS);
   if (keys.length > 0) return keys;
   return fallbackName ? [fallbackName] : [];
@@ -866,6 +865,12 @@ async function spotifyGetCurrentPlayback(
         album?: { name?: string };
         duration_ms?: number;
       } | null;
+      context?: {
+        type?: string | null;
+        uri?: string | null;
+        href?: string | null;
+        external_urls?: { spotify?: string | null } | null;
+      } | null;
       device?: { id?: string | null; name?: string; type?: string; volume_percent?: number | null } | null;
     };
     const track = data.item
@@ -886,6 +891,14 @@ async function spotifyGetCurrentPlayback(
       repeat: normalizeSpotifyRepeatState(data.repeat_state),
       progressMs: data.progress_ms ?? null,
       track,
+      context: data.context
+        ? {
+            type: data.context.type ?? null,
+            uri: data.context.uri ?? null,
+            href: data.context.href ?? null,
+            externalUrl: data.context.external_urls?.spotify ?? null,
+          }
+        : null,
       device: data.device
         ? {
             id: data.device.id ?? null,
@@ -1016,7 +1029,9 @@ function getSpotifyRecentTrackUris(chatMeta?: Record<string, unknown>): string[]
   return recent;
 }
 
-function getSpotifyRecentTrackMetadataKey(chatMeta?: Record<string, unknown>): "spotifyRecentTracks" | "gameRecentSpotifyTracks" {
+function getSpotifyRecentTrackMetadataKey(
+  chatMeta?: Record<string, unknown>,
+): "spotifyRecentTracks" | "gameRecentSpotifyTracks" {
   return chatMeta?.gameUseSpotifyMusic === true || typeof chatMeta?.gameSpotifySourceType === "string"
     ? "gameRecentSpotifyTracks"
     : "spotifyRecentTracks";
@@ -1611,8 +1626,7 @@ async function spotifyGetPlaylistTracks(
         recentAvoidedCount: selection.recentAvoidedCount,
         candidateSample: selectionVariant,
         truncated: index.truncated,
-        hint:
-          "Server indexed the playlist and returned only selected candidates. Recently played tracks are suppressed when alternatives exist; avoid recentTrackUris unless no fitting non-recent candidate appears. Pick 3-5 URIs from this shortlist; do not request every page unless you truly need manual browsing.",
+        hint: "Server indexed the playlist and returned only selected candidates. Recently played tracks are suppressed when alternatives exist; avoid recentTrackUris unless no fitting non-recent candidate appears. Pick 3-5 URIs from this shortlist; do not request every page unless you truly need manual browsing.",
       };
     }
 
@@ -1725,8 +1739,7 @@ async function spotifyPlay(
     const playDeviceId = beforePlayback?.deviceId ? null : targetDeviceId;
     if (!targetDeviceId) {
       return {
-        error:
-          "No active Spotify device is available. Open Spotify on the device you want to use, then try again.",
+        error: "No active Spotify device is available. Open Spotify on the device you want to use, then try again.",
       };
     }
     logger.debug(

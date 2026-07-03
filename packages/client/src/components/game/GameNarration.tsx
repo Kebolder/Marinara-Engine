@@ -38,6 +38,7 @@ import {
   GitBranch,
 } from "lucide-react";
 import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { findNamedMapValue } from "../../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../../lib/game-segment-edits";
 import { parseGmTags, stripGmTagsKeepReadables } from "../../lib/game-tag-parser";
@@ -232,7 +233,7 @@ function formatTokenEstimate(tokens: number): string {
   return tokens.toLocaleString();
 }
 
-interface NarrationSegment {
+export interface NarrationSegment {
   id: string;
   type: "narration" | "dialogue" | "readable" | "system";
   speaker?: string;
@@ -980,6 +981,7 @@ export function GameNarration({
   nextActionToken,
   onMaxNavOffsetChange,
 }: GameNarrationProps) {
+  useRenderTimer("game-narration"); // [#3104 diagnostic]
   const { translations, translating } = useTranslate();
   const { applyToAIOutput } = useApplyRegex();
   // Parse the chat metadata in a memo (not the store selector) so streaming ticks
@@ -1669,6 +1671,16 @@ export function GameNarration({
     segmentDeletes,
     sourceMessagesById,
   ]);
+
+  // Fast O(1) segment-id → index lookup, rebuilt only when `segments` changes.
+  // The per-segment log renderers below previously each called
+  // `segments.findIndex(...)`, making stacked-log rendering O(n²) in segment
+  // count — the root of the #3104 game-mode freeze on long chats.
+  const segmentIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    segments.forEach((segment, index) => map.set(segment.id, index));
+    return map;
+  }, [segments]);
 
   // Clamp activeIndex when segments shrink (e.g. new party chat clears old dialogue)
   useEffect(() => {
@@ -3705,7 +3717,7 @@ export function GameNarration({
     const sourceMessageRole = sourceMessageId ? (sourceMessagesById.get(sourceMessageId)?.role ?? null) : null;
     const sourceRole = seg.sourceRole ?? sourceMessageRole;
     const isUserAuthoredSource = sourceRole === "user" || sourceMessageRole === "user";
-    const liveSegmentIndex = segments.findIndex((candidate) => candidate.id === seg.id);
+    const liveSegmentIndex = segmentIndexById.get(seg.id) ?? -1;
     const canEditMessage = !!onEditMessage && !!sourceMessageId && isUserAuthoredSource;
     const canEditSegment =
       !!onEditSegment &&
@@ -4865,7 +4877,7 @@ export function GameNarration({
                       const sourceRole = seg.sourceRole ?? sourceMessageRole;
                       const isUserAuthoredSource = sourceRole === "user" || sourceMessageRole === "user";
                       const isActiveSeg = active?.id === seg.id;
-                      const liveSegmentIndex = segments.findIndex((s) => s.id === seg.id);
+                      const liveSegmentIndex = segmentIndexById.get(seg.id) ?? -1;
                       const canJumpToSeg =
                         !!latestAssistant &&
                         sourceMessageId === latestAssistant.id &&
@@ -5756,7 +5768,10 @@ function buildTruncationLines(rawContent: string): TruncationLine[] {
   });
 }
 
-function parseNarrationSegments(message: NarrationMessage, speakerColors: Map<string, string>): NarrationSegment[] {
+export function parseNarrationSegments(
+  message: NarrationMessage,
+  speakerColors: Map<string, string>,
+): NarrationSegment[] {
   // Use stripGmTagsKeepReadables so [Note:] and [Book:] stay inline for position-aware display.
   // Extract them first as placeholders so multi-line readables don't break line-based parsing.
   const withReadables = stripGmTagsKeepReadables(message.content || "");

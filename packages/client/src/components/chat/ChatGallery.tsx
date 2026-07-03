@@ -63,6 +63,7 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
   const isIllustrating = useGalleryStore((s) => s.illustratingChatIds.has(chatId));
   const isGeneratingBackground = useGalleryStore((s) => s.backgroundGeneratingChatIds.has(chatId));
   const pinImage = useGalleryStore((s) => s.pinImage);
+  const unpinImage = useGalleryStore((s) => s.unpinImage);
   const setChatIllustrating = useGalleryStore((s) => s.setChatIllustrating);
   const setChatGeneratingBackground = useGalleryStore((s) => s.setChatGeneratingBackground);
   const canBrowseAssets = mode === "roleplay";
@@ -91,9 +92,20 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
   );
 
   const handleDelete = (id: string) => {
-    remove.mutate(id);
+    const image = images?.find((item) => item.id === id) ?? null;
+    const wasPinned = useGalleryStore.getState().pinnedImages.some((item) => item.id === id);
+    unpinImage(id);
     setConfirmDeleteId(null);
     if (lightbox?.id === id) setLightbox(null);
+    remove.mutate(id, {
+      onSuccess: () => {
+        toast.success("Image deleted.");
+      },
+      onError: (error) => {
+        if (wasPinned && image) pinImage({ ...image, chatId });
+        toast.error(error instanceof Error ? error.message : "Failed to delete image.");
+      },
+    });
   };
 
   const handleIllustrate = async () => {

@@ -2,6 +2,7 @@ import { nameToXmlTag, normalizeTextForMatch } from "@marinara-engine/shared";
 import { pruneEmptyPromptWrappers } from "./runtime-agent-sections.js";
 
 export type GenerationPromptMessage = {
+  id?: string | null;
   role: "system" | "user" | "assistant";
   content: string;
   contextKind?: "prompt" | "history" | "injection";

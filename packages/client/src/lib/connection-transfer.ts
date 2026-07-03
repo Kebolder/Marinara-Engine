@@ -12,6 +12,7 @@ export type ConnectionTransferRow = {
   promptPresetId?: unknown;
   defaultParameters?: unknown;
   enableCaching?: unknown;
+  anthropicExtendedCacheTtl?: unknown;
   cachingAtDepth?: unknown;
   isDefault?: unknown;
   useForRandom?: unknown;
@@ -40,6 +41,7 @@ export type SafeConnectionExport = {
   promptPresetId: string | null;
   defaultParameters: Record<string, unknown> | null;
   enableCaching: boolean;
+  anthropicExtendedCacheTtl: boolean;
   cachingAtDepth: number;
   isDefault: boolean;
   useForRandom: boolean;
@@ -108,6 +110,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       useForRandom: false,
       defaultForAgents: false,
       enableCaching: asBoolean(value.enableCaching),
+      anthropicExtendedCacheTtl: asBoolean(value.anthropicExtendedCacheTtl),
       cachingAtDepth: asNonNegativeInteger(value.cachingAtDepth, 5),
       embeddingModel: asString(value.embeddingModel),
       embeddingBaseUrl: asString(value.embeddingBaseUrl),
@@ -141,6 +144,7 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     promptPresetId: asNullableString(connection.promptPresetId),
     defaultParameters: parseDefaultParameters(connection.defaultParameters),
     enableCaching: asBoolean(connection.enableCaching),
+    anthropicExtendedCacheTtl: asBoolean(connection.anthropicExtendedCacheTtl),
     cachingAtDepth: asNonNegativeInteger(connection.cachingAtDepth, 5),
     isDefault: asBoolean(connection.isDefault),
     useForRandom: asBoolean(connection.useForRandom),

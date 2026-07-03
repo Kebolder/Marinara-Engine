@@ -5,6 +5,8 @@ export interface PromptPresetCandidate {
   source: PromptPresetCandidateSource;
 }
 
+export type PromptPresetChoices = Record<string, string | string[]>;
+
 function asNonEmptyString(value: unknown): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -58,4 +60,16 @@ export function buildGenerationPromptPresetCandidates(args: {
 
   pushUnique(candidates, seen, asNonEmptyString(args.chatPromptPresetId), "chat");
   return candidates;
+}
+
+export function resolveGenerationPromptPresetChoices(args: {
+  presetSource: PromptPresetCandidateSource | null;
+  selectedPresetDiffersFromChat: boolean;
+  presetDefaultChoices: PromptPresetChoices;
+  chatPresetChoices: PromptPresetChoices;
+}): PromptPresetChoices {
+  if (args.selectedPresetDiffersFromChat && args.presetSource !== "chat") {
+    return args.presetDefaultChoices;
+  }
+  return { ...args.presetDefaultChoices, ...args.chatPresetChoices };
 }

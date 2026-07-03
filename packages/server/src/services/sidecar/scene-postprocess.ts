@@ -75,6 +75,7 @@ const VALID_DIRECTION_EFFECTS = new Set<DirectionCommand["effect"]>([
 ]);
 
 const VALID_DIRECTION_TARGETS = new Set<NonNullable<DirectionCommand["target"]>>(["background", "content", "all"]);
+const VALID_SCENE_TIME_OF_DAY = new Set(["dawn", "morning", "afternoon", "evening", "night", "midnight"]);
 
 function normalizeExpression(value: string): string {
   const lower = value.toLowerCase().trim();
@@ -87,6 +88,14 @@ function normalizeExpression(value: string): string {
     if (keywords.some((k) => lower.includes(k))) return expr;
   }
   return "neutral";
+}
+
+function normalizeSceneTimeOfDay(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === "null") return null;
+  if (normalized === "noon" || normalized === "midday") return "afternoon";
+  return VALID_SCENE_TIME_OF_DAY.has(normalized) ? normalized : null;
 }
 
 function sanitizeString(value: unknown): string | null {
@@ -361,7 +370,7 @@ export function postProcessSceneResult(raw: SceneAnalysis, ctx: PostProcessConte
   // ── Sanitize string "null" → actual null (grammar sometimes emits the string) ──
   if (result.background === "null") result.background = null;
   if (result.weather === "null") result.weather = null;
-  if (result.timeOfDay === "null") result.timeOfDay = null;
+  result.timeOfDay = normalizeSceneTimeOfDay(rawRecord.timeOfDay);
   result.music = null;
   result.ambient = null;
   if (ctx.useSpotifyMusic) {

@@ -22,6 +22,9 @@ type InjectableExtension = {
   js?: string | null;
   enabled: boolean;
 };
+type InjectableExtensionWithRuntime = InjectableExtension & {
+  runtime?: "client" | "server";
+};
 
 function getExtensionGlobal() {
   return globalThis as ExtensionGlobal;
@@ -279,8 +282,11 @@ export function CustomThemeInjector() {
   // Until the legacy localStorage list has been migrated, fall back to it so
   // users with pre-PR extensions don't see them vanish during the brief window
   // between app boot and `useLegacyExtensionMigration` finishing.
-  const installedExtensions = useMemo(
-    () => (hasMigrated ? serverExtensions : legacyExtensions),
+  const installedExtensions = useMemo<InjectableExtension[]>(
+    () =>
+      ((hasMigrated ? serverExtensions : legacyExtensions) as InjectableExtensionWithRuntime[]).filter(
+        (ext) => ext.runtime !== "server",
+      ),
     [hasMigrated, serverExtensions, legacyExtensions],
   );
   const { data: syncedThemes = [] } = useThemes();

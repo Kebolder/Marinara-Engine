@@ -39,6 +39,8 @@ export interface APIConnection {
   defaultForAgents: boolean;
   /** Whether provider-native prompt caching is enabled */
   enableCaching: boolean;
+  /** Anthropic only: use the 1-hour prompt-cache TTL instead of the default 5-minute TTL */
+  anthropicExtendedCacheTtl: boolean;
   /** Conversation message depth for Anthropic cache breakpoints */
   cachingAtDepth: number;
   /** Model to use for embedding generation (e.g. "text-embedding-3-small") */

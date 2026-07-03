@@ -101,6 +101,8 @@ export interface ChatOptions {
   tools?: LLMToolDefinition[];
   /** Enable provider-native prompt caching when supported */
   enableCaching?: boolean;
+  /** Anthropic only: use 1-hour prompt-cache TTL instead of the default 5-minute TTL */
+  anthropicExtendedCacheTtl?: boolean;
   /** Anthropic cache breakpoint depth from the newest message. 0 = newest message. */
   cachingAtDepth?: number;
   /** Callback for streaming thinking/reasoning content */
@@ -610,7 +612,19 @@ export abstract class BaseLLMProvider {
 
   protected applyCustomParameters(body: Record<string, unknown>, options: ChatOptions): void {
     if (!options.customParameters || Object.keys(options.customParameters).length === 0) return;
+    const hadStructuralModel = Object.prototype.hasOwnProperty.call(body, "model");
     deepMergeRequestBody(body, options.customParameters);
+    if (
+      hadStructuralModel &&
+      (typeof body.model !== "string" || body.model.trim().length === 0) &&
+      options.model.trim().length > 0
+    ) {
+      logger.warn(
+        "[LLM request] Ignoring customParameters.model because it would remove the configured model %s",
+        options.model,
+      );
+      body.model = options.model;
+    }
   }
 
   protected shouldSendParameter(options: ChatOptions, key: GenerationParameterSendKey): boolean {

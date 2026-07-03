@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { ChevronDown, Save, Settings2 } from "lucide-react";
 import { HelpTooltip } from "../../../components/ui/HelpTooltip";
 import {
@@ -30,6 +30,30 @@ const EDITABLE_PARAMETER_KEYS: Array<keyof EditableGenerationParameters> = [
   "enabledParameters",
 ];
 
+const GENERIC_VISION_MODEL_RE =
+  /\b(?:vision|visual|multimodal|omni|vl|llava|pixtral|internvl|molmo|mllama|idefics)\b|qwen[\w.-]*vl/i;
+
+function isLikelyVisionConnection(connection: Record<string, unknown>): boolean {
+  const provider = typeof connection.provider === "string" ? connection.provider : "";
+  const model = typeof connection.model === "string" ? connection.model.toLowerCase() : "";
+  if (!model || provider === "image_generation") return false;
+  if (GENERIC_VISION_MODEL_RE.test(model)) return true;
+  if (provider === "google" || provider === "google_vertex") return model.includes("gemini");
+  if (provider === "anthropic" || provider === "claude_subscription") {
+    return /\bclaude-(?:3|4|fable|mythos|opus|sonnet|haiku)/i.test(model);
+  }
+  if (provider === "openai" || provider === "openai_chatgpt") {
+    return /\b(?:gpt-4o|gpt-4\.1|gpt-5|chatgpt|chat-latest|o3|o4)\b/i.test(model);
+  }
+  if (provider === "cohere") return /(?:aya-vision|command-a-vision)/i.test(model);
+  if (provider === "mistral") return /(?:pixtral|mistral-(?:small|medium|large)-3)/i.test(model);
+  if (provider === "xai") return /(?:grok.*vision|grok-[34])/i.test(model);
+  if (provider === "openrouter" || provider === "nanogpt" || provider === "custom") {
+    return /(?:gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(?:3|4)|pixtral|aya-vision|command-a-vision)/i.test(model);
+  }
+  return false;
+}
+
 interface AdvancedParametersSectionProps {
   metadata: Record<string, unknown>;
   isConversation: boolean;
@@ -37,9 +61,15 @@ interface AdvancedParametersSectionProps {
   connections: Record<string, unknown>[];
   contextMessageLimit: number | null | undefined;
   excludePastReasoning: boolean | undefined;
+  imageCaptioningEnabled: boolean | undefined;
+  imageCaptioningConnectionId: string | null | undefined;
   onChatParametersChange: (chatParameters: Record<string, unknown>) => void;
   onContextMessageLimitChange: (value: number | null) => void;
   onExcludePastReasoningChange: (value: boolean) => void;
+  onImageCaptioningChange: (patch: {
+    imageCaptioningEnabled?: boolean;
+    imageCaptioningConnectionId?: string | null;
+  }) => void;
 }
 
 export function AdvancedParametersSection({
@@ -49,9 +79,12 @@ export function AdvancedParametersSection({
   connections,
   contextMessageLimit,
   excludePastReasoning,
+  imageCaptioningEnabled,
+  imageCaptioningConnectionId,
   onChatParametersChange,
   onContextMessageLimitChange,
   onExcludePastReasoningChange,
+  onImageCaptioningChange,
 }: AdvancedParametersSectionProps) {
   const modeDefaults = isConversation ? CHAT_PARAMETER_DEFAULTS : ROLEPLAY_PARAMETER_DEFAULTS;
   const strictModeDefaults: EditableGenerationParameters = {
@@ -66,6 +99,43 @@ export function AdvancedParametersSection({
   const params = (metadata.chatParameters as Record<string, unknown>) ?? {};
   const effectiveParams = getEditableGenerationParameters(defaults, params);
   const excludeReasoningEnabled = excludePastReasoning !== false;
+  const captioningEnabled = imageCaptioningEnabled === true;
+  const chatConnectionCanCaption = !!conn && isLikelyVisionConnection(conn);
+  const connectionOptions = useMemo(
+    () =>
+      connections.flatMap((connection) => {
+        if (!isLikelyVisionConnection(connection)) return [];
+        const id = typeof connection.id === "string" ? connection.id : "";
+        if (!id) return [];
+        const name = typeof connection.name === "string" && connection.name.trim() ? connection.name.trim() : id;
+        const model = typeof connection.model === "string" && connection.model.trim() ? connection.model.trim() : "";
+        return [{ id, name, model }];
+      }),
+    [connections],
+  );
+  const hasCaptioningConnection = chatConnectionCanCaption || connectionOptions.length > 0;
+  const selectedCaptioningConnectionId = connectionOptions.some((option) => option.id === imageCaptioningConnectionId)
+    ? imageCaptioningConnectionId
+    : null;
+  const fallbackCaptioningConnectionId = chatConnectionCanCaption ? null : (connectionOptions[0]?.id ?? null);
+
+  useEffect(() => {
+    if (!captioningEnabled) return;
+    const storedId = typeof imageCaptioningConnectionId === "string" ? imageCaptioningConnectionId : null;
+    const storedIsValid = !!storedId && connectionOptions.some((option) => option.id === storedId);
+    if (storedId && !storedIsValid) {
+      onImageCaptioningChange({ imageCaptioningConnectionId: fallbackCaptioningConnectionId });
+    } else if (!storedId && !chatConnectionCanCaption && fallbackCaptioningConnectionId) {
+      onImageCaptioningChange({ imageCaptioningConnectionId: fallbackCaptioningConnectionId });
+    }
+  }, [
+    captioningEnabled,
+    chatConnectionCanCaption,
+    connectionOptions,
+    fallbackCaptioningConnectionId,
+    imageCaptioningConnectionId,
+    onImageCaptioningChange,
+  ]);
 
   const setParameters = (next: EditableGenerationParameters) => {
     const editableKeys = new Set<string>(EDITABLE_PARAMETER_KEYS);
@@ -164,6 +234,62 @@ export function AdvancedParametersSection({
               )}
               labelClassName="text-xs font-medium"
             />
+            <SettingsSwitch
+              label="Image Captioning"
+              description={
+                hasCaptioningConnection
+                  ? "Describe image attachments with a selected vision-capable connection instead of sending native images."
+                  : "Add a vision-capable connection before enabling image captioning."
+              }
+              checked={captioningEnabled}
+              onChange={(checked) =>
+                onImageCaptioningChange({
+                  imageCaptioningEnabled: checked,
+                  ...(checked && !chatConnectionCanCaption
+                    ? { imageCaptioningConnectionId: fallbackCaptioningConnectionId }
+                    : {}),
+                })
+              }
+              disabled={!hasCaptioningConnection}
+              labelPosition="start"
+              className={cn(
+                "justify-between rounded-lg px-3 py-2.5 text-left",
+                captioningEnabled
+                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+              )}
+              labelClassName="text-xs font-medium"
+            />
+            {captioningEnabled && (
+              <label className="block space-y-1 px-1">
+                <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                  Captioning Connection
+                </span>
+                <select
+                  value={selectedCaptioningConnectionId ?? ""}
+                  onChange={(event) =>
+                    onImageCaptioningChange({
+                      imageCaptioningConnectionId: event.target.value || null,
+                    })
+                  }
+                  className="w-full rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
+                >
+                  {chatConnectionCanCaption ? (
+                    <option value="">Use chat connection</option>
+                  ) : (
+                    <option value="" disabled>
+                      Select a vision connection
+                    </option>
+                  )}
+                  {connectionOptions.map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {connection.name}
+                      {connection.model ? ` - ${connection.model}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           {canSaveConnectionDefaults && (
             <button

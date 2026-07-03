@@ -4,6 +4,12 @@
 // ──────────────────────────────────────────────
 import { useEffect, useRef, useMemo } from "react";
 
+const MAX_CANVAS_DPR = 1.5;
+const TARGET_FRAME_MS = 1000 / 30;
+const BASE_FRAME_MS = 1000 / 60;
+const FIREFLY_COUNT = 10;
+const STAR_COUNT = 18;
+
 interface WeatherEffectsProps {
   weather?: string | null;
   timeOfDay?: string | null;
@@ -52,59 +58,59 @@ function parseWeather(weather?: string | null): {
 
   // Thunderstorm / lightning
   if (w.includes("thunder") || w.includes("lightning")) {
-    return { type: "rain", count: 200, overlay: "rgba(50,80,120,0.10)", lightning: true };
+    return { type: "rain", count: 120, overlay: "rgba(50,80,120,0.10)", lightning: true };
+  }
+  if (w.includes("hail")) {
+    return { type: "hail", count: 40, overlay: "rgba(180,200,230,0.06)", lightning: false };
+  }
+  if (w.includes("blizzard")) {
+    return { type: "snow", count: 90, overlay: "rgba(200,220,255,0.10)", lightning: false };
+  }
+  if (w.includes("snow") || w.includes("sleet")) {
+    const isHeavy = w.includes("heavy");
+    return { type: "snow", count: isHeavy ? 75 : 35, overlay: "rgba(200,220,255,0.06)", lightning: false };
+  }
+  if (w.includes("frost") || w.includes("cold") || w.includes("freez")) {
+    return { type: "snow", count: 12, overlay: "rgba(180,210,240,0.06)", lightning: false };
+  }
+  if (w.includes("fog") || w.includes("mist") || w.includes("haze")) {
+    return { type: "fog", count: 12, overlay: "rgba(180,180,200,0.12)", lightning: false };
+  }
+  if (w.includes("sand") || w.includes("dust storm") || w.includes("sirocco")) {
+    return { type: "sand", count: 65, overlay: "rgba(180,150,100,0.12)", lightning: false };
+  }
+  if (w.includes("ash") || w.includes("volcanic") || w.includes("smoke")) {
+    return { type: "ash", count: 30, overlay: "rgba(80,60,60,0.10)", lightning: false };
+  }
+  if (w.includes("ember") || w.includes("fire") || w.includes("inferno")) {
+    return { type: "ember", count: 24, overlay: "rgba(120,40,10,0.08)", lightning: false };
+  }
+  if (w.includes("wind") || w.includes("breez") || w.includes("gust")) {
+    return { type: "leaf", count: 18, overlay: "", lightning: false };
+  }
+  if (w.includes("cherry") || w.includes("blossom") || w.includes("petal")) {
+    return { type: "petal", count: 22, overlay: "rgba(255,180,200,0.04)", lightning: false };
+  }
+  if (w.includes("aurora") || w.includes("northern light") || w.includes("polar light")) {
+    return { type: "aurora", count: 6, overlay: "rgba(20,60,40,0.08)", lightning: false };
   }
   if (w.includes("rain") || w.includes("storm") || w.includes("downpour")) {
     const isHeavy = w.includes("heavy") || w.includes("storm") || w.includes("downpour");
     return {
       type: "rain",
-      count: isHeavy ? 200 : 80,
+      count: isHeavy ? 120 : 55,
       overlay: "rgba(50,80,120,0.08)",
       lightning: isHeavy && w.includes("storm"),
     };
   }
-  if (w.includes("hail")) {
-    return { type: "hail", count: 60, overlay: "rgba(180,200,230,0.06)", lightning: false };
-  }
-  if (w.includes("blizzard")) {
-    return { type: "snow", count: 150, overlay: "rgba(200,220,255,0.10)", lightning: false };
-  }
-  if (w.includes("snow") || w.includes("sleet")) {
-    const isHeavy = w.includes("heavy");
-    return { type: "snow", count: isHeavy ? 120 : 50, overlay: "rgba(200,220,255,0.06)", lightning: false };
-  }
-  if (w.includes("frost") || w.includes("cold") || w.includes("freez")) {
-    return { type: "snow", count: 15, overlay: "rgba(180,210,240,0.06)", lightning: false };
-  }
-  if (w.includes("fog") || w.includes("mist") || w.includes("haze")) {
-    return { type: "fog", count: 20, overlay: "rgba(180,180,200,0.12)", lightning: false };
-  }
-  if (w.includes("sand") || w.includes("dust storm") || w.includes("sirocco")) {
-    return { type: "sand", count: 100, overlay: "rgba(180,150,100,0.12)", lightning: false };
-  }
-  if (w.includes("ash") || w.includes("volcanic") || w.includes("smoke")) {
-    return { type: "ash", count: 40, overlay: "rgba(80,60,60,0.10)", lightning: false };
-  }
-  if (w.includes("ember") || w.includes("fire") || w.includes("inferno")) {
-    return { type: "ember", count: 35, overlay: "rgba(120,40,10,0.08)", lightning: false };
-  }
-  if (w.includes("wind") || w.includes("breez") || w.includes("gust")) {
-    return { type: "leaf", count: 25, overlay: "", lightning: false };
-  }
-  if (w.includes("cherry") || w.includes("blossom") || w.includes("petal")) {
-    return { type: "petal", count: 30, overlay: "rgba(255,180,200,0.04)", lightning: false };
-  }
-  if (w.includes("aurora") || w.includes("northern light") || w.includes("polar light")) {
-    return { type: "aurora", count: 6, overlay: "rgba(20,60,40,0.08)", lightning: false };
-  }
   if (w.includes("clear") || w.includes("sunny") || w.includes("bright")) {
-    return { type: "dust", count: 12, overlay: "", lightning: false };
+    return { type: "dust", count: 8, overlay: "", lightning: false };
   }
   if (w.includes("cloud") || w.includes("overcast") || w.includes("grey") || w.includes("gray")) {
-    return { type: "dust", count: 8, overlay: "rgba(100,100,120,0.05)", lightning: false };
+    return { type: "dust", count: 6, overlay: "rgba(100,100,120,0.05)", lightning: false };
   }
 
-  return { type: "dust", count: 10, overlay: "", lightning: false };
+  return { type: "dust", count: 8, overlay: "", lightning: false };
 }
 
 // ── Map time of day → tint + fireflies ──
@@ -388,10 +394,7 @@ function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
       break;
     }
     case "snow": {
-      const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-      gradient.addColorStop(0, "rgba(255,255,255,0.9)");
-      gradient.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = gradient;
+      ctx.fillStyle = "rgba(255,255,255,0.82)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
@@ -421,13 +424,15 @@ function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
     }
     case "firefly": {
       const pulse = Math.sin(p.life * 0.05) * 0.5 + 0.5;
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 3);
-      glow.addColorStop(0, `rgba(200,255,100,${pulse * 0.8})`);
-      glow.addColorStop(0.5, `rgba(180,255,80,${pulse * 0.3})`);
-      glow.addColorStop(1, "rgba(180,255,80,0)");
-      ctx.fillStyle = glow;
+      ctx.globalAlpha = alpha * 0.28 * pulse;
+      ctx.fillStyle = "rgba(180,255,80,0.7)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha * (0.65 + pulse * 0.35);
+      ctx.fillStyle = "rgba(220,255,130,0.95)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
@@ -449,12 +454,10 @@ function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
       break;
     }
     case "fog": {
-      const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-      gradient.addColorStop(0, "rgba(200,200,220,0.06)");
-      gradient.addColorStop(1, "rgba(200,200,220,0)");
-      ctx.fillStyle = gradient;
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = "rgba(200,200,220,0.08)";
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.ellipse(p.x, p.y, p.size * 1.5, p.size * 0.45, 0, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
@@ -467,13 +470,15 @@ function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
     }
     case "ember": {
       const emberPulse = Math.sin(p.life * 0.08) * 0.3 + 0.7;
-      const emberGlow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 2.5);
-      emberGlow.addColorStop(0, `rgba(255,200,60,${emberPulse})`);
-      emberGlow.addColorStop(0.4, `rgba(255,100,20,${emberPulse * 0.6})`);
-      emberGlow.addColorStop(1, "rgba(255,60,10,0)");
-      ctx.fillStyle = emberGlow;
+      ctx.globalAlpha = alpha * 0.32 * emberPulse;
+      ctx.fillStyle = "rgba(255,80,20,0.7)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha * emberPulse;
+      ctx.fillStyle = "rgba(255,205,70,0.92)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
@@ -496,11 +501,7 @@ function drawParticle(ctx: CanvasRenderingContext2D, p: Particle) {
       break;
     }
     case "hail": {
-      const hailGrad = ctx.createRadialGradient(p.x - p.size * 0.3, p.y - p.size * 0.3, 0, p.x, p.y, p.size);
-      hailGrad.addColorStop(0, "rgba(255,255,255,0.95)");
-      hailGrad.addColorStop(0.7, "rgba(200,220,255,0.7)");
-      hailGrad.addColorStop(1, "rgba(180,200,240,0.3)");
-      ctx.fillStyle = hailGrad;
+      ctx.fillStyle = "rgba(230,240,255,0.85)";
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
       ctx.fill();
@@ -717,8 +718,9 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
     let lightningAlpha = 0; // for lightning flash
     let nextLightning = config.lightning ? 200 + Math.random() * 400 : Infinity;
     let frameCount = 0;
+    let lastFrameTime = 0;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_CANVAS_DPR);
 
     const resize = () => {
       const rect = canvas.parentElement?.getBoundingClientRect();
@@ -739,24 +741,34 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
       particlesRef.current.push(createParticle(config.type, w, h));
     }
     if (config.addFireflies) {
-      for (let i = 0; i < 15; i++) {
+      for (let i = 0; i < FIREFLY_COUNT; i++) {
         particlesRef.current.push(createParticle("firefly", w, h));
       }
     }
     if (config.addStars) {
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < STAR_COUNT; i++) {
         particlesRef.current.push(createParticle("star", w, h));
       }
     }
 
-    let paused = false;
+    let paused = document.hidden;
 
-    const tick = () => {
+    const tick = (timestamp: number) => {
       if (!running) return;
       if (paused) {
+        lastFrameTime = timestamp;
         frameRef.current = requestAnimationFrame(tick);
         return;
       }
+
+      if (lastFrameTime === 0) lastFrameTime = timestamp;
+      const elapsed = timestamp - lastFrameTime;
+      if (elapsed < TARGET_FRAME_MS) {
+        frameRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      lastFrameTime = timestamp;
+      const frameScale = Math.min(3, Math.max(0.5, elapsed / BASE_FRAME_MS));
 
       ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
@@ -771,7 +783,7 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
       }
 
       // Lightning flash (epilepsy-safe: capped alpha, gentle decay, long gap between flashes)
-      frameCount++;
+      frameCount += frameScale;
       if (config.lightning) {
         if (frameCount >= nextLightning) {
           lightningAlpha = 0.45 + Math.random() * 0.15; // soft flash, max 0.6
@@ -780,7 +792,7 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
         if (lightningAlpha > 0) {
           ctx.fillStyle = `rgba(220,230,255,${lightningAlpha})`;
           ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
-          lightningAlpha *= 0.88; // gentle decay
+          lightningAlpha *= Math.pow(0.88, frameScale); // gentle decay
           if (lightningAlpha < 0.01) lightningAlpha = 0;
         }
       }
@@ -809,25 +821,25 @@ export function WeatherEffects({ weather, timeOfDay, showCelestial = true }: Wea
 
       for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
-        p.life++;
+        p.life += frameScale;
 
         // Update position
-        p.x += p.vx;
-        p.y += p.vy;
+        p.x += p.vx * frameScale;
+        p.y += p.vy * frameScale;
 
         // Wobble for organic movement
         if (p.type === "snow" || p.type === "leaf" || p.type === "petal" || p.type === "ash") {
-          p.wobble += 0.02;
-          p.x += Math.sin(p.wobble) * 0.5;
+          p.wobble += 0.02 * frameScale;
+          p.x += Math.sin(p.wobble) * 0.5 * frameScale;
         }
         if (p.type === "ember") {
-          p.wobble += 0.04;
-          p.x += Math.sin(p.wobble) * 0.6;
+          p.wobble += 0.04 * frameScale;
+          p.x += Math.sin(p.wobble) * 0.6 * frameScale;
         }
         if (p.type === "firefly") {
-          p.wobble += 0.03;
-          p.x += Math.sin(p.wobble) * 0.8;
-          p.y += Math.cos(p.wobble * 0.7) * 0.4;
+          p.wobble += 0.03 * frameScale;
+          p.x += Math.sin(p.wobble) * 0.8 * frameScale;
+          p.y += Math.cos(p.wobble * 0.7) * 0.4 * frameScale;
         }
 
         drawParticle(ctx, p);

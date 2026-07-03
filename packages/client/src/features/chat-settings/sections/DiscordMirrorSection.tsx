@@ -3,9 +3,14 @@ import { useId } from "react";
 interface DiscordMirrorControlsProps {
   webhookUrl: string;
   onWebhookUrlChange: (webhookUrl: string) => void;
+  className?: string;
 }
 
-export function DiscordMirrorControls({ webhookUrl, onWebhookUrlChange }: DiscordMirrorControlsProps) {
+export function DiscordMirrorControls({
+  webhookUrl,
+  onWebhookUrlChange,
+  className = "space-y-2 pt-2.5",
+}: DiscordMirrorControlsProps) {
   const webhookInputId = useId();
   const webhookErrorId = useId();
   const trimmedWebhookUrl = webhookUrl.trim();
@@ -13,7 +18,7 @@ export function DiscordMirrorControls({ webhookUrl, onWebhookUrlChange }: Discor
     trimmedWebhookUrl.length > 0 && !/^https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(trimmedWebhookUrl);
 
   return (
-    <div className="space-y-2 pt-2.5">
+    <div className={className}>
       <input
         id={webhookInputId}
         type="url"

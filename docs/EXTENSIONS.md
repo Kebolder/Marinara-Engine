@@ -1,10 +1,10 @@
 # Extension Packages
 
-Marinara Engine extensions are add-ons for changing how the client looks and behaves. An extension can include JavaScript or other code that runs in the Marinara page, observes or edits the DOM, adds controls, registers hotkeys, calls allowed Marinara API routes, and cleans itself up when disabled. This is intentionally close to the SillyTavern extension model: folders can contain a manifest plus code and supporting files, and Marinara imports the whole package instead of only a single style snippet.
+Marinara Engine extensions are add-ons for changing how the app looks and behaves. Browser extensions can include CSS or JavaScript that runs in the Marinara page, observes or edits the DOM, adds controls, registers hotkeys, calls allowed Marinara API routes, and cleans itself up when disabled. Trusted server extensions can include JavaScript that runs in the Marinara Node.js server process.
 
-Extensions are imported from **Settings -> Extensions** as a `.json`, `.css`, `.js`, `.zip`, or a folder. Only install extensions from people you trust. Extension JavaScript runs in the Marinara Engine page with the same browser privileges as the app UI, so it can affect your local session and call non-sensitive app APIs. It is not executed by the server, and it does not directly patch Marinara's source code on disk.
+Extensions are imported from **Settings -> Extensions** as a `.json`, `.css`, `.js`, `.server.js`, `.zip`, or a folder. Only install extensions from people you trust. Browser extension JavaScript runs with the same browser privileges as the app UI. Server extension JavaScript runs on the host server and can affect that server until disabled. Neither runtime directly patches Marinara's source code on disk.
 
-## Quick Example
+## Browser Extension Example
 
 Copy the example package in [`docs/examples/extensions/minimal`](examples/extensions/minimal):
 
@@ -76,7 +76,7 @@ Inline content is also accepted:
 
 If both file paths and inline content are present, Marinara Engine uses the file contents.
 
-## What JavaScript Extensions Can Do
+## What Browser JavaScript Extensions Can Do
 
 Extension JavaScript is wrapped and executed as a browser module. The wrapper passes a `marinara` helper object into your code:
 
@@ -115,6 +115,62 @@ Available helpers:
 | `marinara.onCleanup(fn)` | Register custom cleanup logic for anything you create yourself. |
 
 Plain browser APIs are also available. For shared packages, prefer the `marinara` helpers where possible so disabling or updating the extension cleans up its DOM, timers, listeners, and observers.
+
+## Server Extension Example
+
+Server extensions use `kind: "marinara.server-extension"` or `config.runtime: "server"` and point at server-side JavaScript:
+
+```text
+My Server Extension/
+  manifest.json
+  server-extension.js
+```
+
+```json
+{
+  "kind": "marinara.server-extension",
+  "version": 1,
+  "config": {
+    "name": "Server Example",
+    "description": "Runs trusted code in the Marinara server process.",
+    "runtime": "server",
+    "enabled": false,
+    "serverJsPath": "server-extension.js"
+  }
+}
+```
+
+Server extension JavaScript is wrapped in an async function and receives a `marinara` helper:
+
+```js
+marinara.log.info("Server extension loaded");
+
+const timer = marinara.setInterval(() => {
+  marinara.log.debug("Still alive");
+}, 60_000);
+
+marinara.onCleanup(() => {
+  marinara.clearInterval(timer);
+});
+```
+
+Available server helpers:
+
+| Helper | Description |
+| --- | --- |
+| `marinara.runtime` | Always `"server"`. |
+| `marinara.version` | Server extension API version. |
+| `marinara.extensionId` | Installed extension ID. |
+| `marinara.extensionName` | Installed extension name. |
+| `marinara.log.debug/info/warn/error(...)` | Write to the Marinara server logger. |
+| `marinara.fetch(url, options)` | Fetch `http:` or `https:` URLs through Marinara's outbound safety checks and response-size cap. |
+| `marinara.setInterval(fn, ms)` | Start an interval with automatic cleanup. |
+| `marinara.setTimeout(fn, ms)` | Start a timeout with automatic cleanup. |
+| `marinara.clearInterval(id)` | Clear an interval. |
+| `marinara.clearTimeout(id)` | Clear a timeout. |
+| `marinara.onCleanup(fn)` | Register cleanup logic to run when the extension reloads, disables, deletes, or the server shuts down. |
+
+Server extensions do not receive Node's `require`, filesystem APIs, raw app internals, or dynamic route registration. Treat them as trusted startup scripts with logging, timers, cleanup, and safe outbound fetch.
 
 ## Multi-Extension Folder
 
@@ -177,22 +233,28 @@ If there is no root package file, folder import scans for every `manifest.json` 
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `kind` | Yes | Use `marinara.extension` for a single extension manifest. |
+| `kind` | Yes | Use `marinara.extension` for a browser extension or `marinara.server-extension` for a server extension. |
 | `version` | Yes | Use `1`. |
 | `config.name` | Yes | Display name, 1-200 characters. |
 | `config.description` | No | Description, up to 2000 characters. |
-| `config.enabled` | No | Whether the extension is enabled after import. Defaults to `true`. |
+| `config.runtime` | No | Use `client` for browser extensions or `server` for server extensions. Defaults to `client`. |
+| `config.enabled` | No | Whether a browser extension is enabled after import. Missing values are imported as disabled for review. Server extensions are always imported disabled and must be enabled manually. |
 | `config.cssPath` | No | Path or array of paths to CSS files, relative to the manifest folder. |
 | `config.jsPath` | No | Path or array of paths to JS files, relative to the manifest folder. |
+| `config.serverJsPath` | No | Path or array of paths to server JS files, relative to the manifest folder. |
 | `config.css` | No | Inline CSS. Maximum 256 KiB after UTF-8 encoding. |
 | `config.js` | No | Inline JavaScript. Maximum 1 MiB after UTF-8 encoding. |
+| `config.serverJs` | No | Inline server JavaScript. Maximum 1 MiB after UTF-8 encoding. Required for server extensions unless `serverJsPath` is present. |
 
 ## Import Notes
 
 - Folder import reads `.json`, `.js`, `.mjs`, `.cjs`, `.css`, `.md`, `.txt`, `.ts`, and `.tsx` text files.
 - `cssPath` and `jsPath` can point to one file or an array of files. Multiple files are joined in listed order.
 - Paths are resolved relative to the manifest first, then against the package root.
-- A folder with only loose `.css` or `.js` files and no manifest can still import as one extension named after the folder, but manifests are recommended for shared packages and SillyTavern-style extension folders.
+- A folder with only loose `.css` or `.js` files and no manifest can still import as one browser extension named after the folder, but manifests are recommended for shared packages and SillyTavern-style extension folders.
+- A single `.server.js`, `.server.mjs`, or `.server.cjs` file imports as one disabled server extension.
+- A loose folder with `.server.js`, `.server.mjs`, or `.server.cjs` files and no manifest imports as one disabled server extension.
 - CSS is injected as a style block when the extension is enabled.
-- JavaScript is loaded by the browser client when the extension is enabled. It can change client behavior at runtime, but it is not run by the server.
+- Browser JavaScript is loaded by the browser client when the extension is enabled. It can change client behavior at runtime, but it is not run by the server.
+- Server JavaScript is loaded by the Marinara server when the extension is enabled. Startup status appears in Settings -> Extensions.
 - TypeScript files can be included in imported folders as package text, but Marinara does not compile TypeScript for extension execution. Point `jsPath` at JavaScript that the browser can run.

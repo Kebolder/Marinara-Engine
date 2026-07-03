@@ -8,7 +8,7 @@ import {
   Sticker,
   StopCircle,
   X,
-  Plus,
+  Paperclip,
   ImagePlay,
   Keyboard,
   AtSign,
@@ -25,6 +25,7 @@ import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
+import { useChessGameStore } from "../../stores/chess-game.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../hooks/use-chats";
@@ -264,7 +265,26 @@ function readFileAsDataUrl(file: Blob): Promise<string> {
   });
 }
 
+function useIsMobileComposerViewport() {
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia("(max-width: 767px)").matches,
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobileViewport(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return isMobileViewport;
+}
+
 interface ConversationInputProps {
+  mobileHistoryCollapsed?: boolean;
+  onMobileHistoryCollapsedChange?: (collapsed: boolean) => void;
   characterNames?: string[];
   groupResponseOrder?: string;
   chatCharacters?: Array<{
@@ -279,6 +299,8 @@ interface ConversationInputProps {
 }
 
 export function ConversationInput({
+  mobileHistoryCollapsed = false,
+  onMobileHistoryCollapsedChange,
   characterNames = [],
   groupResponseOrder,
   chatCharacters,
@@ -296,6 +318,7 @@ export function ConversationInput({
   const [stickerOpen, setStickerOpen] = useState(false);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
   const [mobilePickerTab, setMobilePickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
+  const isMobileComposerViewport = useIsMobileComposerViewport();
   const [isDragging, setIsDragging] = useState(false);
   // @mention autocomplete
   const [_mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -318,6 +341,7 @@ export function ConversationInput({
   const charPickerBtnRef = useRef<HTMLButtonElement>(null);
   const charPickerMenuRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
+  const focusAfterMobileRestoreRef = useRef(false);
   const attachmentsRef = useRef<Attachment[]>([]);
   const pendingAttachmentDraftsRef = useRef<Map<string, Attachment[]>>(new Map());
   const currentInputFrameRef = useRef<number | null>(null);
@@ -351,6 +375,18 @@ export function ConversationInput({
   const pendingAttachmentReads = activeChatId ? (pendingAttachmentReadsByChat[activeChatId] ?? 0) : 0;
   const isReadingAttachments = pendingAttachmentReads > 0;
   const hasPendingAttachments = isReadingAttachments || attachments.length > 0;
+  const shouldShowMobileCollapsedComposer =
+    isMobileComposerViewport &&
+    mobileHistoryCollapsed &&
+    !hasInput &&
+    attachments.length === 0 &&
+    !isReadingAttachments &&
+    !isStreaming &&
+    !mobilePickerOpen &&
+    !emojiOpen &&
+    !gifOpen &&
+    !stickerOpen &&
+    !charPickerOpen;
   const chatMetadata = useMemo(() => parseChatMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const inactiveCharacterIds = useMemo(
     () =>
@@ -370,6 +406,20 @@ export function ConversationInput({
     [activeChatCharacters, characterNames],
   );
   const requiresManualGuideTarget = groupResponseOrder === "manual" && activeCharacterNames.length > 1;
+  const inputPlaceholder = useMemo(() => {
+    if (groupResponseOrder === "manual") {
+      if (isMobileComposerViewport) {
+        return activeCharacterNames.length > 0 ? `Message… @${activeCharacterNames[0]}` : "Message freely…";
+      }
+      return activeCharacterNames.length > 0
+        ? `Message freely; @${activeCharacterNames[0]} to get a reply`
+        : "Message freely...";
+    }
+    if (isMobileComposerViewport) return "Message… /cmds";
+    if (activeCharacterNames.length > 1 && chatName) return `Message ${chatName}, / for commands`;
+    if (activeCharacterNames.length > 0) return `Message @${activeCharacterNames[0]}, / for commands`;
+    return "Message...";
+  }, [activeCharacterNames, chatName, groupResponseOrder, isMobileComposerViewport]);
 
   // Read from the existing infinite-message cache so an empty Send can retry
   // after a failed generation without adding a second user message.
@@ -876,13 +926,18 @@ export function ConversationInput({
       return;
     }
 
-    // Natural-language launcher: "let's play uno" opens the game setup. The message
-    // still sends normally, so the characters can react to the suggestion too.
+    // Natural-language launchers: "let's play uno" / "let's play chess" open the game
+    // setup. The message still sends normally, so the characters can react too.
     {
       const activeUno = useUnoGameStore.getState().current;
       const unoActive = !!activeUno && activeUno.chatId === activeChatId && activeUno.status !== "finished";
       if (!unoActive && /\b(?:play|start)\b[^.!?\n]{0,16}\buno\b/i.test(raw)) {
         useUnoGameStore.getState().openSetup(activeChatId);
+      }
+      const activeChess = useChessGameStore.getState().current;
+      const chessActive = !!activeChess && activeChess.chatId === activeChatId && activeChess.status !== "finished";
+      if (!chessActive && /\b(?:play|start)\b[^.!?\n]{0,16}\bchess\b/i.test(raw)) {
+        useChessGameStore.getState().openSetup(activeChatId);
       }
     }
 
@@ -1691,10 +1746,30 @@ export function ConversationInput({
   );
 
   const ensureInputVisible = useCallback(() => {
-    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (typeof window === "undefined" || !window.matchMedia("(max-width: 767px)").matches) return;
+    const scroll = () => {
+      const inputBar = inputBarRef.current;
+      const viewport = window.visualViewport;
+      if (!inputBar || !viewport) return;
+      const rect = inputBar.getBoundingClientRect();
+      const viewportTop = viewport.offsetTop;
+      const viewportBottom = viewportTop + viewport.height;
+      if (rect.top >= viewportTop + 8 && rect.bottom <= viewportBottom - 8) return;
+      inputBar.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
     requestAnimationFrame(scroll);
-    window.setTimeout(scroll, 260);
   }, []);
+
+  useEffect(() => {
+    if (mobileHistoryCollapsed || !focusAfterMobileRestoreRef.current) return;
+    focusAfterMobileRestoreRef.current = false;
+    const focus = () => {
+      textareaRef.current?.focus({ preventScroll: true });
+      ensureInputVisible();
+    };
+    requestAnimationFrame(focus);
+    window.setTimeout(focus, 120);
+  }, [ensureInputVisible, mobileHistoryCollapsed]);
 
   const statusDotClass = (status?: string) =>
     status === "offline"
@@ -1707,8 +1782,29 @@ export function ConversationInput({
   const statusLabel = (status?: string) =>
     status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : null;
 
+  if (shouldShowMobileCollapsedComposer) {
+    return (
+      <div className="mari-chat-input chat-input-container relative px-2 pb-3 sm:px-3 md:hidden">
+        <button
+          type="button"
+          onClick={() => {
+            focusAfterMobileRestoreRef.current = true;
+            onMobileHistoryCollapsedChange?.(false);
+          }}
+          className={cn(
+            getChatInputShellClass({ dragging: false, hasContent: false, layout: "conversation" }),
+            "min-h-10 w-full justify-start text-left text-sm text-foreground/55",
+          )}
+          aria-label="Show message input"
+        >
+          <span className="truncate">Message… /cmds</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="mari-chat-input chat-input-container relative px-2 pb-3 sm:px-3">
+    <div className="mari-chat-input chat-input-container relative px-2 sm:px-3 pb-3">
       {/* Slash command autocomplete */}
       {completions.length > 0 && (
         <div className="absolute bottom-full left-3 right-3 z-40 mb-1 max-h-[min(18rem,45dvh)] overflow-y-auto rounded-lg border border-foreground/10 bg-[var(--card)] shadow-lg [-webkit-overflow-scrolling:touch]">
@@ -1914,7 +2010,7 @@ export function ConversationInput({
           )}
           title="Attach file"
         >
-          <Plus size="1rem" />
+          <Paperclip size="1rem" />
         </button>
 
         {/* Quick Switchers — desktop: inline, mobile: chevron */}
@@ -1930,17 +2026,7 @@ export function ConversationInput({
 
         <textarea
           ref={textareaRef}
-          placeholder={
-            groupResponseOrder === "manual"
-              ? activeCharacterNames.length > 0
-                ? `Message freely; @${activeCharacterNames[0]} to get a reply`
-                : "Message freely..."
-              : activeCharacterNames.length > 1 && chatName
-                ? `Message ${chatName}, / for commands`
-                : activeCharacterNames.length > 0
-                  ? `Message @${activeCharacterNames[0]}, / for commands`
-                  : "Message..."
-          }
+          placeholder={inputPlaceholder}
           rows={1}
           onInput={handleInput}
           onKeyDown={handleKeyDown}

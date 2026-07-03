@@ -91,6 +91,7 @@ export function createConnectionsStorage(db: DB) {
         useForRandom: String(input.useForRandom ?? false),
         defaultForAgents: String(input.defaultForAgents ?? false),
         enableCaching: String(input.enableCaching ?? false),
+        anthropicExtendedCacheTtl: String(input.anthropicExtendedCacheTtl ?? false),
         cachingAtDepth: input.cachingAtDepth ?? 5,
         maxParallelJobs: input.maxParallelJobs ?? 1,
         embeddingModel: input.embeddingModel ?? "",
@@ -139,6 +140,9 @@ export function createConnectionsStorage(db: DB) {
       }
       if (data.enableCaching !== undefined) {
         updateFields.enableCaching = String(data.enableCaching);
+      }
+      if (data.anthropicExtendedCacheTtl !== undefined) {
+        updateFields.anthropicExtendedCacheTtl = String(data.anthropicExtendedCacheTtl);
       }
       if (data.cachingAtDepth !== undefined) {
         updateFields.cachingAtDepth = data.cachingAtDepth;
@@ -236,6 +240,7 @@ export function createConnectionsStorage(db: DB) {
         useForRandom: "false",
         defaultForAgents: "false",
         enableCaching: source.enableCaching,
+        anthropicExtendedCacheTtl: source.anthropicExtendedCacheTtl,
         cachingAtDepth: source.cachingAtDepth,
         embeddingModel: source.embeddingModel,
         embeddingConnectionId: source.embeddingConnectionId,

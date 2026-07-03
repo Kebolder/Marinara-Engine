@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { ArrowLeft, ArrowUpDown, Download, Hash, Pencil, Plus, Search, Star, User } from "lucide-react";
-import { useCharacters } from "../../hooks/use-characters";
+import { flattenCharacterPages, useCharacterPages } from "../../hooks/use-characters";
 import { getCharacterTitle } from "../../lib/character-display";
 import { estimateCharacterCardTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
@@ -213,9 +213,12 @@ export function CharacterLibraryView() {
   const sort = useUIStore((s) => s.characterLibrarySort);
   const setCharacterLibrarySort = useUIStore((s) => s.setCharacterLibrarySort);
   const setCharacterLibraryScrollTop = useUIStore((s) => s.setCharacterLibraryScrollTop);
-  const { data: characters, isLoading } = useCharacters();
 
   const [search, setSearch] = useState("");
+  const serverSearch = useMemo(() => parseCharacterSearchQuery(search).text, [search]);
+  const characterPages = useCharacterPages({ search: serverSearch, sort });
+  const characters = useMemo(() => flattenCharacterPages(characterPages.data), [characterPages.data]);
+  const isLoading = characterPages.isLoading;
   const libraryRootScrollRef = useRef<HTMLDivElement | null>(null);
   const libraryListScrollRef = useRef<HTMLElement | null>(null);
   const pendingLibraryScrollTopRef = useRef(0);
@@ -494,9 +497,7 @@ export function CharacterLibraryView() {
                             alt={charName}
                             loading="lazy"
                             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                            style={getAvatarCropStyle(
-                              char.parsed.extensions?.avatarCrop as AvatarCropValue | undefined,
-                            )}
+                            style={getAvatarCropStyle(char.parsed.extensions?.avatarCrop as AvatarCropValue | undefined)}
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-white/85">
@@ -565,6 +566,19 @@ export function CharacterLibraryView() {
                   </Fragment>
                 );
               })}
+            </div>
+          )}
+
+          {!isLoading && characterPages.hasNextPage && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => void characterPages.fetchNextPage()}
+                disabled={characterPages.isFetchingNextPage}
+                className="mari-chrome-control mari-chrome-control--primary px-5 py-2 text-sm"
+              >
+                {characterPages.isFetchingNextPage ? "Loading..." : `Load more (${parsedCharacters.length} loaded)`}
+              </button>
             </div>
           )}
         </section>

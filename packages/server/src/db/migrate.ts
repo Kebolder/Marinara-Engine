@@ -287,6 +287,7 @@ const CREATE_TABLES: string[] = [
     is_default TEXT NOT NULL DEFAULT 'false',
     use_for_random TEXT NOT NULL DEFAULT 'false',
     enable_caching TEXT NOT NULL DEFAULT 'false',
+    anthropic_extended_cache_ttl TEXT NOT NULL DEFAULT 'false',
     caching_at_depth INTEGER NOT NULL DEFAULT 5,
     prompt_preset_id TEXT,
     created_at TEXT NOT NULL,
@@ -584,8 +585,10 @@ const CREATE_TABLES: string[] = [
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    runtime TEXT NOT NULL DEFAULT 'client',
     css TEXT,
     js TEXT,
+    server_js TEXT,
     enabled TEXT NOT NULL DEFAULT 'true',
     installed_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -640,6 +643,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
   {
     table: "api_connections",
     column: "enable_caching",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "api_connections",
+    column: "anthropic_extended_cache_ttl",
     definition: "TEXT NOT NULL DEFAULT 'false'",
   },
   {
@@ -1021,6 +1029,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "choice_blocks",
     column: "option_sort",
     definition: "TEXT NOT NULL DEFAULT 'manual'",
+  },
+  {
+    table: "installed_extensions",
+    column: "runtime",
+    definition: "TEXT NOT NULL DEFAULT 'client'",
+  },
+  {
+    table: "installed_extensions",
+    column: "server_js",
+    definition: "TEXT",
   },
 ];
 

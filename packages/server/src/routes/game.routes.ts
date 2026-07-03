@@ -473,12 +473,256 @@ function gameImagePromptReviewId(kind: "background" | "illustration" | "portrait
   return `${kind}:${generatedBackgroundSlug(key)}`;
 }
 
+type SummarizedIllustrationPrompt = {
+  title?: string;
+  prompt: string;
+  characters?: string[];
+  reason?: string;
+  slug?: string;
+};
+
+function compactIllustrationNarration(value: string): string {
+  const clean = stripGmCommandTags(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (clean.length <= 12000) return clean;
+  return `${clean.slice(0, 7600).trim()}\n\n[Middle of turn omitted]\n\n${clean.slice(-3600).trim()}`;
+}
+
+function compactIllustrationContext(value: unknown, maxLength = 300): string {
+  return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, maxLength) : "";
+}
+
+function cleanOptionalIllustrationString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value.trim().replace(/\s+/g, " ").slice(0, maxLength);
+  return clean || undefined;
+}
+
+function sanitizeIllustrationCharacters(value: unknown, fallback?: string[]): string[] | undefined {
+  const raw = Array.isArray(value) ? value : fallback;
+  const characters = (raw ?? [])
+    .map((character) => (typeof character === "string" ? character.trim().replace(/\s+/g, " ") : ""))
+    .filter(Boolean);
+  return characters.length ? Array.from(new Set(characters)).slice(0, 6) : undefined;
+}
+
+function sanitizeSummarizedIllustrationPrompt(
+  raw: unknown,
+  fallback: SceneIllustrationRequest,
+): SummarizedIllustrationPrompt | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const prompt = cleanOptionalIllustrationString(record.prompt, 6500);
+  if (!prompt || prompt.length < 40) return null;
+
+  const slug = cleanOptionalIllustrationString(record.slug, 80)
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+
+  return {
+    prompt,
+    title: cleanOptionalIllustrationString(record.title, 160) ?? fallback.title,
+    characters: sanitizeIllustrationCharacters(record.characters, fallback.characters),
+    reason: cleanOptionalIllustrationString(record.reason, 300) ?? fallback.reason,
+    slug: slug || fallback.slug,
+  };
+}
+
+function fallbackSummarizedIllustrationPrompt(
+  raw: string,
+  fallback: SceneIllustrationRequest,
+): SummarizedIllustrationPrompt | null {
+  const prompt = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  if (prompt.length < 40) return null;
+  return {
+    prompt: prompt.slice(0, 6500),
+    title: fallback.title,
+    characters: fallback.characters,
+    reason: fallback.reason,
+    slug: fallback.slug,
+  };
+}
+
+function mergeSummarizedIllustration(
+  illustration: SceneIllustrationRequest,
+  summary: SummarizedIllustrationPrompt,
+): SceneIllustrationRequest {
+  return {
+    ...illustration,
+    prompt: summary.prompt,
+    ...(summary.title ? { title: summary.title } : {}),
+    ...(summary.characters?.length ? { characters: summary.characters } : {}),
+    ...(summary.reason ? { reason: summary.reason } : {}),
+    ...(summary.slug ? { slug: summary.slug } : {}),
+  };
+}
+
+function buildIllustrationNarrationSummaryMessages(args: {
+  illustration: SceneIllustrationRequest;
+  narration: string;
+  state?: string | null;
+  location?: string | null;
+  weather?: string | null;
+  timeOfDay?: string | null;
+  genre?: string | null;
+  setting?: string | null;
+  worldOverview?: string | null;
+  artStyle?: string | null;
+  imagePromptInstructions?: string | null;
+}): ChatMessage[] {
+  const contextLines = [
+    args.state ? `Mode: ${compactIllustrationContext(args.state, 80)}` : "",
+    args.location ? `Location: ${compactIllustrationContext(args.location)}` : "",
+    args.weather ? `Weather: ${compactIllustrationContext(args.weather, 120)}` : "",
+    args.timeOfDay ? `Time: ${compactIllustrationContext(args.timeOfDay, 120)}` : "",
+    args.genre ? `Genre: ${compactIllustrationContext(args.genre, 120)}` : "",
+    args.setting ? `Setting: ${compactIllustrationContext(args.setting, 240)}` : "",
+    args.worldOverview ? `World: ${compactIllustrationContext(args.worldOverview, 500)}` : "",
+    args.artStyle ? `Art style: ${compactIllustrationContext(args.artStyle, 400)}` : "",
+    args.imagePromptInstructions
+      ? `User image instructions: ${compactIllustrationContext(args.imagePromptInstructions, 1000)}`
+      : "",
+  ].filter(Boolean);
+
+  const currentRequest = {
+    title: args.illustration.title ?? null,
+    prompt: args.illustration.prompt,
+    characters: args.illustration.characters ?? [],
+    reason: args.illustration.reason ?? null,
+    slug: args.illustration.slug ?? null,
+  };
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are Marinara's Game Mode narration summarizer for the Illustrator.",
+        "Read the completed turn narration and dialogue, then convert it into one concise image-generation prompt.",
+        "Focus on the single strongest visible moment from the full turn: who is present, what they are doing, expressions, pose, composition, lighting, setting, mood, and player POV.",
+        "Do not quote dialogue in the image prompt; translate spoken lines into visible expression, action, and relationship tension.",
+        "Do not invent unseen characters, UI, text, captions, speech bubbles, watermarks, or logos.",
+        "The player protagonist should not be visible unless the narration explicitly requires hands, arms, or body.",
+        "Return strict JSON only with keys: title, prompt, characters, reason, slug.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        contextLines.length ? `<game_context>\n${contextLines.join("\n")}\n</game_context>` : "",
+        `<current_illustration_request>\n${JSON.stringify(currentRequest, null, 2)}\n</current_illustration_request>`,
+        `<completed_turn_narration>\n${compactIllustrationNarration(args.narration)}\n</completed_turn_narration>`,
+        [
+          "Create JSON now.",
+          "prompt: detailed concrete visual description only; preserve every visually important named character, pose, expression, setting detail, and mood from the completed turn. Do not truncate mid-detail. Keep the prompt under 6500 characters.",
+          "characters: only visible named characters, max 6.",
+          "slug: short lowercase filename slug.",
+        ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    },
+  ];
+}
+
+async function summarizeIllustrationFromNarration(args: {
+  connections: ReturnType<typeof createConnectionsStorage>;
+  chat: NonNullable<StoredChatRecord>;
+  meta: Record<string, unknown>;
+  setupConfig: Record<string, unknown> | null;
+  latestState: { location?: string | null; weather?: string | null; time?: string | null } | null;
+  illustration: SceneIllustrationRequest;
+  narration?: string | null;
+  debugLog?: (message: string, ...args: any[]) => void;
+  signal?: AbortSignal;
+}): Promise<SceneIllustrationRequest> {
+  const narration = args.narration?.trim();
+  if (!narration) return args.illustration;
+
+  try {
+    const sceneConnId =
+      (args.meta.gameSceneConnectionId as string | undefined) || (args.setupConfig?.sceneConnectionId as string) || null;
+    const { conn, baseUrl, defaultGenerationParameters } = await resolveConnection(
+      args.connections,
+      sceneConnId,
+      args.chat.connectionId,
+    );
+    const parameters = resolveStoredGameGenerationParameters(args.meta, defaultGenerationParameters);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
+    const messages = buildIllustrationNarrationSummaryMessages({
+      illustration: args.illustration,
+      narration,
+      state: typeof args.meta.gameActiveState === "string" ? args.meta.gameActiveState : null,
+      location: args.latestState?.location ?? null,
+      weather: args.latestState?.weather ?? null,
+      timeOfDay: args.latestState?.time ?? null,
+      genre: (args.setupConfig?.genre as string | undefined) ?? null,
+      setting: (args.setupConfig?.setting as string | undefined) ?? null,
+      worldOverview: (args.meta.gameWorldOverview as string | undefined) ?? null,
+      artStyle: (args.setupConfig?.artStylePrompt as string | undefined) ?? null,
+      imagePromptInstructions:
+        typeof args.meta.gameImagePromptInstructions === "string" ? args.meta.gameImagePromptInstructions : null,
+    });
+
+    args.debugLog?.(
+      "[debug/game/illustration-summarizer] request model=%s narrationChars=%d promptChars=%d",
+      conn.model ?? "",
+      narration.length,
+      args.illustration.prompt.length,
+    );
+
+    const result = await runGameChatComplete(
+      provider,
+      messages,
+      gameGenOptions(
+        conn.model ?? "",
+        {
+          stream: false,
+          maxTokens: 3000,
+          responseFormat: { type: "json_object" },
+          signal: args.signal,
+        },
+        parameters,
+        conn.provider,
+      ),
+      "Game illustration narration summarizer",
+      GAME_ILLUSTRATION_SUMMARY_TIMEOUT_MS,
+    );
+    const extraction = extractLeadingThinkingBlocks(result.content || "", parameters?.customThinkingTags);
+    const raw = extraction.content.trim();
+    args.debugLog?.("[debug/game/illustration-summarizer] raw response:\n%s", raw);
+    if (!raw) return args.illustration;
+
+    let summary: SummarizedIllustrationPrompt | null = null;
+    try {
+      summary = sanitizeSummarizedIllustrationPrompt(parseJSON(raw), args.illustration);
+    } catch {
+      summary = fallbackSummarizedIllustrationPrompt(raw, args.illustration);
+    }
+    return summary ? mergeSummarizedIllustration(args.illustration, summary) : args.illustration;
+  } catch (err) {
+    logger.warn(err, "[game/illustration-summarizer] Failed to summarize narration; using existing prompt");
+    return args.illustration;
+  }
+}
+
 async function addGeneratedIllustrationToGallery(opts: {
   app: FastifyInstance;
   chatId: string;
   tag: string;
   illustration: SceneIllustrationRequest;
   model: string;
+  prompt?: string | null;
 }): Promise<void> {
   const prefix = "backgrounds:illustrations:";
   if (!opts.tag.startsWith(prefix)) return;
@@ -495,7 +739,8 @@ async function addGeneratedIllustrationToGallery(opts: {
     const ext = extname(assetPath).toLowerCase().replace(/^\./, "") || "png";
     const filePath = saveImageToDisk(opts.chatId, readFileSync(assetPath).toString("base64"), ext);
     const gallery = createGalleryStorage(opts.app.db);
-    const prompt = [opts.illustration.reason, opts.illustration.prompt].filter(Boolean).join("\n\n");
+    const prompt =
+      opts.prompt?.trim() || [opts.illustration.reason, opts.illustration.prompt].filter(Boolean).join("\n\n");
     await gallery.create({
       chatId: opts.chatId,
       filePath,
@@ -651,9 +896,15 @@ const stateTransitionSchema = z.object({
 const mapGenerateSchema = z.object({
   chatId: z.string().min(1),
   locationType: z.string().min(1).max(200),
-  context: z.string().max(1000).default(""),
+  context: z.string().max(50000).default(""),
   connectionId: z.string().optional(),
 });
+
+function normalizeMapGenerationContext(context: string): string {
+  const compact = context.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").trim();
+  if (compact.length <= 4000) return compact;
+  return compact.slice(-4000).replace(/^[^\n]*\n?/, "").trim() || compact.slice(-4000).trim();
+}
 
 const mapMoveSchema = z.object({
   chatId: z.string().min(1),
@@ -1795,6 +2046,7 @@ const SESSION_CONCLUSION_MIN_OUTPUT_TOKENS = 8192;
 const CAMPAIGN_PROGRESSION_MIN_OUTPUT_TOKENS = SESSION_CONCLUSION_MIN_OUTPUT_TOKENS;
 const GAME_GENERATION_TIMEOUT_MS = 5 * 60 * 1000;
 const GAME_ASSET_GENERATION_TIMEOUT_MS = 220 * 1000;
+const GAME_ILLUSTRATION_SUMMARY_TIMEOUT_MS = 60 * 1000;
 const GAME_ASSET_PORTRAIT_CONCURRENCY = 2;
 const gameAssetGenerationLocks = new Map<string, Promise<void>>();
 
@@ -6225,6 +6477,7 @@ export async function gameRoutes(app: FastifyInstance) {
   // ── POST /game/map/generate ──
   app.post("/map/generate", async (req, reply) => {
     const { chatId, locationType, context, connectionId } = mapGenerateSchema.parse(req.body);
+    const mapContext = normalizeMapGenerationContext(context);
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);
 
@@ -6242,7 +6495,7 @@ export async function gameRoutes(app: FastifyInstance) {
     );
 
     const messages: ChatMessage[] = [
-      { role: "system", content: buildMapGenerationPrompt(locationType, context) },
+      { role: "system", content: buildMapGenerationPrompt(locationType, mapContext) },
       { role: "user", content: "Generate the map." },
     ];
 
@@ -7221,7 +7474,7 @@ export async function gameRoutes(app: FastifyInstance) {
       canGenerateBackgrounds: z.boolean().optional(),
       canGenerateIllustrations: z.boolean().optional(),
       artStylePrompt: z.string().nullable().optional(),
-      imagePromptInstructions: z.string().max(1200).nullable().optional(),
+      imagePromptInstructions: z.string().max(5000).nullable().optional(),
     }),
     /** Override connection (falls back to scene connection → GM connection). */
     connectionId: z.string().optional(),
@@ -7261,7 +7514,7 @@ export async function gameRoutes(app: FastifyInstance) {
       .catch(() => null);
     const imagePromptInstructions =
       typeof meta.gameImagePromptInstructions === "string"
-        ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
+        ? meta.gameImagePromptInstructions.trim().slice(0, 5000)
         : "";
 
     // Compute approximate turn number: count user messages + 1 (current turn)
@@ -7523,6 +7776,7 @@ export async function gameRoutes(app: FastifyInstance) {
                 includeReferenceImages: meta.gameImageUseAvatarReferences !== false,
                 includeCharacterDescriptions: meta.gameImageIncludeCharacterAppearance !== false,
               });
+              let sentIllustrationPrompt: string | null = null;
               const generatedTag = await generateSceneIllustration({
                 chatId: input.chatId,
                 title: illustration.title,
@@ -7548,6 +7802,9 @@ export async function gameRoutes(app: FastifyInstance) {
                 styleProfileId,
                 debugLog: debugLogsEnabled ? debugLog : undefined,
                 promptOverridesStorage: createPromptOverridesStorage(app.db),
+                onCompiledPrompt: (compiled) => {
+                  sentIllustrationPrompt = compiled.prompt;
+                },
               });
               if (generatedTag) {
                 await addGeneratedIllustrationToGallery({
@@ -7556,6 +7813,7 @@ export async function gameRoutes(app: FastifyInstance) {
                   tag: generatedTag,
                   illustration,
                   model: imgModel,
+                  prompt: sentIllustrationPrompt,
                 });
                 applyGeneratedIllustration(sceneResult, generatedTag, illustration.segment);
                 sceneResult.illustration = null;
@@ -7789,8 +8047,8 @@ export async function gameRoutes(app: FastifyInstance) {
     .array(
       z.object({
         id: z.string().min(1).max(200),
-        prompt: z.string().min(1).max(5000),
-        negativePrompt: z.string().max(5000).optional(),
+        prompt: z.string().min(1).max(7000),
+        negativePrompt: z.string().max(7000).optional(),
       }),
     )
     .max(32)
@@ -7799,6 +8057,10 @@ export async function gameRoutes(app: FastifyInstance) {
     chatId: z.string().min(1),
     /** Background tag that didn't resolve (the scene model suggested it). */
     backgroundTag: z.string().max(500).optional(),
+    /** Optional prompt text for the background when the tag is only a cache/asset key. */
+    backgroundDescription: z.string().min(1).max(5000).optional(),
+    /** Force user-requested background generation instead of reusing an existing slug. */
+    forceBackground: z.boolean().optional(),
     /** NPCs needing portraits: [{ name, description }] */
     npcsNeedingAvatars: z
       .array(
@@ -7815,13 +8077,15 @@ export async function gameRoutes(app: FastifyInstance) {
     illustration: z
       .object({
         segment: z.number().int().min(0).max(500).optional(),
-        prompt: z.string().min(40).max(1200),
+        prompt: z.string().min(40).max(5000),
         title: z.string().max(160).optional(),
         characters: z.array(z.string().min(1).max(200)).max(6).optional(),
         reason: z.string().max(300).optional(),
         slug: z.string().max(80).optional(),
       })
       .optional(),
+    /** Full completed turn narration/dialogue used to summarize the image prompt before illustration generation. */
+    illustrationNarration: z.string().max(50000).optional(),
     imageSizes: imageSizesSchema,
     promptOverrides: imagePromptOverrideSchema,
     useAvatarReferences: z.boolean().optional(),
@@ -7878,7 +8142,7 @@ export async function gameRoutes(app: FastifyInstance) {
       null;
     const imagePromptInstructions =
       typeof meta.gameImagePromptInstructions === "string"
-        ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
+        ? meta.gameImagePromptInstructions.trim().slice(0, 5000)
         : "";
     const useAvatarReferences = input.useAvatarReferences ?? meta.gameImageUseAvatarReferences !== false;
     const includeCharacterAppearance =
@@ -7899,11 +8163,13 @@ export async function gameRoutes(app: FastifyInstance) {
 
     if (input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
+      const backgroundDescription =
+        input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
       const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
       const compiledReviewPrompt = await buildBackgroundProviderPrompt({
         chatId: input.chatId,
         locationSlug: slug,
-        sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
+        sceneDescription: backgroundDescription,
         genre,
         setting,
         currentLocation: latestImageState?.location ?? null,
@@ -7966,9 +8232,20 @@ export async function gameRoutes(app: FastifyInstance) {
           }
         }
 
-        const illustration = input.illustration as SceneIllustrationRequest;
-        const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
-        const promptOverride = promptOverrideById.get(gameImagePromptReviewId("illustration", illustrationKey));
+        const originalIllustration = input.illustration as SceneIllustrationRequest;
+        const illustrationReviewKey =
+          originalIllustration.slug || originalIllustration.reason || originalIllustration.prompt.slice(0, 80);
+        let illustration = originalIllustration;
+        illustration = await summarizeIllustrationFromNarration({
+          connections,
+          chat,
+          meta,
+          setupConfig: setupCfg,
+          latestState: latestImageState,
+          illustration,
+          narration: input.illustrationNarration,
+        });
+        const promptOverride = promptOverrideById.get(gameImagePromptReviewId("illustration", illustrationReviewKey));
         const illustrationAssets = collectIllustrationCharacterAssets({
           illustration,
           characterNames: illustration.characters ?? [],
@@ -8009,7 +8286,7 @@ export async function gameRoutes(app: FastifyInstance) {
           negativePromptOverride: promptOverride?.negativePrompt,
         });
         items.push({
-          id: gameImagePromptReviewId("illustration", illustrationKey),
+          id: gameImagePromptReviewId("illustration", illustrationReviewKey),
           kind: "illustration",
           title: illustration.reason ? `Illustration: ${illustration.reason}` : "Scene illustration",
           prompt: compiledReviewPrompt.prompt,
@@ -8135,8 +8412,11 @@ export async function gameRoutes(app: FastifyInstance) {
             {
               chatId: input.chatId,
               backgroundTag: input.backgroundTag ?? null,
+              backgroundDescriptionChars: input.backgroundDescription?.length ?? 0,
+              forceBackground: input.forceBackground === true,
               npcsNeedingAvatars: input.npcsNeedingAvatars ?? [],
               illustration: input.illustration ?? null,
+              illustrationNarrationChars: input.illustrationNarration?.length ?? 0,
               useAvatarReferences: input.useAvatarReferences ?? null,
               includeCharacterAppearance: input.includeCharacterAppearance ?? null,
               queueImageGenerationRequests: input.queueImageGenerationRequests,
@@ -8197,7 +8477,7 @@ export async function gameRoutes(app: FastifyInstance) {
         null;
       const imagePromptInstructions =
         typeof meta.gameImagePromptInstructions === "string"
-          ? meta.gameImagePromptInstructions.trim().slice(0, 1200)
+          ? meta.gameImagePromptInstructions.trim().slice(0, 5000)
           : "";
       const useAvatarReferences = input.useAvatarReferences ?? meta.gameImageUseAvatarReferences !== false;
       const includeCharacterAppearance =
@@ -8224,12 +8504,14 @@ export async function gameRoutes(app: FastifyInstance) {
       // ── Generate background ──
       if (!assetAbortSignal.aborted && input.backgroundTag) {
         const slug = generatedBackgroundSlug(input.backgroundTag);
+        const backgroundDescription =
+          input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
         const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
 
         const tag = await generateBackground({
           chatId: input.chatId,
           locationSlug: slug,
-          sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
+          sceneDescription: backgroundDescription,
           genre,
           setting,
           currentLocation: latestImageState?.location ?? null,
@@ -8252,6 +8534,7 @@ export async function gameRoutes(app: FastifyInstance) {
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
+          force: input.forceBackground === true,
           signal: assetAbortSignal,
         });
         if (tag) {
@@ -8305,9 +8588,22 @@ export async function gameRoutes(app: FastifyInstance) {
             }
           }
 
-          const illustration = input.illustration as SceneIllustrationRequest;
-          const illustrationKey = illustration.slug || illustration.reason || illustration.prompt.slice(0, 80);
-          const promptOverride = promptOverrideById.get(gameImagePromptReviewId("illustration", illustrationKey));
+          const originalIllustration = input.illustration as SceneIllustrationRequest;
+          const illustrationReviewKey =
+            originalIllustration.slug || originalIllustration.reason || originalIllustration.prompt.slice(0, 80);
+          let illustration = originalIllustration;
+          illustration = await summarizeIllustrationFromNarration({
+            connections,
+            chat,
+            meta,
+            setupConfig: setupCfg,
+            latestState: latestImageState,
+            illustration,
+            narration: input.illustrationNarration,
+            debugLog: debugLogsEnabled ? debugLog : undefined,
+            signal: assetAbortSignal,
+          });
+          const promptOverride = promptOverrideById.get(gameImagePromptReviewId("illustration", illustrationReviewKey));
           const illustrationAssets = collectIllustrationCharacterAssets({
             illustration,
             characterNames: illustration.characters ?? [],
@@ -8319,6 +8615,7 @@ export async function gameRoutes(app: FastifyInstance) {
             includeReferenceImages: useAvatarReferences,
             includeCharacterDescriptions: includeCharacterAppearance,
           });
+          let sentIllustrationPrompt: string | null = null;
           const tag = await generateSceneIllustration({
             chatId: input.chatId,
             title: illustration.title,
@@ -8347,6 +8644,9 @@ export async function gameRoutes(app: FastifyInstance) {
             size: backgroundSize,
             promptOverride: promptOverride?.prompt,
             negativePromptOverride: promptOverride?.negativePrompt,
+            onCompiledPrompt: (compiled) => {
+              sentIllustrationPrompt = compiled.prompt;
+            },
             signal: assetAbortSignal,
           });
 
@@ -8357,6 +8657,7 @@ export async function gameRoutes(app: FastifyInstance) {
               tag,
               illustration,
               model: imgModel,
+              prompt: sentIllustrationPrompt,
             });
             generatedIllustration = {
               tag,

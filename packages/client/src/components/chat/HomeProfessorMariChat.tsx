@@ -82,7 +82,7 @@ const PROFESSOR_MARI_ERROR_TOAST_DURATION_MS = 120_000;
 const PROFESSOR_MARI_NO_CONNECTION_TOAST =
   "You haven't set up a connection yet! Click the chains icon on the left side of the input box to select one.";
 const MARI_WELCOME =
-  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make reversible local workspace changes with a Keep/Restore review.";
+  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make reversible local workspace changes with a Keep/Restore review. Select a connection via the chains icon on the left side of the input box first and then ask away!";
 const NEW_SKILL_CONTENT = `# Custom Professor Mari Skill
 
 Use this skill when the request matches a workflow you want Professor Mari to follow.
@@ -1890,10 +1890,16 @@ export function HomeProfessorMariChat({
         });
       }
     });
-    const timer = window.setInterval(() => {
+    const refreshVisibleWorkspaceStatus = () => {
+      if (document.hidden) return;
       void refreshWorkspaceStatus().catch(() => undefined);
-    }, 2000);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(refreshVisibleWorkspaceStatus, 15_000);
+    document.addEventListener("visibilitychange", refreshVisibleWorkspaceStatus);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisibleWorkspaceStatus);
+    };
   }, [refreshWorkspaceStatus]);
 
   useEffect(() => {

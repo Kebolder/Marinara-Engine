@@ -18,17 +18,22 @@ import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { UnoBoard } from "./UnoBoard";
 import { UnoSetup } from "./UnoSetup";
+import { ChessBoard } from "./ChessBoard";
+import { ChessSetup } from "./ChessSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
+import { groupConsecutiveSegments, parseNamePrefixFormat, parseSpeakerTags } from "./ConversationMessageShared";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
 import { useChatStore } from "../../stores/chat.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
+import { useChessGameStore } from "../../stores/chess-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
@@ -104,23 +109,33 @@ function getDayKey(dateStr: string): string {
 }
 
 /** Check if a message's content uses "Name: text" format with known chat-member character names */
-function hasNamePrefixFormat(msg: Message, characterMap: CharacterMap, chatCharacterIds: string[]): boolean {
-  if (!msg.content) return false;
-  const chatNames = new Set(
+function getKnownChatMemberNames(characterMap: CharacterMap, chatCharacterIds: string[]): Set<string> {
+  return new Set(
     chatCharacterIds
       .map((id) => normalizeTextForMatch(characterMap.get(id)?.name))
       .filter((name): name is string => typeof name === "string" && name.length > 0),
   );
-  if (!chatNames.size) return false;
-  const lines = msg.content.split("\n");
+}
+
+function hasNamePrefixFormat(content: string, knownNames: Set<string>): boolean {
+  if (!content) return false;
+  if (!knownNames.size) return false;
+  const lines = content.split("\n");
   for (const line of lines) {
     const colonIdx = line.indexOf(": ");
     if (colonIdx > 0) {
       const name = line.slice(0, colonIdx).trim();
-      if (chatNames.has(normalizeTextForMatch(name))) return true;
+      if (knownNames.has(normalizeTextForMatch(name))) return true;
     }
   }
   return false;
+}
+
+function getGroupedSegmentCount(content: string, knownNames: Set<string>): number {
+  const speakerSegments = parseSpeakerTags(content, knownNames);
+  if (speakerSegments) return groupConsecutiveSegments(speakerSegments).length;
+  const nameSegments = parseNamePrefixFormat(content, knownNames);
+  return nameSegments ? groupConsecutiveSegments(nameSegments).length : 0;
 }
 
 function isHiddenFromUser(message: Message) {
@@ -273,11 +288,15 @@ export function ConversationView({
   onConcludeScene,
   onAbandonScene,
 }: ConversationViewProps) {
+  useRenderTimer("convo-messages"); // [#3104 diagnostic]
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
   const unoGameActive = useUnoGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
   const unoSetupOpen = useUnoGameStore((s) => s.setupChatId === chatId);
   const closeUnoSetup = useUnoGameStore((s) => s.closeSetup);
+  const chessGameActive = useChessGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
+  const chessSetupOpen = useChessGameStore((s) => s.setupChatId === chatId);
+  const closeChessSetup = useChessGameStore((s) => s.closeSetup);
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useThrottledStreamBuffer();
@@ -391,6 +410,7 @@ export function ConversationView({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [mobileHistoryComposerCollapsed, setMobileHistoryComposerCollapsed] = useState(false);
   const { map: conversationEmojiMap } = useConversationCustomEmojis();
   const { map: conversationStickerMap } = useConversationCustomStickers();
   const prevScrollHeightRef = useRef(0);
@@ -398,7 +418,13 @@ export function ConversationView({
   const isNearBottomRef = useRef(true);
   const userScrolledAwayRef = useRef(false);
   const lastScrollTopRef = useRef(0);
+  const composerScrollTopRef = useRef(0);
   const userScrolledAtRef = useRef(0);
+  const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
+
+  useEffect(() => {
+    if (shouldKeepMobileComposerOpen) setMobileHistoryComposerCollapsed(false);
+  }, [shouldKeepMobileComposerOpen]);
 
   // ── Scroll tracking ──
   useEffect(() => {
@@ -407,6 +433,17 @@ export function ConversationView({
     const onScroll = () => {
       const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
       const nearBottom = distFromBottom < 150;
+      const currentTop = el.scrollTop;
+      const previousComposerTop = composerScrollTopRef.current;
+      const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+      if (!isMobile || shouldKeepMobileComposerOpen || nearBottom) {
+        setMobileHistoryComposerCollapsed(false);
+      } else if (currentTop > previousComposerTop + 18) {
+        setMobileHistoryComposerCollapsed(false);
+      } else if (currentTop < previousComposerTop - 12 && distFromBottom > 180) {
+        setMobileHistoryComposerCollapsed(true);
+      }
+      composerScrollTopRef.current = currentTop;
       if (hasLiveStream && el.scrollTop < lastScrollTopRef.current - 10) {
         userScrolledAwayRef.current = true;
       }
@@ -434,7 +471,7 @@ export function ConversationView({
       el.removeEventListener("wheel", onUserScroll);
       el.removeEventListener("touchmove", onUserScroll);
     };
-  }, [hasLiveStream]);
+  }, [hasLiveStream, shouldKeepMobileComposerOpen]);
 
   useEffect(() => {
     if (!hasLiveStream) userScrolledAwayRef.current = false;
@@ -529,6 +566,7 @@ export function ConversationView({
           isGrouped: boolean;
           index: number;
           contentParts?: string[];
+          groupSegmentCount?: number;
           rawContent?: string;
           bubbleGroupPosition: "single" | "first" | "middle" | "last";
         }
@@ -575,7 +613,12 @@ export function ConversationView({
       const nextGrouped = isGroupedWith(msg, next, false);
       const bubbleGroupPosition = grouped ? (nextGrouped ? "middle" : "last") : nextGrouped ? "first" : "single";
 
-      const hasGroupFormat = msg.content.includes("<speaker=") || hasNamePrefixFormat(msg, characterMap, chatCharIds);
+      const knownNames = getKnownChatMemberNames(characterMap, chatCharIds);
+      const groupingContent = msg.role === "assistant" && msg.content ? stripTimestamps(msg.content) : msg.content;
+      const groupSegmentCount =
+        msg.role === "assistant" && groupingContent ? getGroupedSegmentCount(groupingContent, knownNames) : 0;
+      const hasGroupFormat =
+        groupingContent.includes("<speaker=") || groupSegmentCount > 0 || hasNamePrefixFormat(groupingContent, knownNames);
       let contentParts: string[] | undefined;
       if (conversationMessageStyle === "classic" && msg.role === "assistant" && msg.content && !hasGroupFormat) {
         const cleaned = stripTimestamps(msg.content);
@@ -605,6 +648,7 @@ export function ConversationView({
         isGrouped: grouped,
         index: messageOffset + i,
         contentParts,
+        groupSegmentCount,
         rawContent: displayContent !== msg.content ? msg.content : undefined,
         bubbleGroupPosition,
       });
@@ -710,6 +754,7 @@ export function ConversationView({
   // ── Staggered reveal for assistant display parts ──
   // Reveal chunks inside one real message so Classic gets cadence without fake rows.
   const [visiblePartCounts, setVisiblePartCounts] = useState<Record<string, number>>({});
+  const [visibleSegmentCounts, setVisibleSegmentCounts] = useState<Record<string, number>>({});
   const renderedMessageKeysRef = useRef<Set<string>>(new Set());
   const prevRenderedKeysRef = useRef<Set<string>>(new Set());
   // Track whether the initial data load has settled. Until it has, we treat
@@ -736,6 +781,7 @@ export function ConversationView({
     Object.values(staggerTimersRef.current).forEach((timers) => timers.forEach(clearTimeout));
     staggerTimersRef.current = {};
     setVisiblePartCounts({});
+    setVisibleSegmentCounts({});
   }
 
   useLayoutEffect(() => {
@@ -752,6 +798,15 @@ export function ConversationView({
       }
     }
     setVisiblePartCounts((prev) => {
+      let changed = false;
+      const next: Record<string, number> = {};
+      for (const [key, count] of Object.entries(prev)) {
+        if (currentKeys.has(key)) next[key] = count;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    setVisibleSegmentCounts((prev) => {
       let changed = false;
       const next: Record<string, number> = {};
       for (const [key, count] of Object.entries(prev)) {
@@ -792,6 +847,7 @@ export function ConversationView({
     }
 
     const newPartMessages: Array<{ key: string; count: number }> = [];
+    const newSegmentMessages: Array<{ key: string; count: number }> = [];
     let hasNewAssistantMessage = false;
 
     for (const item of messageItems) {
@@ -815,6 +871,9 @@ export function ConversationView({
         hasNewAssistantMessage = true;
         const partCount = item.contentParts?.length ?? 0;
         if (partCount > 1) newPartMessages.push({ key, count: partCount });
+        if (partCount <= 1 && item.groupSegmentCount && item.groupSegmentCount > 1) {
+          newSegmentMessages.push({ key, count: item.groupSegmentCount });
+        }
       }
     }
 
@@ -831,9 +890,9 @@ export function ConversationView({
       playConfiguredNotificationPing(uiState.convoNotificationSound, uiState.notificationSoundsOnlyWhenUnfocused);
     }
 
-    if (newPartMessages.length === 0) return;
+    if (newPartMessages.length === 0 && newSegmentMessages.length === 0) return;
 
-    for (const { key } of newPartMessages) {
+    for (const { key } of [...newPartMessages, ...newSegmentMessages]) {
       staggerTimersRef.current[key]?.forEach(clearTimeout);
       delete staggerTimersRef.current[key];
     }
@@ -841,6 +900,11 @@ export function ConversationView({
     setVisiblePartCounts((prev) => {
       const next = { ...prev };
       for (const item of newPartMessages) next[item.key] = 1;
+      return next;
+    });
+    setVisibleSegmentCounts((prev) => {
+      const next = { ...prev };
+      for (const item of newSegmentMessages) next[item.key] = 1;
       return next;
     });
 
@@ -867,6 +931,29 @@ export function ConversationView({
         (staggerTimersRef.current[key] ??= []).push(timer);
       }
     });
+    newSegmentMessages.forEach(({ key, count }) => {
+      for (let segmentIndex = 2; segmentIndex <= count; segmentIndex++) {
+        const delay = (segmentIndex - 1) * 1500;
+        const timer = setTimeout(() => {
+          if (!renderedMessageKeysRef.current.has(key)) {
+            staggerTimersRef.current[key]?.forEach(clearTimeout);
+            delete staggerTimersRef.current[key];
+            return;
+          }
+          setVisibleSegmentCounts((prev) => ({ ...prev, [key]: segmentIndex }));
+          const uiState = useUIStore.getState();
+          playConfiguredNotificationPing(uiState.convoNotificationSound, uiState.notificationSoundsOnlyWhenUnfocused);
+          staggerTimersRef.current[key] = (staggerTimersRef.current[key] ?? []).filter(
+            (activeTimer) => activeTimer !== timer,
+          );
+          if (segmentIndex === count) {
+            staggerTimersRef.current[key]?.forEach(clearTimeout);
+            delete staggerTimersRef.current[key];
+          }
+        }, delay);
+        (staggerTimersRef.current[key] ??= []).push(timer);
+      }
+    });
     // No cleanup return here — timers are managed via staggerTimersRef and
     // must survive effect re-runs caused by query refetches. Cleanup on
     // unmount is handled by a separate effect below.
@@ -885,7 +972,7 @@ export function ConversationView({
     if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [visiblePartCounts]);
+  }, [visiblePartCounts, visibleSegmentCounts]);
 
   return (
     <div
@@ -990,6 +1077,10 @@ export function ConversationView({
               : msg;
           const contentParts = isRegenerating ? undefined : item.contentParts;
           const visiblePartCount = contentParts ? (visiblePartCounts[item.key] ?? contentParts.length) : undefined;
+          const visibleSegmentCount =
+            !contentParts && item.groupSegmentCount && item.groupSegmentCount > 1
+              ? (visibleSegmentCounts[item.key] ?? item.groupSegmentCount)
+              : undefined;
           const originalContent = item.rawContent ?? (displayMsg.content !== msg.content ? msg.content : undefined);
           const regenerationDraftMessage =
             isBubbleRegenerating && !isStreamWindingDown
@@ -1037,6 +1128,7 @@ export function ConversationView({
                 messageStyle={conversationMessageStyle}
                 contentParts={contentParts}
                 visiblePartCount={visiblePartCount}
+                visibleSegmentCount={visibleSegmentCount}
                 bubbleGroupPosition={item.bubbleGroupPosition}
                 originalContent={originalContent}
               />
@@ -1143,7 +1235,7 @@ export function ConversationView({
         )}
 
         {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
-        {sceneInfo?.variant === "origin" && !unoGameActive && (
+        {sceneInfo?.variant === "origin" && !unoGameActive && !chessGameActive && (
           <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
         )}
 
@@ -1174,17 +1266,24 @@ export function ConversationView({
         />
       )}
 
-      {/* ── Turn-game board (UNO, etc.) — self-hides when no game is active ── */}
+      {/* ── Turn-game boards (UNO, chess) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
-      {/* Setup modal mounted once here (stable position) so it never double-renders.
-          Keyed by chatId so its internal selection/house-rule state resets on a
-          chat switch (matches ConversationInput below) — otherwise stale selected
-          ids would inflate botCount and could deal an empty botCharacterIds list. */}
-      <UnoSetup key={chatId} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
+      <ChessBoard chatId={chatId} />
+      {/* Setup modals mounted once here (stable position) so they never double-render.
+          Keyed by chatId so their internal selection state resets on a chat switch
+          (matches ConversationInput below) — otherwise stale selected ids would
+          inflate botCount and could deal an empty botCharacterIds list. */}
+      {/* Keys must be unique across this whole children list — ConversationInput
+          below is also keyed by chatId, and duplicate sibling keys make React
+          duplicate/orphan the setup modals (stuck un-closable "Start UNO"). */}
+      <UnoSetup key={`uno-${chatId}`} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
+      <ChessSetup key={`chess-${chatId}`} chatId={chatId} open={chessSetupOpen} onClose={closeChessSetup} />
 
       {/* ── Input area ── */}
       <ConversationInput
         key={chatId}
+        mobileHistoryCollapsed={mobileHistoryComposerCollapsed}
+        onMobileHistoryCollapsedChange={setMobileHistoryComposerCollapsed}
         characterNames={characterNames}
         groupResponseOrder={
           chatMeta.groupResponseOrder === "manual"

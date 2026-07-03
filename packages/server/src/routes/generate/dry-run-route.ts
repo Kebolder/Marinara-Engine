@@ -62,6 +62,7 @@ import { sendSseEvent, startSseReply } from "./sse.js";
 import {
   appendReadableAttachmentsToContent,
   appendNonLeadingSystemMessagesToLastUser,
+  buildGenerationGuideInstruction,
   createLocalSidecarGenerationConnection,
   dedupeLastMessageWrappers,
   extractFileAttachmentInputs,
@@ -1479,6 +1480,14 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     if (wrapLastMessage && !usePromptParts) {
       finalMessages = wrapConversationHistoryAndLastMessageInPlace(finalMessages, wrapFormat, {
         excludeTrailingImpersonationInstruction: impersonate,
+      });
+    }
+
+    const generationGuideInstruction = buildGenerationGuideInstruction(body.generationGuide, promptMacroContext);
+    if (generationGuideInstruction) {
+      finalMessages.push({
+        role: "system",
+        content: generationGuideInstruction,
       });
     }
 

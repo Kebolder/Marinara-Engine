@@ -42,6 +42,7 @@ export type CreateConnectionPayload = {
   useForRandom?: boolean;
   defaultForAgents?: boolean;
   enableCaching?: boolean;
+  anthropicExtendedCacheTtl?: boolean;
   cachingAtDepth?: number;
   embeddingModel?: string;
   embeddingBaseUrl?: string;

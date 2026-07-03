@@ -1,14 +1,16 @@
 // ──────────────────────────────────────────────
 // Storage: Lorebooks
 // ──────────────────────────────────────────────
-import { eq, desc, and, like, inArray, asc } from "drizzle-orm";
+import { eq, desc, and, like, inArray, asc, or } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import {
+  characters,
   lorebooks,
   lorebookCharacterLinks,
   lorebookEntries,
   lorebookFolders,
   lorebookPersonaLinks,
+  personas,
 } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import {
@@ -23,6 +25,7 @@ import {
 import { collectEffectivelyDisabledFolderIds, collectFolderSubtreeIds } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
 import { GAME_LOREBOOK_KEEPER_SOURCE_ID } from "../lorebook/game-lorebook-scope.js";
+import { toPaginatedList } from "../../utils/list-pagination.js";
 
 function normalizeLorebookEntryLimit(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -215,8 +218,51 @@ function parseFolderRow(row: Record<string, unknown>) {
 }
 
 type LorebookRow = typeof lorebooks.$inferSelect;
+type LorebookListPageOptions = {
+  limit: number;
+  offset: number;
+  search?: string;
+  sort?: string;
+  category?: string;
+  active?: {
+    lorebookIds: string[];
+    characterIds: string[];
+    personaId?: string | null;
+    chatId?: string | null;
+  };
+};
 
-async function hydrateLorebookRows(db: DB, rows: LorebookRow[]) {
+function likePattern(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? `%${trimmed}%` : "";
+}
+
+function lorebookOrder(sort: string | undefined) {
+  switch (sort) {
+    case "name-desc":
+      return [desc(lorebooks.name), asc(lorebooks.id)];
+    case "newest":
+      return [desc(lorebooks.createdAt), asc(lorebooks.id)];
+    case "oldest":
+      return [asc(lorebooks.createdAt), asc(lorebooks.id)];
+    case "tokens":
+      return [desc(lorebooks.tokenBudget), asc(lorebooks.id)];
+    case "name-asc":
+    default:
+      return [asc(lorebooks.name), asc(lorebooks.id)];
+  }
+}
+
+function parseCharacterName(row: typeof characters.$inferSelect) {
+  try {
+    const parsed = JSON.parse(row.data) as { name?: unknown };
+    return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Unknown";
+  } catch {
+    return "Unknown";
+  }
+}
+
+async function hydrateLorebookRows(db: DB, rows: LorebookRow[], options: { includeLinkedNames?: boolean } = {}) {
   if (rows.length === 0) return [];
   const bookIds = rows.map((row) => row.id);
   const [characterRows, personaRows] = await Promise.all([
@@ -243,13 +289,36 @@ async function hydrateLorebookRows(db: DB, rows: LorebookRow[]) {
     ids.push(link.personaId);
     personaIdsByBook.set(link.lorebookId, ids);
   }
-  return rows.map((row) =>
-    parseLorebookRow({
+  const characterNameById = new Map<string, string>();
+  const personaNameById = new Map<string, string>();
+  if (options.includeLinkedNames) {
+    const characterIds = Array.from(new Set(characterRows.map((link) => link.characterId)));
+    const personaIds = Array.from(new Set(personaRows.map((link) => link.personaId)));
+    const [linkedCharacters, linkedPersonas] = await Promise.all([
+      characterIds.length > 0 ? db.select().from(characters).where(inArray(characters.id, characterIds)) : [],
+      personaIds.length > 0 ? db.select().from(personas).where(inArray(personas.id, personaIds)) : [],
+    ]);
+    for (const character of linkedCharacters) {
+      characterNameById.set(character.id, parseCharacterName(character));
+    }
+    for (const persona of linkedPersonas) {
+      personaNameById.set(persona.id, persona.comment ? `${persona.name} - ${persona.comment}` : persona.name);
+    }
+  }
+  return rows.map((row) => {
+    const characterIds = characterIdsByBook.get(row.id) ?? [];
+    const personaIds = personaIdsByBook.get(row.id) ?? [];
+    const hydratedRow: Record<string, unknown> = {
       ...(row as Record<string, unknown>),
-      characterIds: characterIdsByBook.get(row.id) ?? [],
-      personaIds: personaIdsByBook.get(row.id) ?? [],
-    }),
-  );
+      characterIds,
+      personaIds,
+    };
+    if (options.includeLinkedNames) {
+      hydratedRow.characterNames = characterIds.map((id) => characterNameById.get(id) ?? id);
+      hydratedRow.personaNames = personaIds.map((id) => personaNameById.get(id) ?? id);
+    }
+    return parseLorebookRow(hydratedRow);
+  });
 }
 
 async function syncLorebookLinks(
@@ -311,6 +380,71 @@ export function createLorebooksStorage(db: DB) {
         .where(eq(lorebooks.category, category))
         .orderBy(desc(lorebooks.updatedAt));
       return hydrateLorebookRows(db, rows);
+    },
+
+    async listPage(options: LorebookListPageOptions) {
+      const clauses = [];
+      if (options.category) clauses.push(eq(lorebooks.category, options.category));
+      const pattern = likePattern(options.search);
+      if (pattern) {
+        clauses.push(
+          or(
+            like(lorebooks.name, pattern),
+            like(lorebooks.description, pattern),
+            like(lorebooks.category, pattern),
+            like(lorebooks.tags, pattern),
+            like(lorebooks.generatedBy, pattern),
+          ),
+        );
+      }
+
+      if (options.active) {
+        clauses.push(eq(lorebooks.enabled, "true"));
+        const activeLorebookIds = new Set(options.active.lorebookIds);
+        if (options.active.characterIds.length > 0) {
+          const linkedCharacters = await db
+            .select({ lorebookId: lorebookCharacterLinks.lorebookId })
+            .from(lorebookCharacterLinks)
+            .where(inArray(lorebookCharacterLinks.characterId, options.active.characterIds));
+          for (const link of linkedCharacters) activeLorebookIds.add(link.lorebookId);
+        }
+        if (options.active.personaId) {
+          const linkedPersonas = await db
+            .select({ lorebookId: lorebookPersonaLinks.lorebookId })
+            .from(lorebookPersonaLinks)
+            .where(eq(lorebookPersonaLinks.personaId, options.active.personaId));
+          for (const link of linkedPersonas) activeLorebookIds.add(link.lorebookId);
+        }
+        const activeClauses = [eq(lorebooks.isGlobal, "true")];
+        if (activeLorebookIds.size > 0) activeClauses.push(inArray(lorebooks.id, Array.from(activeLorebookIds)));
+        if (options.active.characterIds.length > 0) {
+          activeClauses.push(inArray(lorebooks.characterId, options.active.characterIds));
+        }
+        if (options.active.personaId) activeClauses.push(eq(lorebooks.personaId, options.active.personaId));
+        if (options.active.chatId) activeClauses.push(eq(lorebooks.chatId, options.active.chatId));
+        clauses.push(or(...activeClauses));
+      }
+
+      const whereClause = clauses.length > 0 ? and(...clauses) : undefined;
+      const rows = await (whereClause
+        ? db
+            .select()
+            .from(lorebooks)
+            .where(whereClause)
+            .orderBy(...lorebookOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset)
+        : db
+            .select()
+            .from(lorebooks)
+            .orderBy(...lorebookOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset));
+      const items = await hydrateLorebookRows(db, rows.slice(0, options.limit), { includeLinkedNames: true });
+      return {
+        ...toPaginatedList(rows, options.limit, options.offset),
+        items,
+      };
     },
 
     async listByCharacter(characterId: string) {

@@ -4,7 +4,6 @@ import {
   Check,
   ChevronDown,
   Code2,
-  MessageCircle,
   Pencil,
   RefreshCw,
   Sparkles,
@@ -43,10 +42,6 @@ interface RoleplayHUDActionsMenuProps {
   customAgentRunsLoading: boolean;
   agentConfigs?: AgentConfigRow[];
   enabledAgentTypes?: Set<string>;
-  showEcho: boolean;
-  echoChamberOpen: boolean;
-  toggleEchoChamber: () => void;
-  echoMessageCount: number;
   clearGameState: () => void;
   onRetriggerTrackers?: () => void;
   onRetryFailedAgents?: () => void;
@@ -68,10 +63,6 @@ export function RoleplayHUDActionsMenu({
   customAgentRunsLoading,
   agentConfigs,
   enabledAgentTypes,
-  showEcho,
-  echoChamberOpen,
-  toggleEchoChamber,
-  echoMessageCount,
   clearGameState,
   onRetriggerTrackers,
   onRetryFailedAgents,
@@ -82,7 +73,20 @@ export function RoleplayHUDActionsMenu({
 }: RoleplayHUDActionsMenuProps) {
   const [tab, setTab] = useState<AgentsMenuTab>("activity");
   const uniqueAgentCount = new Set(thoughtBubbles.map((bubble) => bubble.agentId)).size;
-  const hasCustomRuns = customAgentRuns.length > 0;
+  const latestActiveCustomRuns = useMemo(
+    () => getLatestActiveCustomRuns(customAgentRuns, agentConfigs ?? [], enabledAgentTypes),
+    [customAgentRuns, agentConfigs, enabledAgentTypes],
+  );
+  const latestHistoricalCustomRuns = useMemo(() => getLatestCustomRuns(customAgentRuns), [customAgentRuns]);
+  const showHistoricalCustomRuns =
+    latestActiveCustomRuns.length === 0 && thoughtBubbles.length === 0 && !isAgentProcessing;
+  const customActivityRuns =
+    latestActiveCustomRuns.length > 0
+      ? latestActiveCustomRuns
+      : showHistoricalCustomRuns
+        ? latestHistoricalCustomRuns
+        : [];
+  const hasCustomRuns = customActivityRuns.length > 0;
   const injectableCustomRuns = useMemo(
     () => getLatestInjectableCustomRuns(customAgentRuns, agentConfigs ?? [], enabledAgentTypes),
     [customAgentRuns, agentConfigs, enabledAgentTypes],
@@ -114,7 +118,7 @@ export function RoleplayHUDActionsMenu({
   );
   const failureCount = displayedFailures.length;
   const showRetryFailedAction = !!onRetryFailedAgents && failureCount > 0;
-  const showFooterActions = showEcho || showTrackerActions || showRetryFailedAction;
+  const showFooterActions = showTrackerActions || showRetryFailedAction;
 
   useEffect(() => {
     if (!showInjectionsTab && tab === "injections") {
@@ -206,10 +210,16 @@ export function RoleplayHUDActionsMenu({
 
           {(hasCustomRuns || customAgentRunsLoading) && (
             <CustomAgentRunsSection
-              runs={customAgentRuns}
+              runs={customActivityRuns}
               loading={customAgentRunsLoading}
               title="Custom outputs"
-              countMode="all"
+              countMode="latest"
+              collapsible
+              latestNote={
+                showHistoricalCustomRuns
+                  ? "Showing the latest saved custom-agent output until new activity arrives."
+                  : "Showing only the latest saved output for each active custom agent."
+              }
             />
           )}
         </>
@@ -233,6 +243,7 @@ export function RoleplayHUDActionsMenu({
               emptyText="No saved prompt-section output yet."
               countMode="latest"
               collapsible
+              latestNote="Showing the latest saved output per custom agent with Add as Prompt Section enabled."
             />
           )}
         </>
@@ -261,22 +272,6 @@ export function RoleplayHUDActionsMenu({
                 ))}
               </div>
             </div>
-          )}
-          {showEcho && (
-            <button
-              onClick={toggleEchoChamber}
-              className="flex w-full items-center gap-2 px-3 py-2 text-[0.625rem] transition-colors hover:bg-[var(--accent)]/45"
-            >
-              <MessageCircle size="0.75rem" className={echoChamberOpen ? "text-foreground/75" : "text-foreground/50"} />
-              <span className={echoChamberOpen ? "font-medium text-foreground/75" : "text-foreground/55"}>
-                Echo Chamber {echoChamberOpen ? "On" : "Off"}
-              </span>
-              {echoMessageCount > 0 && (
-                <span className="ml-auto flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-foreground/15 px-1 text-[0.5rem] font-bold text-foreground/80 ring-1 ring-foreground/10">
-                  {echoMessageCount}
-                </span>
-              )}
-            </button>
           )}
           {showTrackerActions && (
             <button
@@ -333,6 +328,7 @@ function CustomAgentRunsSection({
   emptyText,
   countMode,
   collapsible,
+  latestNote,
 }: {
   runs: AgentRunRow[];
   loading: boolean;
@@ -340,6 +336,7 @@ function CustomAgentRunsSection({
   emptyText?: string;
   countMode: "all" | "latest";
   collapsible?: boolean;
+  latestNote?: string;
 }) {
   const [open, setOpen] = useState(!collapsible);
   const countLabel = loading ? "Loading..." : runs.length > 0 ? String(runs.length) : "";
@@ -387,7 +384,7 @@ function CustomAgentRunsSection({
           )}
           {!loading && countMode === "latest" && runs.length > 0 && (
             <div className="px-1 text-[0.5625rem] text-[var(--muted-foreground)]/70">
-              Showing the latest saved output per custom agent with Add as Prompt Section enabled.
+              {latestNote ?? "Showing the latest saved output per custom agent."}
             </div>
           )}
         </div>
@@ -416,6 +413,37 @@ function hasActiveCustomAgentType(configs: AgentConfigRow[], enabledAgentTypes?:
   });
 }
 
+function getLatestActiveCustomRuns(
+  runs: AgentRunRow[],
+  configs: AgentConfigRow[],
+  enabledAgentTypes?: Set<string>,
+): AgentRunRow[] {
+  if (!enabledAgentTypes) return [];
+  const builtInTypes = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
+  const activeCustomTypes = new Set(
+    configs
+      .filter((config) => !builtInTypes.has(config.type) && enabledAgentTypes.has(config.type))
+      .map((config) => config.type),
+  );
+  return getLatestRunsByType(runs, activeCustomTypes);
+}
+
+function getLatestCustomRuns(runs: AgentRunRow[]): AgentRunRow[] {
+  return getLatestRunsByType(runs);
+}
+
+function getLatestRunsByType(runs: AgentRunRow[], allowedTypes?: Set<string>): AgentRunRow[] {
+  const seen = new Set<string>();
+  const latest: AgentRunRow[] = [];
+  for (const run of runs) {
+    if (allowedTypes && !allowedTypes.has(run.agentType)) continue;
+    if (seen.has(run.agentType)) continue;
+    seen.add(run.agentType);
+    latest.push(run);
+  }
+  return latest;
+}
+
 function getLatestInjectableCustomRuns(
   runs: AgentRunRow[],
   configs: AgentConfigRow[],
@@ -433,14 +461,7 @@ function getLatestInjectableCustomRuns(
       })
       .map((config) => config.type),
   );
-  const seen = new Set<string>();
-  const latest: AgentRunRow[] = [];
-  for (const run of runs) {
-    if (!injectableTypes.has(run.agentType) || seen.has(run.agentType)) continue;
-    seen.add(run.agentType);
-    latest.push(run);
-  }
-  return latest;
+  return getLatestRunsByType(runs, injectableTypes);
 }
 
 function parseAgentSettings(value: string): Record<string, unknown> {

@@ -561,6 +561,12 @@ function normalizeLimit(value: unknown, fallback: number, max: number) {
   return Math.min(max, Math.floor(parsed));
 }
 
+function normalizeOffset(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.floor(parsed);
+}
+
 function makeEmptyValidation(): MariDbValidationResult {
   return { status: "passed", errors: [], notices: [], infos: [] };
 }
@@ -644,16 +650,26 @@ function normalizeAppDataActionName(action: string): string {
     .replace(/^characters\./, "character.")
     .replace(/^personas\./, "persona.")
     .replace(/^lorebooks\./, "lorebook.")
-    .replace(/^themes\./, "theme.");
+    .replace(/^themes\./, "theme.")
+    .replace(/^agents\./, "agent.")
+    .replace(/^presets\./, "preset.")
+    .replace(/^promptpresets\./, "preset.");
   const aliases: Record<string, string> = {
     "lorebook.entry.add": "lorebook.addentry",
     "lorebook.entry.create": "lorebook.addentry",
     "lorebook.entries.add": "lorebook.addentry",
     "lorebook.entries.create": "lorebook.addentry",
+    "lorebook.entry.get": "lorebook.getentry",
+    "lorebook.entries.get": "lorebook.getentry",
     "lorebook.entry.update": "lorebook.updateentry",
     "lorebook.entries.update": "lorebook.updateentry",
     "theme.set": "theme.setactive",
     "theme.activate": "theme.setactive",
+    "promptpreset.list": "preset.list",
+    "promptpreset.get": "preset.get",
+    "promptpreset.search": "preset.search",
+    "promptpreset.create": "preset.create",
+    "promptpreset.update": "preset.update",
   };
   return aliases[key] ?? key;
 }
@@ -754,6 +770,100 @@ function normalizeCharacterActionData(input: Row): Row {
   }
   if (Object.keys(extensions).length > 0) out.extensions = extensions;
   return out;
+}
+
+function jsonString(value: unknown, fallback: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed === "null") return value;
+  }
+  return JSON.stringify(value ?? fallback);
+}
+
+function slugFromName(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "custom"
+  );
+}
+
+function boolText(value: boolean): string {
+  return value ? "true" : "false";
+}
+
+function normalizeAgentActionData(input: Row, existing?: Row | null): Row {
+  const name = firstString(input, ["name"]) ?? (typeof existing?.name === "string" ? existing.name : "");
+  const settings = {
+    ...(isRecord(existing?.settings) ? existing.settings : parseJsonRecordValue(existing?.settings)),
+    ...(isRecord(input.settings) ? input.settings : {}),
+  };
+  const resultType = firstString(input, ["resultType", "result_type"]);
+  if (resultType) settings.resultType = resultType;
+  const row: Row = {
+    ...input,
+    type: firstString(input, ["type", "agentType", "agent_type"]) ?? (typeof existing?.type === "string" ? existing.type : `custom-${slugFromName(name)}`),
+    name,
+    description: firstString(input, ["description"]) ?? (typeof existing?.description === "string" ? existing.description : ""),
+    phase:
+      firstString(input, ["phase"]) ??
+      (typeof existing?.phase === "string" ? existing.phase : "parallel"),
+    enabled: boolText(firstBoolean(input, ["enabled"]) ?? (existing ? existing.enabled !== "false" : true)),
+    connectionId:
+      input.connectionId === undefined && input.connection_id === undefined
+        ? (existing?.connectionId ?? null)
+        : (input.connectionId ?? input.connection_id ?? null),
+    imagePath:
+      input.imagePath === undefined && input.image_path === undefined
+        ? (existing?.imagePath ?? null)
+        : (input.imagePath ?? input.image_path ?? null),
+    promptTemplate:
+      firstString(input, ["promptTemplate", "prompt_template", "prompt"]) ??
+      (typeof existing?.promptTemplate === "string" ? existing.promptTemplate : ""),
+    settings,
+  };
+  delete row.agentType;
+  delete row.agent_type;
+  delete row.resultType;
+  delete row.result_type;
+  delete row.prompt;
+  return row;
+}
+
+function normalizePromptPresetActionData(input: Row, existing?: Row | null): Row {
+  const row: Row = {
+    ...input,
+    name: firstString(input, ["name"]) ?? (typeof existing?.name === "string" ? existing.name : ""),
+    description: firstString(input, ["description"]) ?? (typeof existing?.description === "string" ? existing.description : ""),
+    conversationPrompt:
+      firstString(input, ["conversationPrompt", "conversation_prompt"]) ??
+      (typeof existing?.conversationPrompt === "string" ? existing.conversationPrompt : ""),
+    gamePrompt:
+      firstString(input, ["gamePrompt", "game_prompt"]) ?? (typeof existing?.gamePrompt === "string" ? existing.gamePrompt : ""),
+    sectionOrder: jsonString(input.sectionOrder ?? input.section_order ?? existing?.sectionOrder, []),
+    groupOrder: jsonString(input.groupOrder ?? input.group_order ?? existing?.groupOrder, []),
+    variableGroups: jsonString(input.variableGroups ?? input.variable_groups ?? existing?.variableGroups, []),
+    variableValues: jsonString(input.variableValues ?? input.variable_values ?? existing?.variableValues, {}),
+    parameters: jsonString(input.parameters ?? existing?.parameters, {}),
+    wrapFormat:
+      firstString(input, ["wrapFormat", "wrap_format"]) ?? (typeof existing?.wrapFormat === "string" ? existing.wrapFormat : "xml"),
+    defaultChoices: jsonString(input.defaultChoices ?? input.default_choices ?? existing?.defaultChoices, {}),
+    isDefault: boolText(firstBoolean(input, ["isDefault", "is_default"]) ?? (existing ? existing.isDefault === "true" : false)),
+    author: firstString(input, ["author"]) ?? (typeof existing?.author === "string" ? existing.author : ""),
+  };
+  delete row.conversation_prompt;
+  delete row.game_prompt;
+  delete row.section_order;
+  delete row.group_order;
+  delete row.variable_groups;
+  delete row.variable_values;
+  delete row.wrap_format;
+  delete row.default_choices;
+  delete row.is_default;
+  return row;
 }
 
 function actionCommandPayload(envelope: MariAppDataActionEnvelope): Row {
@@ -882,6 +992,81 @@ function summarizeLorebookRow(row: Row): Row {
     vectorQueryDepth: row.vectorQueryDepth,
     vectorScoreThreshold: row.vectorScoreThreshold,
     vectorMaxResults: row.vectorMaxResults,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function summarizeLorebookEntryRow(row: Row): Row {
+  const parsed = parseRow("lorebook_entries", row);
+  return {
+    id: parsed.id,
+    lorebookId: parsed.lorebookId,
+    name: parsed.name,
+    description: typeof parsed.description === "string" ? parsed.description : "",
+    tag: typeof parsed.tag === "string" ? parsed.tag : "",
+    enabled: parsed.enabled,
+    constant: parsed.constant,
+    keys: parsed.keys,
+    content: typeof parsed.content === "string" ? truncateStr(parsed.content, 200) : "",
+    order: parsed.order,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
+function parseJsonArrayValue(value: unknown): unknown[] {
+  const parsed = typeof value === "string" ? parseJsonMaybe(value) : value;
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function parseJsonRecordValue(value: unknown): Row {
+  const parsed = typeof value === "string" ? parseJsonMaybe(value) : value;
+  return isRecord(parsed) ? parsed : {};
+}
+
+function parsePromptPresetRow(row: Row): Row {
+  return {
+    ...row,
+    sectionOrder: parseJsonArrayValue(row.sectionOrder),
+    groupOrder: parseJsonArrayValue(row.groupOrder),
+    variableGroups: parseJsonArrayValue(row.variableGroups),
+    variableValues: parseJsonRecordValue(row.variableValues),
+    parameters: parseJsonRecordValue(row.parameters),
+    defaultChoices: parseJsonRecordValue(row.defaultChoices),
+    isDefault: row.isDefault === "true",
+  };
+}
+
+function summarizePromptPresetRow(row: Row): Row {
+  const parsed = parsePromptPresetRow(row);
+  return {
+    id: parsed.id,
+    name: parsed.name,
+    description: typeof parsed.description === "string" ? truncateStr(parsed.description, 120) : "",
+    isDefault: parsed.isDefault,
+    author: parsed.author ?? "",
+    sectionCount: Array.isArray(parsed.sectionOrder) ? parsed.sectionOrder.length : 0,
+    groupCount: Array.isArray(parsed.groupOrder) ? parsed.groupOrder.length : 0,
+    choiceDefaults: Object.keys(parseJsonRecordValue(row.defaultChoices)).length,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
+function summarizeAgentConfigRow(row: Row): Row {
+  const settings = parseJsonRecordValue(row.settings);
+  return {
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    description: typeof row.description === "string" ? truncateStr(row.description, 120) : "",
+    phase: row.phase,
+    enabled: row.enabled !== "false",
+    connectionId: row.connectionId ?? null,
+    imagePath: row.imagePath ?? null,
+    promptTemplate: typeof row.promptTemplate === "string" ? truncateStr(row.promptTemplate, 160) : "",
+    resultType: typeof settings.resultType === "string" ? settings.resultType : undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1156,12 +1341,14 @@ export class MariDbService {
       if (key.startsWith("persona.")) return await this.executePersonaAction(key.slice("persona.".length), envelope, context);
       if (key.startsWith("lorebook.")) return await this.executeLorebookAction(key.slice("lorebook.".length), envelope, context);
       if (key.startsWith("theme.")) return await this.executeThemeAction(key.slice("theme.".length), envelope, context);
+      if (key.startsWith("agent.")) return await this.executeAgentAction(key.slice("agent.".length), envelope, context);
+      if (key.startsWith("preset.")) return await this.executePresetAction(key.slice("preset.".length), envelope, context);
       return {
         ok: false,
         mode: "read",
         command,
         error:
-          "Unsupported app_data action. Use character.*, persona.*, lorebook.*, or theme.* actions for structured no-shell app-data work.",
+          "Unsupported app_data action. Use character.*, persona.*, lorebook.*, theme.*, agent.*, or preset.* actions for structured no-shell app-data work.",
       };
     } catch (err) {
       logger.warn(err, "[mari-db] structured app_data action failed");
@@ -1480,6 +1667,7 @@ export class MariDbService {
     changed = assignStringField(target, source, ["name"], "name") || changed;
     changed = assignStringField(target, source, ["content"], "content") || changed;
     changed = assignStringField(target, source, ["description"], "description") || changed;
+    changed = assignStringField(target, source, ["tag"], "tag") || changed;
     changed = assignListField(target, source, ["keys"], "keys") || changed;
     changed = assignListField(target, source, ["secondaryKeys", "secondary_keys"], "secondaryKeys") || changed;
     changed = assignBooleanTextField(target, source, ["enabled"], "enabled") || changed;
@@ -1523,27 +1711,25 @@ export class MariDbService {
       }
       case "entries": {
         const lorebookId = requiredString(args, ["lorebookId", "id"], "lorebook id");
+        const entryId = firstString(args, ["entryId"]);
         const limit = normalizeLimit(firstNumber(args, ["limit"]), 100, 2000);
         const entries = (await this.rawRows("lorebook_entries"))
           .filter((entry) => entry.lorebookId === lorebookId)
+          .filter((entry) => !entryId || entry.id === entryId)
           .sort((a, b) => Number(a.order ?? 100) - Number(b.order ?? 100))
           .slice(0, limit)
-          .map((row) => {
-            const parsed = parseRow("lorebook_entries", row);
-            return {
-              id: parsed.id,
-              lorebookId: parsed.lorebookId,
-              name: parsed.name,
-              enabled: parsed.enabled,
-              constant: parsed.constant,
-              keys: parsed.keys,
-              content: typeof parsed.content === "string" ? truncateStr(parsed.content, 200) : "",
-              order: parsed.order,
-              createdAt: parsed.createdAt,
-              updatedAt: parsed.updatedAt,
-            };
-          });
+          .map(summarizeLorebookEntryRow);
         return { ok: true, mode: "read", command: context.command, output: entries };
+      }
+      case "getentry": {
+        const entryId = requiredString(args, ["entryId", "id"], "lorebook entry id");
+        const row = await this.getRawById(getMeta("lorebook_entries"), entryId);
+        return {
+          ok: !!row,
+          mode: "read",
+          command: context.command,
+          output: row ? parseRow("lorebook_entries", row) : null,
+        };
       }
       case "search": {
         const query = requiredString(args, ["query", "search"], "lorebook search query").toLowerCase();
@@ -1669,6 +1855,7 @@ export class MariDbService {
           "name",
           "content",
           "description",
+          "tag",
           "keys",
           "secondaryKeys",
           "enabled",
@@ -1688,6 +1875,7 @@ export class MariDbService {
           name: entryName,
           content: "",
           description: "",
+          tag: "",
           keys: [],
           secondaryKeys: [],
           enabled: "true",
@@ -1717,7 +1905,6 @@ export class MariDbService {
           delayUntilRecursion: "false",
           excludeFromVectorization: "false",
           locked: "false",
-          tag: "",
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -1746,6 +1933,7 @@ export class MariDbService {
           "name",
           "content",
           "description",
+          "tag",
           "keys",
           "secondaryKeys",
           "enabled",
@@ -1858,6 +2046,207 @@ export class MariDbService {
       }
       default:
         return { ok: false, mode: "read", command: context.command, error: "Unsupported theme app_data action." };
+    }
+  }
+
+  private async executeAgentAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const search = firstString(args, ["search", "query"])?.toLowerCase();
+        const rows = (await this.rawRows("agent_configs")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        const summaries = rows
+          .map(summarizeAgentConfigRow)
+          .filter((summary) => !search || JSON.stringify(summary).toLowerCase().includes(search));
+        return { ok: true, mode: "read", command: context.command, output: summaries.slice(0, limit) };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "agentId", "agentConfigId"], "agent id");
+        const row = await this.getRawById(getMeta("agent_configs"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parseRow("agent_configs", row) : null };
+      }
+      case "search": {
+        const query = requiredString(args, ["query", "search"], "agent search query").toLowerCase();
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("agent_configs"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(summarizeAgentConfigRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const data = normalizeAgentActionData(
+          actionDataWithTopLevel(args, ["data", "agent", "row"], [
+            "type",
+            "agentType",
+            "name",
+            "description",
+            "phase",
+            "enabled",
+            "connectionId",
+            "imagePath",
+            "promptTemplate",
+            "prompt",
+            "settings",
+            "resultType",
+          ]),
+        );
+        requiredString(data, ["name"], "agent name");
+        requiredString(data, ["type"], "agent type");
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "agent_configs",
+          row: data,
+          apply: appDataCreateApply(args),
+          requiresApproval: false,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = requiredString(args, ["id", "agentId", "agentConfigId"], "agent id");
+        const existing = await this.requireRawById(getMeta("agent_configs"), id);
+        const data = normalizeAgentActionData(
+          actionDataWithTopLevel(args, ["patch", "data", "agent"], [
+            "type",
+            "agentType",
+            "name",
+            "description",
+            "phase",
+            "enabled",
+            "connectionId",
+            "imagePath",
+            "promptTemplate",
+            "prompt",
+            "settings",
+            "resultType",
+          ]),
+          parseRow("agent_configs", existing),
+        );
+        delete data.id;
+        const request: ParsedMutationRequest = {
+          kind: "patch",
+          table: "agent_configs",
+          id,
+          patch: data,
+          apply: firstBoolean(args, ["apply"]) === true,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported agent app_data action." };
+    }
+  }
+
+  private async executePresetAction(
+    sub: string,
+    args: Row,
+    context: { command: string; sessionId: string; cwd?: string },
+  ): Promise<MariDbCommandResult> {
+    switch (sub) {
+      case "list": {
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const search = firstString(args, ["search", "query"])?.toLowerCase();
+        const rows = (await this.rawRows("prompt_presets")).sort((a, b) =>
+          String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")),
+        );
+        const summaries = rows
+          .map(summarizePromptPresetRow)
+          .filter((summary) => !search || JSON.stringify(summary).toLowerCase().includes(search));
+        return { ok: true, mode: "read", command: context.command, output: summaries.slice(0, limit) };
+      }
+      case "get": {
+        const id = requiredString(args, ["id", "presetId", "promptPresetId"], "prompt preset id");
+        const row = await this.getRawById(getMeta("prompt_presets"), id);
+        return { ok: Boolean(row), mode: "read", command: context.command, output: row ? parsePromptPresetRow(row) : null };
+      }
+      case "search": {
+        const query = requiredString(args, ["query", "search"], "prompt preset search query").toLowerCase();
+        const limit = normalizeLimit(firstNumber(args, ["limit"]), 50, 1000);
+        const rows = (await this.rawRows("prompt_presets"))
+          .filter((row) => JSON.stringify(row).toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(summarizePromptPresetRow);
+        return { ok: true, mode: "read", command: context.command, output: rows };
+      }
+      case "create": {
+        const data = normalizePromptPresetActionData(
+          actionDataWithTopLevel(args, ["data", "preset", "promptPreset", "row"], [
+            "name",
+            "description",
+            "conversationPrompt",
+            "gamePrompt",
+            "sectionOrder",
+            "groupOrder",
+            "variableGroups",
+            "variableValues",
+            "parameters",
+            "wrapFormat",
+            "defaultChoices",
+            "isDefault",
+            "author",
+          ]),
+        );
+        requiredString(data, ["name"], "prompt preset name");
+        const request: ParsedMutationRequest = {
+          kind: "insert",
+          table: "prompt_presets",
+          row: data,
+          apply: appDataCreateApply(args),
+          requiresApproval: false,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update": {
+        const id = requiredString(args, ["id", "presetId", "promptPresetId"], "prompt preset id");
+        const existing = await this.requireRawById(getMeta("prompt_presets"), id);
+        const data = normalizePromptPresetActionData(
+          actionDataWithTopLevel(args, ["patch", "data", "preset", "promptPreset"], [
+            "name",
+            "description",
+            "conversationPrompt",
+            "gamePrompt",
+            "sectionOrder",
+            "groupOrder",
+            "variableGroups",
+            "variableValues",
+            "parameters",
+            "wrapFormat",
+            "defaultChoices",
+            "isDefault",
+            "author",
+          ]),
+          existing,
+        );
+        delete data.id;
+        const request: ParsedMutationRequest = {
+          kind: "patch",
+          table: "prompt_presets",
+          id,
+          patch: data,
+          apply: firstBoolean(args, ["apply"]) === true,
+          cascade: false,
+          reason: firstString(args, ["reason"]) ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(request, context.command, context.sessionId);
+      }
+      default:
+        return { ok: false, mode: "read", command: context.command, error: "Unsupported prompt preset app_data action." };
     }
   }
 
@@ -2620,26 +3009,27 @@ export class MariDbService {
       }
       case "entries": {
         const lorebookId = parsed.positionals[0];
-        if (!lorebookId) throw new Error("Usage: mari lorebooks entries <lorebook-id> [--limit <n>]");
+        if (!lorebookId) throw new Error("Usage: mari lorebooks entries <lorebook-id> [--limit <n>] [--entry-id <entry-id>]");
         const limit = normalizeLimit(flagString(flags, "limit"), 100, 2000);
+        const entryId = flagString(flags, "entry-id") ?? flagString(flags, "entryId");
         const entries = (await this.rawRows("lorebook_entries"))
           .filter((e) => e.lorebookId === lorebookId)
+          .filter((e) => !entryId || e.id === entryId)
           .sort((a, b) => Number(a.order ?? 100) - Number(b.order ?? 100))
           .slice(0, limit)
-          .map((row) => {
-            const p = parseRow("lorebook_entries", row);
-            return {
-              id: p.id,
-              name: p.name,
-              enabled: p.enabled,
-              constant: p.constant,
-              keys: p.keys,
-              content: typeof p.content === "string" ? truncateStr(p.content, 200) : "",
-              order: p.order,
-              createdAt: p.createdAt,
-            };
-          });
+          .map(summarizeLorebookEntryRow);
         return { ok: true, mode: "read", command: context.command, output: entries };
+      }
+      case "get-entry": {
+        const entryId = parsed.positionals[0] ?? flagString(flags, "entry-id") ?? flagString(flags, "entryId");
+        if (!entryId) throw new Error("Usage: mari lorebooks get-entry <entry-id>");
+        const row = await this.getRawById(getMeta("lorebook_entries"), entryId);
+        return {
+          ok: !!row,
+          mode: "read",
+          command: context.command,
+          output: row ? parseRow("lorebook_entries", row) : null,
+        };
       }
       case "search": {
         const query = parsed.positionals[0];
@@ -2733,7 +3123,7 @@ export class MariDbService {
         const lorebookId = parsed.positionals[0];
         if (!lorebookId) {
           throw new Error(
-            "Usage: mari lorebooks add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--apply] [--reason <text>]",
+            "Usage: mari lorebooks add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--tag <tag>] [--apply] [--reason <text>]",
           );
         }
         const entryName = flagString(flags, "name")?.trim();
@@ -2754,6 +3144,7 @@ export class MariDbService {
           name: entryName,
           content: flagString(flags, "content") ?? "",
           description: flagString(flags, "description") ?? "",
+          tag: flagString(flags, "tag") ?? "",
           keys,
           secondaryKeys: [],
           enabled: "true",
@@ -2783,7 +3174,6 @@ export class MariDbService {
           delayUntilRecursion: "false",
           excludeFromVectorization: "false",
           locked: "false",
-          tag: "",
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -2803,7 +3193,7 @@ export class MariDbService {
         const entryId = parsed.positionals[0];
         if (!entryId) {
           throw new Error(
-            "Usage: mari lorebooks update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
+            "Usage: mari lorebooks update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--tag <tag>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
           );
         }
         const entryExists = await this.getRawById(getMeta("lorebook_entries"), entryId);
@@ -2813,6 +3203,7 @@ export class MariDbService {
           ["name", "name"],
           ["content", "content"],
           ["description", "description"],
+          ["tag", "tag"],
         ];
         for (const [flagName, fieldName] of entryFieldMap) {
           const val = flagString(flags, flagName);
@@ -2836,7 +3227,7 @@ export class MariDbService {
         if (hasFlag(flags, "no-constant")) entryPatch.constant = "false";
         if (Object.keys(entryPatch).length <= 1) {
           throw new Error(
-            "Provide at least one field to update (--name, --content, --keys, --description, --enable, --disable, --constant, --no-constant, --order)",
+            "Provide at least one field to update (--name, --content, --keys, --description, --tag, --enable, --disable, --constant, --no-constant, --order)",
           );
         }
         const updateEntryRequest: ParsedMutationRequest = {
@@ -2963,14 +3354,18 @@ export class MariDbService {
       }
       case "messages": {
         const chatId = parsed.positionals[0];
-        if (!chatId) throw new Error("Usage: mari chats messages <chat-id> [--limit <n>] [--tail]");
+        if (!chatId) throw new Error("Usage: mari chats messages <chat-id> [--limit <n>] [--offset <n>] [--tail]");
         const limitFlag = flagString(flags, "limit");
         const limit = limitFlag !== undefined ? normalizeLimit(limitFlag, 20, 200) : null;
+        const offset = normalizeOffset(flagString(flags, "offset"));
         const tail = hasFlag(flags, "tail");
         let messages = (await this.rawRows("messages")).filter((m) => m.chatId === chatId);
         messages.sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")));
-        if (limit !== null) {
-          messages = tail ? messages.slice(-limit) : messages.slice(0, limit);
+        if (tail) {
+          const offsetMessages = offset > 0 ? messages.slice(0, Math.max(0, messages.length - offset)) : messages;
+          messages = limit !== null ? offsetMessages.slice(-limit) : offsetMessages;
+        } else {
+          messages = messages.slice(offset, limit !== null ? offset + limit : undefined);
         }
         const result = messages.map((row) => ({
           id: row.id,
@@ -3879,7 +4274,7 @@ export class MariDbService {
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
       "Creative data:       mari characters list|get|search|create|update|delete",
       "Creative data:       mari personas list|active|get|search|create|update|delete",
-      "Creative data:       mari lorebooks list|get|entries <lorebook-id>|search|create|update <lorebook-id>|add-entry <lorebook-id>|update-entry <entry-id>|delete-entry <entry-id>|link-character|unlink-character|delete",
+      "Creative data:       mari lorebooks list|get|get-entry <entry-id>|entries <lorebook-id>|search|create|update <lorebook-id>|add-entry <lorebook-id>|update-entry <entry-id>|delete-entry <entry-id>|link-character|unlink-character|delete",
       "Chats (read-only):   mari chats list|get|messages|search",
       "Fandom/wiki reads:   mari wiki find-wikis|search-all|search|get-page|sections|category|site-info",
       "Discovery:           mari <group> --help or mari <group> <command> --help",
@@ -3920,12 +4315,13 @@ export class MariDbService {
       "Usage: mari lorebooks <command>",
       "Read:  list [--limit <n>] [--global] [--character <id>]",
       "Read:  get <id>",
-      "Read:  entries <lorebook-id> [--limit <n>]",
+      "Read:  entries <lorebook-id> [--limit <n>] [--entry-id <entry-id>]",
+      "Read:  get-entry <entry-id>",
       "Read:  search <query> [--limit <n>]",
       "Write: create --name <name> [--description <text>] [--category <text>] [--global] [--apply] [--reason <text>]",
       "Write: update <id> [--name <name>] [--description <text>] [--category <text>] [--tags <t1,t2,...>] [--global] [--enable] [--disable] [--apply] [--reason <text>]",
-      "Write: add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--apply] [--reason <text>]",
-      "Write: update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
+      "Write: add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--tag <tag>] [--apply] [--reason <text>]",
+      "Write: update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--tag <tag>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
       "Write: delete-entry <entry-id> [--apply] [--reason <text>]",
       "Write: link-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
       "Write: unlink-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
@@ -3939,7 +4335,7 @@ export class MariDbService {
       "Usage: mari chats <command>",
       "Read:  list [--limit <n>] [--character <id>]",
       "Read:  get <id>",
-      "Read:  messages <chat-id> [--limit <n>] [--tail]",
+      "Read:  messages <chat-id> [--limit <n>] [--offset <n>] [--tail]",
       "Read:  search <query> [--limit <n>]",
       "All chat commands are read-only.",
     ].join("\n");

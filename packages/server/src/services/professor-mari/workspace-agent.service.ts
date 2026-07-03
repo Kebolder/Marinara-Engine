@@ -63,6 +63,7 @@ type WorkspaceConnection = Pick<
   | "claudeFastMode"
   | "treatAsLocalEndpoint"
   | "enableCaching"
+  | "anthropicExtendedCacheTtl"
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
@@ -222,7 +223,7 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
   {
     name: "app_data",
     description:
-      "Read or change live app data through structured actions, without shell commands. Use this for characters, personas, lorebooks, lorebook entries, and themes.",
+      "Read or change live app data through structured actions, without shell commands. Use this for characters, personas, lorebooks, lorebook entries, themes, agents, and prompt presets.",
     parameters: {
       type: "object",
       properties: {
@@ -254,6 +255,16 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
             "theme.create",
             "theme.update",
             "theme.setActive",
+            "agent.list",
+            "agent.get",
+            "agent.search",
+            "agent.create",
+            "agent.update",
+            "preset.list",
+            "preset.get",
+            "preset.search",
+            "preset.create",
+            "preset.update",
           ],
         },
         id: { type: "string" },
@@ -261,6 +272,8 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
         personaId: { type: "string" },
         lorebookId: { type: "string" },
         entryId: { type: "string" },
+        agentId: { type: "string" },
+        presetId: { type: "string" },
         query: { type: "string" },
         limit: { type: "integer", minimum: 1 },
         name: { type: "string" },
@@ -342,7 +355,7 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
 Workspace defaults:
-- Use the structured \`app_data\` workspace command, not shell, for character/persona/lorebook/lorebook-entry/theme reads, creation, and updates.
+- Use the structured \`app_data\` workspace command, not shell, for character/persona/lorebook/lorebook-entry/theme/agent/preset reads, creation, and updates.
 - Use Mari CLI commands for images, wiki reads, code/workspace tasks, agents, tools, extensions, raw DB work, or anything \`app_data\` does not cover. Only write raw files when no CLI/helper path fits.
 - Inspect before claiming facts. Verify after changing anything.
 - Do not ask the user to choose between \`apply:true\` and \`apply:false\`. Those are internal command flags, not chat questions.
@@ -351,7 +364,7 @@ Workspace defaults:
 - For persona creation, interview the user briefly only when missing details would likely create the wrong identity. If the user says to decide the details, create the persona directly. Do not require a preview/approval loop for a new persona.
 
 Command families:
-- \`app_data\`: no-shell structured actions for characters, personas, lorebooks, lorebook entries, and themes. Prefer this before \`mari characters\`, \`mari personas\`, \`mari lorebooks\`, or \`mari themes\`.
+- \`app_data\`: no-shell structured actions for characters, personas, lorebooks, lorebook entries, themes, agents, and prompt presets. Prefer this before shell commands for those objects.
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
 - \`mari themes\`: synced custom themes and active theme state.
 - \`mari images\`: image-generation connections, HITL image prompt previews, generated/edited preview assets, and assignment/deletion for avatars, personas, lorebooks, sprites, backgrounds, and galleries.
@@ -359,9 +372,10 @@ Command families:
 - \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`.
 - \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits.
 - \`mari lorebooks\`: list, get, entries <lorebook-id>, search, create, update <lorebook-id>, add-entry <lorebook-id>, update-entry <entry-id>, delete-entry <entry-id>, link-character, unlink-character, delete.
-- \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
+- \`mari presets\`: no dedicated shell helper — use \`app_data\` \`preset.*\` for preset-level reads/writes. Use \`mari db\` for advanced \`prompt_groups\`, \`prompt_sections\`, and \`choice_blocks\` edits after inspecting schemas.
 - \`mari chats\`: read-only list/get/messages/search.
-- \`mari extensions\`, \`mari agents\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.
+- \`mari agents\`: no dedicated shell helper — use \`app_data\` \`agent.*\` for agent configs.
+- \`mari extensions\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.
 - \`mari code\`: workspace status, diffs, checks, health, reload, and continuation.
 
 Built-in help:
@@ -401,10 +415,10 @@ Field rules:
 - If you say you will do workspace/app-data work, include the command in the same JSON object.
 
 \`app_data\` quick reference:
-- Reads: \`character.list|get|search\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|search\`, \`theme.list|active|get\`.
-- Writes: \`character.create|update\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry\`, \`theme.create|update|setActive\`.
+- Reads: \`character.list|get|search\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|search\`, \`theme.list|active|get\`, \`agent.list|get|search\`, \`preset.list|get|search\`.
+- Writes: \`character.create|update\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry\`, \`theme.create|update|setActive\`, \`agent.create|update\`, \`preset.create|update\`.
 - Put write fields in \`data\` for creates and \`patch\` for updates. Use \`entryId\` for \`lorebook.updateEntry\`; use \`lorebookId\` only for a lorebook or for \`lorebook.addEntry\`.
-- New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
+- New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, \`agent.create\`, \`preset.create\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
 - Existing-data changes: use \`apply:true\` for requested \`*.update\`, \`lorebook.updateEntry\`, and \`theme.setActive\`. Marinara will save first and show the user an in-chat Keep/Restore review card for reversible changes.
 - Use \`apply:false\` only for explicit preview/dry-run requests or when you need to inspect validation before making a risky change.
 - Do not say "preview" unless you show the concrete fields/content in \`say\` or the UI has returned an explicit preview artifact.
@@ -1463,6 +1477,18 @@ export class ProfessorMariWorkspaceService {
         }
       }
 
+      if (!assistantText.trim() && workspaceTrace.length > 0) {
+        const failedTool = workspaceTrace.find((item) => item.type === "tool" && item.tool.status === "error");
+        const content =
+          failedTool?.type === "tool"
+            ? `Professor Mari stopped after ${formatWorkspaceToolName(failedTool.tool.name)} failed: ${compactTraceText(String(failedTool.tool.output ?? "unknown error"), 700)}`
+            : "Professor Mari finished workspace steps but did not return a visible final answer. I saved the tool timeline here so the work is not lost; ask her to continue and she can pick up from the trace.";
+        assistantText = appendVisibleText(assistantText, content);
+        appendTraceStatus(workspaceTrace, content);
+        args.onEvent({ type: "status", data: { content, kind: "info", level: failedTool ? "warning" : "info" } });
+        for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
+      }
+
       const persistedText = assistantText.trim();
       if (persistedText) {
         const message = await chatStorage.createMessage({
@@ -1578,6 +1604,7 @@ ${sections.join("\n\n")}
       maxTokens: normalizeMariMaxTokens(defaultParameters?.maxTokens) ?? resolveMariMaxOutputTokens(connection),
       maxContext: connection.maxContext,
       enableCaching: bool(connection.enableCaching),
+      anthropicExtendedCacheTtl: bool(connection.anthropicExtendedCacheTtl),
       cachingAtDepth: connection.cachingAtDepth ?? 5,
       serviceTier: normalizeServiceTier(defaultParameters?.serviceTier),
       openrouterProvider: connection.openrouterProvider,
@@ -2052,6 +2079,7 @@ ${sections.join("\n\n")}
       claudeFastMode: "false",
       treatAsLocalEndpoint: "true",
       enableCaching: "false",
+      anthropicExtendedCacheTtl: "false",
       cachingAtDepth: 5,
       isLocalSidecar: true,
     };
@@ -2140,6 +2168,10 @@ function appendVisibleText(current: string, next: string): string {
   if (!current.trim()) return next.trimEnd();
   if (!next.trim()) return current;
   return `${current.trimEnd()}\n\n${next.trim()}`;
+}
+
+function formatWorkspaceToolName(name: string): string {
+  return name.replace(/[_-]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 // Extracts and streams a single named string field from a JSON object as tokens arrive,

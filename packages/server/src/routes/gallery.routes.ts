@@ -484,16 +484,25 @@ export async function galleryRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Not found" });
     }
 
-    // Remove file from disk (assertInsideDir guards a poisoned stored filePath)
-    try {
-      const filePath = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, image.filePath));
-      if (existsSync(filePath)) {
-        unlinkSync(filePath);
+    const filename = getStoredFilename(image.filePath);
+    const fallbackFilePath = `${image.chatId}/${filename}`;
+    const filePathCandidates = new Set([image.filePath, fallbackFilePath]);
+
+    for (const candidate of filePathCandidates) {
+      try {
+        const filePath = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, candidate));
+        if (existsSync(filePath)) {
+          unlinkSync(filePath);
+        }
+      } catch (err) {
+        logger.warn(err, "Skipped gallery file unlink for %s (%s): path escapes gallery dir", id, candidate);
       }
-    } catch (err) {
-      logger.warn(err, "Skipped gallery file unlink for %s: path escapes gallery dir", id);
     }
 
+    await storage.removeByChatAndFilePath(image.chatId, image.filePath);
+    if (fallbackFilePath !== image.filePath) {
+      await storage.removeByChatAndFilePath(image.chatId, fallbackFilePath);
+    }
     await storage.remove(id);
     return { success: true };
   });

@@ -25,7 +25,11 @@ import {
 import { safeFetch } from "../../utils/security.js";
 
 const DEFAULT_RUNPOD_POLL_INTERVAL_MS = 2_000;
-const RUNPOD_MAX_POLLS = 90; // 90 × 2s = 3 minutes max by default.
+const COMFYUI_GEN_TIMEOUT_SECONDS = Number(process.env.COMFYUI_GEN_TIMEOUT ?? 2400);
+const RUNPOD_MAX_POLLS = Math.max(
+  1,
+  Math.ceil((COMFYUI_GEN_TIMEOUT_SECONDS * 1000) / DEFAULT_RUNPOD_POLL_INTERVAL_MS),
+);
 const RUNPOD_MAX_RESPONSE_BYTES = 30 * 1024 * 1024;
 const RUNPOD_COMFYUI_MAX_REFERENCE_IMAGES = 4;
 const RUNPOD_COMFYUI_PLACEHOLDER_REFERENCE_BASE64 =
@@ -167,7 +171,7 @@ export async function generateRunPodComfyUI(
     }
   }
 
-  throw new Error("RunPod generation timed out after 3 minutes");
+  throw new Error(`RunPod generation timed out after ${COMFYUI_GEN_TIMEOUT_SECONDS} seconds`);
 }
 
 function collectRunPodReferenceImages(request: ImageGenRequest, defaults: ComfyUiDefaults): string[] {

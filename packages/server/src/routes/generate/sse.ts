@@ -2,6 +2,10 @@ import type { FastifyReply } from "fastify";
 
 type SsePayload = Record<string, unknown>;
 
+export function isSseReplyWritable(reply: FastifyReply): boolean {
+  return !reply.raw.destroyed && !reply.raw.writableEnded && !reply.raw.writableFinished;
+}
+
 export function startSseReply(reply: FastifyReply, extraHeaders: Record<string, string> = {}) {
   reply.raw.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -14,7 +18,7 @@ export function startSseReply(reply: FastifyReply, extraHeaders: Record<string, 
 export function startSseKeepalive(reply: FastifyReply, intervalMs = 15_000): () => void {
   const timer = setInterval(() => {
     try {
-      if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+      if (isSseReplyWritable(reply)) {
         reply.raw.write(": keepalive\n\n");
       }
     } catch {
@@ -25,14 +29,15 @@ export function startSseKeepalive(reply: FastifyReply, intervalMs = 15_000): () 
   return () => clearInterval(timer);
 }
 
-export function sendSseEvent(reply: FastifyReply, payload: SsePayload) {
-  reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+export function sendSseEvent(reply: FastifyReply, payload: SsePayload): boolean {
+  if (!isSseReplyWritable(reply)) return false;
+  try {
+    return reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch {
+    return false;
+  }
 }
 
-export function trySendSseEvent(reply: FastifyReply, payload: SsePayload) {
-  try {
-    sendSseEvent(reply, payload);
-  } catch {
-    // Ignore writes after the client disconnects.
-  }
+export function trySendSseEvent(reply: FastifyReply, payload: SsePayload): boolean {
+  return sendSseEvent(reply, payload);
 }

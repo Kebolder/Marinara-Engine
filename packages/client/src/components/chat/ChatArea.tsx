@@ -33,13 +33,20 @@ import {
 
 import { useChatStore } from "../../stores/chat.store";
 import { useGenerate } from "../../hooks/use-generate";
-import { characterKeys, spriteKeys, useCharacters, usePersonas, type SpriteInfo } from "../../hooks/use-characters";
+import {
+  characterKeys,
+  spriteKeys,
+  useActivePersona,
+  useCharacters,
+  usePersona,
+  type SpriteInfo,
+} from "../../hooks/use-characters";
 import { usePageActivity } from "../../hooks/use-page-activity";
+import { useRenderTimer, useWhyRender } from "../../lib/perf-diagnostics";
 import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { api, ApiError } from "../../lib/api-client";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
 import { getChatCharacterIds } from "../../lib/chat-macros";
-import { resolveCurrentGameSessionChatId } from "../../lib/game-session-resolution";
 import { resolveSpriteExpression } from "../../lib/sprite-expression-match";
 import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
@@ -100,6 +107,7 @@ import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
 import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
+import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "../ui/ImagePromptReviewModal";
 
 export type { CharacterMap };
 
@@ -139,6 +147,16 @@ type GeneratedSceneBackgroundResponse = {
   filename: string;
   url: string;
   tag: string;
+};
+
+type GenerateSceneBackgroundPayload = {
+  chatId: string;
+  sceneDescription: string;
+  locationSlug: string;
+  reason: string;
+  force: boolean;
+  debugMode: boolean;
+  promptOverrides?: ImagePromptOverride[];
 };
 
 function buildRoleplayBackgroundSceneDescription(args: {
@@ -284,8 +302,31 @@ type AgentInjectionReviewRequest = {
   injections: AgentInjectionReviewItem[];
 };
 
-type CharacterRow = { id: string; data: unknown; avatarPath: string | null };
+type CharacterRow = { id: string; data: unknown; avatarPath: string | null; comment?: string | null };
 type CharacterMapValue = NonNullable<ReturnType<CharacterMap["get"]>>;
+
+function isCharacterRow(value: unknown): value is CharacterRow {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { data?: unknown }).data !== "undefined"
+  );
+}
+
+function resolveChatPersonaId(chat: unknown): string | null {
+  const rawPersonaId = (chat as { personaId?: unknown } | null | undefined)?.personaId;
+  if (typeof rawPersonaId === "string" && rawPersonaId.trim()) return rawPersonaId.trim();
+
+  const metadata = parseChatMetadata((chat as { metadata?: unknown } | null | undefined)?.metadata);
+  const setupConfig = metadata.gameSetupConfig;
+  const rawSetupPersonaId =
+    setupConfig && typeof setupConfig === "object" && !Array.isArray(setupConfig)
+      ? (setupConfig as { personaId?: unknown }).personaId
+      : null;
+  return typeof rawSetupPersonaId === "string" && rawSetupPersonaId.trim() ? rawSetupPersonaId.trim() : null;
+}
 
 function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
   try {
@@ -398,6 +439,7 @@ function HomeStarfield() {
 }
 
 export function ChatArea() {
+  useRenderTimer("chat-area"); // [#3104 diagnostic]
   const activeChatId = useChatStore((s) => s.activeChatId);
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreamingGlobal = useChatStore((s) => s.isStreaming);
@@ -425,7 +467,6 @@ export function ChatArea() {
   const hasAnimatedRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState<ChatSettingsInitialSection>(null);
-  const [filesOpen, setFilesOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [settingsAnchor, setSettingsAnchor] = useState<FloatingPanelAnchor>(null);
   const [galleryAnchor, setGalleryAnchor] = useState<FloatingPanelAnchor>(null);
@@ -465,7 +506,7 @@ export function ChatArea() {
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
   const [selectionAnchorIndex, setSelectionAnchorIndex] = useState<number | null>(null);
 
-  const { data: chatDetail, error: chatError } = useChat(activeChatId);
+  const { data: chatDetail, error: chatError, isFetched: chatDetailFetched } = useChat(activeChatId);
   const { data: allChats } = useChats();
   const listedActiveChat = useMemo(
     () => (activeChatId ? (allChats?.find((candidate) => candidate.id === activeChatId) ?? null) : null),
@@ -512,7 +553,6 @@ export function ChatArea() {
     setSettingsOpen(false);
     setSettingsAnchor(null);
     setSettingsInitialSection(null);
-    setFilesOpen(false);
     setGalleryOpen(false);
     setGalleryAnchor(null);
     setPeekPromptData(null);
@@ -576,8 +616,10 @@ export function ChatArea() {
     });
     return map;
   }, [messageOffset, messages]);
-  const { data: allCharacters } = useCharacters({ includeBuiltIn: true });
-  const { data: allPersonas } = usePersonas();
+  const { data: gameLibraryCharacters } = useCharacters({
+    enabled: !!chat?.id && chat.id === activeChatId && isGameChat,
+    includeBuiltIn: true,
+  });
   const deleteMessage = useDeleteMessage(activeChatId);
   const deleteMessages = useDeleteMessages(activeChatId);
   const deleteSwipe = useDeleteSwipe(activeChatId);
@@ -589,8 +631,12 @@ export function ChatArea() {
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const pendingNewChatMode = useChatStore((s) => s.pendingNewChatMode);
-  const failedAgentTypes = useAgentStore((s) => s.failedAgentTypes);
-  const agentProcessing = useAgentStore((s) => s.isProcessing);
+  const failedAgentTypes = useAgentStore((s) =>
+    activeChatId && s.failedAgentChatId && s.failedAgentChatId !== activeChatId ? [] : s.failedAgentTypes,
+  );
+  const agentProcessing = useAgentStore((s) =>
+    activeChatId ? s.processingChatIds.includes(activeChatId) : s.isProcessing,
+  );
 
   useEffect(() => {
     if (!activeChatId || !(chatError instanceof ApiError) || chatError.status !== 404) return;
@@ -600,15 +646,10 @@ export function ChatArea() {
   useEffect(() => {
     if (!activeChatId || !allChats) return;
     if (listedActiveChat) return;
+    if (chatDetail || !chatDetailFetched) return;
+    if (chatError) return;
     setActiveChatId(null);
-  }, [activeChatId, allChats, listedActiveChat, setActiveChatId]);
-
-  const currentGameSessionChatId = useMemo(() => resolveCurrentGameSessionChatId(chat, allChats), [allChats, chat]);
-
-  useEffect(() => {
-    if (!currentGameSessionChatId || currentGameSessionChatId === activeChatId) return;
-    setActiveChatId(currentGameSessionChatId);
-  }, [activeChatId, currentGameSessionChatId, setActiveChatId]);
+  }, [activeChatId, allChats, chatDetail, chatDetailFetched, chatError, listedActiveChat, setActiveChatId]);
 
   useEffect(() => {
     const handleReviewRequest = (event: Event) => {
@@ -644,41 +685,34 @@ export function ChatArea() {
 
   // Character IDs in the active chat
   const chatCharIds = useMemo(() => getChatCharacterIds(chat), [chat]);
+  const chatPersonaId = useMemo(() => resolveChatPersonaId(chat), [chat]);
+  const { data: chatPersona } = usePersona(chatPersonaId);
+  const { data: activePersonaFallback } = useActivePersona(!!chat?.id && !chatPersonaId && !isGameChat);
 
-  const baseCharacterMap: CharacterMap = useMemo(() => {
-    const map: CharacterMap = new Map();
-    if (!allCharacters) return map;
-    for (const char of allCharacters as CharacterRow[]) {
-      map.set(char.id, toCharacterMapValue(char));
-    }
-    return map;
-  }, [allCharacters]);
-
-  const missingChatCharacterIds = useMemo(
-    () => chatCharIds.filter((id) => !baseCharacterMap.has(id)),
-    [baseCharacterMap, chatCharIds],
-  );
-  const missingCharacterQueries = useQueries({
-    queries: missingChatCharacterIds.map((id) => ({
+  const activeCharacterQueries = useQueries({
+    queries: chatCharIds.map((id) => ({
       queryKey: characterKeys.detail(id),
       queryFn: () => api.get<CharacterRow>(`/characters/${id}`),
       enabled: !!chat?.id,
+      retry: false,
       staleTime: 5 * 60_000,
     })),
   });
+  const chatCharacterRows = useMemo(
+    () => activeCharacterQueries.map((query) => query.data).filter(isCharacterRow),
+    [activeCharacterQueries],
+  );
 
   // A 60s-cadence clock so schedule/override-derived presence refreshes when time
   // alone changes the effective status (mirrors the presence pill's refetch).
   const presenceNow = usePresenceClock();
 
-  // Build character lookup map. Cold launches can render chat detail before the
-  // full library list has produced every active character, so merge exact
-  // per-chat character fetches as a rescue path.
+  // Build character lookup map from the active chat's characters only. Library
+  // panels can load the whole catalog; the chat surface should not.
   const characterMap: CharacterMap = useMemo(() => {
-    const map: CharacterMap = new Map(baseCharacterMap);
-    for (const query of missingCharacterQueries) {
-      const char = query.data;
-      if (char?.id) map.set(char.id, toCharacterMapValue(char));
+    const map: CharacterMap = new Map();
+    for (const char of chatCharacterRows) {
+      map.set(char.id, toCharacterMapValue(char));
     }
     const convoMeta = parseChatMetadata(chat?.metadata);
     const archivedSnapshots = convoMeta.archivedCharacterSnapshots as Record<string, unknown> | undefined;
@@ -733,17 +767,43 @@ export function ChatArea() {
       }
     }
     return map;
-  }, [baseCharacterMap, missingCharacterQueries, chat?.metadata, presenceNow]);
+  }, [chatCharacterRows, chat?.metadata, presenceNow]);
 
   const characterNames = useMemo(
     () => chatCharIds.map((id) => characterMap.get(id)?.name).filter((n): n is string => !!n),
     [characterMap, chatCharIds],
   );
 
+  // [#3104 diagnostic] Re-render driver probe: names which source input changed
+  // on each ChatArea render (and flags IDLE re-renders = a loop). Inert unless
+  // localStorage.mariPerfVerbose = "1".
+  useWhyRender("chat-area", () => ({
+    activeChatId,
+    chatMode,
+    isStreaming,
+    isLoading,
+    chatDetail,
+    allChats,
+    msgPages: msgData?.pages,
+    messages,
+    messageCountData,
+    characterMap,
+    presenceNow,
+    agentProcessing,
+    failedAgentTypes,
+    chatBackground,
+    weatherEffects,
+    messagesPerPage,
+    regenerateMessageId,
+    streamingChatId,
+    isPageActive,
+    pendingNewChatMode,
+  }));
+
   const gameCharacters = useMemo(() => {
-    if (!allCharacters) return [];
+    if (!isGameChat || !gameLibraryCharacters) return [];
     return (
-      allCharacters as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>
+      gameLibraryCharacters as Array<{ id: string; data: string; comment?: string | null; avatarPath: string | null }>
     ).flatMap((c) => {
       if (c.id === PROFESSOR_MARI_ID) return [];
       try {
@@ -769,34 +829,14 @@ export function ChatArea() {
         return [{ id: c.id, name: "Unknown" }];
       }
     });
-  }, [allCharacters]);
+  }, [gameLibraryCharacters, isGameChat]);
 
   // Active persona info (for user message styling: name, avatar, colors)
   const personaInfo = useMemo(() => {
-    if (!allPersonas) return undefined;
-    const personas = allPersonas as Array<{
-      id: string;
-      isActive: string | boolean;
-      name: string;
-      description?: string;
-      personality?: string;
-      scenario?: string;
-      backstory?: string;
-      appearance?: string;
-      avatarPath?: string | null;
-      avatarCrop?: string;
-      nameColor?: string;
-      dialogueColor?: string;
-      boxColor?: string;
-    }>;
-    // Prefer per-chat personaId, fall back to globally active persona
-    // (Game mode skips the fallback — persona must be explicitly selected)
-    const chatPersonaId = (chat as unknown as { personaId?: string | null })?.personaId;
-    const isGame = (chat as unknown as { mode?: string })?.mode === "game";
-    const persona =
-      (chatPersonaId ? personas.find((p) => p.id === chatPersonaId) : null) ??
-      (!isGame ? personas.find((p) => p.isActive === "true" || p.isActive === true) : null);
+    // Prefer per-chat personaId, fall back to the globally active persona outside Game mode.
+    const persona = chatPersona ?? (!isGameChat ? activePersonaFallback : null);
     if (!persona) return undefined;
+    const avatarCrop = typeof persona.avatarCrop === "string" ? parseAvatarCropJson(persona.avatarCrop) : (persona.avatarCrop ?? null);
     return {
       id: persona.id,
       name: persona.name,
@@ -806,12 +846,12 @@ export function ChatArea() {
       backstory: persona.backstory || undefined,
       appearance: persona.appearance || undefined,
       avatarUrl: persona.avatarPath || undefined,
-      avatarCrop: parseAvatarCropJson(persona.avatarCrop),
+      avatarCrop,
       nameColor: persona.nameColor || undefined,
       dialogueColor: persona.dialogueColor || undefined,
       boxColor: persona.boxColor || undefined,
     };
-  }, [allPersonas, chat]);
+  }, [activePersonaFallback, chatPersona, isGameChat]);
 
   const { startEncounter } = useEncounter();
   const { concludeScene, abandonScene, forkScene, isForking } = useScene();
@@ -915,6 +955,34 @@ export function ChatArea() {
 
   const updateMeta = useUpdateChatMetadata();
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
+  const [roleplayBackgroundReviewItems, setRoleplayBackgroundReviewItems] = useState<ImagePromptReviewItem[]>([]);
+  const [roleplayBackgroundReviewSubmitting, setRoleplayBackgroundReviewSubmitting] = useState(false);
+  const roleplayBackgroundReviewResolveRef = useRef<((overrides: ImagePromptOverride[] | null) => void) | null>(null);
+
+  const openRoleplayBackgroundPromptReview = useCallback((items: ImagePromptReviewItem[]) => {
+    return new Promise<ImagePromptOverride[] | null>((resolve) => {
+      roleplayBackgroundReviewResolveRef.current = resolve;
+      setRoleplayBackgroundReviewSubmitting(false);
+      setRoleplayBackgroundReviewItems(items);
+    });
+  }, []);
+
+  const closeRoleplayBackgroundPromptReview = useCallback((overrides: ImagePromptOverride[] | null) => {
+    const resolve = roleplayBackgroundReviewResolveRef.current;
+    roleplayBackgroundReviewResolveRef.current = null;
+    setRoleplayBackgroundReviewSubmitting(false);
+    setRoleplayBackgroundReviewItems([]);
+    resolve?.(overrides);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      const resolve = roleplayBackgroundReviewResolveRef.current;
+      roleplayBackgroundReviewResolveRef.current = null;
+      resolve?.(null);
+    };
+  }, []);
+
   const handleGenerateRoleplayBackground = useCallback(async () => {
     if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
     const sceneDescription = buildRoleplayBackgroundSceneDescription({
@@ -927,18 +995,49 @@ export function ChatArea() {
       return;
     }
 
-    const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", {
+    const locationSlug = [chat.name, messages?.[messages.length - 1]?.id, Date.now().toString(36)]
+      .filter(Boolean)
+      .join("-");
+    const payload: GenerateSceneBackgroundPayload = {
       chatId: activeChatId,
       sceneDescription,
-      locationSlug: chat.name,
+      locationSlug,
       reason: "Manual Gallery background request",
+      force: true,
       debugMode: useUIStore.getState().debugMode,
-    });
-    useUIStore.getState().setChatBackground(result.url);
-    updateMeta.mutate({ id: activeChatId, background: result.filename });
-    queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
-    toast.success("Background generated.", { duration: 1800 });
-  }, [activeChatId, characterNames, chat, chatMode, messages, queryClient, updateMeta]);
+    };
+
+    try {
+      if (useUIStore.getState().reviewImagePromptsBeforeSend) {
+        const preview = await api.post<{ items: ImagePromptReviewItem[] }>("/backgrounds/generate-scene/preview", payload);
+        if (preview.items.length > 0) {
+          const overrides = await openRoleplayBackgroundPromptReview(preview.items);
+          if (!overrides) return;
+          setRoleplayBackgroundReviewSubmitting(true);
+          payload.promptOverrides = overrides;
+        }
+      }
+
+      const result = await api.post<GeneratedSceneBackgroundResponse>("/backgrounds/generate-scene", payload);
+      useUIStore.getState().setChatBackground(result.url);
+      updateMeta.mutate({ id: activeChatId, background: result.filename });
+      queryClient.invalidateQueries({ queryKey: ["backgrounds"] });
+      toast.success("Background generated.", { duration: 1800 });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Background generation failed.");
+    } finally {
+      setRoleplayBackgroundReviewSubmitting(false);
+    }
+  }, [
+    activeChatId,
+    characterNames,
+    chat,
+    chatMode,
+    messages,
+    openRoleplayBackgroundPromptReview,
+    queryClient,
+    updateMeta,
+  ]);
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -950,7 +1049,7 @@ export function ChatArea() {
   const cardCssInjector = (
     <CreatorNotesCssInjector
       characterIds={chatCharIds}
-      allCharacters={allCharacters as CharacterRow[] | undefined}
+      allCharacters={chatCharacterRows}
       mode={cardCssMode}
       chatMode={cardCssChatMode}
     />
@@ -1652,7 +1751,6 @@ export function ChatArea() {
 
   const intuitiveSwipeBlocked =
     settingsOpen ||
-    filesOpen ||
     galleryOpen ||
     wizardOpen ||
     spriteArrangeMode ||
@@ -2444,7 +2542,6 @@ export function ChatArea() {
             chat={chat}
             settingsOpen={settingsOpen}
             settingsAnchor={settingsAnchor}
-            filesOpen={filesOpen}
             galleryOpen={galleryOpen}
             galleryAnchor={galleryAnchor}
             wizardOpen={wizardOpen}
@@ -2464,7 +2561,6 @@ export function ChatArea() {
               onSpriteVisualSettingsChange: patchLocalSpriteVisualSettings,
             }}
             onCloseSettings={handleCloseSettingsPanel}
-            onCloseFiles={() => setFilesOpen(false)}
             onCloseGallery={handleCloseGalleryPanel}
             onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
             onWizardFinish={() => {
@@ -2618,6 +2714,7 @@ export function ChatArea() {
           hasNextPage={!!hasNextPage}
           isFetchingNextPage={isFetchingNextPage}
           isStreaming={isStreaming}
+          agentProcessing={agentProcessing}
           regenerateMessageId={regenerateMessageId}
           shouldAnimateMessages={shouldAnimateMessages}
           summaryContextSize={summaryContextSize}
@@ -2626,7 +2723,6 @@ export function ChatArea() {
           settingsOpen={settingsOpen}
           settingsAnchor={settingsAnchor}
           settingsInitialSection={settingsInitialSection}
-          filesOpen={filesOpen}
           galleryOpen={galleryOpen}
           galleryAnchor={galleryAnchor}
           wizardOpen={wizardOpen}
@@ -2663,7 +2759,6 @@ export function ChatArea() {
           onOpenSettings={handleOpenSettingsPanel}
           onOpenGallery={handleOpenGalleryPanel}
           onCloseSettings={handleCloseSettingsPanel}
-          onCloseFiles={() => setFilesOpen(false)}
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
           onGenerateBackground={handleGenerateRoleplayBackground}
@@ -2701,6 +2796,13 @@ export function ChatArea() {
           onClose={handleCloseAgentInjectionReview}
         />
       )}
+      <ImagePromptReviewModal
+        open={roleplayBackgroundReviewItems.length > 0}
+        items={roleplayBackgroundReviewItems}
+        isSubmitting={roleplayBackgroundReviewSubmitting}
+        onCancel={() => closeRoleplayBackgroundPromptReview(null)}
+        onConfirm={(overrides) => closeRoleplayBackgroundPromptReview(overrides)}
+      />
       {pendingNewChatMode && (
         <NewChatConnectionGate
           mode={pendingNewChatMode}

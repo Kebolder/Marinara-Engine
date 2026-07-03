@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import type { Message, SpriteSide } from "@marinara-engine/shared";
 import { ConversationView } from "./ConversationView";
 import { ChatCommonOverlays } from "./ChatCommonOverlays";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import type { CharacterMap, MessageSelectionToggle, PeekPromptData, PersonaInfo } from "./chat-area.types";
 
 type SceneInfo =
@@ -144,6 +145,7 @@ export function ChatConversationSurface({
   onSelectAllBelowSelection,
   lastAssistantMessageId,
 }: ConversationSurfaceProps) {
+  useRenderTimer("convo-surface"); // [#3104 diagnostic]
   return (
     <div data-component="ChatArea.Conversation" className="flex flex-1 overflow-hidden">
       <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -189,7 +191,6 @@ export function ChatConversationSurface({
         settingsOpen={settingsOpen}
         settingsAnchor={settingsAnchor}
         settingsInitialSection={settingsInitialSection}
-        filesOpen={false}
         galleryOpen={galleryOpen}
         galleryAnchor={galleryAnchor}
         wizardOpen={wizardOpen}
@@ -207,7 +208,6 @@ export function ChatConversationSurface({
           onSpriteSideChange,
         }}
         onCloseSettings={onCloseSettings}
-        onCloseFiles={() => undefined}
         onCloseGallery={onCloseGallery}
         onIllustrate={onIllustrate}
         onWizardFinish={onWizardFinish}

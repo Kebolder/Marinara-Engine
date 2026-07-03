@@ -16,11 +16,25 @@ export interface ConversationSummaryMessage {
   createdAt?: string | null;
 }
 
+export function countUserMessagesAfterSummaryAnchor(
+  messages: Array<{ id?: string | null; role: string }>,
+  anchorMessageId: string | null | undefined,
+): number {
+  const countAllUserMessages = () => messages.filter((message) => message.role === "user").length;
+  const anchor = typeof anchorMessageId === "string" && anchorMessageId.trim() ? anchorMessageId.trim() : null;
+  if (!anchor) return countAllUserMessages();
+  const anchorIndex = messages.findIndex((message) => message.id === anchor);
+  if (anchorIndex < 0) return countAllUserMessages();
+  return messages.slice(anchorIndex + 1).filter((message) => message.role === "user").length;
+}
+
 export interface ConversationSummaryRunResult {
   daySummaries: Record<string, DaySummaryEntry>;
   weekSummaries: Record<string, WeekSummaryEntry>;
   newlyGeneratedDays: Record<string, DaySummaryEntry>;
   newlyConsolidatedWeeks: Record<string, WeekSummaryEntry>;
+  summaryFailures: ConversationSummaryFailures;
+  summaryFailureMetadataChanged: boolean;
   failedDays: Array<{ date: string; error: string }>;
   failedWeeks: Array<{ weekKey: string; error: string }>;
   missingDayCount: number;
@@ -31,6 +45,19 @@ export interface ConversationSummaryRunResult {
 interface ConversationSummaryDayBucket {
   date: string;
   msgs: Array<{ role: string; content: string; author: string; ts: Date }>;
+}
+
+export interface ConversationSummaryFailureRecord {
+  attempts: number;
+  lastAttemptAt: string;
+  lastError: string;
+  model: string;
+  permanent: boolean;
+}
+
+export interface ConversationSummaryFailures {
+  days: Record<string, ConversationSummaryFailureRecord>;
+  weeks: Record<string, ConversationSummaryFailureRecord>;
 }
 
 interface GenerateMissingConversationSummariesOptions {
@@ -50,6 +77,49 @@ interface GenerateMissingConversationSummariesOptions {
 const DEFAULT_SUMMARY_TIMEOUT_MS = 300_000;
 const DAILY_TRANSCRIPT_CHUNK_CHARS = 32_000;
 const MAX_SUMMARY_CHUNKS_PER_DAY = 12;
+const SUMMARY_TRANSIENT_RETRY_BASE_MS = 5 * 60_000;
+const SUMMARY_TRANSIENT_RETRY_MAX_MS = 60 * 60_000;
+const SUMMARY_PERMANENT_RETRY_MS = 24 * 60 * 60_000;
+const MAX_STORED_SUMMARY_FAILURE_ERROR_CHARS = 240;
+
+function createSummaryFailureMap(): Record<string, ConversationSummaryFailureRecord> {
+  return Object.create(null) as Record<string, ConversationSummaryFailureRecord>;
+}
+
+function coerceFailureRecord(value: unknown): ConversationSummaryFailureRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const attempts = Number(record.attempts);
+  const lastAttemptAt = typeof record.lastAttemptAt === "string" ? record.lastAttemptAt : "";
+  const lastError = typeof record.lastError === "string" ? record.lastError : "";
+  const model = typeof record.model === "string" ? record.model : "";
+  if (!Number.isFinite(attempts) || attempts <= 0 || !lastAttemptAt || !lastError || !model) return null;
+  return {
+    attempts: Math.floor(attempts),
+    lastAttemptAt,
+    lastError,
+    model,
+    permanent: record.permanent === true,
+  };
+}
+
+export function normalizeConversationSummaryFailures(raw: unknown): ConversationSummaryFailures {
+  const empty: ConversationSummaryFailures = { days: createSummaryFailureMap(), weeks: createSummaryFailureMap() };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return empty;
+  const record = raw as Record<string, unknown>;
+  for (const [bucketName, target] of [
+    ["days", empty.days],
+    ["weeks", empty.weeks],
+  ] as const) {
+    const bucket = record[bucketName];
+    if (!bucket || typeof bucket !== "object" || Array.isArray(bucket)) continue;
+    for (const [key, value] of Object.entries(bucket as Record<string, unknown>)) {
+      const failure = coerceFailureRecord(value);
+      if (failure) target[key] = failure;
+    }
+  }
+  return empty;
+}
 
 function coerceSummaryEntry(value: unknown): DaySummaryEntry | null {
   if (typeof value === "string") {
@@ -331,6 +401,49 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function storedSummaryFailureError(error: string): string {
+  const sanitized = error.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!sanitized) return "Summary generation failed";
+  return sanitized.length > MAX_STORED_SUMMARY_FAILURE_ERROR_CHARS
+    ? `${sanitized.slice(0, MAX_STORED_SUMMARY_FAILURE_ERROR_CHARS - 1)}…`
+    : sanitized;
+}
+
+function isPermanentSummaryFailure(error: string): boolean {
+  return /\b(?:400|401|403|404|405|410|422)\b/u.test(error);
+}
+
+function transientSummaryRetryDelayMs(attempts: number): number {
+  return Math.min(SUMMARY_TRANSIENT_RETRY_MAX_MS, SUMMARY_TRANSIENT_RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1));
+}
+
+function shouldSkipFailedSummary(
+  record: ConversationSummaryFailureRecord | undefined,
+  model: string,
+  now: Date,
+): boolean {
+  if (!record || record.model !== model) return false;
+  const lastAttemptTime = new Date(record.lastAttemptAt).getTime();
+  if (!Number.isFinite(lastAttemptTime)) return false;
+  if (record.permanent) return now.getTime() - lastAttemptTime < SUMMARY_PERMANENT_RETRY_MS;
+  return now.getTime() - lastAttemptTime < transientSummaryRetryDelayMs(record.attempts);
+}
+
+function recordSummaryFailure(
+  previous: ConversationSummaryFailureRecord | undefined,
+  error: string,
+  model: string,
+  now: Date,
+): ConversationSummaryFailureRecord {
+  return {
+    attempts: previous && previous.model === model ? previous.attempts + 1 : 1,
+    lastAttemptAt: now.toISOString(),
+    lastError: storedSummaryFailureError(error),
+    model,
+    permanent: isPermanentSummaryFailure(error),
+  };
+}
+
 export async function generateMissingConversationSummaries(
   options: GenerateMissingConversationSummariesOptions,
 ): Promise<ConversationSummaryRunResult> {
@@ -340,6 +453,8 @@ export async function generateMissingConversationSummaries(
   const todayDateKey = logicalDateKey(now, rolloverHour, options.timeZone);
   const daySummaries = normalizeDaySummaries(options.metadata.daySummaries);
   const weekSummaries = normalizeWeekSummaries(options.metadata.weekSummaries);
+  const summaryFailures = normalizeConversationSummaryFailures(options.metadata.conversationSummaryFailures);
+  let summaryFailureMetadataChanged = false;
 
   const buckets = buildDayBuckets(
     options.messages,
@@ -349,7 +464,11 @@ export async function generateMissingConversationSummaries(
     options.timeZone,
   );
   const pastBuckets = buckets.filter((bucket) => bucket.date !== todayDateKey);
-  const missingBuckets = pastBuckets.filter((bucket) => !daySummaries[bucket.date]);
+  const missingBuckets = pastBuckets.filter(
+    (bucket) =>
+      !daySummaries[bucket.date] &&
+      !shouldSkipFailedSummary(summaryFailures.days[bucket.date], options.model, now),
+  );
   const maxMissingDays =
     typeof options.maxMissingDays === "number" && Number.isFinite(options.maxMissingDays)
       ? Math.max(0, Math.floor(options.maxMissingDays))
@@ -367,9 +486,21 @@ export async function generateMissingConversationSummaries(
       if (entry.summary || entry.keyDetails.length > 0) {
         daySummaries[bucket.date] = entry;
         newlyGeneratedDays[bucket.date] = entry;
+        if (summaryFailures.days[bucket.date]) {
+          delete summaryFailures.days[bucket.date];
+          summaryFailureMetadataChanged = true;
+        }
       }
     } catch (error) {
-      failedDays.push({ date: bucket.date, error: errorMessage(error) });
+      const message = errorMessage(error);
+      failedDays.push({ date: bucket.date, error: message });
+      summaryFailures.days[bucket.date] = recordSummaryFailure(
+        summaryFailures.days[bucket.date],
+        message,
+        options.model,
+        now,
+      );
+      summaryFailureMetadataChanged = true;
     }
   }
 
@@ -391,6 +522,7 @@ export async function generateMissingConversationSummaries(
 
   for (const [weekKey, days] of daysByWeek) {
     if (weekSummaries[weekKey]) continue;
+    if (shouldSkipFailedSummary(summaryFailures.weeks[weekKey], options.model, now)) continue;
     const monday = parseConversationDateKey(weekKey);
     const nextMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
     if (logicalDate(now, rolloverHour, options.timeZone).getTime() < nextMonday.getTime()) continue;
@@ -418,9 +550,21 @@ export async function generateMissingConversationSummaries(
       if (entry.summary || entry.keyDetails.length > 0) {
         weekSummaries[weekKey] = entry;
         newlyConsolidatedWeeks[weekKey] = entry;
+        if (summaryFailures.weeks[weekKey]) {
+          delete summaryFailures.weeks[weekKey];
+          summaryFailureMetadataChanged = true;
+        }
       }
     } catch (error) {
-      failedWeeks.push({ weekKey, error: errorMessage(error) });
+      const message = errorMessage(error);
+      failedWeeks.push({ weekKey, error: message });
+      summaryFailures.weeks[weekKey] = recordSummaryFailure(
+        summaryFailures.weeks[weekKey],
+        message,
+        options.model,
+        now,
+      );
+      summaryFailureMetadataChanged = true;
     }
   }
 
@@ -429,6 +573,8 @@ export async function generateMissingConversationSummaries(
     weekSummaries,
     newlyGeneratedDays,
     newlyConsolidatedWeeks,
+    summaryFailures,
+    summaryFailureMetadataChanged,
     failedDays,
     failedWeeks,
     missingDayCount: missingBuckets.length,

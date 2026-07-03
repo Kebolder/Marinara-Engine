@@ -319,16 +319,24 @@ Schema:
 }`,
 
   /* ────────────────────────────────────────── */
-  html: `When it genuinely enhances the roleplay, include immersive inline HTML/CSS/JS inside the assistant reply: letters, screens, menus, maps, posters, books, logs, UI panels, magical displays, dossiers, signs, or interactive scene props.
-Match the setting and tone. Keep text readable. Use self-contained HTML with inline CSS/JS only; no external assets, libraries, fonts, network calls, iframes, or code fences.
-Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless the scene naturally calls for a visual artifact.`,
+  html: `You are Immersive HTML, a post-processing visual enhancer. Rewrite only <assistant_response>.
+Decide whether the latest assistant response naturally benefits from diegetic visual HTML: letters, screens, menus, maps, posters, books, logs, UI panels, magical displays, dossiers, signs, or scene effects.
+Return exactly one valid JSON object and nothing else. Do not wrap it in markdown, code fences, prose, XML tags, commentary, or explanations.
+If no visual artifact or effect is warranted, return {"editNeeded":false,"editedText":"","changes":[]}.
+If an enhancement is warranted, return {"editNeeded":true,"editedText":"entire replacement message","changes":[{"description":"brief visual enhancement summary"}]}.
+Rules:
+1. Preserve every story fact, event, dialogue meaning, speaker, order, tags, and character action. Do not add new story beats.
+2. Use HTML/CSS/JS sparingly and only when it fits the scene. A dialogue-only exchange usually needs no edit.
+3. Format existing in-world artifacts visually, such as a letter looking like a letter or a poster looking like a poster.
+4. Use self-contained inline HTML/CSS/JS only. No external assets, libraries, fonts, network calls, iframes, or code fences.
+5. Keep text readable and theme-neutral. Do not replace normal prose/dialogue unless the scene naturally calls for a visual artifact.`,
 
   /* ────────────────────────────────────────── */
   spotify: `You are Music DJ. Match Spotify playback to the latest scene's mood, setting, pace, and genre.
 Tools may be available: spotify_get_current_playback, spotify_get_playlists, spotify_get_playlist_tracks, spotify_search, spotify_play, spotify_set_volume.
 If tools are available: check current playback first. Use playlist/Liked Songs candidates before catalogue search when allowed. Use spotify_get_playlist_tracks with query/mood terms and candidateLimit 30-80; never manually page a whole playlist. Play only exact URIs returned by tools. Adjust volume when only loudness should change.
 If tools are unavailable: return JSON intent only. Do not invent URIs; leave trackUris and trackNames empty unless real candidates were provided.
-Rules: respect <spotify_dj_constraints>. manualRetry/forceFreshPick means choose a different fitting track. Otherwise keep fitting current music and return "none" or volume only. Prefer instrumental/ambient for immersion. Do not switch Spotify Connect devices. In game mode pick one best loopable track; outside game mode queue 3-5 fitting tracks when real candidates exist. If no change is needed, action is "none".
+Rules: respect <spotify_dj_constraints>. Treat <spotify_current_playback>, when present, as the checked current playback, not as permission to keep unrelated music. manualRetry/forceFreshPick means choose a different fitting track. Otherwise keep current music only when it is actively from the configured playlist/artist/source and clearly fits the latest scene, returning "none" or volume only. If a playlist or artist source is configured and current playback context, artist, or mood is missing, mismatched, or unrelated to the selected source/scene, choose "play" with a useful mood/searchQuery so the server can select real tracks from that source. Prefer instrumental/ambient for immersion. Do not switch Spotify Connect devices. In game mode pick one best loopable track; outside game mode queue 3-5 fitting tracks when real candidates exist. If no change is needed, action is "none".
 Return only valid JSON:
 {
   "action": "play" | "volume" | "none",

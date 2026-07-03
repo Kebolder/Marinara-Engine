@@ -44,6 +44,7 @@ import {
   createFolderEntry,
   getFolderImportEntries,
   getFolderManifestConfig,
+  isJsonRecord,
   type ImagePromptKind,
   type ImagePromptMode,
   type ImageStyleProfile,
@@ -1904,6 +1905,69 @@ function AppearanceSettings() {
   const currentGradient = convoGradient[activeGradientScheme];
   const [draftFrom, setDraftFrom] = useState(currentGradient.from);
   const [draftTo, setDraftTo] = useState(currentGradient.to);
+  const pendingGradientChangeRef = useRef<{
+    scheme: "dark" | "light";
+    field: "from" | "to";
+    value: string;
+  } | null>(null);
+  const pendingGradientFrameRef = useRef<number | null>(null);
+
+  const flushPendingGradientChange = useCallback(() => {
+    if (pendingGradientFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingGradientFrameRef.current);
+      pendingGradientFrameRef.current = null;
+    }
+
+    const pending = pendingGradientChangeRef.current;
+    pendingGradientChangeRef.current = null;
+    if (pending) {
+      setConvoGradientField(pending.scheme, pending.field, pending.value);
+    }
+  }, [setConvoGradientField]);
+
+  const cancelPendingGradientChange = useCallback(() => {
+    if (pendingGradientFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingGradientFrameRef.current);
+      pendingGradientFrameRef.current = null;
+    }
+    pendingGradientChangeRef.current = null;
+  }, []);
+
+  useEffect(
+    () => () => {
+      flushPendingGradientChange();
+    },
+    [flushPendingGradientChange],
+  );
+
+  const commitConvoGradientField = useCallback(
+    (scheme: "dark" | "light", field: "from" | "to", value: string, defer = false) => {
+      if (!defer) {
+        cancelPendingGradientChange();
+        setConvoGradientField(scheme, field, value);
+        return;
+      }
+
+      pendingGradientChangeRef.current = { scheme, field, value };
+      if (pendingGradientFrameRef.current !== null) return;
+      pendingGradientFrameRef.current = window.requestAnimationFrame(() => {
+        pendingGradientFrameRef.current = null;
+        const pending = pendingGradientChangeRef.current;
+        pendingGradientChangeRef.current = null;
+        if (pending) {
+          setConvoGradientField(pending.scheme, pending.field, pending.value);
+        }
+      });
+    },
+    [cancelPendingGradientChange, setConvoGradientField],
+  );
+
+  const handleGradientColorInput = useCallback(
+    (field: "from" | "to", value: string) => {
+      commitConvoGradientField(activeGradientScheme, field, value, true);
+    },
+    [activeGradientScheme, commitConvoGradientField],
+  );
 
   // Sync draft inputs when switching between scheme tabs so the text fields
   // always reflect the stored value for the active scheme.
@@ -2815,10 +2879,11 @@ function AppearanceSettings() {
                   <input
                     type="color"
                     value={currentGradient.from}
-                    onChange={(e) => {
-                      setConvoGradientField(activeGradientScheme, "from", e.target.value);
-                      setDraftFrom(e.target.value);
-                    }}
+                    onInput={(e) => handleGradientColorInput("from", e.currentTarget.value)}
+                    onChange={(e) => handleGradientColorInput("from", e.currentTarget.value)}
+                    onBlur={flushPendingGradientChange}
+                    onPointerUp={flushPendingGradientChange}
+                    onKeyUp={flushPendingGradientChange}
                     className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
                   />
                   <input
@@ -2827,7 +2892,7 @@ function AppearanceSettings() {
                     onChange={(e) => {
                       setDraftFrom(e.target.value);
                       if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                        setConvoGradientField(activeGradientScheme, "from", e.target.value);
+                        commitConvoGradientField(activeGradientScheme, "from", e.target.value);
                     }}
                     onBlur={() => setDraftFrom(currentGradient.from)}
                     className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
@@ -2839,10 +2904,11 @@ function AppearanceSettings() {
                   <input
                     type="color"
                     value={currentGradient.to}
-                    onChange={(e) => {
-                      setConvoGradientField(activeGradientScheme, "to", e.target.value);
-                      setDraftTo(e.target.value);
-                    }}
+                    onInput={(e) => handleGradientColorInput("to", e.currentTarget.value)}
+                    onChange={(e) => handleGradientColorInput("to", e.currentTarget.value)}
+                    onBlur={flushPendingGradientChange}
+                    onPointerUp={flushPendingGradientChange}
+                    onKeyUp={flushPendingGradientChange}
                     className="h-8 w-8 flex-shrink-0 cursor-pointer rounded-md border border-[var(--border)] bg-transparent p-0.5"
                   />
                   <input
@@ -2851,7 +2917,7 @@ function AppearanceSettings() {
                     onChange={(e) => {
                       setDraftTo(e.target.value);
                       if (/^#[0-9a-fA-F]{6}$/.test(e.target.value))
-                        setConvoGradientField(activeGradientScheme, "to", e.target.value);
+                        commitConvoGradientField(activeGradientScheme, "to", e.target.value);
                     }}
                     onBlur={() => setDraftTo(currentGradient.to)}
                     className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-xs outline-none ring-1 ring-transparent transition-shadow focus:ring-[var(--primary)]/40"
@@ -2866,8 +2932,8 @@ function AppearanceSettings() {
                   activeGradientScheme === "dark"
                     ? { from: "#0a0a0e", to: "#1c2133" }
                     : { from: "#f2eff7", to: "#eae6f0" };
-                setConvoGradientField(activeGradientScheme, "from", defaults.from);
-                setConvoGradientField(activeGradientScheme, "to", defaults.to);
+                commitConvoGradientField(activeGradientScheme, "from", defaults.from);
+                commitConvoGradientField(activeGradientScheme, "to", defaults.to);
                 setDraftFrom(defaults.from);
                 setDraftTo(defaults.to);
               }}
@@ -3923,6 +3989,18 @@ function createInlineFolderPackageImportEntry(raw: unknown, path: string): Folde
   };
 }
 
+function getExtensionImportKind(raw: unknown) {
+  if (!isJsonRecord(raw)) return "";
+  const manifest = isJsonRecord(raw.manifest) ? raw.manifest : raw;
+  return typeof manifest.kind === "string" ? manifest.kind : "";
+}
+
+function getExtensionImportRuntime(raw: unknown, record: Record<string, unknown>): "client" | "server" {
+  const runtime = typeof record.runtime === "string" ? record.runtime.toLowerCase() : "";
+  const kind = getExtensionImportKind(raw).toLowerCase();
+  return runtime === "server" || kind === "marinara.server-extension" ? "server" : "client";
+}
+
 function normalizeExtensionImportEntry(entry: FolderPackageImportEntry, fallbackName: string) {
   const source = getFolderManifestConfig(entry.raw);
   if (!source || typeof source !== "object" || Array.isArray(source)) return null;
@@ -3930,14 +4008,37 @@ function normalizeExtensionImportEntry(entry: FolderPackageImportEntry, fallback
   const folderName = getPackagePathBasename(entry.basePath) || fallbackName;
   const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : folderName;
   if (!name) return null;
-  const cssFromFiles = resolvePackageTextPaths(entry.resolveTextFile, record.cssPath ?? record.cssPaths);
-  const jsFromFiles = resolvePackageTextPaths(entry.resolveTextFile, record.jsPath ?? record.jsPaths);
+  const runtime = getExtensionImportRuntime(entry.raw, record);
+
+  if (runtime === "server") {
+    const serverJsFromFiles = resolvePackageTextPaths(
+      entry.resolveTextFile,
+      record.serverJsPath ?? record.serverJsPaths ?? record.jsPath ?? record.jsPaths,
+    );
+    return {
+      name,
+      description: typeof record.description === "string" ? record.description : "",
+      runtime,
+      css: null,
+      js: null,
+      serverJs:
+        serverJsFromFiles ??
+        (typeof record.serverJs === "string" ? record.serverJs : typeof record.js === "string" ? record.js : null),
+      enabled: false,
+    };
+  }
 
   return {
     name,
     description: typeof record.description === "string" ? record.description : "",
-    css: cssFromFiles ?? (typeof record.css === "string" ? record.css : null),
-    js: jsFromFiles ?? (typeof record.js === "string" ? record.js : null),
+    runtime,
+    css:
+      resolvePackageTextPaths(entry.resolveTextFile, record.cssPath ?? record.cssPaths) ??
+      (typeof record.css === "string" ? record.css : null),
+    js:
+      resolvePackageTextPaths(entry.resolveTextFile, record.jsPath ?? record.jsPaths) ??
+      (typeof record.js === "string" ? record.js : null),
+    serverJs: null,
     enabled: typeof record.enabled === "boolean" ? record.enabled : false,
   };
 }
@@ -3946,12 +4047,31 @@ function createLooseExtensionFolderImportEntries(
   files: PackageTextFile[],
   fallbackName: string,
 ): FolderPackageImportEntry[] {
+  const serverJs = files
+    .filter((file) => /\.server\.(js|mjs|cjs)$/i.test(file.path))
+    .map((file) => file.text)
+    .join("\n\n");
+  if (serverJs) {
+    return [
+      createInlineFolderPackageImportEntry(
+        {
+          name: fallbackName || "extension",
+          description: "Server extension imported from folder",
+          runtime: "server",
+          serverJs,
+          enabled: false,
+        },
+        fallbackName || "extension",
+      ),
+    ];
+  }
+
   const css = files
     .filter((file) => file.path.toLowerCase().endsWith(".css"))
     .map((file) => file.text)
     .join("\n\n");
   const js = files
-    .filter((file) => /\.(js|mjs|cjs)$/i.test(file.path))
+    .filter((file) => /\.(js|mjs|cjs)$/i.test(file.path) && !/\.server\.(js|mjs|cjs)$/i.test(file.path))
     .map((file) => file.text)
     .join("\n\n");
   if (!css && !js) return [];
@@ -3960,8 +4080,10 @@ function createLooseExtensionFolderImportEntries(
       {
         name: fallbackName || "extension",
         description: "Extension imported from folder",
+        runtime: "client",
         css: css || null,
         js: js || null,
+        serverJs: null,
         enabled: false,
       },
       fallbackName || "extension",
@@ -4095,7 +4217,9 @@ function ExtensionsSettings() {
   const handleImportExtensionFile = async (file: File) => {
     try {
       const installedAt = new Date().toISOString();
-      const fallbackName = file.name.replace(/\.(json|css|js|zip)$/i, "");
+      const fallbackName = file.name
+        .replace(/\.server\.(js|mjs|cjs)$/i, "")
+        .replace(/\.(json|css|js|mjs|cjs|zip)$/i, "");
       const lowerName = file.name.toLowerCase();
 
       if (isZipArchiveFile(file)) {
@@ -4116,13 +4240,30 @@ function ExtensionsSettings() {
           createInlineFolderPackageImportEntry(entry, file.name),
         );
         await importExtensionEntries(entries, installedAt, fallbackName);
-      } else if (lowerName.endsWith(".js")) {
+      } else if (/\.server\.(js|mjs|cjs)$/i.test(lowerName)) {
         const text = await file.text();
-        const name = file.name.replace(/\.js$/i, "");
+        const name = file.name.replace(/\.server\.(js|mjs|cjs)$/i, "");
+        try {
+          await createExtension.mutateAsync({
+            name,
+            description: "Server extension imported from file",
+            runtime: "server",
+            serverJs: text,
+            enabled: false,
+            installedAt,
+          });
+        } catch (err) {
+          throw new Error(describeExtensionImportError(err, name));
+        }
+        toast.success(`Server extension "${name}" imported and left disabled for review`);
+      } else if (/\.(js|mjs|cjs)$/i.test(lowerName)) {
+        const text = await file.text();
+        const name = file.name.replace(/\.(js|mjs|cjs)$/i, "");
         try {
           await createExtension.mutateAsync({
             name,
             description: "JS extension imported from file",
+            runtime: "client",
             js: text,
             enabled: false,
             installedAt,
@@ -4138,6 +4279,7 @@ function ExtensionsSettings() {
           await createExtension.mutateAsync({
             name,
             description: "CSS extension imported from file",
+            runtime: "client",
             css: text,
             enabled: false,
             installedAt,
@@ -4147,7 +4289,9 @@ function ExtensionsSettings() {
         }
         toast.success(`Extension "${name}" imported and left disabled for review`);
       } else {
-        toast.error("Only .zip, .json, .css, and .js extension files are supported.");
+        toast.error(
+          "Only .zip, .json, .css, .js, .mjs, .cjs, .server.js, .server.mjs, and .server.cjs files are supported.",
+        );
       }
     } catch (err) {
       toast.error(getPrivilegedActionErrorMessage(err, "Failed to import extension."));
@@ -4175,7 +4319,15 @@ function ExtensionsSettings() {
 
   const handleToggleExtension = async (ext: InstalledExtension) => {
     const nextEnabled = !ext.enabled;
-    if (nextEnabled && ext.js?.trim()) {
+    if (nextEnabled && ext.runtime === "server") {
+      const confirmed = await showConfirmDialog({
+        title: "Enable Server Extension",
+        message: `Enable "${ext.name}"? This runs trusted JavaScript inside the Marinara Node.js server process and can affect this server until disabled. Only enable code you trust.`,
+        confirmLabel: "Enable Server Extension",
+        tone: "destructive",
+      });
+      if (!confirmed) return;
+    } else if (nextEnabled && ext.js?.trim()) {
       const confirmed = await showConfirmDialog({
         title: "Enable Extension",
         message: `Enable "${ext.name}"? This runs the extension's JavaScript inside Marinara Engine.`,
@@ -4195,7 +4347,7 @@ function ExtensionsSettings() {
   const handleDeleteExtension = async (ext: InstalledExtension) => {
     const confirmed = await showConfirmDialog({
       title: "Delete Extension",
-      message: `Delete "${ext.name}"? This permanently removes its saved CSS and JavaScript from this server.`,
+      message: `Delete "${ext.name}"? This permanently removes its saved extension code from this server.`,
       confirmLabel: "Delete",
       tone: "destructive",
     });
@@ -4211,11 +4363,11 @@ function ExtensionsSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <SettingsIntro>Install extensions to add custom behavior or styling.</SettingsIntro>
+      <SettingsIntro>Install browser or trusted server extensions to add custom behavior or styling.</SettingsIntro>
 
       <SettingsSection
         title="Extension Library"
-        description="Import, enable, disable, or remove installed extensions."
+        description="Import, enable, disable, export, or remove installed extensions."
         icon={<Puzzle size="0.875rem" />}
       >
         <div className="flex flex-col gap-3">
@@ -4223,7 +4375,7 @@ function ExtensionsSettings() {
           <button
             onClick={() => {
               triggerFilePicker({
-                accept: ".zip,.json,.css,.js,application/zip,application/json",
+                accept: ".zip,.json,.css,.js,.mjs,.cjs,.server.js,.server.mjs,.server.cjs,application/zip,application/json",
                 onSelect: (files) => {
                   const file = files[0];
                   if (file) void handleImportExtensionFile(file);
@@ -4232,7 +4384,7 @@ function ExtensionsSettings() {
             }}
             className="flex items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-[var(--border)] p-3 text-xs text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
           >
-            <Download size="0.875rem" /> Import Extension File (.zip, .json, .css, or .js)
+            <Download size="0.875rem" /> Import Extension File (.zip, .json, .css, .js, .mjs, .cjs, or .server.js)
           </button>
           <button
             onClick={() => {
@@ -4273,10 +4425,43 @@ function ExtensionsSettings() {
                 >
                   {ext.enabled ? <Power size="0.75rem" /> : <PowerOff size="0.75rem" />}
                 </button>
-                <div className="flex flex-1 flex-col min-w-0">
-                  <span className="truncate font-medium">{ext.name}</span>
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate font-medium">{ext.name}</span>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1 py-px text-[0.5625rem] font-semibold",
+                        ext.runtime === "server"
+                          ? "bg-amber-500/12 text-amber-300 ring-1 ring-amber-500/20"
+                          : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]",
+                      )}
+                    >
+                      {ext.runtime === "server" ? "Server" : "Browser"}
+                    </span>
+                    {ext.runtime === "server" && ext.enabled && (
+                      <span
+                        className={cn(
+                          "shrink-0 rounded px-1 py-px text-[0.5625rem] font-semibold ring-1",
+                          ext.serverStatus === "running"
+                            ? "bg-emerald-500/12 text-emerald-300 ring-emerald-500/20"
+                            : ext.serverStatus === "error"
+                              ? "bg-[var(--destructive)]/12 text-[var(--destructive)] ring-[var(--destructive)]/20"
+                              : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)]",
+                        )}
+                      >
+                        {ext.serverStatus === "running"
+                          ? "Running"
+                          : ext.serverStatus === "error"
+                            ? "Error"
+                            : "Stopped"}
+                      </span>
+                    )}
+                  </div>
                   {ext.description && (
                     <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]">{ext.description}</span>
+                  )}
+                  {ext.runtime === "server" && ext.serverError && (
+                    <span className="truncate text-[0.625rem] text-[var(--destructive)]">{ext.serverError}</span>
                   )}
                 </div>
                 <button
@@ -4286,8 +4471,10 @@ function ExtensionsSettings() {
                         {
                           name: ext.name,
                           description: ext.description ?? "",
+                          runtime: ext.runtime,
                           css: ext.css ?? null,
                           js: ext.js ?? null,
+                          serverJs: ext.serverJs ?? null,
                           enabled: ext.enabled,
                         },
                       ]),
@@ -4320,7 +4507,14 @@ function ExtensionsSettings() {
           <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
             <strong>Folder format:</strong>{" "}
             <code className="rounded bg-[var(--secondary)] px-1">Extensions/My Extension/manifest.json</code>
-            . Extensions can include CSS and/or JavaScript files to modify the UI.
+            . Browser extensions can include CSS and/or JavaScript files to modify the UI.
+          </div>
+          <div className="rounded-lg bg-amber-500/10 p-2.5 text-[0.625rem] leading-relaxed text-amber-200 ring-1 ring-amber-500/20">
+            <strong>Server extensions:</strong> use{" "}
+            <code className="rounded bg-amber-500/10 px-1">runtime: "server"</code> with{" "}
+            <code className="rounded bg-amber-500/10 px-1">serverJsPath</code>, or import a{" "}
+            <code className="rounded bg-amber-500/10 px-1">.server.js</code> file. They run in the Node.js server
+            process and should only come from trusted sources.
           </div>
           <div className="rounded-lg bg-[var(--secondary)]/35 p-2.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
             Extensions can be downloaded from the official Marinara Engine Discord server.
@@ -5305,13 +5499,14 @@ function AdvancedSettings() {
   }, [adminSecret]);
 
   type UpdateChannelId = "stable" | "staging";
-  const [updateChannel, setUpdateChannel] = useState<UpdateChannelId>("stable");
+  const [updateChannel, setUpdateChannel] = useState<UpdateChannelId | null>(null);
   const updateCheck = useQuery<{
     currentVersion: string;
     currentCommit: string | null;
     currentBuild: string;
     channel: UpdateChannelId;
     channelLabel: string;
+    currentBranch?: string | null;
     channels: Array<{
       id: UpdateChannelId;
       label: string;
@@ -5341,17 +5536,20 @@ function AdvancedSettings() {
     manualUpdateCommand?: string | null;
     manualUpdateHint?: string | null;
   }>({
-    queryKey: ["update-check", updateChannel],
-    queryFn: () => api.get(`/updates/check?channel=${encodeURIComponent(updateChannel)}`),
+    queryKey: ["update-check", updateChannel ?? "current"],
+    queryFn: () =>
+      api.get(updateChannel ? `/updates/check?channel=${encodeURIComponent(updateChannel)}` : "/updates/check"),
     enabled: false,
     retry: false,
   });
+
+  const selectedUpdateChannelId = updateChannel ?? updateCheck.data?.channel ?? "stable";
 
   const applyUpdate = useMutation({
     mutationFn: () =>
       api.post<{ status: string; message: string }>("/updates/apply", {
         confirm: true,
-        channel: updateChannel,
+        channel: selectedUpdateChannelId,
         currentVersion: updateCheck.data?.currentVersion ?? health.data?.version ?? APP_VERSION,
         currentCommit: updateCheck.data?.currentCommit ?? health.data?.commit ?? null,
         currentBuild: updateCheck.data?.currentBuild ?? health.data?.build ?? null,
@@ -5390,7 +5588,7 @@ function AdvancedSettings() {
       warning: "Staging builds are pre-release tester builds. Back up your app data before applying them.",
     },
   ];
-  const selectedUpdateChannel = updateChannelOptions.find((channel) => channel.id === updateChannel);
+  const selectedUpdateChannel = updateChannelOptions.find((channel) => channel.id === selectedUpdateChannelId);
   const currentReleaseLabel = `v${health.data?.version ?? updateCheck.data?.currentVersion ?? APP_VERSION}`;
   const currentCommit = health.data?.commit ?? updateCheck.data?.currentCommit ?? null;
   const currentBuildLabel = currentCommit ? `Build: ${currentCommit.slice(0, 7)}` : "Build: unavailable";
@@ -5484,7 +5682,7 @@ function AdvancedSettings() {
             <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
               Release Channel
               <select
-                value={updateChannel}
+                value={selectedUpdateChannelId}
                 onChange={(event) => setUpdateChannel(event.target.value as UpdateChannelId)}
                 className="w-full rounded-lg bg-[var(--background)] px-3 py-2 text-xs font-medium normal-case tracking-normal text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] focus:ring-[var(--primary)]"
               >
@@ -5515,6 +5713,7 @@ function AdvancedSettings() {
             <div className="flex flex-col px-1 text-[0.6875rem] text-[var(--muted-foreground)]">
               <span>Release: {currentReleaseLabel}</span>
               <span>{currentBuildLabel}</span>
+              {updateCheck.data?.currentBranch && <span>Branch: {updateCheck.data.currentBranch}</span>}
             </div>
           </div>
 

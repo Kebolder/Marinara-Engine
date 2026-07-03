@@ -187,6 +187,7 @@ export function ConnectionEditor() {
   const [localMaxContext, setLocalMaxContext] = useState(128000);
   const [localMaxParallelJobs, setLocalMaxParallelJobs] = useState(DEFAULT_MAX_PARALLEL_JOBS);
   const [localEnableCaching, setLocalEnableCaching] = useState(false);
+  const [localAnthropicExtendedCacheTtl, setLocalAnthropicExtendedCacheTtl] = useState(false);
   const [localCachingAtDepth, setLocalCachingAtDepth] = useState(DEFAULT_CACHING_AT_DEPTH);
   const [localDefaultForAgents, setLocalDefaultForAgents] = useState(false);
   const [localEmbeddingModel, setLocalEmbeddingModel] = useState("");
@@ -257,6 +258,9 @@ export function ConnectionEditor() {
     setLocalMaxContext(Number(c.maxContext) || 128000);
     setLocalMaxParallelJobs(normalizeMaxParallelJobs(c.maxParallelJobs));
     setLocalEnableCaching(c.enableCaching === "true" || c.enableCaching === true);
+    setLocalAnthropicExtendedCacheTtl(
+      c.anthropicExtendedCacheTtl === "true" || c.anthropicExtendedCacheTtl === true,
+    );
     setLocalCachingAtDepth(normalizeCachingAtDepth(c.cachingAtDepth));
     setLocalDefaultForAgents(c.defaultForAgents === "true" || c.defaultForAgents === true);
     setLocalEmbeddingModel((c.embeddingModel as string) ?? "");
@@ -458,6 +462,8 @@ export function ConnectionEditor() {
       maxContext: localMaxContext,
       maxParallelJobs: localMaxParallelJobs,
       enableCaching: localEnableCaching,
+      anthropicExtendedCacheTtl:
+        localProvider === "anthropic" && localEnableCaching ? localAnthropicExtendedCacheTtl : false,
       cachingAtDepth: localCachingAtDepth,
       defaultForAgents: localDefaultForAgents,
       embeddingModel: supportsDirectEmbeddings ? localEmbeddingModel : existingEmbeddingModel,
@@ -531,6 +537,7 @@ export function ConnectionEditor() {
     localMaxContext,
     localMaxParallelJobs,
     localEnableCaching,
+    localAnthropicExtendedCacheTtl,
     localCachingAtDepth,
     localDefaultForAgents,
     localEmbeddingModel,
@@ -1812,6 +1819,7 @@ export function ConnectionEditor() {
                 checked={localEnableCaching}
                 onChange={(checked) => {
                   setLocalEnableCaching(checked);
+                  if (!checked) setLocalAnthropicExtendedCacheTtl(false);
                   markDirty();
                 }}
               />
@@ -1821,25 +1829,39 @@ export function ConnectionEditor() {
                   : "On OpenRouter, this currently targets Claude models by adding top-level cache_control. Cache reads are much cheaper than normal prompt tokens, while the first cache write costs more."}
               </p>
               {localProvider === "anthropic" && localEnableCaching && (
-                <label className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/40 px-3 py-2 ring-1 ring-[var(--border)]">
-                  <div className="min-w-0">
-                    <span className="block text-sm font-medium">Cache depth</span>
-                    <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
-                      Messages back from the newest turn.
-                    </span>
-                  </div>
-                  <DraftNumberInput
-                    value={localCachingAtDepth}
-                    min={0}
-                    max={MAX_CACHING_AT_DEPTH}
-                    onCommit={(value) => {
-                      setLocalCachingAtDepth(normalizeCachingAtDepth(value));
+                <div className="mt-2 space-y-2">
+                  <SettingsSwitch
+                    label="Extended token caching (1 hour)"
+                    checked={localAnthropicExtendedCacheTtl}
+                    onChange={(checked) => {
+                      setLocalAnthropicExtendedCacheTtl(checked);
                       markDirty();
                     }}
-                    className="h-8 w-16 rounded-lg bg-[var(--background)] px-2 text-right text-sm outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40"
-                    selectOnFocus
                   />
-                </label>
+                  <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                    Keeps Anthropic cache entries alive for one hour instead of five minutes. First cache writes cost 2x
+                    the base input token price, so leave this off unless longer reuse matters.
+                  </p>
+                  <label className="flex items-center justify-between gap-3 rounded-xl bg-[var(--secondary)]/40 px-3 py-2 ring-1 ring-[var(--border)]">
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium">Cache depth</span>
+                      <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
+                        Messages back from the newest turn.
+                      </span>
+                    </div>
+                    <DraftNumberInput
+                      value={localCachingAtDepth}
+                      min={0}
+                      max={MAX_CACHING_AT_DEPTH}
+                      onCommit={(value) => {
+                        setLocalCachingAtDepth(normalizeCachingAtDepth(value));
+                        markDirty();
+                      }}
+                      className="h-8 w-16 rounded-lg bg-[var(--background)] px-2 text-right text-sm outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40"
+                      selectOnFocus
+                    />
+                  </label>
+                </div>
               )}
             </FieldGroup>
           )}

@@ -281,7 +281,7 @@ Generates NPC portraits, location backgrounds, and inventory imagery via your se
 
 This toggle adds the most cost per turn — one or more image API calls each time the scene changes. If you do enable it, expect a meaningful per-session cost increase compared to running without.
 
-Game Mode image generation waits up to 5 minutes by default. Slow providers can be given more time by setting `IMAGE_GEN_TIMEOUT_MS` in `.env`; ComfyUI workflows also use `COMFYUI_GEN_TIMEOUT` (seconds) for the post-queue polling window. Restart Marinara after changing either timeout.
+Game Mode image generation waits up to 30 minutes by default. Slow providers can be given more time by setting `IMAGE_GEN_TIMEOUT_MS` in `.env`; ComfyUI workflows also use `COMFYUI_GEN_TIMEOUT` (seconds) for the post-queue polling window, defaulting to 40 minutes. Restart Marinara after changing either timeout.
 
 ## The `game-assets` folder
 

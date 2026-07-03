@@ -24,6 +24,18 @@ const TAGGED_RULES: ImageStyleProfileRules = {
 
 export const DEFAULT_IMAGE_STYLE_PROFILES: ImageStyleProfile[] = [
   {
+    id: "off",
+    name: "Off",
+    baseStyle: "custom",
+    promptMode: "hybrid",
+    styleText: "",
+    positiveTags: "",
+    negativeTags: "",
+    subjectTags: {},
+    rules: DEFAULT_RULES,
+    builtIn: true,
+  },
+  {
     id: "auto",
     name: "Auto",
     baseStyle: "auto",

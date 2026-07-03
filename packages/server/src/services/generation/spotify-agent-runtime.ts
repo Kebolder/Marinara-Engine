@@ -58,6 +58,10 @@ function readSpotifyTrackNames(data: unknown): string[] {
   return raw.filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 }
 
+function readSpotifyRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
 function readSpotifyCandidateTracks(data: unknown): SpotifyRuntimeTrack[] {
   if (!data || typeof data !== "object") return [];
   const record = data as Record<string, unknown>;
@@ -199,6 +203,60 @@ function getSpotifyConstraintRecord(context: AgentContext): Record<string, unkno
     : {};
 }
 
+function getSpotifyCurrentPlaybackRecord(context: AgentContext): Record<string, unknown> | null {
+  return readSpotifyRecord(context.memory._spotifyDjCurrentPlayback);
+}
+
+function spotifyComparableText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function spotifyTextMatchesNeedle(value: string, needle: string): boolean {
+  const normalizedValue = spotifyComparableText(value);
+  const normalizedNeedle = spotifyComparableText(needle);
+  return (
+    normalizedNeedle.length > 0 &&
+    (normalizedValue === normalizedNeedle ||
+      normalizedValue.includes(normalizedNeedle) ||
+      normalizedNeedle.includes(normalizedValue))
+  );
+}
+
+function spotifyCurrentPlaybackMatchesConfiguredSource(context: AgentContext): boolean {
+  const constraints = getSpotifyConstraintRecord(context);
+  const sourceType = readSpotifyStringField(constraints, "sourceType") || "liked";
+  if (sourceType !== "playlist" && sourceType !== "artist") return true;
+
+  const playback = getSpotifyCurrentPlaybackRecord(context);
+  if (!playback || playback.error) return false;
+
+  if (sourceType === "playlist") {
+    const playlistId = readSpotifyStringField(constraints, "playlistId");
+    if (!playlistId || playlistId === "liked") return false;
+    const playbackContext = readSpotifyRecord(playback.context);
+    const contextUri = readSpotifyStringField(playbackContext, "uri");
+    return contextUri === `spotify:playlist:${playlistId}`;
+  }
+
+  const artist = readSpotifyStringField(constraints, "artist");
+  if (!artist) return false;
+  const track = readSpotifyRecord(playback.track);
+  const currentArtist = readSpotifyStringField(track, "artist");
+  return currentArtist
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .some((part) => spotifyTextMatchesNeedle(part, artist));
+}
+
+function shouldRecoverSpotifyNoneResult(resultData: Record<string, unknown>, context: AgentContext): boolean {
+  if (readSpotifyStringField(resultData, "action").toLowerCase() !== "none") return false;
+  const constraints = getSpotifyConstraintRecord(context);
+  const sourceType = readSpotifyStringField(constraints, "sourceType") || "liked";
+  if (sourceType !== "playlist" && sourceType !== "artist") return false;
+  return !spotifyCurrentPlaybackMatchesConfiguredSource(context);
+}
+
 function buildSpotifyFallbackQuery(
   agent: SpotifyRuntimeAgent,
   resultData: Record<string, unknown>,
@@ -326,7 +384,9 @@ async function playSpotifyFallbackCandidates(args: {
       device: readSpotifyStringField(play, "device") || null,
       display:
         display ||
-        (queued > 1 ? `🎵 Queued ${queued} tracks: ${candidates.mood}` : `🎵 Started Spotify playback: ${candidates.mood}`),
+        (queued > 1
+          ? `🎵 Queued ${queued} tracks: ${candidates.mood}`
+          : `🎵 Started Spotify playback: ${candidates.mood}`),
       deterministicFallbackApplied: true,
     },
   };
@@ -391,6 +451,15 @@ async function applySpotifyAgentPlaybackFallback(
       resultData: data,
       context,
       reason: readSpotifyStringField(data, "mood") || "Music DJ malformed-result recovery",
+    });
+  }
+  if (shouldRecoverSpotifyNoneResult(data, context)) {
+    return playSpotifyFallbackCandidates({
+      agent,
+      result: normalizedResult,
+      resultData: data,
+      context,
+      reason: readSpotifyStringField(data, "mood") || "Music DJ configured-source recovery",
     });
   }
   if (action !== "play" || requestedUris.length === 0) return normalizedResult;

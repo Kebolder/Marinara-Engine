@@ -31,6 +31,7 @@ import { useLegacyThemeMigration, useThemes } from "./hooks/use-themes";
 import { useLegacyExtensionMigration } from "./hooks/use-extensions";
 import { useSettingsSync } from "./hooks/use-settings-sync";
 import { useChatRealtimeEvents } from "./hooks/use-chat-realtime-events";
+import { installLongTaskWarner } from "./lib/perf-diagnostics";
 
 const VERSION_RECOVERY_KEY = "marinara:pwa-version-recovery";
 const VERSION_CHECK_INTERVAL_MS = 5 * 60_000;
@@ -440,6 +441,11 @@ export function App() {
   const showDownloadModal = useSidecarStore((s) => s.showDownloadModal);
   const setShowDownloadModal = useSidecarStore((s) => s.setShowDownloadModal);
   const fetchSidecarStatus = useSidecarStore((s) => s.fetchStatus);
+
+  // [#3104 diagnostic] warn on long main-thread tasks (see lib/perf-diagnostics.ts)
+  useEffect(() => {
+    installLongTaskWarner();
+  }, []);
 
   useEffect(() => {
     const syncAll = () => {
