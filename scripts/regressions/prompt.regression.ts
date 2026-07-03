@@ -45,6 +45,8 @@ import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
+import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
+import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
 
 type RegressionCase = {
   name: string;
@@ -154,6 +156,38 @@ const cases: RegressionCase[] = [
       });
       assert.equal(testSecondaryKeys(["forbidden"], "This has the forbidden key.", "not", keywordOptions), false);
       assert.equal(testSecondaryKeys(["forbidden"], "This is safe.", "not", keywordOptions), true);
+    },
+  },
+  {
+    name: "save_lorebook_entry tool preserves large entry content",
+    async run() {
+      const longContent = `entry-start\n${"0123456789".repeat(8_000)}\nentry-end`;
+      let savedContent = "";
+      const calls: LLMToolCall[] = [
+        {
+          id: "call_save_lore",
+          type: "function",
+          function: {
+            name: "save_lorebook_entry",
+            arguments: JSON.stringify({
+              name: "Large entry",
+              content: longContent,
+              keys: ["Large entry"],
+              mode: "replace",
+            }),
+          },
+        },
+      ];
+
+      const results = await executeToolCalls(calls, {
+        saveLorebookEntry: async (entry) => {
+          savedContent = entry.content;
+          return { ok: true };
+        },
+      });
+
+      assert.equal(results[0]?.success, true);
+      assert.equal(savedContent, longContent);
     },
   },
   {

@@ -1727,8 +1727,10 @@ export const ChatInput = memo(function ChatInput({
                 : "text-foreground/20",
           )}
         >
-          {isInputBusy ? (
+          {isStreaming ? (
             <StopCircle size="1rem" />
+          ) : isInputBusy ? (
+            <Loader2 size="1rem" className="animate-spin" />
           ) : (
             <Send size="0.9375rem" className={cn(hasInput && "translate-x-[1px]")} />
           )}

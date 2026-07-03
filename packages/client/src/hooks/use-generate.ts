@@ -2154,7 +2154,6 @@ export function useGenerate() {
               if (spriteChangeReceived) {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
               }
-              setProcessing(false, params.chatId);
               if (isActiveChat()) {
                 if (useChatStore.getState().streamingChatId === params.chatId) {
                   setStreaming(false);
@@ -2415,8 +2414,8 @@ export function useGenerate() {
             }
             clearStreamBuffer(params.chatId);
           }
+          setProcessing(false, params.chatId);
           if (isActiveChat()) {
-            setProcessing(false, params.chatId);
             setRegenerateMessageId(null);
             setStreamingCharacterId(null);
             setTypingCharacterName(null);
