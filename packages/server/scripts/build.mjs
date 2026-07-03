@@ -7,15 +7,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(__dirname, "..");
 const SRC_DIR = resolve(PACKAGE_ROOT, "src");
 const DIST_DIR = resolve(PACKAGE_ROOT, "dist");
+const TSC_CLI = fileURLToPath(import.meta.resolve("typescript/bin/tsc"));
 const LOW_MEMORY_BUILD = process.platform === "android" || process.env.MARINARA_LOW_MEMORY_BUILD === "1";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: PACKAGE_ROOT,
     env: { ...process.env, ...options.env },
-    // The shell is only needed to resolve .cmd shims (tsc) on Windows; it
-    // breaks unquoted paths with spaces, e.g. "C:\Program Files\nodejs\node.exe".
-    shell: options.shell ?? process.platform === "win32",
+    shell: options.shell ?? false,
     stdio: "inherit",
   });
   if (result.status !== 0) {
@@ -65,7 +64,7 @@ function copyRuntimeAssets() {
 if (LOW_MEMORY_BUILD) {
   await buildLowMemoryServer();
 } else {
-  run("tsc", []);
+  run(process.execPath, [TSC_CLI]);
 }
 
 run(process.execPath, [resolve(__dirname, "write-build-meta.mjs")], { shell: false });
