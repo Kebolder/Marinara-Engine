@@ -241,6 +241,7 @@ const CASCADES: Array<{ parent: string; child: string; parentKey: string; childK
   { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_state_snapshots", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
   { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
   { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
   { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },

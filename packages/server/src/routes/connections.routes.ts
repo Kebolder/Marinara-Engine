@@ -8,9 +8,13 @@ import { extname, join } from "path";
 import {
   IMAGE_DEFAULTS_STORAGE_KEY,
   MODEL_LISTS,
+  VIDEO_DEFAULTS_STORAGE_KEY,
   createConnectionSchema,
+  createDefaultVideoGenerationProfile,
   generationParametersSchema,
   inferImageSource,
+  inferVideoSource,
+  normalizeVideoGenerationProfile,
 } from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { resetMemoryRecallVectorizerCache } from "../services/memory-recall-embedding.js";
@@ -31,6 +35,10 @@ import { DATA_DIR } from "../utils/data-dir.js";
 
 const CONNECTION_TEST_ERROR_PREVIEW_CHARS = 2000;
 const CONNECTION_IMAGES_DIR = join(DATA_DIR, "connections", "images");
+const DEFAULT_GEMINI_OMNI_VIDEO_MODEL = "gemini-omni-flash-preview";
+const DEFAULT_GEMINI_OMNI_VIDEO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
+const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -121,26 +129,57 @@ function resolveImageGenerationSource(conn: Record<string, unknown>, baseUrl: st
   return inferImageSource(explicitSource || model, baseUrl);
 }
 
+function resolveVideoGenerationSource(conn: Record<string, unknown>, baseUrl: string): string {
+  const explicitSource = typeof conn.videoGenerationSource === "string" ? conn.videoGenerationSource : "";
+  const model = typeof conn.model === "string" ? conn.model : "";
+  return inferVideoSource(explicitSource || model, baseUrl);
+}
+
 function localUrlPolicyForProvider(provider: string, imageSource: string) {
   const isLocalImageBackend =
     provider === "image_generation" && (imageSource === "comfyui" || imageSource === "automatic1111");
   const isImage = provider === "image_generation";
+  const isVideo = provider === "video_generation";
   return {
-    allowLocal: isLocalImageBackend || (isImage && isImageLocalUrlsEnabled()) ? true : isProviderLocalUrlsEnabled(),
+    allowLocal: isVideo
+      ? false
+      : isLocalImageBackend || (isImage && isImageLocalUrlsEnabled())
+        ? true
+        : isProviderLocalUrlsEnabled(),
     allowLoopback: true,
-    allowMdns: provider !== "image_generation" || isLocalImageBackend || isImageLocalUrlsEnabled(),
+    allowMdns: !isVideo && (provider !== "image_generation" || isLocalImageBackend || isImageLocalUrlsEnabled()),
     allowedProtocols: ["https:", "http:"],
     flagName: isImage ? "IMAGE_LOCAL_URLS_ENABLED" : "PROVIDER_LOCAL_URLS_ENABLED",
   };
 }
 
 function normalizeConnectionTestBaseUrl(baseUrl: string, provider: string): string {
-  if (provider !== "image_generation") return baseUrl;
+  if (provider !== "image_generation") return baseUrl.replace(/\/+$/, "");
   try {
     return normalizeLoopbackUrl(baseUrl).replace(/\/+$/, "");
   } catch {
     return baseUrl;
   }
+}
+
+function getStoredVideoDefaults(raw: unknown) {
+  const root = parseDefaultParametersRoot(raw);
+  return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
+}
+
+function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  let parsed: unknown = raw;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return {};
+    }
+  }
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? { ...(parsed as Record<string, unknown>) }
+    : {};
 }
 
 function parseImageUpload(image: string): { buffer: Buffer; hintedExt: string } {
@@ -417,6 +456,14 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
       const imageSource =
         conn.provider === "image_generation" ? resolveImageGenerationSource(conn as any, baseUrl) : "";
+      if (conn.provider === "video_generation") {
+        return {
+          success: true,
+          message: "Video generation connection configured. Use Test Video to verify MP4 generation.",
+          latencyMs: Date.now() - start,
+          modelName: conn.model,
+        };
+      }
       baseUrl = normalizeConnectionTestBaseUrl(baseUrl, conn.provider);
       // image_generation has no standard modelsEndpoint — use provider-specific checks
       let testUrl: string;
@@ -517,6 +564,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
           // before the host has run `codex login`.
         }
         return { models: MODEL_LISTS.openai_chatgpt.map((m) => ({ id: m.id, name: m.name })) };
+      }
+
+      if (conn.provider === "video_generation") {
+        const models = MODEL_LISTS.video_generation.map((m) => ({ id: m.id, name: m.name }));
+        return { models };
       }
 
       const { PROVIDERS } = await import("@marinara-engine/shared");
@@ -842,6 +894,65 @@ export async function connectionsRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── Test video generation — generates a short fixed MP4 ──
+  app.post<{ Params: { id: string } }>("/:id/test-video", async (req, reply) => {
+    const conn = await storage.getWithKey(req.params.id);
+    if (!conn) return reply.status(404).send({ error: "Connection not found" });
+    if (conn.provider !== "video_generation") {
+      return reply.status(400).send({ error: "Not a video generation connection" });
+    }
+
+    const { PROVIDERS } = await import("@marinara-engine/shared");
+    const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
+    const videoApiKey = conn.apiKey || "";
+    const defaults = conn.defaultParameters
+      ? getStoredVideoDefaults(conn.defaultParameters)
+      : createDefaultVideoGenerationProfile();
+    const inferredVideoSource = resolveVideoGenerationSource(conn as any, conn.baseUrl || "");
+    const explicitVideoSource = conn.videoGenerationSource || conn.videoService || "";
+    const videoSource =
+      explicitVideoSource || (inferredVideoSource !== "gemini_omni" ? inferredVideoSource : defaults.service);
+    const videoServiceHint = conn.videoService || videoSource;
+    const isXaiVideo = videoSource === "xai" || videoServiceHint === "xai";
+    const baseUrl = (
+      conn.baseUrl ||
+      (isXaiVideo ? DEFAULT_XAI_VIDEO_BASE_URL : providerDef?.defaultBaseUrl || DEFAULT_GEMINI_OMNI_VIDEO_BASE_URL)
+    ).replace(/\/+$/, "");
+    const videoModel = conn.model || (isXaiVideo ? DEFAULT_XAI_VIDEO_MODEL : DEFAULT_GEMINI_OMNI_VIDEO_MODEL);
+    const activeDefaults = isXaiVideo ? defaults.xai : defaults.geminiOmni;
+
+    const prompt =
+      "Create a concise cinematic 16:9 game scene video: a plate of spaghetti with marinara sauce on a table, gentle steam rising, warm kitchen light, slow push-in camera, no text or logos.";
+
+    const start = Date.now();
+    try {
+      const { generateVideo } = await import("../services/video/video-generation.js");
+      const result = await generateVideo(videoSource, baseUrl, videoApiKey, videoServiceHint, {
+        prompt,
+        model: videoModel,
+        durationSeconds: activeDefaults.durationSeconds,
+        aspectRatio: activeDefaults.aspectRatio,
+        resolution: isXaiVideo ? defaults.xai.resolution : undefined,
+      });
+      return {
+        success: true,
+        base64: result.base64,
+        mimeType: result.mimeType,
+        latencyMs: Date.now() - start,
+        prompt,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        base64: null,
+        mimeType: null,
+        latencyMs: Date.now() - start,
+        prompt,
+        error: err instanceof Error ? err.message : "Unknown error",
+      };
+    }
+  });
+
   // ── Diagnose Claude (Subscription) — verifies which model the SDK actually
   //    billed against. The Claude Agent SDK can silently route a request to a
   //    smaller model (fast mode, post-rate-limit `cooldown` state, account-tier
@@ -937,6 +1048,10 @@ export async function connectionsRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>("/:id/test-message", async (req, reply) => {
     const conn = await storage.getWithKey(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
+
+    if (conn.provider === "image_generation" || conn.provider === "video_generation") {
+      return reply.status(400).send({ error: "This provider does not support chat test messages." });
+    }
 
     if (!conn.model) {
       return reply.status(400).send({ error: "No model configured. Set a model first." });

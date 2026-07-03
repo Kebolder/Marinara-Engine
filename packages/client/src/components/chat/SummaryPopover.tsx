@@ -158,7 +158,8 @@ function isSummaryConnectionOption(value: unknown): value is SummaryConnectionOp
     typeof record.name === "string" &&
     typeof record.model === "string" &&
     typeof record.provider === "string" &&
-    record.provider !== "image_generation"
+    record.provider !== "image_generation" &&
+    record.provider !== "video_generation"
   );
 }
 

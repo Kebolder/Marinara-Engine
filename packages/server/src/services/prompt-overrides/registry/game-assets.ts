@@ -257,3 +257,82 @@ export const GAME_NARRATION_SUMMARIZER: PromptOverrideKeyDef<GameNarrationSummar
       "Korr drops to one knee in the rain, his sword biting into the mud. Lyra stands over him, shaking but unblinking, while shattered moonlight catches on the wet stones.",
   },
 };
+
+// ── Omni video prompt (scene illustration -> animated clip) ──
+
+export interface GameOmniVideoCtx extends Record<string, string | number | undefined> {
+  sceneTitle: string;
+  narrationSummary: string;
+  illustrationPrompt: string;
+  charactersLine: string;
+  settingLine: string;
+  artStyleLine: string;
+  durationSeconds: number;
+  aspectRatio: string;
+  sourceIllustrationLine: string;
+}
+
+export const GAME_OMNI_VIDEO: PromptOverrideKeyDef<GameOmniVideoCtx> = {
+  key: "game.omniVideo",
+  description: "Gemini Omni video prompt for animating a generated Game Mode scene illustration.",
+  variables: [
+    { name: "sceneTitle", description: "Short scene title or visual subject.", example: "Moonlit duel aftermath" },
+    {
+      name: "narrationSummary",
+      description: "Short summary of the latest visible scene narration.",
+      example: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
+    },
+    {
+      name: "illustrationPrompt",
+      description: "Prompt used for the source scene illustration.",
+      example: "Visual novel CG, moonlit graveyard, rain, dramatic duel aftermath...",
+    },
+    { name: "charactersLine", description: "Pre-formatted visible character line.", example: "Characters: Lyra, Korr." },
+    {
+      name: "settingLine",
+      description: "Pre-formatted setting/location line.",
+      example: "Setting: moonlit graveyard, cold rain, broken tombstones.",
+    },
+    {
+      name: "artStyleLine",
+      description: "Pre-formatted art style line.",
+      example: "Art style: watercolor fantasy illustration, soft edges, warm palette.",
+    },
+    { name: "durationSeconds", description: "Requested video duration in seconds.", example: "10" },
+    { name: "aspectRatio", description: "Requested video aspect ratio.", example: "16:9" },
+    {
+      name: "sourceIllustrationLine",
+      description: "Pre-formatted reminder that the provided image is the first frame/reference.",
+      example: "Use the provided scene illustration as the first frame/reference image.",
+    },
+  ],
+  defaultBuilder: (ctx) =>
+    [
+      `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} cinematic animated game scene from the provided first-frame illustration.`,
+      ctx.sourceIllustrationLine,
+      ctx.sceneTitle ? `Scene title: ${ctx.sceneTitle}.` : "",
+      ctx.narrationSummary ? `Narration summary: ${ctx.narrationSummary}` : "",
+      ctx.charactersLine,
+      ctx.settingLine,
+      ctx.artStyleLine,
+      ctx.illustrationPrompt ? `Source illustration prompt: ${ctx.illustrationPrompt}` : "",
+      "Preserve the core composition, character identities, costumes, faces, lighting, and environment from the reference image.",
+      "Animate only plausible in-scene motion: breathing, clothing and hair movement, rain, drifting dust, firelight, subtle facial emotion, and environmental parallax.",
+      "Camera direction: slow cinematic push-in with slight handheld drift; no hard cuts, no montage, no new viewpoint, no sudden character repositioning.",
+      `Timing: seconds 0-3 establish the held first-frame composition; seconds 3-7 add gentle character and environment motion; seconds 7-${ctx.durationSeconds} end on a readable dramatic pose.`,
+      "Avoid: captions, subtitles, UI, logos, watermarks, speech bubbles, text overlays, extra characters, duplicated faces, warped hands, melted anatomy, heavy camera shake, jump cuts, and unrelated action.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  exampleContext: {
+    sceneTitle: "Moonlit duel aftermath",
+    narrationSummary: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
+    illustrationPrompt: "Visual novel CG, moonlit graveyard, rain, dramatic duel aftermath.",
+    charactersLine: "Characters: Lyra, Korr.",
+    settingLine: "Setting: moonlit graveyard, cold rain, broken tombstones.",
+    artStyleLine: "Art style: watercolor fantasy illustration, soft edges, warm palette.",
+    durationSeconds: 10,
+    aspectRatio: "16:9",
+    sourceIllustrationLine: "Use the provided scene illustration as the first frame/reference image.",
+  },
+};

@@ -458,6 +458,14 @@ export interface ChatMetadata {
   gameLastIllustrationSessionNumber?: number | null;
   /** Background tag for the last rare generated scene illustration. */
   gameLastIllustrationTag?: string;
+  /** Connection used for Game Mode scene-video generation. */
+  gameVideoConnectionId?: string | null;
+  /** Last generated scene-video record ID for this game. */
+  gameLastSceneVideoId?: string | null;
+  /** Connection used for roleplay/gallery scene-video generation. */
+  sceneVideoConnectionId?: string | null;
+  /** Last generated roleplay/gallery scene-video record ID. */
+  sceneLastVideoId?: string | null;
   /** Game-mode GM instruction override. Empty/null uses the built-in default prompt. */
   gameSystemPrompt?: string | null;
   /** Additional game-mode generation instructions appended to the final GM format reminder. */

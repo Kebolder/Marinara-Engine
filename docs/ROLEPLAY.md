@@ -208,6 +208,12 @@ For comparison across modes:
 - **Roleplay** uses it for sprites + backgrounds + optional illustrations
 - **Game Mode** uses it for backgrounds + NPC portraits + scene effects, via a sidecar pipeline
 
+## Scene videos
+
+Roleplay and Visual Novel galleries can animate existing Gallery illustrations through a separate **Video Generation** connection. Open **Chat Settings -> Agents -> Scene Videos** and choose a video connection, then use Gallery **Video** for the latest illustration or **Animate** on a specific illustration tile.
+
+Generated scene videos appear in the Gallery, can be previewed fullscreen with the prompt, copied, downloaded, pinned, resized, and shown through **View latest**. See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for setup and provider details.
+
 ## Generation parameters
 
 Roleplay uses Marinara's shared generation parameter system. See [Generation Parameters](GENERATION_PARAMETERS.md) for the defaults table, tuning advice, and per-backend gotchas (Claude `temperature`/`topP` conflict, Claude thinking mode, OpenRouter caveats).

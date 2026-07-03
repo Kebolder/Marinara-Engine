@@ -17,6 +17,7 @@ export const apiProviderSchema = z.enum([
   "xai",
   "custom",
   "image_generation",
+  "video_generation",
 ]);
 
 export const createConnectionSchema = z.object({
@@ -41,6 +42,8 @@ export const createConnectionSchema = z.object({
   comfyuiWorkflow: z.string().nullable().default(null),
   imageService: z.string().nullable().default(null),
   imageEndpointId: z.string().nullable().default(null),
+  videoGenerationSource: z.string().nullable().default(null),
+  videoService: z.string().nullable().default(null),
   promptPresetId: z.string().nullable().default(null),
   maxTokensOverride: z.number().int().min(1).nullable().default(null),
   maxParallelJobs: z.number().int().min(1).max(16).default(1),

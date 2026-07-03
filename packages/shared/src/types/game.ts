@@ -179,6 +179,8 @@ export interface GameSetupConfig {
   enableSpriteGeneration?: boolean;
   /** Connection ID for image generation (NPC portraits + location backgrounds) */
   imageConnectionId?: string;
+  /** Connection ID for video generation (animated scene clips from generated illustrations). */
+  videoConnectionId?: string;
   /** Unified art style prompt applied to all generated images (auto-generated at setup) */
   artStylePrompt?: string;
   /** Optional image style profile applied to generated images in this game. */
@@ -582,5 +584,22 @@ export interface GameCheckpoint {
   weather: string | null;
   timeOfDay: string | null;
   turnNumber: number | null;
+  createdAt: string;
+}
+
+export type GameSceneVideoAspectRatio = "16:9" | "9:16";
+
+export interface GeneratedSceneVideo {
+  id: string;
+  chatId: string;
+  filePath: string;
+  url: string;
+  sourceIllustrationTag: string | null;
+  sourceIllustrationPath: string | null;
+  prompt: string;
+  provider: string;
+  model: string;
+  durationSeconds: number;
+  aspectRatio: GameSceneVideoAspectRatio;
   createdAt: string;
 }

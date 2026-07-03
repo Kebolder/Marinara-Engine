@@ -3,6 +3,7 @@ import type { SpriteSide } from "@marinara-engine/shared";
 import { ChevronUp, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import type { PeekPromptData } from "./chat-area.types";
 import type { LocalSpriteVisualSettings } from "./local-sprite-visual-settings";
+import type { ChatImage } from "../../hooks/use-gallery";
 
 const loadChatSettingsDrawer = async () => {
   const module = await import("./ChatSettingsDrawer");
@@ -236,6 +237,10 @@ type ChatCommonOverlaysProps = {
   onIllustrate?: () => void;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
+  /** Generate a scene video from the latest gallery image. */
+  onGenerateVideo?: () => void | Promise<void>;
+  /** Generate a scene video from a specific gallery image. */
+  onAnimateImage?: (image: ChatImage) => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onDeleteConfirm: () => void;
@@ -269,6 +274,8 @@ export function ChatCommonOverlays({
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
+  onGenerateVideo,
+  onAnimateImage,
   onWizardFinish,
   onClosePeekPrompt,
   onDeleteConfirm,
@@ -309,6 +316,8 @@ export function ChatCommonOverlays({
               onClose={onCloseGallery}
               anchor={galleryAnchor}
               onIllustrate={onIllustrate}
+              onGenerateVideo={onGenerateVideo}
+              onAnimateImage={onAnimateImage}
               onGenerateBackground={onGenerateBackground}
             />
           )}

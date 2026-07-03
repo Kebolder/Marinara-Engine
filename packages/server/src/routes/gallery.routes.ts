@@ -1,25 +1,51 @@
 // ──────────────────────────────────────────────
 // Routes: Chat Gallery (upload, list, delete, serve)
 // ──────────────────────────────────────────────
-import type { FastifyInstance } from "fastify";
-import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import type { FastifyInstance, FastifyReply } from "fastify";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { writeFile } from "fs/promises";
-import { join, extname } from "path";
+import { basename, extname, join } from "path";
+import { z } from "zod";
+import {
+  VIDEO_DEFAULTS_STORAGE_KEY,
+  createDefaultVideoGenerationProfile,
+  inferVideoSource,
+  normalizeVideoGenerationProfile,
+  type GameSceneVideoAspectRatio,
+  type GeneratedSceneVideo,
+} from "@marinara-engine/shared";
 import { createGalleryStorage } from "../services/storage/gallery.storage.js";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
+import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
+import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import { GAME_OMNI_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
+import { generateVideo, saveVideoToDisk, type VideoReferenceImage } from "../services/video/video-generation.js";
+import { isDebugAgentsEnabled } from "../config/runtime-config.js";
 import { newId } from "../utils/id-generator.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { assertInsideDir, isAllowedImageBuffer } from "../utils/security.js";
-import { logger } from "../lib/logger.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
 const SPRITES_DIR = join(DATA_DIR, "sprites");
+const GAME_SCENE_VIDEOS_ROOT = join(DATA_DIR, "game-scene-videos");
 const ALLOWED_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
 const GALLERY_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 const SPRITE_FILE_RE = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
+const SCENE_VIDEO_FILENAME_RE = /^[A-Za-z0-9_-]+\.mp4$/;
+const SCENE_VIDEO_GENERATION_TIMEOUT_MS = 31 * 60 * 1000;
+const DEFAULT_GEMINI_OMNI_MODEL = "gemini-omni-flash-preview";
+const DEFAULT_GEMINI_OMNI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
+const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
+
+type SceneVideoRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGameSceneVideosStorage>["getById"]>>>;
+type ChatGalleryImageRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGalleryStorage>["getById"]>>>;
+type ChatRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createChatsStorage>["getById"]>>>;
 
 interface ChatAssetBrowserItem {
   id: string;
@@ -34,6 +60,37 @@ interface ChatAssetBrowserItem {
   createdAt: string | null;
   url: string;
   cardUrl: string;
+}
+
+const generateSceneVideoSchema = z.object({
+  chatId: z.string().min(1),
+  galleryImageId: z.string().max(200).optional(),
+  durationSeconds: z.number().int().min(1).max(60).optional(),
+  aspectRatio: z.enum(["16:9", "9:16"]).optional(),
+  debugMode: z.boolean().optional().default(false),
+});
+
+function sceneVideoUrl(chatId: string, filePath: string): string {
+  const filename = filePath.split(/[\\/]/).pop() ?? "";
+  return `/api/gallery/scene-videos/file/${encodeURIComponent(chatId)}/${encodeURIComponent(filename)}`;
+}
+
+function serializeSceneVideo(row: SceneVideoRow): GeneratedSceneVideo {
+  const aspectRatio: GameSceneVideoAspectRatio = row.aspectRatio === "9:16" ? "9:16" : "16:9";
+  return {
+    id: row.id,
+    chatId: row.chatId,
+    filePath: row.filePath,
+    url: sceneVideoUrl(row.chatId, row.filePath),
+    sourceIllustrationTag: row.sourceIllustrationTag ?? null,
+    sourceIllustrationPath: row.sourceIllustrationPath ?? null,
+    prompt: row.prompt,
+    provider: row.provider,
+    model: row.model,
+    durationSeconds: row.durationSeconds,
+    aspectRatio,
+    createdAt: row.createdAt,
+  };
 }
 
 // Reject any chatId segment that could escape GALLERY_DIR (traversal, absolute
@@ -134,6 +191,150 @@ function getPersonaName(row: { name?: string | null } | null, fallback: string):
   return typeof row?.name === "string" && row.name.trim() ? row.name.trim() : fallback;
 }
 
+function readTrimmedString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function compactSceneVideoTemplateText(value: unknown, maxLength = 1800): string {
+  if (typeof value !== "string") return "";
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, Math.max(0, maxLength - 20)).trim()}...`;
+}
+
+function titleCaseSlug(value: string): string {
+  return value
+    .split(/[-_:\s]+/)
+    .map((part) => (part ? `${part[0]!.toUpperCase()}${part.slice(1)}` : ""))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function sceneTitleFromGalleryImage(image: ChatGalleryImageRow): string {
+  const promptTitle = compactSceneVideoTemplateText(image.prompt, 96);
+  if (promptTitle) return promptTitle;
+  const filename = basename(image.filePath).replace(/\.[^.]+$/, "");
+  return titleCaseSlug(filename) || "Selected illustration";
+}
+
+function sourceGalleryImagePathForMetadata(image: ChatGalleryImageRow): string {
+  return `gallery/${image.filePath.replace(/\\/g, "/")}`;
+}
+
+function resolveGalleryImagePath(image: ChatGalleryImageRow): string | null {
+  const normalizedPath = image.filePath.replace(/\\/g, "/");
+  const filename = basename(normalizedPath);
+  const candidates = new Set([normalizedPath, `${image.chatId}/${filename}`]);
+  for (const candidate of candidates) {
+    if (!candidate || candidate.includes("..") || candidate.includes("\0")) continue;
+    try {
+      const resolved = assertInsideDir(GALLERY_DIR, join(GALLERY_DIR, candidate));
+      if (existsSync(resolved)) return resolved;
+    } catch {
+      // Ignore invalid gallery path candidates and try the next one.
+    }
+  }
+  return null;
+}
+
+function imageMimeTypeForPath(path: string): VideoReferenceImage["mimeType"] | null {
+  const ext = extname(path).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  return null;
+}
+
+function readSceneVideoReferenceImage(path: string): VideoReferenceImage {
+  const mimeType = imageMimeTypeForPath(path);
+  if (!mimeType) throw new Error("Scene videos require a PNG or JPEG gallery image");
+  return { base64: readFileSync(path).toString("base64"), mimeType };
+}
+
+function latestNarrationSummary(messages: Array<{ role?: string | null; content?: string | null }>): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role === "user") continue;
+    const summary = compactSceneVideoTemplateText(message.content, 2000);
+    if (summary) return summary;
+  }
+  return "Animate the latest illustrated roleplay scene while preserving its core mood, composition, and character action.";
+}
+
+function buildRoleplayVideoSettingLine(chat: ChatRow, meta: Record<string, unknown>): string {
+  const parts = [
+    readTrimmedString(meta.groupScenarioText),
+    readTrimmedString(meta.scenario),
+    readTrimmedString(meta.sceneInstructions),
+    readTrimmedString(meta.background),
+    chat.name,
+  ].filter((part): part is string => Boolean(part));
+  const setting = Array.from(new Set(parts.map((part) => compactSceneVideoTemplateText(part, 420)).filter(Boolean)));
+  return setting.length ? `Setting: ${setting.join("; ")}.` : "Setting: Current roleplay scene.";
+}
+
+function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  let parsed: unknown = raw;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return {};
+    }
+  }
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? { ...(parsed as Record<string, unknown>) }
+    : {};
+}
+
+function getStoredVideoDefaults(raw: unknown) {
+  const root = parseDefaultParametersRoot(raw);
+  return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
+}
+
+async function resolveSceneVideoConnectionId(
+  meta: Record<string, unknown>,
+  connections: ReturnType<typeof createConnectionsStorage>,
+): Promise<string | null> {
+  const chatConnectionId =
+    readTrimmedString(meta.sceneVideoConnectionId) ?? readTrimmedString(meta.gameVideoConnectionId);
+  if (chatConnectionId) return chatConnectionId;
+
+  const defaultConnection = await connections.getDefaultForVideoGeneration();
+  return defaultConnection?.id ?? null;
+}
+
+function createResponseAbortSignal(reply: FastifyReply, timeoutMs: number, label: string): AbortSignal {
+  const controller = new AbortController();
+  let finished = false;
+  const timeout = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds`));
+    }
+  }, timeoutMs);
+  timeout.unref?.();
+
+  const cleanup = () => {
+    clearTimeout(timeout);
+    reply.raw.off("finish", onFinish);
+    reply.raw.off("close", onClose);
+  };
+  const onFinish = () => {
+    finished = true;
+    cleanup();
+  };
+  const onClose = () => {
+    if (!finished && !controller.signal.aborted) {
+      controller.abort(new Error(`${label} cancelled because the client disconnected`));
+    }
+    cleanup();
+  };
+
+  reply.raw.once("finish", onFinish);
+  reply.raw.once("close", onClose);
+  return controller.signal;
+}
+
 function buildSpriteAssets(
   ownerId: string,
   ownerName: string,
@@ -220,6 +421,26 @@ export async function galleryRoutes(app: FastifyInstance) {
       characterIds: Array.from(characterIds),
       personaIds: Array.from(personaIds),
     };
+  }
+
+  async function collectChatSceneCharacterNames(chat: {
+    id: string;
+    characterIds?: unknown;
+    personaId?: string | null;
+  }): Promise<string[]> {
+    const names = new Set<string>();
+    const { characterIds, personaIds } = await collectChatAssetParticipants(chat);
+    for (const characterId of characterIds.slice(0, 8)) {
+      const character = await characters.getById(characterId);
+      const name = getCharacterName(character, "");
+      if (name) names.add(name);
+    }
+    for (const personaId of personaIds.slice(0, 2)) {
+      const persona = await characters.getPersona(personaId);
+      const name = getPersonaName(persona, "");
+      if (name) names.add(name);
+    }
+    return Array.from(names).slice(0, 10);
   }
 
   async function findContextualSprite(
@@ -358,6 +579,187 @@ export async function galleryRoutes(app: FastifyInstance) {
     }
 
     return assets;
+  });
+
+  app.get<{ Params: { chatId: string } }>("/scene-videos/:chatId", async (req, reply) => {
+    const { chatId } = req.params;
+    if (!isValidChatId(chatId)) return reply.status(400).send({ error: "Invalid chatId" });
+
+    const chat = await chats.getById(chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    const videos = await createGameSceneVideosStorage(app.db).listByChatId(chatId);
+    return { videos: videos.map((video) => serializeSceneVideo(video)) };
+  });
+
+  app.get<{ Params: { chatId: string; filename: string } }>(
+    "/scene-videos/file/:chatId/:filename",
+    async (req, reply) => {
+      const { chatId, filename } = req.params;
+      if (!isValidChatId(chatId) || !SCENE_VIDEO_FILENAME_RE.test(filename)) {
+        return reply.status(400).send({ error: "Invalid scene video path" });
+      }
+
+      const normalizedFilePath = `${chatId}/${filename}`;
+      const sceneVideos = createGameSceneVideosStorage(app.db);
+      const videos = await sceneVideos.listByChatId(chatId);
+      const matchingRow = videos.find((video) => video.filePath.replace(/\\/g, "/") === normalizedFilePath);
+      if (!matchingRow) return reply.status(404).send({ error: "Scene video not found" });
+
+      const filePath = assertInsideDir(GAME_SCENE_VIDEOS_ROOT, join(GAME_SCENE_VIDEOS_ROOT, chatId, filename));
+      if (!existsSync(filePath)) return reply.status(404).send({ error: "Scene video file not found" });
+
+      return reply
+        .header("Content-Type", "video/mp4")
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .send(readFileSync(filePath));
+    },
+  );
+
+  app.post("/generate-scene-video", async (req, reply) => {
+    const input = generateSceneVideoSchema.parse(req.body);
+    if (!isValidChatId(input.chatId)) return reply.status(400).send({ error: "Invalid chatId" });
+
+    const sceneVideoAbortSignal = createResponseAbortSignal(
+      reply,
+      SCENE_VIDEO_GENERATION_TIMEOUT_MS,
+      "Scene video generation",
+    );
+    const requestDebug = input.debugMode === true;
+    const debugOverrideEnabled = requestDebug || isDebugAgentsEnabled();
+    const debugLogsEnabled = debugOverrideEnabled || logger.isLevelEnabled("debug");
+    const debugLog = (message: string, ...args: unknown[]) => {
+      logDebugOverride(debugOverrideEnabled, message, ...args);
+    };
+
+    const connections = createConnectionsStorage(app.db);
+    const sceneVideos = createGameSceneVideosStorage(app.db);
+    const promptOverridesStorage = createPromptOverridesStorage(app.db);
+
+    const chat = await chats.getById(input.chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    const meta = parseChatMetadata(chat.metadata);
+    const videoConnectionId = await resolveSceneVideoConnectionId(meta, connections);
+    if (!videoConnectionId) {
+      return reply.status(400).send({ error: "No video generation connection is configured for this chat." });
+    }
+
+    const videoConn = await connections.getWithKey(videoConnectionId);
+    if (!videoConn) return reply.status(404).send({ error: "Video generation connection not found" });
+    if (videoConn.provider !== "video_generation") {
+      return reply.status(400).send({ error: "The selected connection is not a video generation connection." });
+    }
+
+    const requestedGalleryImageId = input.galleryImageId?.trim();
+    const galleryImages = requestedGalleryImageId ? [] : await storage.listByChatId(input.chatId);
+    const galleryImage = requestedGalleryImageId
+      ? await storage.getById(requestedGalleryImageId)
+      : (galleryImages[0] ?? null);
+    if (!galleryImage || galleryImage.chatId !== input.chatId) {
+      return reply.status(404).send({
+        error: requestedGalleryImageId
+          ? "Gallery illustration not found"
+          : "Add or generate a gallery image before generating a scene video.",
+      });
+    }
+
+    const galleryImagePath = resolveGalleryImagePath(galleryImage);
+    if (!galleryImagePath) {
+      return reply.status(400).send({ error: "The selected gallery image file could not be found." });
+    }
+
+    let referenceImage: VideoReferenceImage;
+    try {
+      referenceImage = readSceneVideoReferenceImage(galleryImagePath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The selected gallery image cannot be used.";
+      return reply.status(400).send({ error: message });
+    }
+
+    const videoDefaults = videoConn.defaultParameters
+      ? getStoredVideoDefaults(videoConn.defaultParameters)
+      : createDefaultVideoGenerationProfile();
+    const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
+    const source =
+      explicitVideoSource ||
+      (videoDefaults.service === "xai" ? "xai" : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
+    const serviceHint = videoConn.videoService || source;
+    const isXaiVideo = source === "xai" || serviceHint === "xai";
+    const activeVideoDefaults = isXaiVideo ? videoDefaults.xai : videoDefaults.geminiOmni;
+    const durationSeconds = Math.min(
+      isXaiVideo ? 15 : 60,
+      Math.max(1, Math.trunc(input.durationSeconds ?? activeVideoDefaults.durationSeconds)),
+    );
+    const aspectRatio = input.aspectRatio ?? activeVideoDefaults.aspectRatio;
+    const baseUrl = videoConn.baseUrl || (isXaiVideo ? DEFAULT_XAI_VIDEO_BASE_URL : DEFAULT_GEMINI_OMNI_BASE_URL);
+    const model = videoConn.model || (isXaiVideo ? DEFAULT_XAI_VIDEO_MODEL : DEFAULT_GEMINI_OMNI_MODEL);
+    const resolution = isXaiVideo ? videoDefaults.xai.resolution : undefined;
+
+    const messages = await chats.listMessages(input.chatId);
+    const characterNames = await collectChatSceneCharacterNames(chat);
+    const prompt = await loadPrompt(promptOverridesStorage, GAME_OMNI_VIDEO, {
+      sceneTitle: sceneTitleFromGalleryImage(galleryImage),
+      narrationSummary: latestNarrationSummary(messages),
+      illustrationPrompt:
+        compactSceneVideoTemplateText(galleryImage.prompt, 2200) ||
+        "Use the supplied first-frame gallery image as the visual source.",
+      charactersLine: characterNames.length
+        ? `Characters: ${characterNames.join(", ")}.`
+        : "Characters: preserve any visible characters from the supplied image.",
+      settingLine: buildRoleplayVideoSettingLine(chat, meta),
+      artStyleLine: "Art style: match the supplied gallery image.",
+      durationSeconds,
+      aspectRatio,
+      sourceIllustrationLine: `Use the selected gallery image (${galleryImage.id}) as the first frame/reference image.`,
+    });
+
+    logger.info(
+      "[gallery/generate-scene-video] request: chatId=%s connection=%s source=%s model=%s duration=%d aspect=%s image=%s",
+      input.chatId,
+      videoConnectionId,
+      source,
+      model,
+      durationSeconds,
+      aspectRatio,
+      galleryImage.id,
+    );
+    if (debugLogsEnabled) {
+      debugLog("[debug/gallery/scene-video] prompt:\n%s", prompt);
+    }
+
+    try {
+      const generated = await generateVideo(source, baseUrl, videoConn.apiKey || "", serviceHint, {
+        prompt,
+        model,
+        durationSeconds,
+        aspectRatio,
+        resolution,
+        referenceImage,
+        signal: sceneVideoAbortSignal,
+      });
+      const filePath = saveVideoToDisk(input.chatId, generated.base64);
+      const row = await sceneVideos.create({
+        chatId: input.chatId,
+        filePath,
+        sourceIllustrationTag: `gallery:${galleryImage.id}`,
+        sourceIllustrationPath: sourceGalleryImagePathForMetadata(galleryImage),
+        prompt,
+        provider: source,
+        model,
+        durationSeconds,
+        aspectRatio,
+      });
+      if (!row) throw new Error("Scene video metadata could not be saved");
+
+      await chats.patchMetadata(input.chatId, () => ({ sceneLastVideoId: row.id }));
+      logger.info("[gallery/generate-scene-video] saved video %s for chat %s", row.id, input.chatId);
+      return { video: serializeSceneVideo(row) };
+    } catch (err) {
+      logger.warn(err, "[gallery/generate-scene-video] Scene video generation failed for chat %s", input.chatId);
+      const message = err instanceof Error ? err.message : "Scene video generation failed";
+      return reply.status(502).send({ error: message });
+    }
   });
 
   // List all images for a chat

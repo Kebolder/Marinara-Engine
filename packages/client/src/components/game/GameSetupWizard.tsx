@@ -16,6 +16,7 @@ import {
   User,
   Plug,
   Image,
+  Film,
   BookOpen,
   Music2,
   Volume2,
@@ -366,6 +367,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [gameSpotifyArtist, setGameSpotifyArtist] = useState("");
   const [enableLorebookKeeper, setEnableLorebookKeeper] = useState(false);
   const [imageConnectionId, setImageConnectionId] = useState<string | null>(null);
+  const [videoConnectionId, setVideoConnectionId] = useState<string | null>(null);
   const [sceneConnectionId, setSceneConnectionId] = useState<string | null>(null);
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
   const [lbSearch, setLbSearch] = useState("");
@@ -453,6 +455,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
     [selectedGmConnection?.defaultParameters],
   );
   const imageConnections = useMemo(() => connections.filter((c) => c.provider === "image_generation"), [connections]);
+  const videoConnections = useMemo(() => connections.filter((c) => c.provider === "video_generation"), [connections]);
   const promptPresets = useMemo(
     () => (promptPresetsList as Array<{ id: string; name: string; isDefault?: boolean | string }>) ?? [],
     [promptPresetsList],
@@ -647,6 +650,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         sceneConnectionId: sceneModelValue && sceneModelValue !== "local" ? sceneModelValue : undefined,
         enableSpriteGeneration: enableSpriteGeneration || undefined,
         imageConnectionId: enableSpriteGeneration && imageConnectionId ? imageConnectionId : undefined,
+        videoConnectionId: videoConnectionId || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,
         customHudWidgets:
@@ -1583,6 +1587,33 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                         Generates portraits for new NPCs and backgrounds for new locations using the scene analysis
                         pipeline.
                       </p>
+                      <div className="mt-3 border-t border-[var(--border)] pt-3">
+                        <label className="mb-1 flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                          <Film size={11} />
+                          Video Generation Connection
+                        </label>
+                        <select
+                          value={videoConnectionId ?? ""}
+                          onChange={(e) => setVideoConnectionId(e.target.value || null)}
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
+                        >
+                          <option value="">No scene video connection</option>
+                          {videoConnections.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.model ? ` - ${c.model}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {videoConnections.length === 0 && (
+                          <p className="mt-1 text-[0.55rem] text-amber-700 dark:text-amber-400/80">
+                            No video generation connections found. Add one in Settings -&gt; Connections.
+                          </p>
+                        )}
+                        <p className="mt-1 text-[0.55rem] text-[var(--muted-foreground)]">
+                          Uses the latest generated scene illustration as the first frame for manual scene videos.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>

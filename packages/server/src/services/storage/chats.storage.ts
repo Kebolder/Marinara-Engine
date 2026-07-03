@@ -11,6 +11,7 @@ import {
   gameCheckpoints,
   gameEngineState,
   chatImages,
+  gameSceneVideos,
   oocInfluences,
   conversationNotes,
   agentRuns,
@@ -31,6 +32,7 @@ import { scheduleNeedsRefresh, type CharacterSchedules, type WeekSchedule } from
 import { logger } from "../../lib/logger.js";
 
 const GALLERY_DIR = join(DATA_DIR, "gallery");
+const GAME_SCENE_VIDEOS_DIR = join(DATA_DIR, "game-scene-videos");
 
 /** Total character budget for durable conversation notes per roleplay chat. Oldest pruned on insert. */
 export const CONVERSATION_NOTES_BUDGET_CHARS = 4000;
@@ -255,7 +257,13 @@ export function createChatsStorage(db: DB) {
       .from(chatImages)
       .where(eq(chatImages.chatId, chatId))
       .limit(1);
-    return existingImage.length > 0;
+    if (existingImage.length > 0) return true;
+    const existingVideo = await db
+      .select({ id: gameSceneVideos.id })
+      .from(gameSceneVideos)
+      .where(eq(gameSceneVideos.chatId, chatId))
+      .limit(1);
+    return existingVideo.length > 0;
   }
 
   async function isProtectedGameDeleteTarget(chat: {
@@ -691,11 +699,14 @@ export function createChatsStorage(db: DB) {
       await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
       await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
       await db.delete(gameEngineState).where(eq(gameEngineState.chatId, id));
+      await db.delete(gameSceneVideos).where(eq(gameSceneVideos.chatId, id));
 
       // Clean up gallery images (DB records + files on disk)
       await db.delete(chatImages).where(eq(chatImages.chatId, id));
       const galleryDir = join(GALLERY_DIR, id);
       if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
+      const videoDir = join(GAME_SCENE_VIDEOS_DIR, id);
+      if (existsSync(videoDir)) rmSync(videoDir, { recursive: true, force: true });
 
       await db.delete(chats).where(eq(chats.id, id));
     },
@@ -710,9 +721,12 @@ export function createChatsStorage(db: DB) {
         await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
         await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
         await db.delete(gameEngineState).where(eq(gameEngineState.chatId, chat.id));
+        await db.delete(gameSceneVideos).where(eq(gameSceneVideos.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
         const galleryDir = join(GALLERY_DIR, chat.id);
         if (existsSync(galleryDir)) rmSync(galleryDir, { recursive: true, force: true });
+        const videoDir = join(GAME_SCENE_VIDEOS_DIR, chat.id);
+        if (existsSync(videoDir)) rmSync(videoDir, { recursive: true, force: true });
       }
 
       await db.delete(chats).where(eq(chats.groupId, groupId));

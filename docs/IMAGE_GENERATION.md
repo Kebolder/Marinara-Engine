@@ -42,3 +42,7 @@ The backend-specific controls for AUTOMATIC1111/Forge, ComfyUI, NovelAI, and oth
 ## Prompt review
 
 When **review prompts before image generation** is enabled, Marinara shows the final compiled positive prompt and, when available, the final compiled negative prompt before generation. Editing either field changes exactly what is sent for that request; reviewed prompts are not compiled a second time after confirmation.
+
+## Scene videos
+
+Scene videos are configured separately from still-image generation. They use **Video Generation** connections, animate existing Gallery illustrations, and save MP4 files in their own media store. See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for setup, Gallery controls, provider defaults, and editable prompt templates.

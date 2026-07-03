@@ -52,6 +52,8 @@ export type CreateConnectionPayload = {
   comfyuiWorkflow?: string | null;
   imageService?: string | null;
   imageEndpointId?: string | null;
+  videoGenerationSource?: string | null;
+  videoService?: string | null;
   promptPresetId?: string | null;
   maxTokensOverride?: number | null;
   maxParallelJobs?: number;
@@ -165,6 +167,20 @@ export function useTestImageGeneration() {
         prompt: string;
         error?: string;
       }>(`/connections/${id}/test-image`),
+  });
+}
+
+export function useTestVideoGeneration() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post<{
+        success: boolean;
+        base64: string | null;
+        mimeType: string | null;
+        latencyMs: number;
+        prompt: string;
+        error?: string;
+      }>(`/connections/${id}/test-video`),
   });
 }
 

@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Sparkles,
   Image,
+  Film,
   Pencil,
   AlertTriangle,
   GripVertical,
@@ -702,6 +703,13 @@ export function ChatSettingsDrawer({
     () =>
       ((connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? []).filter(
         (c) => c.provider === "image_generation",
+      ),
+    [connections],
+  );
+  const videoConnectionsList = useMemo(
+    () =>
+      ((connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? []).filter(
+        (c) => c.provider === "video_generation",
       ),
     [connections],
   );
@@ -5389,6 +5397,41 @@ export function ChatSettingsDrawer({
                   </div>
                 )}
 
+                {isRoleplayMode && (
+                  <AgentSettingsCard
+                    icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                    title="Scene Videos"
+                    description="Generate manual MP4 scene videos from gallery images."
+                  >
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
+                      <select
+                        value={(metadata.sceneVideoConnectionId as string) ?? ""}
+                        onChange={(e) =>
+                          updateMeta.mutate({ id: chat.id, sceneVideoConnectionId: e.target.value || null })
+                        }
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                      >
+                        <option value="">Select video connection...</option>
+                        {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                            {c.model ? ` - ${c.model}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {videoConnectionsList.length === 0 && (
+                      <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
+                        No video generation connections found. Add one in Settings -&gt; Connections.
+                      </p>
+                    )}
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Gallery Video and image Animate use this connection with the editable Omni scene-video prompt.
+                    </p>
+                  </AgentSettingsCard>
+                )}
+
                 {isGame && (
                   <AgentSettingsCard
                     icon={<BookOpen size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
@@ -6672,6 +6715,42 @@ export function ChatSettingsDrawer({
                         </label>
                       </div>
                     )}
+                  </AgentSettingsCard>
+                )}
+
+                {isGame && (
+                  <AgentSettingsCard
+                    icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                    title="Scene Videos"
+                    description="Generate manual MP4 scene videos from the latest game illustration."
+                  >
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
+                      <select
+                        value={(metadata.gameVideoConnectionId as string) ?? ""}
+                        onChange={(e) =>
+                          updateMeta.mutate({ id: chat.id, gameVideoConnectionId: e.target.value || null })
+                        }
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                      >
+                        <option value="">Select video connection...</option>
+                        {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                            {c.model ? ` - ${c.model}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {videoConnectionsList.length === 0 && (
+                      <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
+                        No video generation connections found. Add one in Settings -&gt; Connections.
+                      </p>
+                    )}
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Scene videos use the latest generated scene illustration as the first frame and the editable Omni
+                      scene-video prompt template.
+                    </p>
                   </AgentSettingsCard>
                 )}
 

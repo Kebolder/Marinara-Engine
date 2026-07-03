@@ -1,12 +1,16 @@
 // ──────────────────────────────────────────────
-// Pinned Image Overlay — Draggable floating images in the chat area
+// Pinned Image Overlay — Draggable floating gallery media in the chat area
 // ──────────────────────────────────────────────
-import { useState, useRef, useCallback, useEffect } from "react";
-import { X } from "lucide-react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { Film, GripHorizontal, X } from "lucide-react";
 import { useGalleryStore } from "../../stores/gallery.store";
-import type { ChatImage } from "../../hooks/use-gallery";
+import type { PinnedGalleryMedia } from "../../stores/gallery.store";
 import { cn } from "../../lib/utils";
 import { getChatToolbarButtonClass } from "./ChatToolbarControls";
+import { useGalleryImages, useSceneVideos } from "../../hooks/use-gallery";
+import type { GeneratedSceneVideo } from "@marinara-engine/shared";
+
+const EMPTY_SCENE_VIDEOS: GeneratedSceneVideo[] = [];
 
 function getViewport() {
   return {
@@ -15,8 +19,9 @@ function getViewport() {
   };
 }
 
-function getImageAspect(image: ChatImage) {
-  return image.width && image.height && image.width > 0 && image.height > 0 ? image.width / image.height : 1;
+function getMediaAspect(media: PinnedGalleryMedia) {
+  if (media.kind === "video") return media.aspectRatio === "9:16" ? 9 / 16 : 16 / 9;
+  return media.width && media.height && media.width > 0 && media.height > 0 ? media.width / media.height : 1;
 }
 
 function getInitialSizeForAspect(aspect: number) {
@@ -33,8 +38,8 @@ function getInitialSizeForAspect(aspect: number) {
   return { w: Math.max(160, width), h: Math.max(120, height) };
 }
 
-function getInitialSize(image: ChatImage) {
-  return getInitialSizeForAspect(getImageAspect(image));
+function getInitialSize(media: PinnedGalleryMedia) {
+  return getInitialSizeForAspect(getMediaAspect(media));
 }
 
 function clampPosition(pos: { x: number; y: number }, size: { w: number; h: number }) {
@@ -57,16 +62,25 @@ function clampSizeToViewport(width: number, aspect: number, pos: { x: number; y:
   return { w: nextWidth, h: nextHeight };
 }
 
-function PinnedImageViewer({
-  image,
+function shouldIgnoreDragTarget(target: EventTarget | null) {
+  return target instanceof Element && !!target.closest("button,a,video,[data-gallery-media-no-drag]");
+}
+
+function getPinnedMediaLabel(media: PinnedGalleryMedia) {
+  if (media.kind === "video") return media.prompt || "Scene video";
+  return media.prompt || "Gallery image";
+}
+
+function PinnedMediaViewer({
+  media,
   onClose,
   offsetIndex,
 }: {
-  image: ChatImage;
+  media: PinnedGalleryMedia;
   onClose: () => void;
   offsetIndex: number;
 }) {
-  const initialSize = getInitialSize(image);
+  const initialSize = getInitialSize(media);
   const [pos, setPos] = useState(() =>
     clampPosition(
       {
@@ -96,13 +110,13 @@ function PinnedImageViewer({
 
   useEffect(() => {
     const handleResize = () => {
-      const nextSize = getInitialSize(image);
+      const nextSize = getInitialSize(media);
       setSize(nextSize);
       setPos((current) => clampPosition(current, nextSize));
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [image]);
+  }, [media]);
 
   useEffect(
     () => () => {
@@ -113,6 +127,7 @@ function PinnedImageViewer({
 
   const onDragStart = useCallback(
     (e: React.PointerEvent) => {
+      if (shouldIgnoreDragTarget(e.target)) return;
       e.preventDefault();
       if (e.pointerType !== "mouse") showTouchControls();
       dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
@@ -174,18 +189,18 @@ function PinnedImageViewer({
 
   const handleImageLoad = useCallback(
     (event: React.SyntheticEvent<HTMLImageElement>) => {
-      if (image.width && image.height) return;
+      if (media.kind !== "image" || (media.width && media.height)) return;
       const { naturalWidth, naturalHeight } = event.currentTarget;
       if (!naturalWidth || !naturalHeight) return;
       const nextSize = getInitialSizeForAspect(naturalWidth / naturalHeight);
       setSize(nextSize);
       setPos((current) => clampPosition(current, nextSize));
     },
-    [image.height, image.width],
+    [media],
   );
   const controlsVisibilityClass = touchControlsVisible
     ? "opacity-100"
-    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100";
+    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100";
 
   return (
     <div
@@ -195,7 +210,7 @@ function PinnedImageViewer({
       onPointerMove={onDragMove}
       onPointerUp={onDragEnd}
       onPointerCancel={onDragEnd}
-      aria-label="Pinned gallery image. Drag to move."
+      aria-label={`Pinned ${media.kind === "video" ? "scene video" : "gallery image"}. Drag to move.`}
     >
       <div className="relative h-full w-full">
         <button
@@ -213,23 +228,49 @@ function PinnedImageViewer({
             }),
             controlsVisibilityClass,
           )}
-          aria-label="Dismiss pinned image"
+          aria-label={`Dismiss pinned ${media.kind === "video" ? "video" : "image"}`}
         >
           <X size="0.875rem" />
         </button>
-        <img
-          src={image.url}
-          alt={image.prompt || "Gallery image"}
-          className="h-full w-full rounded-lg object-contain shadow-2xl"
-          draggable={false}
-          onLoad={handleImageLoad}
-        />
+        {media.kind === "video" ? (
+          <>
+            <div
+              className={cn(
+                "absolute left-2 top-2 z-10 flex max-w-[calc(100%-4rem)] cursor-grab items-center gap-1.5 rounded-md bg-black/65 px-2 py-1 text-[0.625rem] font-medium text-white shadow-lg backdrop-blur-sm active:cursor-grabbing",
+                controlsVisibilityClass,
+              )}
+              onPointerDown={onDragStart}
+              aria-label="Drag pinned video"
+            >
+              <GripHorizontal size="0.75rem" className="shrink-0" />
+              <Film size="0.75rem" className="shrink-0" />
+              <span className="truncate">{getPinnedMediaLabel(media)}</span>
+            </div>
+            <video
+              src={media.url}
+              controls
+              muted
+              playsInline
+              loop
+              className="h-full w-full touch-auto cursor-auto rounded-lg bg-black object-contain shadow-2xl"
+              data-gallery-media-no-drag
+            />
+          </>
+        ) : (
+          <img
+            src={media.url}
+            alt={getPinnedMediaLabel(media)}
+            className="h-full w-full rounded-lg object-contain shadow-2xl"
+            draggable={false}
+            onLoad={handleImageLoad}
+          />
+        )}
         <div
           className={cn(
             "absolute -bottom-2 -right-2 z-10 flex h-7 w-7 cursor-nwse-resize items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text)] shadow-lg transition-all duration-150 hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)] active:scale-95",
             controlsVisibilityClass,
           )}
-          aria-label="Resize pinned image"
+          aria-label={`Resize pinned ${media.kind === "video" ? "video" : "image"}`}
           tabIndex={0}
           onPointerDown={onResizeStart}
           onPointerMove={onResizeMove}
@@ -243,19 +284,60 @@ function PinnedImageViewer({
   );
 }
 
-/** Renders pinned gallery images for the active chat as floating overlays. */
-export function PinnedImageOverlay({ activeChatId }: { activeChatId: string | null | undefined }) {
-  const pinnedImages = useGalleryStore((s) => s.pinnedImages);
+/** Renders pinned gallery media for the active chat as floating overlays. */
+export function PinnedImageOverlay({
+  activeChatId,
+  includeSceneVideos = false,
+}: {
+  activeChatId: string | null | undefined;
+  includeSceneVideos?: boolean;
+}) {
+  const pinnedMedia = useGalleryStore((s) => s.pinnedImages);
+  const viewerMedia = useGalleryStore((s) => s.viewerMedia);
+  const latestViewerChatId = useGalleryStore((s) => s.latestViewerChatId);
+  const syncLatestViewer = useGalleryStore((s) => s.syncLatestViewer);
   const unpinImage = useGalleryStore((s) => s.unpinImage);
+  const clearViewerMedia = useGalleryStore((s) => s.clearViewerMedia);
 
-  const visibleImages = pinnedImages.filter((img) => img.chatId === activeChatId);
+  const latestViewerActive = !!activeChatId && latestViewerChatId === activeChatId;
+  const viewerChatId = latestViewerActive && activeChatId ? activeChatId : undefined;
+  const galleryImagesQuery = useGalleryImages(viewerChatId);
+  const sceneVideosQuery = useSceneVideos(
+    viewerChatId,
+    latestViewerActive && includeSceneVideos,
+  );
+  const latestMedia = useMemo<PinnedGalleryMedia | null>(() => {
+    if (!latestViewerActive) return null;
+    const imageMedia = (galleryImagesQuery.data ?? []).map((image) => ({ ...image, kind: "image" as const }));
+    const videoMedia = (sceneVideosQuery.data ?? EMPTY_SCENE_VIDEOS).map((video) => ({
+      ...video,
+      kind: "video" as const,
+    }));
+    return [...imageMedia, ...videoMedia].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+  }, [galleryImagesQuery.data, latestViewerActive, sceneVideosQuery.data]);
 
-  if (visibleImages.length === 0) return null;
+  useEffect(() => {
+    if (!latestViewerActive || !latestMedia) return;
+    syncLatestViewer(latestMedia);
+  }, [latestMedia, latestViewerActive, syncLatestViewer]);
+
+  const activeViewer = viewerMedia?.chatId === activeChatId ? viewerMedia : null;
+  const visiblePinnedMedia = pinnedMedia.filter((media) => media.chatId === activeChatId && media.id !== activeViewer?.id);
+  const visibleMedia = activeViewer ? [activeViewer, ...visiblePinnedMedia] : visiblePinnedMedia;
+  const activeViewerKey =
+    latestViewerActive && activeViewer ? `${activeChatId}:latest-viewer` : `${activeViewer?.id ?? "viewer"}:viewer`;
+
+  if (visibleMedia.length === 0) return null;
 
   return (
     <>
-      {visibleImages.map((img, index) => (
-        <PinnedImageViewer key={img.id} image={img} offsetIndex={index} onClose={() => unpinImage(img.id)} />
+      {visibleMedia.map((media, index) => (
+        <PinnedMediaViewer
+          key={media.id === activeViewer?.id ? activeViewerKey : `${media.id}:pin`}
+          media={media}
+          offsetIndex={index}
+          onClose={() => (media.id === activeViewer?.id ? clearViewerMedia() : unpinImage(media.id))}
+        />
       ))}
     </>
   );

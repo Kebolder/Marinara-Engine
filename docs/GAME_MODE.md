@@ -283,6 +283,14 @@ This toggle adds the most cost per turn — one or more image API calls each tim
 
 Game Mode image generation waits up to 30 minutes by default. Slow providers can be given more time by setting `IMAGE_GEN_TIMEOUT_MS` in `.env`; ComfyUI workflows also use `COMFYUI_GEN_TIMEOUT` (seconds) for the post-queue polling window, defaulting to 40 minutes. Restart Marinara after changing either timeout.
 
+### Scene Video Generation
+
+Scene videos animate generated Game Mode illustrations into short MP4 clips. Configure a **Video Generation** connection in Settings, then choose it in the Game setup wizard or in **Chat Settings -> Agents -> Scene Videos** for an existing game.
+
+Use the Gallery **Video** action to animate the latest scene illustration, or click **Animate** on a specific Gallery illustration to use that image as the first frame/reference. Generated videos appear in the Gallery, can be previewed fullscreen with their prompt, copied, downloaded, pinned, resized, and followed through **View latest**.
+
+See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, prompt templates, and troubleshooting.
+
 ## The `game-assets` folder
 
 The engine stores game-related media in `packages/server/data/game-assets/` relative to your install. Subfolders are organized by category:

@@ -52,6 +52,7 @@ import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { useGameStateStore } from "../../stores/game-state.store";
+import { useGalleryStore } from "../../stores/gallery.store";
 import { toast } from "sonner";
 import { Check, HelpCircle, List, X } from "lucide-react";
 import {
@@ -60,6 +61,7 @@ import {
   PROFESSOR_MARI_ID,
   buildGuidedGenerationInstructionMessage,
   type AchievementEvent,
+  type GeneratedSceneVideo,
   type SpritePlacement,
   type SpriteSide,
 } from "@marinara-engine/shared";
@@ -1096,6 +1098,35 @@ export function ChatArea() {
     queryClient,
     updateMeta,
   ]);
+
+  const handleGenerateRoleplaySceneVideo = useCallback(
+    async (source?: { galleryImageId?: string }) => {
+      if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
+      const sceneVideoConnectionId =
+        typeof chatMeta.sceneVideoConnectionId === "string" ? chatMeta.sceneVideoConnectionId.trim() : "";
+      if (!sceneVideoConnectionId) {
+        toast.error("Choose a Scene Video connection in Chat Settings first.");
+        return;
+      }
+
+      const galleryImageId = source?.galleryImageId?.trim();
+      try {
+        const result = await api.post<{ video: GeneratedSceneVideo }>("/gallery/generate-scene-video", {
+          chatId: activeChatId,
+          ...(galleryImageId ? { galleryImageId } : {}),
+          debugMode: useUIStore.getState().debugMode,
+        });
+        const galleryStore = useGalleryStore.getState();
+        galleryStore.pinVideo(result.video);
+        galleryStore.syncLatestViewer({ ...result.video, kind: "video" as const });
+        void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+        toast.success("Scene video generated.", { duration: 1800 });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Scene video generation failed.");
+      }
+    },
+    [activeChatId, chat, chatMeta.sceneVideoConnectionId, chatMode, queryClient],
+  );
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -2820,6 +2851,8 @@ export function ChatArea() {
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
           onGenerateBackground={handleGenerateRoleplayBackground}
+          onGenerateVideo={() => handleGenerateRoleplaySceneVideo()}
+          onAnimateImage={(image) => handleGenerateRoleplaySceneVideo({ galleryImageId: image.id })}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();

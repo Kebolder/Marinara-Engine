@@ -22,6 +22,7 @@ import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useGameStateStore } from "../../stores/game-state.store";
+import { useGalleryStore } from "../../stores/gallery.store";
 import {
   useSyncGameState,
   useCreateGame,
@@ -94,6 +95,7 @@ import type {
   CombatSummary,
   GameMap,
   GameActiveState,
+  GeneratedSceneVideo,
   CombatInitState,
   CombatPartyMember,
   CombatEnemy,
@@ -1708,6 +1710,7 @@ import {
   CircleHelp,
   Feather,
   Folder,
+  Film,
   Image,
   ImagePlus,
   Loader2,
@@ -2083,6 +2086,13 @@ function GameSurfaceComponent({
   const activeGameMetaId = typeof chatMeta.gameId === "string" ? chatMeta.gameId : "";
   const sceneRuntimeScopeKey = `${activeChatId}:${activeGameMetaId}`;
   const { data: connectionsList } = useConnections();
+  const sceneVideosQuery = useQuery({
+    queryKey: ["game", "scene-videos", activeChatId],
+    queryFn: () => api.get<{ videos: GeneratedSceneVideo[] }>(`/game/scene-videos/${activeChatId}`),
+    enabled: !!activeChatId,
+    staleTime: 30_000,
+  });
+  const latestSceneVideo = sceneVideosQuery.data?.videos?.[0] ?? null;
   const updateChat = useUpdateChat();
   const branchChat = useBranchChat();
   const languageConnections = useMemo(
@@ -2526,6 +2536,8 @@ function GameSurfaceComponent({
   const [assetGenerationBlocksScene, setAssetGenerationBlocksScene] = useState(false);
   const [assetGenerationFailed, setAssetGenerationFailed] = useState(false);
   const [manualBackgroundGenerating, setManualBackgroundGenerating] = useState(false);
+  const [sceneVideoGenerating, setSceneVideoGenerating] = useState(false);
+  const [sceneVideoFailed, setSceneVideoFailed] = useState(false);
   const [failedNpcAvatarNames, setFailedNpcAvatarNames] = useState<Set<string>>(() => new Set());
   const [imagePromptReviewItems, setImagePromptReviewItems] = useState<GameImagePromptReviewItem[]>([]);
   const [imagePromptReviewSubmitting, setImagePromptReviewSubmitting] = useState(false);
@@ -3315,6 +3327,8 @@ function GameSurfaceComponent({
     chatMeta.enableSpriteGeneration === true &&
     typeof chatMeta.gameImageConnectionId === "string" &&
     chatMeta.gameImageConnectionId.trim().length > 0;
+  const gameVideoGenerationEnabled =
+    typeof chatMeta.gameVideoConnectionId === "string" && chatMeta.gameVideoConnectionId.trim().length > 0;
   const gameImageAutoGenerationEnabled =
     gameImageGenerationEnabled && chatMeta.gameImageAutoGenerationEnabled !== false;
   const gameImageUseAvatarReferences = chatMeta.gameImageUseAvatarReferences !== false;
@@ -4980,6 +4994,49 @@ function GameSurfaceComponent({
     npcs,
     runGameAssetGeneration,
     sceneWrapCharacterNames,
+  ]);
+
+  const handleGenerateSceneVideo = useCallback(async (source?: { galleryImageId?: string }) => {
+    if (!activeChatId || sceneVideoGenerating) return;
+    if (!gameVideoGenerationEnabled) {
+      toast.error("Choose a Video Generation connection in Game Settings first.");
+      return;
+    }
+    const galleryImageId = source?.galleryImageId?.trim();
+    const illustrationTag =
+      typeof chatMeta.gameLastIllustrationTag === "string" ? chatMeta.gameLastIllustrationTag.trim() : "";
+    if (!galleryImageId && !illustrationTag) {
+      toast.error("Generate a scene illustration before generating a scene video.");
+      return;
+    }
+
+    setSceneVideoGenerating(true);
+    setSceneVideoFailed(false);
+    try {
+      const result = await api.post<{ video: GeneratedSceneVideo }>("/game/generate-scene-video", {
+        chatId: activeChatId,
+        ...(galleryImageId ? { galleryImageId } : { illustrationTag }),
+        debugMode: useUIStore.getState().debugMode,
+      });
+      const galleryStore = useGalleryStore.getState();
+      galleryStore.pinVideo(result.video);
+      galleryStore.syncLatestViewer({ ...result.video, kind: "video" as const });
+      void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+      await sceneVideosQuery.refetch();
+      toast.success("Scene video generated.", { duration: 1800 });
+    } catch (error) {
+      setSceneVideoFailed(true);
+      toast.error(error instanceof Error ? error.message : "Scene video generation failed.");
+    } finally {
+      setSceneVideoGenerating(false);
+    }
+  }, [
+    activeChatId,
+    chatMeta.gameLastIllustrationTag,
+    gameVideoGenerationEnabled,
+    queryClient,
+    sceneVideoGenerating,
+    sceneVideosQuery,
   ]);
 
   useEffect(() => {
@@ -8939,8 +8996,39 @@ function GameSurfaceComponent({
             {manualBackgroundGenerating ? <Loader2 size={14} className="animate-spin" /> : <ImagePlus size={14} />}
             Generate background
           </button>
+          <button
+            type="button"
+            onClick={() => void handleGenerateSceneVideo()}
+            disabled={
+              sceneVideoGenerating ||
+              !gameVideoGenerationEnabled ||
+              typeof chatMeta.gameLastIllustrationTag !== "string" ||
+              chatMeta.gameLastIllustrationTag.trim().length === 0
+            }
+            className="marinara-chat-popover__item flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            title="Generate a scene video from the latest illustration"
+          >
+            {sceneVideoGenerating ? <Loader2 size={14} className="animate-spin" /> : <Film size={14} />}
+            Generate video
+          </button>
         </div>
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {(latestSceneVideo || sceneVideoFailed) && (
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-divider)] p-3">
+              {latestSceneVideo ? (
+                <video
+                  src={latestSceneVideo.url}
+                  controls
+                  muted
+                  playsInline
+                  className="aspect-video w-full rounded-lg bg-black object-contain ring-1 ring-[var(--marinara-chat-chrome-panel-divider)]"
+                />
+              ) : null}
+              {sceneVideoFailed && (
+                <p className="mt-2 text-[0.6875rem] text-[var(--destructive)]">Scene video generation failed.</p>
+              )}
+            </div>
+          )}
           <Suspense fallback={null}>
             <GameAssetsBrowserView embedded onClose={() => setGameAssetsPanelOpen(false)} />
           </Suspense>
@@ -9993,10 +10081,12 @@ function GameSurfaceComponent({
                   onClose={handleCloseGalleryPanel}
                   anchor={galleryAnchor}
                   onIllustrate={handleManualSceneIllustration}
+                  onGenerateVideo={handleGenerateSceneVideo}
+                  onAnimateImage={(image) => handleGenerateSceneVideo({ galleryImageId: image.id })}
                   onGenerateBackground={handleManualSceneBackground}
                 />
               </Suspense>
-              <PinnedImageOverlay activeChatId={activeChatId} />
+              <PinnedImageOverlay activeChatId={activeChatId} includeSceneVideos />
 
               {/* Inventory overlay */}
               <GameInventory

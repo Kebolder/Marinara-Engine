@@ -395,6 +395,19 @@ const CREATE_TABLES: string[] = [
     turn_number INTEGER,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS game_scene_videos (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    source_illustration_tag TEXT,
+    source_illustration_path TEXT,
+    prompt TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    duration_seconds INTEGER NOT NULL DEFAULT 10,
+    aspect_ratio TEXT NOT NULL DEFAULT '16:9',
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS regex_scripts (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
@@ -926,6 +939,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
   {
     table: "api_connections",
     column: "image_endpoint_id",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "video_generation_source",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "video_service",
     definition: "TEXT",
   },
   {

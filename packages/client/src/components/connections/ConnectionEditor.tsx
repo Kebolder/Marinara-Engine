@@ -12,6 +12,7 @@ import {
   useTestConnection,
   useTestMessage,
   useTestImageGeneration,
+  useTestVideoGeneration,
   useDiagnoseClaudeSubscription,
   useFetchModels,
   useSaveConnectionDefaults,
@@ -42,6 +43,7 @@ import {
   ChevronDown,
   ExternalLink,
   ImageIcon,
+  Film,
   RotateCcw,
   SlidersHorizontal,
 } from "lucide-react";
@@ -70,8 +72,11 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   MODEL_LISTS,
   IMAGE_GENERATION_SOURCES,
+  VIDEO_GENERATION_SOURCES,
   inferImageSource,
+  inferVideoSource,
   IMAGE_DEFAULTS_STORAGE_KEY,
+  VIDEO_DEFAULTS_STORAGE_KEY,
   COMFYUI_SAMPLER_OPTIONS,
   COMFYUI_SCHEDULER_OPTIONS,
   NOVELAI_NOISE_SCHEDULE_OPTIONS,
@@ -79,14 +84,20 @@ import {
   SD_WEBUI_SAMPLER_OPTIONS,
   SD_WEBUI_SCHEDULER_OPTIONS,
   createDefaultImageGenerationProfile,
+  createDefaultVideoGenerationProfile,
   imageSourceToDefaultsService,
   normalizeImageGenerationProfile,
+  normalizeVideoGenerationProfile,
   sanitizeImageGenerationProfile,
+  sanitizeVideoGenerationProfile,
   suggestImageStyleProfileIdForModel,
   type APIProvider,
   type ImageDefaultsService,
   type ImageGenerationDefaultsProfile,
   type ImageStyleProfileSettings,
+  type VideoDefaultsService,
+  type VideoGenerationDefaultsProfile,
+  type VideoResolution,
 } from "@marinara-engine/shared";
 
 /** Links where users can obtain API keys for each provider */
@@ -103,12 +114,30 @@ const API_KEY_LINKS: Partial<Record<APIProvider, { label: string; url: string }>
   openrouter: { label: "Get your OpenRouter API key", url: "https://openrouter.ai/keys" },
   nanogpt: { label: "Get your NanoGPT API key", url: "https://nano-gpt.com/api" },
   xai: { label: "Get your xAI API key", url: "https://console.x.ai" },
+  video_generation: { label: "Get your Google AI API key", url: "https://aistudio.google.com/apikey" },
 };
 
 const DEFAULT_CACHING_AT_DEPTH = 5;
 const MAX_CACHING_AT_DEPTH = 100;
 const DEFAULT_MAX_PARALLEL_JOBS = 1;
 const MAX_PARALLEL_JOBS = 16;
+const DEFAULT_VIDEO_MODELS: Record<VideoDefaultsService, string> = {
+  gemini_omni: "gemini-omni-flash-preview",
+  xai: "grok-imagine-video-1.5",
+};
+const VIDEO_RESOLUTION_OPTIONS: Array<{ value: VideoResolution; label: string }> = [
+  { value: "480p", label: "480p" },
+  { value: "720p", label: "720p" },
+  { value: "1080p", label: "1080p" },
+];
+
+function videoSourceToDefaultsService(value: string | null | undefined): VideoDefaultsService {
+  return value === "xai" ? "xai" : "gemini_omni";
+}
+
+function defaultVideoModelForService(value: string | null | undefined): string {
+  return DEFAULT_VIDEO_MODELS[videoSourceToDefaultsService(value)];
+}
 
 function normalizeEndpointUrlInput(raw: string, label: string): { value: string; error: string | null } {
   const trimmed = raw.trim();
@@ -124,12 +153,18 @@ function normalizeEndpointUrlInput(raw: string, label: string): { value: string;
 }
 
 function canProviderTreatAsLocalEndpoint(provider: APIProvider): boolean {
-  return provider !== "image_generation" && provider !== "claude_subscription" && provider !== "openai_chatgpt";
+  return (
+    provider !== "image_generation" &&
+    provider !== "video_generation" &&
+    provider !== "claude_subscription" &&
+    provider !== "openai_chatgpt"
+  );
 }
 
 function providerSupportsDirectEmbeddingConfig(provider: APIProvider): boolean {
   return (
     provider !== "image_generation" &&
+    provider !== "video_generation" &&
     provider !== "anthropic" &&
     provider !== "claude_subscription" &&
     provider !== "openai_chatgpt"
@@ -161,6 +196,7 @@ export function ConnectionEditor() {
   const testConnection = useTestConnection();
   const testMessage = useTestMessage();
   const testImageGeneration = useTestImageGeneration();
+  const testVideoGeneration = useTestVideoGeneration();
   const diagnoseClaudeSubscription = useDiagnoseClaudeSubscription();
   const fetchModels = useFetchModels();
   const saveConnectionDefaults = useSaveConnectionDefaults();
@@ -199,6 +235,8 @@ export function ConnectionEditor() {
   const [localComfyuiWorkflow, setLocalComfyuiWorkflow] = useState("");
   const [localImageService, setLocalImageService] = useState<string | null>(null);
   const [localImageEndpointId, setLocalImageEndpointId] = useState("");
+  const [localVideoGenerationSource, setLocalVideoGenerationSource] = useState("");
+  const [localVideoService, setLocalVideoService] = useState<string | null>(null);
   const [localMaxTokensOverride, setLocalMaxTokensOverride] = useState<number | null>(null);
   const [localClaudeFastMode, setLocalClaudeFastMode] = useState(false);
   const [localTreatAsLocalEndpoint, setLocalTreatAsLocalEndpoint] = useState(false);
@@ -206,7 +244,9 @@ export function ConnectionEditor() {
   const [localDefaultParameters, setLocalDefaultParameters] =
     useState<EditableGenerationParameters>(CONNECTION_PARAMETER_DEFAULTS);
   const [localImageDefaults, setLocalImageDefaults] = useState<ImageGenerationDefaultsProfile | null>(null);
+  const [localVideoDefaults, setLocalVideoDefaults] = useState<VideoGenerationDefaultsProfile | null>(null);
   const [imageDefaultsExpanded, setImageDefaultsExpanded] = useState(false);
+  const [videoDefaultsExpanded, setVideoDefaultsExpanded] = useState(false);
 
   // Test results
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latencyMs: number } | null>(null);
@@ -217,6 +257,14 @@ export function ConnectionEditor() {
     error?: string;
   } | null>(null);
   const [imgTestResult, setImgTestResult] = useState<{
+    success: boolean;
+    base64: string | null;
+    mimeType: string | null;
+    latencyMs: number;
+    prompt: string;
+    error?: string;
+  } | null>(null);
+  const [vidTestResult, setVidTestResult] = useState<{
     success: boolean;
     base64: string | null;
     mimeType: string | null;
@@ -279,10 +327,24 @@ export function ConnectionEditor() {
     const storedImageDefaults = defaultsService
       ? getStoredImageGenerationDefaults(c.defaultParameters, defaultsService)
       : null;
+    const videoGenerationSource =
+      (c.provider as APIProvider) === "video_generation"
+        ? ((c.videoGenerationSource as string) ??
+          (c.videoService as string) ??
+          inferVideoSource((c.model as string) ?? "", (c.baseUrl as string) ?? ""))
+        : "";
+    const videoService = ((c.videoService as string | null) ?? (c.videoGenerationSource as string | null)) || null;
+    const storedVideoDefaults =
+      (c.provider as APIProvider) === "video_generation" ? getStoredVideoGenerationDefaults(c.defaultParameters) : null;
+    const videoDefaultsService = videoSourceToDefaultsService(
+      videoService || videoGenerationSource || storedVideoDefaults?.service,
+    );
     setLocalImageGenerationSource(imageGenerationSource);
     setLocalComfyuiWorkflow((c.comfyuiWorkflow as string) ?? "");
     setLocalImageService(imageService);
     setLocalImageEndpointId((c.imageEndpointId as string) ?? "");
+    setLocalVideoGenerationSource(videoGenerationSource);
+    setLocalVideoService(videoService);
     setLocalMaxTokensOverride(typeof c.maxTokensOverride === "number" ? (c.maxTokensOverride as number) : null);
     setLocalClaudeFastMode(c.claudeFastMode === "true" || c.claudeFastMode === true);
     setLocalTreatAsLocalEndpoint(c.treatAsLocalEndpoint === "true" || c.treatAsLocalEndpoint === true);
@@ -291,12 +353,21 @@ export function ConnectionEditor() {
     setLocalImageDefaults(
       defaultsService ? (storedImageDefaults ?? createDefaultImageGenerationProfile(defaultsService)) : null,
     );
+    setLocalVideoDefaults(
+      (c.provider as APIProvider) === "video_generation"
+        ? (storedVideoDefaults
+            ? sanitizeVideoGenerationProfile({ ...storedVideoDefaults, service: videoDefaultsService })
+            : createDefaultVideoGenerationProfile(videoDefaultsService))
+        : null,
+    );
     setImageDefaultsExpanded(!!storedImageDefaults);
+    setVideoDefaultsExpanded(!!storedVideoDefaults);
     setDirty(false);
     setSaveError(null);
     setTestResult(null);
     setMsgResult(null);
     setImgTestResult(null);
+    setVidTestResult(null);
     setClaudeDiagResult(null);
   }, [conn]);
 
@@ -353,11 +424,25 @@ export function ConnectionEditor() {
     return localImageGenerationSource || localImageService || inferImageSource(localModel, localBaseUrl);
   }, [localProvider, localImageGenerationSource, localImageService, localModel, localBaseUrl]);
 
+  const effectiveVideoGenerationSource = useMemo(() => {
+    if (localProvider !== "video_generation") return "";
+    return localVideoGenerationSource || localVideoService || inferVideoSource(localModel, localBaseUrl);
+  }, [localProvider, localVideoGenerationSource, localVideoService, localModel, localBaseUrl]);
+
   const selectedImageService =
     localProvider === "image_generation"
       ? localImageGenerationSource || localImageService || effectiveImageGenerationSource
       : "";
   const selectedImageDefaultsService = imageSourceToDefaultsService(selectedImageService);
+  const selectedVideoService =
+    localProvider === "video_generation"
+      ? localVideoGenerationSource || localVideoService || effectiveVideoGenerationSource
+      : "";
+  const selectedVideoDefaultsService = videoSourceToDefaultsService(selectedVideoService);
+  const apiKeyLink =
+    localProvider === "video_generation" && selectedVideoDefaultsService === "xai"
+      ? API_KEY_LINKS.xai
+      : API_KEY_LINKS[localProvider];
 
   useEffect(() => {
     if (localProvider !== "image_generation" || !selectedImageDefaultsService) {
@@ -370,6 +455,18 @@ export function ConnectionEditor() {
         : createDefaultImageGenerationProfile(selectedImageDefaultsService),
     );
   }, [localProvider, selectedImageDefaultsService]);
+
+  useEffect(() => {
+    if (localProvider !== "video_generation") {
+      setLocalVideoDefaults(null);
+      return;
+    }
+    setLocalVideoDefaults((current) =>
+      current
+        ? sanitizeVideoGenerationProfile({ ...current, service: selectedVideoDefaultsService })
+        : createDefaultVideoGenerationProfile(selectedVideoDefaultsService),
+    );
+  }, [localProvider, selectedVideoDefaultsService]);
 
   // Model list for current provider
   const providerModels = useMemo(() => {
@@ -450,6 +547,9 @@ export function ConnectionEditor() {
       setSaveError(embeddingBaseUrlValidation.error);
       throw new Error(embeddingBaseUrlValidation.error);
     }
+    const isImageProvider = localProvider === "image_generation";
+    const isVideoProvider = localProvider === "video_generation";
+    const isMediaProvider = isImageProvider || isVideoProvider;
     const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const existingEmbeddingModel = (conn as { embeddingModel?: string | null } | undefined)?.embeddingModel ?? "";
     const existingEmbeddingBaseUrl = (conn as { embeddingBaseUrl?: string | null } | undefined)?.embeddingBaseUrl ?? "";
@@ -469,17 +569,18 @@ export function ConnectionEditor() {
       embeddingModel: supportsDirectEmbeddings ? localEmbeddingModel : existingEmbeddingModel,
       embeddingBaseUrl: supportsDirectEmbeddings ? embeddingBaseUrlValidation.value : existingEmbeddingBaseUrl,
       embeddingConnectionId: localEmbeddingConnectionId || null,
-      promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
+      promptPresetId: !isMediaProvider ? localPromptPresetId || null : null,
       openrouterProvider: localOpenrouterProvider || null,
       imageGenerationSource:
-        localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
-      comfyuiWorkflow: localComfyuiWorkflow || null,
-      imageService:
-        localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null,
+        isImageProvider ? localImageGenerationSource || localImageService || null : null,
+      comfyuiWorkflow: isImageProvider ? localComfyuiWorkflow || null : null,
+      imageService: isImageProvider ? localImageGenerationSource || localImageService || null : null,
       imageEndpointId:
-        localProvider === "image_generation" && selectedImageService === "runpod_comfyui"
+        isImageProvider && selectedImageService === "runpod_comfyui"
           ? localImageEndpointId || null
           : null,
+      videoGenerationSource: isVideoProvider ? localVideoGenerationSource || localVideoService || null : null,
+      videoService: isVideoProvider ? localVideoGenerationSource || localVideoService || null : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
       claudeFastMode: localClaudeFastMode,
       treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
@@ -492,12 +593,12 @@ export function ConnectionEditor() {
     }
     try {
       await updateConnection.mutateAsync(payload as { id: string } & Record<string, unknown>);
-      if (localProvider !== "image_generation") {
+      if (!isMediaProvider) {
         await saveConnectionDefaults.mutateAsync({
           id: connectionDetailId,
           params: localDefaultParametersEnabled ? (localDefaultParameters as unknown as Record<string, unknown>) : null,
         });
-      } else {
+      } else if (isImageProvider) {
         const nextImageDefaults =
           selectedImageDefaultsService && localImageDefaults
             ? sanitizeImageGenerationProfile(localImageDefaults, selectedImageDefaultsService)
@@ -507,6 +608,17 @@ export function ConnectionEditor() {
           params: buildImageDefaultParameters(
             (conn as Record<string, unknown> | null)?.defaultParameters,
             nextImageDefaults,
+          ),
+        });
+      } else {
+        const nextVideoDefaults = localVideoDefaults
+          ? sanitizeVideoGenerationProfile({ ...localVideoDefaults, service: selectedVideoDefaultsService })
+          : null;
+        await saveConnectionDefaults.mutateAsync({
+          id: connectionDetailId,
+          params: buildVideoDefaultParameters(
+            (conn as Record<string, unknown> | null)?.defaultParameters,
+            nextVideoDefaults,
           ),
         });
       }
@@ -550,6 +662,8 @@ export function ConnectionEditor() {
     localComfyuiWorkflow,
     localImageService,
     localImageEndpointId,
+    localVideoGenerationSource,
+    localVideoService,
     localMaxTokensOverride,
     localClaudeFastMode,
     localTreatAsLocalEndpoint,
@@ -557,7 +671,9 @@ export function ConnectionEditor() {
     localDefaultParameters,
     selectedImageService,
     selectedImageDefaultsService,
+    selectedVideoDefaultsService,
     localImageDefaults,
+    localVideoDefaults,
     updateConnection,
     saveConnectionDefaults,
     conn,
@@ -589,19 +705,29 @@ export function ConnectionEditor() {
     if (!confirmed) return;
 
     const currentConnection = conn as Record<string, unknown>;
+    const isImageProvider = localProvider === "image_generation";
+    const isVideoProvider = localProvider === "video_generation";
+    const isMediaProvider = isImageProvider || isVideoProvider;
     const defaultParameters =
-      localProvider === "image_generation"
+      isImageProvider
         ? buildImageDefaultParameters(
             currentConnection.defaultParameters,
             selectedImageDefaultsService && localImageDefaults
               ? sanitizeImageGenerationProfile(localImageDefaults, selectedImageDefaultsService)
               : null,
           )
+        : isVideoProvider
+          ? buildVideoDefaultParameters(
+              currentConnection.defaultParameters,
+              localVideoDefaults
+                ? sanitizeVideoGenerationProfile({ ...localVideoDefaults, service: selectedVideoDefaultsService })
+                : null,
+            )
         : localDefaultParametersEnabled
           ? (localDefaultParameters as unknown as Record<string, unknown>)
           : null;
-    const imageService =
-      localProvider === "image_generation" ? localImageGenerationSource || localImageService || null : null;
+    const imageService = isImageProvider ? localImageGenerationSource || localImageService || null : null;
+    const videoService = isVideoProvider ? localVideoGenerationSource || localVideoService || null : null;
     const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const supportsDirectEmbeddings = providerSupportsDirectEmbeddingConfig(localProvider);
     const existingEmbeddingModel = (conn as { embeddingModel?: string | null } | undefined)?.embeddingModel ?? "";
@@ -616,7 +742,7 @@ export function ConnectionEditor() {
       maxTokensOverride: localMaxTokensOverride ?? null,
       maxParallelJobs: localMaxParallelJobs,
       treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
-      promptPresetId: localProvider !== "image_generation" ? localPromptPresetId || null : null,
+      promptPresetId: !isMediaProvider ? localPromptPresetId || null : null,
       defaultParameters,
       enableCaching: localEnableCaching,
       cachingAtDepth: localCachingAtDepth,
@@ -627,11 +753,13 @@ export function ConnectionEditor() {
       openrouterProvider: localOpenrouterProvider || null,
       imageGenerationSource: imageService,
       imageService,
+      videoGenerationSource: videoService,
+      videoService,
       imageEndpointId:
-        localProvider === "image_generation" && selectedImageService === "runpod_comfyui"
+        isImageProvider && selectedImageService === "runpod_comfyui"
           ? localImageEndpointId || null
           : null,
-      comfyuiWorkflow: localProvider === "image_generation" ? localComfyuiWorkflow || null : null,
+      comfyuiWorkflow: isImageProvider ? localComfyuiWorkflow || null : null,
       claudeFastMode: localClaudeFastMode,
     };
 
@@ -662,12 +790,16 @@ export function ConnectionEditor() {
     localOpenrouterProvider,
     localImageGenerationSource,
     localImageService,
+    localVideoGenerationSource,
+    localVideoService,
     selectedImageService,
     localImageEndpointId,
     localComfyuiWorkflow,
     localClaudeFastMode,
     selectedImageDefaultsService,
+    selectedVideoDefaultsService,
     localImageDefaults,
+    localVideoDefaults,
   ]);
 
   const handleTestConnection = useCallback(async () => {
@@ -772,6 +904,40 @@ export function ConnectionEditor() {
     });
   }, [connectionDetailId, dirty, handleSave, testImageGeneration]);
 
+  const handleTestVideo = useCallback(async () => {
+    if (!connectionDetailId) return;
+    if (dirty) {
+      try {
+        await handleSave();
+      } catch {
+        return;
+      }
+    }
+    setVidTestResult(null);
+    testVideoGeneration.mutate(connectionDetailId, {
+      onSuccess: (data) =>
+        setVidTestResult(
+          data as {
+            success: boolean;
+            base64: string | null;
+            mimeType: string | null;
+            latencyMs: number;
+            prompt: string;
+            error?: string;
+          },
+        ),
+      onError: (err) =>
+        setVidTestResult({
+          success: false,
+          base64: null,
+          mimeType: null,
+          latencyMs: 0,
+          prompt: "",
+          error: err instanceof Error ? err.message : "Failed",
+        }),
+    });
+  }, [connectionDetailId, dirty, handleSave, testVideoGeneration]);
+
   const handleFetchModels = useCallback(async () => {
     if (!connectionDetailId) return;
     setFetchError(null);
@@ -828,6 +994,8 @@ export function ConnectionEditor() {
 
   const providerDef = PROVIDERS[localProvider];
   const isImageGenerationProvider = localProvider === "image_generation";
+  const isVideoGenerationProvider = localProvider === "video_generation";
+  const isMediaGenerationProvider = isImageGenerationProvider || isVideoGenerationProvider;
   const isClaudeSubscriptionProvider = localProvider === "claude_subscription";
   const isOpenAIChatGPTProvider = localProvider === "openai_chatgpt";
   const isLocalAuthProvider = isClaudeSubscriptionProvider || isOpenAIChatGPTProvider;
@@ -1150,15 +1318,15 @@ export function ConnectionEditor() {
                 Your key is encrypted at rest. Leave blank when editing to keep the existing key.
               </p>
             )}
-            {!isLocalAuthProvider && API_KEY_LINKS[localProvider] && (
+            {!isLocalAuthProvider && apiKeyLink && (
               <a
-                href={API_KEY_LINKS[localProvider]!.url}
+                href={apiKeyLink.url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-1.5 inline-flex items-center gap-1 text-[0.6875rem] font-medium text-sky-400 transition-colors hover:text-sky-300"
               >
                 <ExternalLink size="0.625rem" />
-                {API_KEY_LINKS[localProvider]!.label}
+                {apiKeyLink.label}
               </a>
             )}
             {localProvider === "custom" && (
@@ -1313,6 +1481,59 @@ export function ConnectionEditor() {
                   CLIPTextEncode node.
                 </div>
               )}
+            </FieldGroup>
+          )}
+
+          {localProvider === "video_generation" && (
+            <FieldGroup
+              label="Video Service"
+              icon={<Film size="0.875rem" className="text-sky-400" />}
+              help="Pick the video backend. Game Mode uses this service to produce MP4 scene videos."
+            >
+              <div className="grid grid-cols-2 gap-1.5">
+                {VIDEO_GENERATION_SOURCES.map((src) => {
+                  const isActive = selectedVideoService === src.id;
+                  return (
+                    <button
+                      key={src.id}
+                      onClick={() => {
+                        const previousSource = VIDEO_GENERATION_SOURCES.find(
+                          (candidate) => candidate.id === selectedVideoService,
+                        );
+                        const shouldSeedBaseUrl = !localBaseUrl || localBaseUrl === previousSource?.defaultBaseUrl;
+                        const previousDefaultModel = defaultVideoModelForService(selectedVideoService);
+                        const nextDefaultModel = defaultVideoModelForService(src.id);
+                        const shouldSeedModel = !localModel || localModel === previousDefaultModel;
+                        setLocalVideoGenerationSource(src.id);
+                        setLocalVideoService(src.id);
+                        if (shouldSeedBaseUrl) {
+                          setLocalBaseUrl(src.defaultBaseUrl);
+                        }
+                        if (shouldSeedModel) {
+                          setLocalModel(nextDefaultModel);
+                        }
+                        markDirty();
+                      }}
+                      className={cn(
+                        "flex flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left text-[0.6875rem] transition-all",
+                        isActive
+                          ? "bg-sky-400/15 text-sky-400 ring-1 ring-sky-400/30"
+                          : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{src.name}</span>
+                        {isActive && <Check size="0.625rem" />}
+                      </div>
+                      <span className="text-[0.5625rem] opacity-70">{src.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                Scene videos are generated from the current game illustration plus the editable scene video prompt
+                template.
+              </p>
             </FieldGroup>
           )}
 
@@ -1630,8 +1851,24 @@ export function ConnectionEditor() {
             />
           )}
 
+          {localProvider === "video_generation" && localVideoDefaults && (
+            <VideoGenerationDefaultsPanel
+              value={localVideoDefaults}
+              expanded={videoDefaultsExpanded}
+              onExpandedChange={setVideoDefaultsExpanded}
+              onChange={(next) => {
+                setLocalVideoDefaults(sanitizeVideoGenerationProfile(next));
+                markDirty();
+              }}
+              onReset={() => {
+                setLocalVideoDefaults(createDefaultVideoGenerationProfile(selectedVideoDefaultsService));
+                markDirty();
+              }}
+            />
+          )}
+
           {/* ── Max Context ── */}
-          {localProvider !== "image_generation" && (
+          {!isMediaGenerationProvider && (
             <FieldGroup
               label="Max Context Window"
               icon={<Zap size="0.875rem" className="text-sky-400" />}
@@ -1657,7 +1894,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Max Output Tokens Override ── */}
-          {localProvider !== "image_generation" && !isLocalAuthProvider && (
+          {!isMediaGenerationProvider && !isLocalAuthProvider && (
             <FieldGroup
               label="Max Output Tokens Override"
               icon={<Zap size="0.875rem" className="text-[var(--marinara-chat-chrome-button-text-active)]" />}
@@ -1686,7 +1923,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Agent Parallel Jobs ── */}
-          {localProvider !== "image_generation" && (
+          {!isMediaGenerationProvider && (
             <FieldGroup
               label="Max Parallel Agent Jobs"
               icon={
@@ -1739,7 +1976,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Prompt Preset Override ── */}
-          {localProvider !== "image_generation" && (
+          {!isMediaGenerationProvider && (
             <FieldGroup
               label="Prompt Preset Override"
               icon={<FileText size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
@@ -1768,7 +2005,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Default Chat Parameters ── */}
-          {localProvider !== "image_generation" && (
+          {!isMediaGenerationProvider && (
             <FieldGroup
               label="Default Chat Parameters"
               icon={<Zap size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
@@ -1868,19 +2105,29 @@ export function ConnectionEditor() {
 
           {/* ── Default for Agents ── */}
           <FieldGroup
-            label={isImageGenerationProvider ? "Default for Illustrator" : "Default for Agents"}
+            label={
+              isImageGenerationProvider
+                ? "Default for Illustrator"
+                : isVideoGenerationProvider
+                  ? "Default for Scene Videos"
+                  : "Default for Agents"
+            }
             icon={<Sparkles size="0.875rem" className="text-sky-400" />}
             help={
               isImageGenerationProvider
                 ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
-                : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
+                : isVideoGenerationProvider
+                  ? "When enabled, Game Mode uses this video generation connection by default when a game has no specific Video Generation Connection assigned."
+                  : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
             }
           >
             <SettingsSwitch
               label={
                 isImageGenerationProvider
                   ? "Use as default Illustrator agent connection"
-                  : "Use as default agent connection"
+                  : isVideoGenerationProvider
+                    ? "Use as default scene video connection"
+                    : "Use as default agent connection"
               }
               checked={localDefaultForAgents}
               onChange={(checked) => {
@@ -1892,6 +2139,11 @@ export function ConnectionEditor() {
             {isImageGenerationProvider && (
               <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
                 Only one image generation connection should be marked as the default for the Illustrator agent.
+              </p>
+            )}
+            {isVideoGenerationProvider && (
+              <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
+                Only one video generation connection should be marked as the default scene video connection.
               </p>
             )}
           </FieldGroup>
@@ -1948,7 +2200,7 @@ export function ConnectionEditor() {
           )}
 
           {/* ── Embedding Model (for lorebook vectorization) ── */}
-          {localProvider !== "image_generation" && (
+          {!isMediaGenerationProvider && (
             <FieldGroup
               label="Semantic Search (Embeddings)"
               icon={<Server size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
@@ -2030,7 +2282,12 @@ export function ConnectionEditor() {
                     <option value={LOCAL_SIDECAR_CONNECTION_ID}>Local Model (sidecar)</option>
                   )}
                   {((allConnections ?? []) as Record<string, unknown>[])
-                    .filter((c) => c.id !== connectionDetailId && c.provider !== "image_generation")
+                    .filter(
+                      (c) =>
+                        c.id !== connectionDetailId &&
+                        c.provider !== "image_generation" &&
+                        c.provider !== "video_generation",
+                    )
                     .map((c) => (
                       <option key={c.id as string} value={c.id as string}>
                         {c.name as string}
@@ -2063,7 +2320,7 @@ export function ConnectionEditor() {
                 )}
                 Test Connection
               </button>
-              {localProvider !== "image_generation" && (
+              {!isMediaGenerationProvider && (
                 <button
                   onClick={handleTestMessage}
                   disabled={testMessage.isPending || !localModel}
@@ -2092,6 +2349,21 @@ export function ConnectionEditor() {
                   Test Image
                 </button>
               )}
+              {localProvider === "video_generation" && (
+                <button
+                  onClick={handleTestVideo}
+                  disabled={testVideoGeneration.isPending}
+                  className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-50"
+                  title={dirty ? "Save first to test video generation" : undefined}
+                >
+                  {testVideoGeneration.isPending ? (
+                    <Loader2 size="0.8125rem" className="animate-spin" />
+                  ) : (
+                    <Film size="0.8125rem" />
+                  )}
+                  Test Video
+                </button>
+              )}
               {localProvider === "claude_subscription" && (
                 <button
                   onClick={handleDiagnoseClaudeSubscription}
@@ -2111,7 +2383,7 @@ export function ConnectionEditor() {
 
             <p className="text-[0.625rem] text-[var(--muted-foreground)]">
               <strong>Test Connection</strong> verifies your API key against the provider catalog or health endpoint.
-              {localProvider !== "image_generation" && (
+              {!isMediaGenerationProvider && (
                 <>
                   {" "}
                   <strong>Send Test Message</strong> sends "hi" to the selected model endpoint and shows the response.
@@ -2121,6 +2393,12 @@ export function ConnectionEditor() {
                 <>
                   {" "}
                   <strong>Test Image</strong> generates a 512×512 test image (requires saving first).
+                </>
+              )}
+              {localProvider === "video_generation" && (
+                <>
+                  {" "}
+                  <strong>Test Video</strong> generates a short MP4 test clip (requires saving first).
                 </>
               )}
               {localProvider === "claude_subscription" && (
@@ -2166,6 +2444,23 @@ export function ConnectionEditor() {
                   />
                 ) : (
                   <span className="text-[var(--destructive)]">{imgTestResult.error || "No image returned"}</span>
+                )}
+              </TestResultCard>
+            )}
+
+            {vidTestResult && (
+              <TestResultCard label="Test Video" success={vidTestResult.success} latencyMs={vidTestResult.latencyMs}>
+                {vidTestResult.success && vidTestResult.base64 && vidTestResult.mimeType ? (
+                  <video
+                    src={`data:${vidTestResult.mimeType};base64,${vidTestResult.base64}`}
+                    title={vidTestResult.prompt}
+                    controls
+                    muted
+                    playsInline
+                    className="mt-2 aspect-video max-h-[300px] w-full max-w-xl rounded-lg bg-black object-contain"
+                  />
+                ) : (
+                  <span className="text-[var(--destructive)]">{vidTestResult.error || "No video returned"}</span>
                 )}
               </TestResultCard>
             )}
@@ -2733,6 +3028,154 @@ function TextSetting({
   );
 }
 
+function VideoGenerationDefaultsPanel({
+  value,
+  expanded,
+  onExpandedChange,
+  onChange,
+  onReset,
+}: {
+  value: VideoGenerationDefaultsProfile;
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  onChange: (next: VideoGenerationDefaultsProfile) => void;
+  onReset: () => void;
+}) {
+  const service = value.service === "xai" ? "xai" : "gemini_omni";
+  const summary =
+    service === "xai"
+      ? `${value.xai.durationSeconds}s, ${value.xai.aspectRatio}, ${value.xai.resolution}`
+      : `${value.geminiOmni.durationSeconds}s, ${value.geminiOmni.aspectRatio}`;
+
+  const updateGeminiOmni = (patch: Partial<VideoGenerationDefaultsProfile["geminiOmni"]>) => {
+    onChange({
+      ...value,
+      service: "gemini_omni",
+      geminiOmni: { ...value.geminiOmni, ...patch },
+    });
+  };
+  const updateXai = (patch: Partial<VideoGenerationDefaultsProfile["xai"]>) => {
+    onChange({
+      ...value,
+      service: "xai",
+      xai: { ...value.xai, ...patch },
+    });
+  };
+
+  return (
+    <FieldGroup
+      label="Video Defaults"
+      icon={<SlidersHorizontal size="0.875rem" className="text-sky-400" />}
+      help={
+        service === "xai"
+          ? "Connection-scoped defaults for xAI scene video generation."
+          : "Connection-scoped defaults for scene video generation. Duration is rendered into the Omni prompt."
+      }
+    >
+      <div className="rounded-xl bg-[var(--secondary)]/40 ring-1 ring-[var(--border)]">
+        <button
+          type="button"
+          onClick={() => onExpandedChange(!expanded)}
+          className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[var(--accent)]"
+        >
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-[var(--foreground)]">
+              {service === "xai" ? "xAI Imagine setup" : "Gemini Omni setup"}
+            </div>
+            <div className="text-[0.625rem] text-[var(--muted-foreground)]">{summary}</div>
+          </div>
+          <ChevronDown
+            size="0.875rem"
+            className={cn("shrink-0 text-[var(--muted-foreground)] transition-transform", expanded && "rotate-180")}
+          />
+        </button>
+
+        {expanded && (
+          <div className="space-y-3 border-t border-[var(--border)] px-3 py-3">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onReset}
+                className="flex items-center gap-1.5 rounded-lg bg-[var(--card)] px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:text-[var(--foreground)]"
+              >
+                <RotateCcw size="0.6875rem" />
+                Reset
+              </button>
+            </div>
+
+            {service === "xai" ? (
+              <>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <NumberSetting
+                    label="Duration Seconds"
+                    value={value.xai.durationSeconds}
+                    min={1}
+                    max={15}
+                    onCommit={(durationSeconds) => updateXai({ durationSeconds })}
+                  />
+                  <label className="block">
+                    <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Aspect Ratio</span>
+                    <select
+                      value={value.xai.aspectRatio}
+                      onChange={(event) =>
+                        updateXai({ aspectRatio: event.target.value === "9:16" ? "9:16" : "16:9" })
+                      }
+                      className="mt-1 w-full rounded-lg bg-[var(--card)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                    >
+                      <option value="16:9">16:9</option>
+                      <option value="9:16">9:16</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Resolution</span>
+                    <select
+                      value={value.xai.resolution}
+                      onChange={(event) => updateXai({ resolution: event.target.value as VideoResolution })}
+                      className="mt-1 w-full rounded-lg bg-[var(--card)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                    >
+                      {VIDEO_RESOLUTION_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                  These values are sent to the xAI Videos API. xAI accepts 1-15 seconds for generated videos.
+                </p>
+              </>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <NumberSetting
+                  label="Target Duration Seconds"
+                  value={value.geminiOmni.durationSeconds}
+                  min={1}
+                  max={60}
+                  onCommit={(durationSeconds) => updateGeminiOmni({ durationSeconds })}
+                />
+                <label className="block">
+                  <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Aspect Ratio</span>
+                  <select
+                    value={value.geminiOmni.aspectRatio}
+                    onChange={(event) =>
+                      updateGeminiOmni({ aspectRatio: event.target.value === "9:16" ? "9:16" : "16:9" })
+                    }
+                    className="mt-1 w-full rounded-lg bg-[var(--card)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                  >
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </FieldGroup>
+  );
+}
+
 function ChoiceSetting({
   label,
   value,
@@ -2844,6 +3287,25 @@ function buildImageDefaultParameters(
     root[IMAGE_DEFAULTS_STORAGE_KEY] = imageDefaults;
   } else {
     delete root[IMAGE_DEFAULTS_STORAGE_KEY];
+  }
+  return Object.keys(root).length > 0 ? root : null;
+}
+
+function getStoredVideoGenerationDefaults(raw: unknown): VideoGenerationDefaultsProfile | null {
+  const root = parseDefaultParametersRoot(raw);
+  if (!root[VIDEO_DEFAULTS_STORAGE_KEY]) return null;
+  return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
+}
+
+function buildVideoDefaultParameters(
+  raw: unknown,
+  videoDefaults: VideoGenerationDefaultsProfile | null,
+): Record<string, unknown> | null {
+  const root = parseDefaultParametersRoot(raw);
+  if (videoDefaults) {
+    root[VIDEO_DEFAULTS_STORAGE_KEY] = videoDefaults;
+  } else {
+    delete root[VIDEO_DEFAULTS_STORAGE_KEY];
   }
   return Object.keys(root).length > 0 ? root : null;
 }

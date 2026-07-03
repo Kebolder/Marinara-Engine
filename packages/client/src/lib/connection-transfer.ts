@@ -23,6 +23,8 @@ export type ConnectionTransferRow = {
   openrouterProvider?: unknown;
   imageGenerationSource?: unknown;
   imageService?: unknown;
+  videoGenerationSource?: unknown;
+  videoService?: unknown;
   service?: unknown;
   imageEndpointId?: unknown;
   comfyuiWorkflow?: unknown;
@@ -52,6 +54,8 @@ export type SafeConnectionExport = {
   openrouterProvider: string | null;
   imageGenerationSource: string | null;
   imageService: string | null;
+  videoGenerationSource: string | null;
+  videoService: string | null;
   imageEndpointId: string | null;
   comfyuiWorkflow: string | null;
   treatAsLocalEndpoint: boolean;
@@ -97,6 +101,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
   const defaultParameters = parseDefaultParameters(value.defaultParameters);
   const imageService = asNullableString(value.imageService ?? value.service);
+  const videoService = asNullableString(value.videoService ?? value.service);
 
   return {
     connection: {
@@ -120,6 +125,8 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       comfyuiWorkflow: asNullableString(value.comfyuiWorkflow),
       imageService,
       imageEndpointId: asNullableString(value.imageEndpointId),
+      videoGenerationSource: asNullableString(value.videoGenerationSource),
+      videoService,
       promptPresetId: null,
       maxTokensOverride: asNullablePositiveInteger(value.maxTokensOverride),
       maxParallelJobs: asBoundedPositiveInteger(value.maxParallelJobs, 1, MAX_PARALLEL_JOBS),
@@ -155,6 +162,8 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     openrouterProvider: asNullableString(connection.openrouterProvider),
     imageGenerationSource: asNullableString(connection.imageGenerationSource),
     imageService: asNullableString(connection.imageService ?? connection.service),
+    videoGenerationSource: asNullableString(connection.videoGenerationSource),
+    videoService: asNullableString(connection.videoService ?? connection.service),
     imageEndpointId: asNullableString(connection.imageEndpointId),
     comfyuiWorkflow: asNullableString(connection.comfyuiWorkflow),
     treatAsLocalEndpoint: asBoolean(connection.treatAsLocalEndpoint),
