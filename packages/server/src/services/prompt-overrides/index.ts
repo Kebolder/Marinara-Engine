@@ -13,6 +13,7 @@ export {
   GAME_NPC_PORTRAIT,
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
+  GAME_NARRATION_SUMMARIZER,
   CONVERSATION_SELFIE,
   getPromptOverrideDef,
   listPromptOverrideKeys,
@@ -27,5 +28,6 @@ export type {
   GameNpcPortraitCtx,
   GameBackgroundCtx,
   GameSceneIllustrationCtx,
+  GameNarrationSummarizerCtx,
   ConversationSelfieCtx,
 } from "./registry.js";

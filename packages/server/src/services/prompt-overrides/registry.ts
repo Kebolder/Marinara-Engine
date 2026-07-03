@@ -12,7 +12,12 @@ import {
   SPRITES_SINGLE_FULL_BODY,
   SPRITES_FULL_BODY_SHEET,
 } from "./registry/sprites.js";
-import { GAME_NPC_PORTRAIT, GAME_BACKGROUND, GAME_SCENE_ILLUSTRATION } from "./registry/game-assets.js";
+import {
+  GAME_NPC_PORTRAIT,
+  GAME_BACKGROUND,
+  GAME_SCENE_ILLUSTRATION,
+  GAME_NARRATION_SUMMARIZER,
+} from "./registry/game-assets.js";
 import { CONVERSATION_SELFIE } from "./registry/conversation.js";
 
 export const PROMPT_OVERRIDE_REGISTRY = [
@@ -23,6 +28,7 @@ export const PROMPT_OVERRIDE_REGISTRY = [
   GAME_NPC_PORTRAIT,
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
+  GAME_NARRATION_SUMMARIZER,
   CONVERSATION_SELFIE,
 ] as const;
 
@@ -57,6 +63,7 @@ export {
   GAME_NPC_PORTRAIT,
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
+  GAME_NARRATION_SUMMARIZER,
   CONVERSATION_SELFIE,
 };
 export type {
@@ -65,6 +72,11 @@ export type {
   SpritesSingleFullBodyCtx,
   SpritesFullBodySheetCtx,
 } from "./registry/sprites.js";
-export type { GameNpcPortraitCtx, GameBackgroundCtx, GameSceneIllustrationCtx } from "./registry/game-assets.js";
+export type {
+  GameNpcPortraitCtx,
+  GameBackgroundCtx,
+  GameSceneIllustrationCtx,
+  GameNarrationSummarizerCtx,
+} from "./registry/game-assets.js";
 export type { ConversationSelfieCtx } from "./registry/conversation.js";
 export type { PromptOverrideKeyDef, PromptVariable } from "./types.js";

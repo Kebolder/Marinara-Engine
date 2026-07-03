@@ -145,7 +145,11 @@ import {
   loadImageGenerationUserSettings,
   type ImageGenerationSize,
 } from "../services/image/image-generation-settings.js";
-import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import {
+  createPromptOverridesStorage,
+  type PromptOverridesStorage,
+} from "../services/storage/prompt-overrides.storage.js";
+import { GAME_NARRATION_SUMMARIZER, loadPrompt } from "../services/prompt-overrides/index.js";
 import { now } from "../utils/id-generator.js";
 import {
   buildGameSpotifySceneQuery,
@@ -561,7 +565,8 @@ function mergeSummarizedIllustration(
   };
 }
 
-function buildIllustrationNarrationSummaryMessages(args: {
+async function buildIllustrationNarrationSummaryMessages(args: {
+  promptOverridesStorage?: PromptOverridesStorage;
   illustration: SceneIllustrationRequest;
   narration: string;
   state?: string | null;
@@ -573,7 +578,7 @@ function buildIllustrationNarrationSummaryMessages(args: {
   worldOverview?: string | null;
   artStyle?: string | null;
   imagePromptInstructions?: string | null;
-}): ChatMessage[] {
+}): Promise<ChatMessage[]> {
   const contextLines = [
     args.state ? `Mode: ${compactIllustrationContext(args.state, 80)}` : "",
     args.location ? `Location: ${compactIllustrationContext(args.location)}` : "",
@@ -595,26 +600,29 @@ function buildIllustrationNarrationSummaryMessages(args: {
     reason: args.illustration.reason ?? null,
     slug: args.illustration.slug ?? null,
   };
+  const gameContextBlock = contextLines.length ? `<game_context>\n${contextLines.join("\n")}\n</game_context>` : "";
+  const currentIllustrationRequestJson = JSON.stringify(currentRequest, null, 2);
+  const completedTurnNarration = compactIllustrationNarration(args.narration);
+  const summarizerVars = {
+    gameContextBlock,
+    currentIllustrationRequestJson,
+    completedTurnNarration,
+  };
+  const summarizerPrompt = args.promptOverridesStorage
+    ? await loadPrompt(args.promptOverridesStorage, GAME_NARRATION_SUMMARIZER, summarizerVars)
+    : GAME_NARRATION_SUMMARIZER.defaultBuilder(summarizerVars);
 
   return [
     {
       role: "system",
-      content: [
-        "You are Marinara's Game Mode narration summarizer for the Illustrator.",
-        "Read the completed turn narration and dialogue, then convert it into one concise image-generation prompt.",
-        "Focus on the single strongest visible moment from the full turn: who is present, what they are doing, expressions, pose, composition, lighting, setting, mood, and player POV.",
-        "Do not quote dialogue in the image prompt; translate spoken lines into visible expression, action, and relationship tension.",
-        "Do not invent unseen characters, UI, text, captions, speech bubbles, watermarks, or logos.",
-        "The player protagonist should not be visible unless the narration explicitly requires hands, arms, or body.",
-        "Return strict JSON only with keys: title, prompt, characters, reason, slug.",
-      ].join("\n"),
+      content: summarizerPrompt,
     },
     {
       role: "user",
       content: [
-        contextLines.length ? `<game_context>\n${contextLines.join("\n")}\n</game_context>` : "",
-        `<current_illustration_request>\n${JSON.stringify(currentRequest, null, 2)}\n</current_illustration_request>`,
-        `<completed_turn_narration>\n${compactIllustrationNarration(args.narration)}\n</completed_turn_narration>`,
+        gameContextBlock,
+        `<current_illustration_request>\n${currentIllustrationRequestJson}\n</current_illustration_request>`,
+        `<completed_turn_narration>\n${completedTurnNarration}\n</completed_turn_narration>`,
         [
           "Create JSON now.",
           "prompt: detailed concrete visual description only; preserve every visually important named character, pose, expression, setting detail, and mood from the completed turn. Do not truncate mid-detail. Keep the prompt under 6500 characters.",
@@ -630,6 +638,7 @@ function buildIllustrationNarrationSummaryMessages(args: {
 
 async function summarizeIllustrationFromNarration(args: {
   connections: ReturnType<typeof createConnectionsStorage>;
+  promptOverridesStorage?: PromptOverridesStorage;
   chat: NonNullable<StoredChatRecord>;
   meta: Record<string, unknown>;
   setupConfig: Record<string, unknown> | null;
@@ -644,7 +653,9 @@ async function summarizeIllustrationFromNarration(args: {
 
   try {
     const sceneConnId =
-      (args.meta.gameSceneConnectionId as string | undefined) || (args.setupConfig?.sceneConnectionId as string) || null;
+      (args.meta.gameSceneConnectionId as string | undefined) ||
+      (args.setupConfig?.sceneConnectionId as string) ||
+      null;
     const { conn, baseUrl, defaultGenerationParameters } = await resolveConnection(
       args.connections,
       sceneConnId,
@@ -659,7 +670,8 @@ async function summarizeIllustrationFromNarration(args: {
       conn.openrouterProvider,
       conn.maxTokensOverride,
     );
-    const messages = buildIllustrationNarrationSummaryMessages({
+    const messages = await buildIllustrationNarrationSummaryMessages({
+      promptOverridesStorage: args.promptOverridesStorage,
       illustration: args.illustration,
       narration,
       state: typeof args.meta.gameActiveState === "string" ? args.meta.gameActiveState : null,
@@ -680,6 +692,7 @@ async function summarizeIllustrationFromNarration(args: {
       narration.length,
       args.illustration.prompt.length,
     );
+    args.debugLog?.("[debug/game/illustration-summarizer] prompt messages:\n%s", JSON.stringify(messages, null, 2));
 
     const result = await runGameChatComplete(
       provider,
@@ -8285,6 +8298,7 @@ export async function gameRoutes(app: FastifyInstance) {
         let illustration = originalIllustration;
         illustration = await summarizeIllustrationFromNarration({
           connections,
+          promptOverridesStorage,
           chat,
           meta,
           setupConfig: setupCfg,
@@ -8536,6 +8550,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const backgroundSize: ImageGenerationSize = input.imageSizes?.background ?? imageSettings.background;
       const portraitSize: ImageGenerationSize = input.imageSizes?.portrait ?? imageSettings.portrait;
       const styleProfiles = imageSettings.styleProfiles;
+      const promptOverridesStorage = createPromptOverridesStorage(app.db);
       const promptOverrideById = new Map(
         (input.promptOverrides ?? []).map((item) => [
           item.id,
@@ -8577,7 +8592,7 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfiles,
           styleProfileId,
           debugLog: debugLogsEnabled ? debugLog : undefined,
-          promptOverridesStorage: createPromptOverridesStorage(app.db),
+          promptOverridesStorage,
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
@@ -8641,6 +8656,7 @@ export async function gameRoutes(app: FastifyInstance) {
           let illustration = originalIllustration;
           illustration = await summarizeIllustrationFromNarration({
             connections,
+            promptOverridesStorage,
             chat,
             meta,
             setupConfig: setupCfg,
@@ -8687,7 +8703,7 @@ export async function gameRoutes(app: FastifyInstance) {
             styleProfiles,
             styleProfileId,
             debugLog: debugLogsEnabled ? debugLog : undefined,
-            promptOverridesStorage: createPromptOverridesStorage(app.db),
+            promptOverridesStorage,
             size: backgroundSize,
             promptOverride: promptOverride?.prompt,
             negativePromptOverride: promptOverride?.negativePrompt,
@@ -8805,7 +8821,7 @@ export async function gameRoutes(app: FastifyInstance) {
                 styleProfiles,
                 styleProfileId,
                 debugLog: debugLogsEnabled ? debugLog : undefined,
-                promptOverridesStorage: createPromptOverridesStorage(app.db),
+                promptOverridesStorage,
                 size: portraitSize,
                 promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.prompt,
                 negativePromptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))
