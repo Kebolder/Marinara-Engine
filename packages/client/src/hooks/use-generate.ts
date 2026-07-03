@@ -2329,7 +2329,7 @@ export function useGenerate() {
         if (isAbortError(error)) return receivedContent;
         if (isPassiveStreamDisconnect(error, pageWasHiddenDuringStream, abortController.signal)) {
           passiveStreamRecovered = true;
-          useChatStore.getState().setGenerationPhase("Finishing in background...");
+          if (isActiveChat()) useChatStore.getState().setGenerationPhase("Finishing in background...");
           const settled = await waitForServerGenerationToSettle(params.chatId, abortController.signal);
           if (!abortController.signal.aborted) {
             await refreshMessagesAuthoritatively(qc, params.chatId, persistedMessages.values());

@@ -2831,12 +2831,7 @@ function VectorizeSection({
             </select>
             <button
               onClick={() => handleVectorize(primaryVectorizeMode)}
-              disabled={
-                vectorizing ||
-                vectorizableEntryCount === 0 ||
-                !selectedConnectionId ||
-                (primaryVectorizeMode === "missing" && missingCount === 0)
-              }
+              disabled={vectorizing || vectorizableEntryCount === 0 || !selectedConnectionId}
               className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-50"
             >
               {vectorizingMode === primaryVectorizeMode ? (

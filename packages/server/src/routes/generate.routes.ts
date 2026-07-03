@@ -1746,7 +1746,7 @@ export async function generateRoutes(app: FastifyInstance) {
     const onClose = () => {
       clientDisconnected = true;
       if (generationComplete) return;
-      if (!shouldAbortOnPassiveGenerationDisconnect({ chatMode: requestChatMode, impersonate: input.impersonate })) {
+      if (!shouldAbortOnPassiveGenerationDisconnect({ impersonate: input.impersonate })) {
         logger.info(
           "[generate] Client disconnected; generation will continue for %s chat: %s",
           requestChatMode,

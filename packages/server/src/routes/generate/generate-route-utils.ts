@@ -300,7 +300,7 @@ export function parseSnapshotPlayerStats(snapshot: { playerStats?: unknown } | n
   }
 }
 
-export function shouldAbortOnPassiveGenerationDisconnect(args: { chatMode: string; impersonate?: boolean }): boolean {
+export function shouldAbortOnPassiveGenerationDisconnect(args: { impersonate?: boolean }): boolean {
   return args.impersonate === true;
 }
 
