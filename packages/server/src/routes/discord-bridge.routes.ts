@@ -312,12 +312,21 @@ export async function discordBridgeRoutes(app: FastifyInstance) {
     const parsed = parseCreateRoleplayChatBody(req.body);
     if ("error" in parsed) return reply.status(400).send({ error: parsed.error });
 
+    let greeting: { characterId: string; content: string } | null = null;
     for (const characterId of parsed.input.characterIds) {
       if (characterId === PROFESSOR_MARI_ID) {
         return reply.status(400).send({ error: "Professor Mari is only available from the Home screen." });
       }
       const character = await charactersStorage.getById(characterId);
       if (!character) return reply.status(404).send({ error: `Character not found: ${characterId}` });
+      // Seed the first character's greeting so the opening message loads on both web and Discord.
+      // ponytail: primary character's first_mes only; alternate greetings/per-character group greetings not seeded.
+      if (!greeting) {
+        const firstMes = parseRecord(character.data).first_mes;
+        if (typeof firstMes === "string" && firstMes.trim()) {
+          greeting = { characterId, content: firstMes };
+        }
+      }
     }
 
     if (parsed.input.personaId) {
@@ -351,6 +360,15 @@ export async function discordBridgeRoutes(app: FastifyInstance) {
 
     if (roleplayDefaults.defaultParameters && Object.keys(roleplayDefaults.defaultParameters).length > 0) {
       await chatsStorage.patchMetadata(chat.id, { chatParameters: roleplayDefaults.defaultParameters });
+    }
+
+    if (greeting) {
+      await chatsStorage.createMessage({
+        chatId: chat.id,
+        role: "assistant",
+        characterId: greeting.characterId,
+        content: greeting.content,
+      });
     }
 
     const context = await getDiscordBridgeChatContext(chatsStorage, charactersStorage, chat.id, { messageLimit: 0 });

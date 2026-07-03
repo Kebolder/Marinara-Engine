@@ -9,7 +9,6 @@ import type {
   DiscordBridgeCharacterOption,
   DiscordBridgeChatOption,
   DiscordBridgeConnectionOption,
-  DiscordBridgePersonaOption,
   DiscordBridgePromptPresetOption,
   DiscordBridgeRoleplayDefaults,
 } from "@marinara-engine/shared";
@@ -23,7 +22,6 @@ export const ROLEPLAY_SETTINGS_CONNECTION_SELECT_CUSTOM_ID = "roleplay:settings-
 export const ROLEPLAY_SETTINGS_PROMPT_PRESET_SELECT_CUSTOM_ID = "roleplay:settings-prompt-preset";
 export const ROLEPLAY_LOAD_SELECT_CUSTOM_ID = "roleplay:load-select";
 export const ROLEPLAY_NAME_MODAL_CUSTOM_ID = "roleplay:name-modal";
-export const ROLEPLAY_PERSONA_SELECT_CUSTOM_ID = "roleplay:persona";
 export const ROLEPLAY_CHARACTER_SELECT_CUSTOM_ID = "roleplay:characters";
 export const ROLEPLAY_FINAL_CREATE_CUSTOM_ID = "roleplay:final-create";
 
@@ -88,26 +86,9 @@ export function buildRoleplayLoadComponents(chats: DiscordBridgeChatOption[]) {
 }
 
 export function buildRoleplaySelectionComponents(input: {
-  personas: DiscordBridgePersonaOption[];
   characters: DiscordBridgeCharacterOption[];
-  personaId: string | null;
   characterIds: string[];
 }) {
-  const personaOptions = [
-    new StringSelectMenuOptionBuilder()
-      .setLabel("No persona")
-      .setDescription("Create the chat without a selected persona")
-      .setValue("none")
-      .setDefault(!input.personaId),
-    ...input.personas.slice(0, MAX_SELECT_OPTIONS - 1).map((persona) =>
-      new StringSelectMenuOptionBuilder()
-        .setLabel(persona.name.slice(0, 100) || "Unnamed Persona")
-        .setDescription((persona.comment || persona.id).slice(0, 100))
-        .setValue(persona.id)
-        .setDefault(persona.id === input.personaId),
-    ),
-  ];
-
   const selectedCharacterIds = new Set(input.characterIds);
   const noCharacters = input.characters.length === 0;
   const characterOptions = input.characters.slice(0, MAX_SELECT_OPTIONS).map((character) =>
@@ -128,14 +109,6 @@ export function buildRoleplaySelectionComponents(input: {
   }
 
   return [
-    new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(ROLEPLAY_PERSONA_SELECT_CUSTOM_ID)
-        .setPlaceholder("Select persona")
-        .setMinValues(1)
-        .setMaxValues(1)
-        .addOptions(personaOptions),
-    ),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(ROLEPLAY_CHARACTER_SELECT_CUSTOM_ID)

@@ -45,7 +45,6 @@ import {
   ROLEPLAY_LOAD_CUSTOM_ID,
   ROLEPLAY_LOAD_SELECT_CUSTOM_ID,
   ROLEPLAY_NAME_MODAL_CUSTOM_ID,
-  ROLEPLAY_PERSONA_SELECT_CUSTOM_ID,
   ROLEPLAY_SETTINGS_BACK_CUSTOM_ID,
   ROLEPLAY_SETTINGS_CONNECTION_SELECT_CUSTOM_ID,
   ROLEPLAY_SETTINGS_CUSTOM_ID,
@@ -333,22 +332,16 @@ function getRoleplayDraft(userId: string) {
 async function buildRoleplayDraftResponse(config: DiscordBridgeConfig, userId: string) {
   const setup = await getBridgeSetupOptions(config.serverUrl);
   const draft = getRoleplayDraft(userId);
-  const personaName = draft.personaId
-    ? (setup.personas.find((persona) => persona.id === draft.personaId)?.name ?? null)
-    : null;
   const selectedCharacters = setup.characters.filter((character) => draft.characterIds.includes(character.id));
   return {
     embeds: [
       buildRoleplayDraftEmbed({
         chatName: draft.chatName,
-        personaName,
         characterNames: selectedCharacters.map((character) => character.name),
       }),
     ],
     components: buildRoleplaySelectionComponents({
-      personas: setup.personas,
       characters: setup.characters,
-      personaId: draft.personaId,
       characterIds: draft.characterIds,
     }),
   };
@@ -412,13 +405,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId === CHARACTER_CLOSE_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can close this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
         await closeComponentPanel(interaction);
         return;
       }
@@ -429,13 +415,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_CLOSE_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can close this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
         roleplayDrafts.delete(interaction.user.id);
         await closeComponentPanel(interaction);
         return;
@@ -462,14 +441,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_CREATE_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const modal = new ModalBuilder().setCustomId(ROLEPLAY_NAME_MODAL_CUSTOM_ID).setTitle("Create roleplay");
         modal.addComponents(
           buildTextInputRow({
@@ -484,53 +455,21 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_SETTINGS_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         await interaction.update(await buildRoleplaySettingsResponse(config));
         return;
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_LOAD_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         await interaction.update(await buildRoleplayLoadResponse(config));
         return;
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_SETTINGS_BACK_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         await interaction.update(await buildRoleplaySetupResponse(config));
         return;
       }
 
       if (interaction.isButton() && interaction.customId === ROLEPLAY_FINAL_CREATE_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can create this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const draft = getRoleplayDraft(interaction.user.id);
         if (!draft.chatName.trim() || draft.characterIds.length === 0) {
           await interaction.reply({
@@ -591,13 +530,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId === CHARACTER_BACK_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
         const setup = await getBridgeSetupOptions(config.serverUrl);
         await interaction.update({
           embeds: [buildCharacterListEmbed(setup.characters)],
@@ -679,14 +611,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_EDIT_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can edit this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_EDIT_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Character edit target not found.", flags: MessageFlags.Ephemeral });
@@ -722,14 +646,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId.startsWith(PERSONA_EDIT_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can edit this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parsePersonaPageAction(interaction.customId, PERSONA_EDIT_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Persona edit target not found.", flags: MessageFlags.Ephemeral });
@@ -759,14 +675,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_SAVE_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can save this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_SAVE_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Character save target not found.", flags: MessageFlags.Ephemeral });
@@ -799,14 +707,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isButton() && interaction.customId.startsWith(PERSONA_SAVE_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can save this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parsePersonaPageAction(interaction.customId, PERSONA_SAVE_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Persona save target not found.", flags: MessageFlags.Ephemeral });
@@ -835,14 +735,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isStringSelectMenu() && interaction.customId === CHARACTER_SELECT_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const selectedId = interaction.values[0];
         if (!selectedId || selectedId === "none") return;
         const setup = await getBridgeSetupOptions(config.serverUrl);
@@ -899,34 +791,7 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
         return;
       }
 
-      if (interaction.isStringSelectMenu() && interaction.customId === ROLEPLAY_PERSONA_SELECT_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
-        const selectedId = interaction.values[0];
-        const draft = getRoleplayDraft(interaction.user.id);
-        roleplayDrafts.set(interaction.user.id, {
-          ...draft,
-          personaId: selectedId && selectedId !== "none" ? selectedId : null,
-        });
-        await interaction.update(await buildRoleplayDraftResponse(config, interaction.user.id));
-        return;
-      }
-
       if (interaction.isStringSelectMenu() && interaction.customId === ROLEPLAY_CHARACTER_SELECT_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const selectedIds = interaction.values.filter((value) => value !== "none");
         const draft = getRoleplayDraft(interaction.user.id);
         roleplayDrafts.set(interaction.user.id, {
@@ -938,14 +803,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isStringSelectMenu() && interaction.customId === ROLEPLAY_LOAD_SELECT_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const chatId = interaction.values[0];
         if (!chatId || chatId === "none") return;
         if (!interaction.guildId || !isThreadParentChannel(interaction.channel)) {
@@ -1016,14 +873,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isStringSelectMenu() && interaction.customId === ROLEPLAY_SETTINGS_CONNECTION_SELECT_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const defaults = await getBridgeRoleplayDefaults(config.serverUrl);
         const selectedId = interaction.values[0];
         await updateBridgeRoleplayDefaults(config.serverUrl, {
@@ -1038,14 +887,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
         interaction.isStringSelectMenu() &&
         interaction.customId === ROLEPLAY_SETTINGS_PROMPT_PRESET_SELECT_CUSTOM_ID
       ) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const defaults = await getBridgeRoleplayDefaults(config.serverUrl);
         const selectedId = interaction.values[0];
         await updateBridgeRoleplayDefaults(config.serverUrl, {
@@ -1057,14 +898,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CHARACTER_PAGE_SELECT_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can use this selector.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const page = interaction.values[0];
         if (!page || !isCharacterCardPage(page)) {
           await interaction.reply({ content: "Character page not found.", flags: MessageFlags.Ephemeral });
@@ -1122,14 +955,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isModalSubmit() && interaction.customId.startsWith(CHARACTER_EDIT_MODAL_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can submit this edit.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_EDIT_MODAL_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Character edit target not found.", flags: MessageFlags.Ephemeral });
@@ -1176,14 +1001,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isModalSubmit() && interaction.customId === ROLEPLAY_NAME_MODAL_CUSTOM_ID) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can submit this.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const chatName = interaction.fields.getTextInputValue("chatName").trim();
         if (!chatName) {
           await interaction.reply({ content: "Chat name is required.", flags: MessageFlags.Ephemeral });
@@ -1203,14 +1020,6 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
       }
 
       if (interaction.isModalSubmit() && interaction.customId.startsWith(PERSONA_EDIT_MODAL_PREFIX)) {
-        if (interaction.user.id !== config.ownerId) {
-          await interaction.reply({
-            content: "Only the configured Marinara Discord owner can submit this edit.",
-            flags: MessageFlags.Ephemeral,
-          });
-          return;
-        }
-
         const parsed = parsePersonaPageAction(interaction.customId, PERSONA_EDIT_MODAL_PREFIX);
         if (!parsed) {
           await interaction.reply({ content: "Persona edit target not found.", flags: MessageFlags.Ephemeral });

@@ -33,7 +33,6 @@ export function buildRoleplaySetupEmbed(input: {
 
 export function buildRoleplayDraftEmbed(input: {
   chatName: string;
-  personaName: string | null;
   characterNames: string[];
 }) {
   return new EmbedBuilder()
@@ -41,7 +40,6 @@ export function buildRoleplayDraftEmbed(input: {
     .setColor(0x2f855a)
     .addFields(
       { name: "Chat name", value: input.chatName || "Untitled", inline: false },
-      { name: "Persona", value: input.personaName ?? "No persona", inline: true },
       {
         name: "Characters",
         value: input.characterNames.length > 0 ? input.characterNames.join("\n").slice(0, 1024) : "Select at least one character",
