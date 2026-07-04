@@ -26,6 +26,17 @@ export type GenerateGameTurnStoryboardInput = {
   debugMode?: boolean;
 };
 
+const RENDERING_STORYBOARD_STATUSES = new Set(["planning", "rendering_images", "rendering_videos"]);
+
+export function isGameTurnStoryboardRendering(storyboard: GameTurnStoryboard | null | undefined): boolean {
+  if (!storyboard) return false;
+  return RENDERING_STORYBOARD_STATUSES.has(storyboard.status);
+}
+
+function hasRenderingStoryboard(storyboards: GameTurnStoryboard[] | undefined): boolean {
+  return storyboards?.some(isGameTurnStoryboardRendering) ?? false;
+}
+
 export function useGameTurnStoryboards(
   chatId: string | undefined,
   messageId: string | undefined,
@@ -46,6 +57,10 @@ export function useGameTurnStoryboards(
       return result.storyboards;
     },
     enabled: enabled && !!chatId && !!messageId,
+    refetchInterval: (query) => {
+      const storyboards = query.state.data as GameTurnStoryboard[] | undefined;
+      return hasRenderingStoryboard(storyboards) ? 2500 : false;
+    },
     staleTime: 30_000,
   });
 }

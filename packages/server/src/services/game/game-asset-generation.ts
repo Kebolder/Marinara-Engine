@@ -332,6 +332,35 @@ function addUniqueVisualTag(tags: string[], value: string | null | undefined): v
   tags.push(tag);
 }
 
+const NPC_NAME_VISUAL_CUE_WORDS: Record<string, string> = {
+  boot: "boots",
+  boots: "boots",
+  cloak: "cloak",
+  coat: "coat",
+  hat: "hat",
+  mask: "mask",
+  hand: "hand",
+  eye: "eye",
+  eyes: "eyes",
+  hair: "hair",
+  beard: "beard",
+};
+
+function collectNpcNameVisualTags(name: string): string[] {
+  const tags: string[] = [];
+  const normalized = name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ");
+  const pattern =
+    /\b(red|black|white|silver|golden|gold|blue|green|gray|grey|brown|iron|steel|copper|bronze)\s*(boots?|cloak|coat|hat|mask|hand|eyes?|hair|beard)\b/gi;
+  for (const match of normalized.matchAll(pattern)) {
+    const color = match[1]?.toLowerCase().replace(/^gold$/, "golden");
+    const noun = match[2] ? NPC_NAME_VISUAL_CUE_WORDS[match[2].toLowerCase()] : null;
+    if (color && noun) addUniqueVisualTag(tags, `${color} ${noun}`);
+  }
+  return tags.slice(0, 2);
+}
+
 function collectNpcVisualAttributeTags(text: string): string[] {
   const tags: string[] = [];
   const clean = text.replace(/\s+/g, " ");
@@ -353,6 +382,39 @@ function collectNpcVisualAttributeTags(text: string): string[] {
   return tags.slice(0, 4);
 }
 
+function collectNpcNarrativePortraitTags(text: string): string[] {
+  const tags: string[] = [];
+  const clean = text.replace(/\s+/g, " ");
+  const lower = clean.toLowerCase();
+
+  if (/\bspear(?:s|man|woman|fighter)?\b/.test(lower)) addUniqueVisualTag(tags, "spear");
+  if (/\b(?:sword|blade|dagger|axe|bow|crossbow|staff|wand|shield|lance|halberd|mace|club|pistol|rifle)\b/.test(lower)) {
+    const weapon = lower.match(
+      /\b(?:sword|blade|dagger|axe|bow|crossbow|staff|wand|shield|lance|halberd|mace|club|pistol|rifle)\b/,
+    )?.[0];
+    addUniqueVisualTag(tags, weapon);
+  }
+
+  if (/\b(?:rookie|novice|newcomer|trainee|apprentice|e[-\s]?rank|f[-\s]?rank)\b/.test(lower)) {
+    addUniqueVisualTag(tags, "rookie adventurer");
+  }
+  if (/\b(?:adventurer|mercenary|hunter|guard|soldier|knight|mage|wizard|merchant|priest|cleric|thief|rogue)\b/.test(lower)) {
+    const role = lower.match(
+      /\b(?:adventurer|mercenary|hunter|guard|soldier|knight|mage|wizard|merchant|priest|cleric|thief|rogue)\b/,
+    )?.[0];
+    addUniqueVisualTag(tags, role);
+  }
+
+  if (/\b(?:loud|boast|boastful|brag|brash|cocky|swagger|show[-\s]?off|showy|applause|taunt|embarrass)\b/.test(lower)) {
+    addUniqueVisualTag(tags, "boastful expression");
+  }
+  if (/\b(?:afraid|fear|fears|forgotten|forgot|anxious|nervous|worried|insecure)\b/.test(lower)) {
+    addUniqueVisualTag(tags, "anxious expression");
+  }
+
+  return tags.slice(0, 5);
+}
+
 function buildNpcAppearanceLine(req: NpcPortraitRequest, explicitNonHuman: boolean): string {
   const context = req.appearance.trim();
   if (explicitNonHuman && !context) return "Appearance: non-human creature.";
@@ -363,7 +425,9 @@ function buildNpcAppearanceLine(req: NpcPortraitRequest, explicitNonHuman: boole
     identityTags.push(normalizeNpcGenderCue(req.gender, req.pronouns, context) ?? "androgynous");
     identityTags.push("human or humanoid person");
   }
+  identityTags.push(...collectNpcNameVisualTags(req.npcName));
   identityTags.push(...collectNpcVisualAttributeTags(context));
+  identityTags.push(...collectNpcNarrativePortraitTags(context));
 
   const identityLine = identityTags.length > 0 ? `Appearance: ${identityTags.join(", ")}.` : "";
   if (!context) return identityLine || "Appearance: human or humanoid adult.";

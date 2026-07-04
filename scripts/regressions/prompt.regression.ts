@@ -52,6 +52,7 @@ import { fitMessagesForModelAccess } from "../../packages/server/src/services/ge
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
 import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
+import { buildNpcPortraitProviderPrompt } from "../../packages/server/src/services/game/game-asset-generation.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
 import { resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
 
@@ -521,6 +522,34 @@ const cases: RegressionCase[] = [
       assert.equal(createRegexScriptSchema.safeParse({ ...base, applyMode: "both" }).success, true);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, flags: "gg" }).success, false);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, minDepth: 5, maxDepth: 2 }).success, false);
+    },
+  },
+  {
+    name: "game NPC portrait prompts preserve distinctive cues from role descriptions",
+    async run() {
+      const compiled = await buildNpcPortraitProviderPrompt({
+        chatId: "regression",
+        npcName: "Rusk Redboot",
+        appearance:
+          "A loud E-rank spear rookie who talks like every sentence needs applause, wants to embarrass new parties, and fears being forgotten.",
+        gender: null,
+        pronouns: null,
+        artStyle: "Colorful fantasy anime",
+        imgModel: "illustrious",
+        imgBaseUrl: "",
+        imgApiKey: "",
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(compiled.prompt, /\bred boots\b/);
+      assert.match(compiled.prompt, /\bspear\b/);
+      assert.match(compiled.prompt, /\brookie adventurer\b/);
+      assert.match(compiled.prompt, /\bboastful expression\b/);
+      assert.notEqual(
+        compiled.prompt,
+        "androgynous, human, Colorful fantasy anime, detailed eyes, human or humanoid person, one face, solo, adult, upper body, portrait, centered composition, one portrait, looking at viewer, anime screencap, readable expression, masterpiece, best quality, absurdres",
+      );
     },
   },
   {

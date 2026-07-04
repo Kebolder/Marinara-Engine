@@ -9055,7 +9055,7 @@ export async function gameRoutes(app: FastifyInstance) {
       GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS,
       "Game storyboard generation",
     );
-    const releaseStoryboardLock = await acquireGameAssetGenerationLock(
+    let releaseStoryboardLock: (() => void) | null = await acquireGameAssetGenerationLock(
       `storyboard:${input.chatId}`,
       storyboardAbortSignal,
     );
@@ -9310,6 +9310,8 @@ export async function gameRoutes(app: FastifyInstance) {
       }
 
       const frameRows = await storyboards.listKeyframes(storyboardRow.id);
+      const backgroundController = new AbortController();
+      const backgroundSignal = backgroundController.signal;
       type StoryboardFrameRenderResult = {
         generatedImage: boolean;
         generatedVideo: boolean;
@@ -9317,7 +9319,7 @@ export async function gameRoutes(app: FastifyInstance) {
         videoFailure: boolean;
       };
       const renderStoryboardFrame = async (frame: (typeof frameRows)[number]): Promise<StoryboardFrameRenderResult> => {
-        if (storyboardAbortSignal.aborted) {
+        if (backgroundSignal.aborted) {
           await storyboards.updateKeyframe(frame.id, { status: "failed", error: "Storyboard generation was cancelled." });
           return { generatedImage: false, generatedVideo: false, imageFailure: true, videoFailure: false };
         }
@@ -9375,7 +9377,7 @@ export async function gameRoutes(app: FastifyInstance) {
             onCompiledPrompt: (compiled) => {
               sentIllustrationPrompt = compiled.prompt;
             },
-            signal: storyboardAbortSignal,
+            signal: backgroundSignal,
           });
           if (!tag) throw new Error("Image provider did not return a storyboard keyframe.");
           const galleryImage = await addGeneratedIllustrationToGallery({
@@ -9414,7 +9416,7 @@ export async function gameRoutes(app: FastifyInstance) {
                   aspectRatio: plannedFrame.aspectRatio,
                   resolution: videoRuntime.resolution,
                   referenceImage,
-                  signal: storyboardAbortSignal,
+                  signal: backgroundSignal,
                 },
               );
               const filePath = await saveVideoToDisk(input.chatId, generated.base64);
@@ -9469,32 +9471,61 @@ export async function gameRoutes(app: FastifyInstance) {
         ? GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY
         : GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY;
       const frameWorkerCount = Math.min(frameWorkerLimit, frameRows.length);
-      await Promise.all(Array.from({ length: frameWorkerCount }, () => runFrameWorker()));
-      const imageFailures = frameResults.filter((result) => result.imageFailure).length;
-      const generatedImages = frameResults.filter((result) => result.generatedImage).length;
-      const videoFailures = frameResults.filter((result) => result.videoFailure).length;
-      const generatedVideos = frameResults.filter((result) => result.generatedVideo).length;
+      const initialStoryboard = await serializeGameTurnStoryboard({ storyboards, gallery, sceneVideos, row: storyboardRow });
+      const releaseBackgroundStoryboardLock = releaseStoryboardLock;
+      releaseStoryboardLock = null;
 
-      const finalStatus: GameStoryboardStatus =
-        generatedImages === 0
-          ? "failed"
-          : imageFailures > 0 ||
-              generatedImages < plan.keyframes.length ||
-              videoFailures > 0 ||
-              (videoRuntime && generatedVideos < plan.keyframes.length)
-            ? "partial"
-            : "complete";
-      const updatedStoryboard = await storyboards.update(storyboardRow.id, { status: finalStatus });
-      if (!updatedStoryboard) throw new Error("Storyboard metadata could not be reloaded");
+      void (async () => {
+        const backgroundTimeout = setTimeout(() => {
+          backgroundController.abort(
+            new Error(`Game storyboard media rendering timed out after ${Math.round(GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS / 1000)} seconds`),
+          );
+        }, GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS);
+        backgroundTimeout.unref?.();
+
+        try {
+          await Promise.all(Array.from({ length: frameWorkerCount }, () => runFrameWorker()));
+          const imageFailures = frameResults.filter((result) => result.imageFailure).length;
+          const generatedImages = frameResults.filter((result) => result.generatedImage).length;
+          const videoFailures = frameResults.filter((result) => result.videoFailure).length;
+          const generatedVideos = frameResults.filter((result) => result.generatedVideo).length;
+
+          const finalStatus: GameStoryboardStatus =
+            generatedImages === 0
+              ? "failed"
+              : imageFailures > 0 ||
+                  generatedImages < plan.keyframes.length ||
+                  videoFailures > 0 ||
+                  (videoRuntime && generatedVideos < plan.keyframes.length)
+                ? "partial"
+                : "complete";
+          const updatedStoryboard = await storyboards.update(storyboardRow.id, { status: finalStatus });
+          if (!updatedStoryboard) throw new Error("Storyboard metadata could not be reloaded");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Storyboard media rendering failed";
+          logger.warn(err, "[game/storyboard] background media rendering failed for storyboard %s", storyboardRow.id);
+          await storyboards.update(storyboardRow.id, { status: "failed", error: message }).catch((updateErr) => {
+            logger.warn(
+              updateErr,
+              "[game/storyboard] failed to persist background media rendering error for storyboard %s",
+              storyboardRow.id,
+            );
+          });
+        } finally {
+          clearTimeout(backgroundTimeout);
+          releaseBackgroundStoryboardLock?.();
+        }
+      })();
+
       return {
-        storyboard: await serializeGameTurnStoryboard({ storyboards, gallery, sceneVideos, row: updatedStoryboard }),
+        storyboard: initialStoryboard,
       };
     } catch (err) {
       logger.warn(err, "[game/storyboard] Storyboard generation failed for chat %s", input.chatId);
       const message = err instanceof Error ? err.message : "Storyboard generation failed";
       return reply.status(502).send({ error: message });
     } finally {
-      releaseStoryboardLock();
+      releaseStoryboardLock?.();
     }
   });
 

@@ -51,6 +51,7 @@ import {
 } from "../../hooks/use-game";
 import {
   gameStoryboardKeys,
+  isGameTurnStoryboardRendering,
   useGameTurnStoryboards,
   useGenerateGameTurnStoryboard,
   type GenerateGameTurnStoryboardInput,
@@ -3375,6 +3376,7 @@ function GameSurfaceComponent({
   const latestTurnStoryboard = turnStoryboardRows?.[0] ?? null;
   const generateTurnStoryboard = useGenerateGameTurnStoryboard();
   const storyboardGenerating = generateTurnStoryboard.isPending;
+  const latestTurnStoryboardRendering = isGameTurnStoryboardRendering(latestTurnStoryboard);
 
   const latestAssistantDirectAddressMode = useMemo(() => {
     if (!latestAssistantMsg) return null;
@@ -5327,7 +5329,7 @@ function GameSurfaceComponent({
   );
 
   const handleGenerateTurnStoryboard = useCallback(async () => {
-    if (!activeChatId || storyboardGenerating) return;
+    if (!activeChatId || storyboardGenerating || latestTurnStoryboardRendering) return;
     if (!latestAssistantMsg?.id) {
       toast.error("No GM narration turn is available to storyboard.");
       return;
@@ -5350,17 +5352,24 @@ function GameSurfaceComponent({
         generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
         debugMode: useUIStore.getState().debugMode,
       });
-      void queryClient.invalidateQueries({
-        queryKey: gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
-      });
+      queryClient.setQueryData(
+        gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
+        (existing: GameTurnStoryboard[] | undefined) => [
+          result.storyboard,
+          ...(existing ?? []).filter((storyboard) => storyboard.id !== result.storyboard.id),
+        ],
+      );
       void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
       void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
       void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
       void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
-      await Promise.all([turnStoryboardsQuery.refetch(), sceneVideosQuery.refetch()]);
+      void turnStoryboardsQuery.refetch();
+      void sceneVideosQuery.refetch();
       const frameCount = result.storyboard.keyframes.length;
       toast.success(
-        result.storyboard.status === "partial"
+        isGameTurnStoryboardRendering(result.storyboard)
+          ? `Storyboard planned with ${frameCount} keyframes; images are rendering.`
+          : result.storyboard.status === "partial"
           ? `Storyboard saved with ${frameCount} keyframes; some media failed.`
           : `Storyboard saved with ${frameCount} keyframes.`,
         { duration: 2200 },
@@ -5378,6 +5387,7 @@ function GameSurfaceComponent({
     latestAssistantMsg?.id,
     latestAssistantStoryboardSections,
     latestAssistantSwipeIndex,
+    latestTurnStoryboardRendering,
     queryClient,
     sceneVideosQuery,
     storyboardGenerating,
@@ -5390,7 +5400,7 @@ function GameSurfaceComponent({
       autoStoryboardGenerationKeyRef.current = null;
       return;
     }
-    if (isStreaming || scenePreparing || pendingAssetGeneration || storyboardGenerating) return;
+    if (isStreaming || storyboardGenerating || latestTurnStoryboardRendering) return;
     if (turnStoryboardsLoading || turnStoryboardsFetching) return;
     if (latestAssistantStoryboardSections.length === 0) return;
     if ((turnStoryboardRows?.length ?? 0) > 0) return;
@@ -5446,9 +5456,8 @@ function GameSurfaceComponent({
     latestAssistantMsg?.id,
     latestAssistantStoryboardSections,
     latestAssistantSwipeIndex,
-    pendingAssetGeneration,
+    latestTurnStoryboardRendering,
     queryClient,
-    scenePreparing,
     sceneVideosQuery,
     storyboardGenerating,
     turnStoryboardRows,
@@ -9475,7 +9484,9 @@ function GameSurfaceComponent({
               />
             ) : (
               <div className="flex aspect-video w-full items-center justify-center gap-2 bg-black/45 text-xs text-white/55">
-                {storyboardGenerating ? <Loader2 size={14} className="animate-spin" /> : null}
+                {storyboardGenerating || latestTurnStoryboardRendering ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : null}
                 {frame ? frame.status.replace("_", " ") : "Creating storyboard"}
               </div>
             )}
@@ -9608,11 +9619,21 @@ function GameSurfaceComponent({
           <button
             type="button"
             onClick={() => void handleGenerateTurnStoryboard()}
-            disabled={storyboardGenerating || isStreaming || !gameImageGenerationEnabled || !latestAssistantMsg?.id}
+            disabled={
+              storyboardGenerating ||
+              latestTurnStoryboardRendering ||
+              isStreaming ||
+              !gameImageGenerationEnabled ||
+              !latestAssistantMsg?.id
+            }
             className="marinara-chat-popover__item flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             title="Create manga keyframes and animation prompts from the current GM narration"
           >
-            {storyboardGenerating ? <Loader2 size={14} className="animate-spin" /> : <PanelsTopLeft size={14} />}
+            {storyboardGenerating || latestTurnStoryboardRendering ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <PanelsTopLeft size={14} />
+            )}
             Storyboard turn
           </button>
         </div>
@@ -9625,7 +9646,9 @@ function GameSurfaceComponent({
                     {latestTurnStoryboard?.title || "Storyboard turn"}
                   </h3>
                   <p className="mt-0.5 text-[0.6875rem] uppercase tracking-wide text-[var(--marinara-chat-chrome-panel-muted)]">
-                    {storyboardGenerating ? "Generating" : (latestTurnStoryboard?.status ?? "ready").replace("_", " ")}
+                    {storyboardGenerating || latestTurnStoryboardRendering
+                      ? "Generating"
+                      : (latestTurnStoryboard?.status ?? "ready").replace("_", " ")}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -9657,52 +9680,6 @@ function GameSurfaceComponent({
                 <p className="mb-3 rounded-lg border border-[var(--marinara-chat-chrome-panel-divider)] px-3 py-2 text-[0.6875rem] text-[var(--destructive)]">
                   {latestTurnStoryboard.error}
                 </p>
-              ) : null}
-              {latestTurnStoryboard ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {latestTurnStoryboard.keyframes.map((frame) => (
-                    <div
-                      key={frame.id}
-                      className="overflow-hidden rounded-lg border border-[var(--marinara-chat-chrome-panel-divider)] bg-[var(--marinara-chat-chrome-panel-bg)]"
-                    >
-                      {frame.video ? (
-                        <video
-                          src={frame.video.url}
-                          controls
-                          muted
-                          playsInline
-                          className="aspect-video w-full bg-black object-contain"
-                        />
-                      ) : frame.image ? (
-                        <img
-                          src={frame.image.url}
-                          alt={frame.title || `Storyboard keyframe ${frame.index + 1}`}
-                          className="aspect-video w-full bg-black object-cover"
-                        />
-                      ) : (
-                        <div className="flex aspect-video items-center justify-center bg-black/40 text-[0.6875rem] text-[var(--marinara-chat-chrome-panel-muted)]">
-                          {frame.status.replace("_", " ")}
-                        </div>
-                      )}
-                      <div className="space-y-2 p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <h4 className="min-w-0 truncate text-xs font-semibold text-[var(--marinara-chat-chrome-panel-text)]">
-                            {frame.index + 1}. {frame.title || "Keyframe"}
-                          </h4>
-                          <span className="shrink-0 text-[0.625rem] uppercase tracking-wide text-[var(--marinara-chat-chrome-panel-muted)]">
-                            {frame.status.replace("_", " ")}
-                          </span>
-                        </div>
-                        <p className="line-clamp-2 text-[0.6875rem] leading-4 text-[var(--marinara-chat-chrome-panel-muted)]">
-                          {frame.narrationBeat || frame.videoPrompt}
-                        </p>
-                        {frame.error ? (
-                          <p className="text-[0.6875rem] text-[var(--destructive)]">{frame.error}</p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))}
-                </div>
               ) : null}
             </div>
           )}
