@@ -641,6 +641,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
     if (nextEnabled && !imageConnectionId && preferredImageConnectionId) {
       setImageConnectionId(preferredImageConnectionId);
     }
+    if (nextEnabled) {
+      setEnableStoryboardIllustrations(true);
+    }
     if (!nextEnabled) {
       setEnableStoryboardIllustrations(false);
       setEnableStoryboardAnimations(false);
