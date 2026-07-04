@@ -5328,6 +5328,34 @@ function GameSurfaceComponent({
     ],
   );
 
+  const applyGeneratedStoryboardToCache = useCallback(
+    (storyboard: GameTurnStoryboard, options: { refetchTurnStoryboards?: boolean } = {}) => {
+      if (!activeChatId || !latestAssistantMsg?.id) return;
+
+      queryClient.setQueryData(
+        gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
+        (existing: GameTurnStoryboard[] | undefined) => [
+          storyboard,
+          ...(existing ?? []).filter((entry) => entry.id !== storyboard.id),
+        ],
+      );
+      void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
+      void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
+      void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+      void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
+      if (options.refetchTurnStoryboards) void turnStoryboardsQuery.refetch();
+      void sceneVideosQuery.refetch();
+    },
+    [
+      activeChatId,
+      latestAssistantMsg?.id,
+      latestAssistantSwipeIndex,
+      queryClient,
+      sceneVideosQuery,
+      turnStoryboardsQuery,
+    ],
+  );
+
   const handleGenerateTurnStoryboard = useCallback(async () => {
     if (!activeChatId || storyboardGenerating || latestTurnStoryboardRendering) return;
     if (!latestAssistantMsg?.id) {
@@ -5352,19 +5380,7 @@ function GameSurfaceComponent({
         generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
         debugMode: useUIStore.getState().debugMode,
       });
-      queryClient.setQueryData(
-        gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
-        (existing: GameTurnStoryboard[] | undefined) => [
-          result.storyboard,
-          ...(existing ?? []).filter((storyboard) => storyboard.id !== result.storyboard.id),
-        ],
-      );
-      void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
-      void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
-      void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
-      void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
-      void turnStoryboardsQuery.refetch();
-      void sceneVideosQuery.refetch();
+      applyGeneratedStoryboardToCache(result.storyboard, { refetchTurnStoryboards: true });
       const frameCount = result.storyboard.keyframes.length;
       toast.success(
         isGameTurnStoryboardRendering(result.storyboard)
@@ -5388,10 +5404,8 @@ function GameSurfaceComponent({
     latestAssistantStoryboardSections,
     latestAssistantSwipeIndex,
     latestTurnStoryboardRendering,
-    queryClient,
-    sceneVideosQuery,
+    applyGeneratedStoryboardToCache,
     storyboardGenerating,
-    turnStoryboardsQuery,
   ]);
 
   useEffect(() => {
@@ -5428,18 +5442,7 @@ function GameSurfaceComponent({
         debugMode: useUIStore.getState().debugMode,
       })
       .then((result) => {
-        queryClient.setQueryData(
-          gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
-          (existing: GameTurnStoryboard[] | undefined) => [
-            result.storyboard,
-            ...(existing ?? []).filter((storyboard) => storyboard.id !== result.storyboard.id),
-          ],
-        );
-        void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
-        void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
-        void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
-        void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
-        void sceneVideosQuery.refetch();
+        applyGeneratedStoryboardToCache(result.storyboard);
       })
       .catch((error) => {
         console.warn("[game/storyboard] auto storyboard generation failed", error);
@@ -5457,8 +5460,7 @@ function GameSurfaceComponent({
     latestAssistantStoryboardSections,
     latestAssistantSwipeIndex,
     latestTurnStoryboardRendering,
-    queryClient,
-    sceneVideosQuery,
+    applyGeneratedStoryboardToCache,
     storyboardGenerating,
     turnStoryboardRows,
     turnStoryboardsFetching,

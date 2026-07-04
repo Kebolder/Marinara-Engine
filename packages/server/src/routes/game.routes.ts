@@ -2325,6 +2325,9 @@ const GAME_STORYBOARD_DIRECTOR_TIMEOUT_MS = 3 * 60 * 1000;
 const GAME_ASSET_PORTRAIT_CONCURRENCY = 2;
 const GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY = 4;
 const GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY = 2;
+const GAME_STORYBOARD_STALE_RENDER_MS = GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS * 2;
+const GAME_STORYBOARD_STALE_RENDER_ERROR =
+  "Storyboard rendering was interrupted before completion. Generate it again to retry.";
 const gameAssetGenerationLocks = new Map<string, Promise<void>>();
 
 class GameGenerationTimeoutError extends Error {
@@ -3957,6 +3960,25 @@ function normalizeStoryboardKeyframeStatus(value: string): GameStoryboardKeyfram
     : "failed";
 }
 
+function storyboardStaleRenderCutoff(): string {
+  return new Date(Date.now() - GAME_STORYBOARD_STALE_RENDER_MS).toISOString();
+}
+
+async function recoverStaleGameStoryboards(
+  storyboards: ReturnType<typeof createGameStoryboardsStorage>,
+  cutoffUpdatedAt: string,
+  context: string,
+) {
+  try {
+    const recovered = await storyboards.failInProgressUpdatedBefore(cutoffUpdatedAt, GAME_STORYBOARD_STALE_RENDER_ERROR);
+    if (recovered > 0) {
+      logger.warn("[game/storyboard] marked %d stale storyboard render job(s) failed during %s", recovered, context);
+    }
+  } catch (err) {
+    logger.warn(err, "[game/storyboard] failed to recover stale storyboard render jobs during %s", context);
+  }
+}
+
 function normalizeStoryboardAspectRatio(
   value: unknown,
   fallback: GameSceneVideoAspectRatio,
@@ -4470,6 +4492,8 @@ async function serializeGameTurnStoryboard(args: {
 }
 
 export async function gameRoutes(app: FastifyInstance) {
+  await recoverStaleGameStoryboards(createGameStoryboardsStorage(app.db), new Date().toISOString(), "startup");
+
   const buildHydratedGameMeta = async (
     chatId: string,
     baseMeta: Record<string, unknown>,
@@ -9060,6 +9084,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const storyboards = createGameStoryboardsStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const sceneVideos = createGameSceneVideosStorage(app.db);
+      await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard list");
       const rows = query.messageId
         ? await storyboards.listForTurn(chatId, query.messageId, query.swipeIndex ?? 0)
         : await storyboards.listByChatId(chatId);
@@ -9096,6 +9121,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const sceneVideos = createGameSceneVideosStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const promptOverridesStorage = createPromptOverridesStorage(app.db);
+      await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard generate");
 
       const chat = await chats.getById(input.chatId);
       if (!chat) return reply.status(404).send({ error: "Chat not found" });

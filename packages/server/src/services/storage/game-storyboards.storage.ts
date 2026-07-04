@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { gameTurnStoryboardKeyframes, gameTurnStoryboards } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
@@ -111,6 +111,39 @@ export function createGameStoryboardsStorage(db: DB) {
         .set({ ...patch, updatedAt: now() })
         .where(eq(gameTurnStoryboards.id, id));
       return this.getById(id);
+    },
+
+    async failInProgressUpdatedBefore(cutoffUpdatedAt: string, error: string) {
+      const inProgressStoryboardStatuses = ["planning", "rendering_images", "rendering_videos"];
+      const inProgressKeyframeStatuses = ["planned", "rendering_image", "rendering_video"];
+      const staleRows = await db
+        .select({ id: gameTurnStoryboards.id })
+        .from(gameTurnStoryboards)
+        .where(
+          and(
+            inArray(gameTurnStoryboards.status, inProgressStoryboardStatuses),
+            lt(gameTurnStoryboards.updatedAt, cutoffUpdatedAt),
+          ),
+        );
+      if (staleRows.length === 0) return 0;
+
+      const staleIds = staleRows.map((row) => row.id);
+      const timestamp = now();
+      await db
+        .update(gameTurnStoryboards)
+        .set({ status: "failed", error, updatedAt: timestamp })
+        .where(inArray(gameTurnStoryboards.id, staleIds));
+      await db
+        .update(gameTurnStoryboardKeyframes)
+        .set({ status: "failed", error, updatedAt: timestamp })
+        .where(
+          and(
+            inArray(gameTurnStoryboardKeyframes.storyboardId, staleIds),
+            inArray(gameTurnStoryboardKeyframes.status, inProgressKeyframeStatuses),
+          ),
+        );
+
+      return staleRows.length;
     },
 
     async replaceKeyframes(storyboardId: string, frames: CreateGameTurnStoryboardKeyframeInput[]) {
