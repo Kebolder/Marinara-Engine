@@ -23,19 +23,20 @@ Keyframe images are saved in the Gallery's **Images** tab. Keyframe clips are sa
 1. Open or create a Game Mode chat.
 2. Make sure image generation is available:
    - New game: enable **Visual Generation** in the setup wizard and select an **Image Generation Connection**.
-   - Existing game: open **Chat Settings -> Game Mode -> Illustrator**, enable **Game Illustrator**, and select an **Image Connection**.
+   - Existing game: open **Chat Settings -> Agents -> Illustrator**, enable **Game Illustrator** and **Automatic Visuals**, and select an **Image Connection**.
+   - Toggle Send Avatar References to get consistency between generations. This sends the avatar image of the character. 
 3. Optional: set up animated clips:
    - Create a **Video Generation** connection in **Settings -> Connections**.
-   - Select it in the setup wizard's **Video Generation Connection** field, or in **Chat Settings -> Game Mode -> Scene Videos -> Video Connection**.
-4. Play until the GM finishes a narration turn.
-5. Open **Game Assets** and click **Storyboard turn**.
-6. Keep reading. The floating storyboard viewer appears and changes panels as you move through the turn.
+   - Select it in the setup wizard's **Video Generation Connection** field, or in **Chat Settings -> Agents -> Scene Videos -> Video Connection**.
+4. Play until the GM finishes a narration turn, and it should automatically start as soon as the next turn is created (after when you enter choices after a turn)
+5. Open **Gallery** and click **Create Storyboard**.
+6. Keep reading. The floating storyboard viewer appears and changes panels/illustrations/animations as you read through the turn.
 
-If you close the floating viewer, reopen it from the storyboard card in **Game Assets**.
+If you close the floating viewer, reopen it from the storyboard card in **Gallery -> View storyboard**.
 
 ## Manual vs Automatic
 
-Manual generation is the safest way to start. **Game Assets -> Storyboard turn** creates a storyboard for the latest completed GM narration only when you ask for it. It requires the Game Illustrator image connection. It can be used even when automatic storyboards are off.
+**Gallery -> Create Storyboard** creates a storyboard for the latest completed GM narration only when you ask for it, or refreshes/re-illustrates the current turn. It requires the Game Illustrator image connection. It can be used even when automatic storyboards are off.
 
 Automatic generation is controlled per chat:
 
@@ -45,20 +46,20 @@ Automatic generation is controlled per chat:
 Find these switches in either place:
 
 - New game: setup wizard -> **Visual Generation** -> **Storyboards**.
-- Existing game: **Chat Settings -> Game Mode -> Storyboards**.
+- Existing game: **Chat Settings -> Agents -> Storyboards**.
 
-Use automatic illustrations when you want every turn to get a visual panel sequence. Add automatic animations only when you are comfortable with multiple video-generation calls per completed GM turn.
+Use automatic illustrations when you want every turn to get a visual panel sequence. Add automatic animations only when you are comfortable with multiple video-generation calls per completed GM turn (currently this is expensive).
 
 ## What Happens Under the Hood
 
 When a storyboard starts, Marinara:
 
-1. Takes the selected completed GM message, strips GM command tags, and ignores the user's CYOA/action text because that action belongs to the next turn.
+1. Takes the selected completed GM message and strips GM command tags.
 2. Sends the GM narration, game context, reader section indices, target keyframe count, aspect ratio, and clip duration to a Prompt Director.
 3. Uses `game.storyboardIllustrationDirector` for image-only storyboards or `game.storyboardDirector` when video prompts are needed.
 4. Saves the storyboard plan, then starts keyframe media generation.
 5. Renders keyframe images through the Game Illustrator image connection.
-6. If animations are enabled and a video connection is selected, renders each keyframe clip from its generated image.
+6. If animations are enabled and a video connection is selected, renders each keyframe clip from its generated image and director prompt.
 
 The default plan targets 4 keyframes, 16:9 output, and 6-second clips when videos are generated. Very short turns may produce fewer frames, but the engine keeps storyboards between 2 and 6 keyframes.
 
@@ -72,23 +73,22 @@ The viewer:
 - falls back to the keyframe image while video is pending or failed,
 - can be dragged and resized,
 - includes close, size, play/pause, mute/unmute, and frame-position controls,
-- can be reopened from **Game Assets** after being closed.
+- can be reopened from **Gallery** after being closed.
 
 Generated storyboard images and videos also remain normal Gallery assets. You can preview, download, pin, or copy prompts from the Gallery workflow.
 
 ## Getting Better Results
 
-Storyboards are only as clear as the turn they receive. The best source turns have concrete character positions, visible actions, setting details, and emotional beats. A turn that says "the fight continues" gives the Prompt Director less to work with than a turn that names who moves, what changes, and where the camera-worthy moment is.
+Storyboards are only as clear as the turn they receive and the Game Storyboard Illustration Director or Game Storyboard Director prompts strength. The best source turns have concrete character positions, visible actions, setting details, and emotional beats. A turn that says "the fight continues" gives the Prompt Director less to work with than a turn that names who moves, what changes, and where the camera-worthy moment is.
 
 For more consistent boards:
 
 - Keep the game's setting, tone, and art style specific during setup.
-- Use character cards with clear visual descriptions.
+- **Use character cards with detailed avatars and reference images enabled to get consistency**
 - Keep important outfits, wounds, props, and locations explicit in the narration or game state.
 - Use image style profiles for the visual finish you want.
-- Avoid asking the GM for many rapid scene cuts in one turn if you want a clean 4-panel sequence.
 
-For advanced tuning, open **Settings -> Advanced -> Game Prompt Templates**. The most relevant keys are:
+For advanced tuning, open **Settings -> Advanced -> Game Prompt Templates and Prompt Overrides**. The most relevant keys are:
 
 | Key | What it changes |
 | --- | --- |
@@ -105,7 +105,7 @@ A storyboard usually creates about 4 image jobs. With animations enabled, it als
 
 A practical starting point:
 
-- Use manual **Storyboard turn** until you know the output and cost profile.
+- Use manual **Create Storyboard** until you know the output and cost profile.
 - Enable **Automatic Storyboard Illustrations** if you want every GM turn to get a visual recap.
 - Enable **Automatic Storyboard Animations** only for chats where video cost and wait time are acceptable.
 
@@ -115,20 +115,17 @@ If a provider is slow, raise `IMAGE_GEN_TIMEOUT_MS` for keyframe images or `VIDE
 
 ### "Choose an Illustrator image connection in Game Settings first"
 
-Enable **Game Illustrator** and select an **Image Connection** under **Chat Settings -> Game Mode -> Illustrator**. For a new game, enable **Visual Generation** and choose an **Image Generation Connection** in the setup wizard.
+Enable **Game Illustrator** and select an **Image Connection** under **Chat Settings -> Agents -> Illustrator**. For a new game, enable **Visual Generation** and choose an **Image Generation Connection** in the setup wizard. Automatic storyboard options are also in the setup wizard. 
 
 ### Storyboard images appear, but videos do not
 
-Storyboard clips need both **Automatic Storyboard Animations** and a selected **Video Generation** connection. If animations are off, manual and automatic storyboards create still keyframes only.
+Storyboard videos need both **Automatic Storyboard Animations** and a selected **Video Generation** connection. If animations are off, manual and automatic storyboards create still keyframes only.
 
 ### Automatic storyboards do not run
 
-Check that **Automatic Storyboard Illustrations** or **Automatic Storyboard Animations** is enabled, the Game Illustrator image connection is selected, and the GM turn has finished streaming. Marinara also avoids duplicating a storyboard that already exists for the same turn and swipe.
+Check that **Automatic Storyboard Illustrations** or **Automatic Storyboard Animations** is enabled, the Game Illustrator image connection is selected, and the GM turn has finished streaming. Marinara also avoids duplicating a storyboard that already exists for the same turn and swipe, but it can be manually recreated in gallery and clicking create storyboard.
 
-### The storyboard picked the wrong moment
-
-Storyboards use the selected completed GM narration turn. They do not include your next CYOA/action text. If you regenerated or swiped the GM response, make sure the response you want is the active one before clicking **Storyboard turn**.
 
 ### The storyboard is partial or stuck rendering
 
-Partial storyboards usually mean one or more image/video provider jobs failed, timed out, or hit rate limits. Increase `IMAGE_GEN_TIMEOUT_MS` or `VIDEO_GEN_TIMEOUT_MS` for slow providers, and use `LOG_PRESET=prompt-connections` or `LOG_LEVEL=debug` to inspect `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]` logs.
+Partial storyboards usually mean one or more image/video provider jobs failed (content prohibited?), timed out, or hit rate limits. Increase `IMAGE_GEN_TIMEOUT_MS` or `VIDEO_GEN_TIMEOUT_MS` for slow providers, and use `LOG_PRESET=prompt-connections` or `LOG_LEVEL=debug` to inspect `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]` logs.
