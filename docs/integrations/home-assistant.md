@@ -23,7 +23,7 @@ Everything happens on first startup. You never copy URLs or configure tools manu
 
 - Home Assistant 2024.1 or newer
 - [HACS](https://hacs.xyz) installed
-- [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) running locally (default: `localhost:3000`)
+- [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) running locally (default: `localhost:7860`)
 
 ## Installation
 
@@ -39,7 +39,7 @@ Everything happens on first startup. You never copy URLs or configure tools manu
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **Marinara Engine**
-3. Enter the host and port where Marinara Engine is running (default: `localhost` / `3000`)
+3. Enter the host and port where Marinara Engine is running (default: `localhost` / `7860`)
 4. Click **Submit**
 
 On startup, the integration automatically:
@@ -155,7 +155,7 @@ The **Home Assistant** custom agent must be synced in Marinara and added to the 
 Check that Home Assistant is reachable from the machine running Marinara Engine. If they run on the same machine, the internal URL (`http://localhost:8123`) is used automatically. If Marinara runs on a different device, make sure HA's local network URL is accessible from that device.
 
 **Cannot connect on setup**
-Make sure Marinara Engine is running (`pnpm dev` or the packaged app) and the host/port you entered match where it's actually listening (default: `localhost:3000`).
+Make sure Marinara Engine is running (`pnpm dev` or the packaged app) and the host/port you entered match where it's actually listening (default: `localhost:7860`).
 
 **Finding the webhook URL manually**
 Go to **Settings → Devices & Services → Marinara Engine** in HA. The webhook ID is stored in the config entry. The full URL follows the pattern:
