@@ -7,7 +7,7 @@ import path from "path";
 const ENABLE_SOURCE_MAPS = process.env.VITE_ENABLE_SOURCEMAP === "true";
 const PWA_DISABLED = Boolean(process.env.SKIP_PWA);
 const DEV_SERVER_PORT = Number.parseInt(process.env.VITE_PORT ?? "5173", 10);
-const DEV_SERVER_HOST = process.env.VITE_HOST?.trim() || "0.0.0.0";
+const DEV_SERVER_HOST = process.env.VITE_HOST?.trim() || undefined;
 const DEV_SERVER_OPEN = process.env.VITE_OPEN_BROWSER !== "false" && process.env.AUTO_OPEN_BROWSER !== "false";
 
 function manualChunks(id: string) {
