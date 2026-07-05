@@ -356,11 +356,57 @@ function getCommandStringParam(value: string | null | undefined, name: string) {
   return bare?.[1]?.trim() ?? "";
 }
 
-function getReadyCallVideoUrl(
+function getReadyCallVideoClip(
   manifest: ConversationCallCharacterVideoManifest | undefined,
   kind: ConversationCallCharacterVideoClipKind,
 ) {
-  return manifest?.clips.find((clip) => clip.kind === kind && clip.status === "ready")?.url ?? null;
+  return manifest?.clips.find((clip) => clip.kind === kind && clip.status === "ready" && clip.url) ?? null;
+}
+
+type TrimmedCallVideoClip = {
+  url?: string | null;
+  trimStartSeconds?: number | null;
+  trimEndSeconds?: number | null;
+};
+
+function readCallVideoTrimStart(clip: TrimmedCallVideoClip | null | undefined) {
+  const value = clip?.trimStartSeconds;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function readCallVideoTrimEnd(clip: TrimmedCallVideoClip | null | undefined) {
+  const value = clip?.trimEndSeconds;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function seekCallVideoToTrimStart(video: HTMLVideoElement, clip: TrimmedCallVideoClip | null | undefined) {
+  const start = readCallVideoTrimStart(clip);
+  const end = readCallVideoTrimEnd(clip);
+  if (end !== null && start >= end) return;
+  if (video.currentTime + 0.03 < start || (end !== null && video.currentTime >= end)) {
+    video.currentTime = start;
+  }
+}
+
+function handleCallVideoTrimTimeUpdate(
+  video: HTMLVideoElement,
+  clip: TrimmedCallVideoClip | null | undefined,
+  options: { loop: boolean; onEnded?: () => void },
+) {
+  const start = readCallVideoTrimStart(clip);
+  if (start > 0 && video.currentTime + 0.03 < start) {
+    video.currentTime = start;
+    return;
+  }
+  const end = readCallVideoTrimEnd(clip);
+  if (end === null || video.currentTime < end - 0.03) return;
+  video.currentTime = start;
+  if (options.loop) {
+    void video.play().catch(() => undefined);
+  } else {
+    video.pause();
+    options.onEnded?.();
+  }
 }
 
 function detectCallVideoEmotionKind(
@@ -606,8 +652,15 @@ function CallCustomClipPreview({ clip }: { clip: ConversationCallCustomClipExtra
           muted
           playsInline
           className="max-h-80 w-full bg-black object-contain"
-          onLoadedMetadata={keepCallVideoSilent}
-          onPlay={keepCallVideoSilent}
+          onLoadedMetadata={(event) => {
+            keepCallVideoSilent(event);
+            seekCallVideoToTrimStart(event.currentTarget, customClip);
+          }}
+          onPlay={(event) => {
+            keepCallVideoSilent(event);
+            seekCallVideoToTrimStart(event.currentTarget, customClip);
+          }}
+          onTimeUpdate={(event) => handleCallVideoTrimTimeUpdate(event.currentTarget, customClip, { loop: false })}
           onVolumeChange={keepCallVideoSilent}
         />
         <div className="border-t border-[var(--marinara-chat-chrome-panel-border)] px-2.5 py-2">
@@ -722,19 +775,20 @@ function ParticipantTile({
   }, [characterId, characterVideoEnabled, characterVideoManifest, generateCharacterVideos]);
 
   const requestedVideoKind = videoPlayback?.kind ?? "idle";
-  const preferredVideoUrl = getReadyCallVideoUrl(characterVideoManifest, requestedVideoKind);
-  const fallbackVideoUrl =
-    requestedVideoKind !== "talking" ? getReadyCallVideoUrl(characterVideoManifest, "talking") : null;
-  const idleVideoUrl = requestedVideoKind !== "idle" ? getReadyCallVideoUrl(characterVideoManifest, "idle") : null;
-  const characterVideoUrl = characterVideoEnabled
-    ? (preferredVideoUrl ?? fallbackVideoUrl ?? idleVideoUrl)
+  const preferredVideoClip = getReadyCallVideoClip(characterVideoManifest, requestedVideoKind);
+  const fallbackVideoClip =
+    requestedVideoKind !== "talking" ? getReadyCallVideoClip(characterVideoManifest, "talking") : null;
+  const idleVideoClip = requestedVideoKind !== "idle" ? getReadyCallVideoClip(characterVideoManifest, "idle") : null;
+  const characterVideoClip = characterVideoEnabled
+    ? (preferredVideoClip ?? fallbackVideoClip ?? idleVideoClip)
     : null;
+  const characterVideoUrl = characterVideoClip?.url ?? null;
   const activeVideoKind =
-    characterVideoUrl === preferredVideoUrl
+    characterVideoClip === preferredVideoClip
       ? requestedVideoKind
-      : characterVideoUrl === fallbackVideoUrl
+      : characterVideoClip === fallbackVideoClip
         ? "talking"
-        : characterVideoUrl
+        : characterVideoClip
           ? "idle"
           : null;
   const videoLoops = activeVideoKind === "idle" || activeVideoKind === "talking";
@@ -743,7 +797,14 @@ function ParticipantTile({
     activeVideoKind ?? "avatar",
     videoPlayback?.voiceKey ?? "idle",
     videoPlayback?.nonce ?? 0,
+    characterVideoClip?.trimStartSeconds ?? 0,
+    characterVideoClip?.trimEndSeconds ?? "end",
   ].join(":");
+  const trimEndedRef = useRef(false);
+
+  useEffect(() => {
+    trimEndedRef.current = false;
+  }, [videoKey]);
 
   return (
     <div
@@ -766,10 +827,30 @@ function ParticipantTile({
           playsInline
           loop={videoLoops}
           className="absolute inset-0 h-full w-full object-cover"
-          onLoadedMetadata={keepCallVideoSilent}
-          onPlay={keepCallVideoSilent}
+          onLoadedMetadata={(event) => {
+            keepCallVideoSilent(event);
+            seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+          }}
+          onPlay={(event) => {
+            keepCallVideoSilent(event);
+            seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+          }}
+          onTimeUpdate={(event) => {
+            handleCallVideoTrimTimeUpdate(event.currentTarget, characterVideoClip, {
+              loop: videoLoops,
+              onEnded: () => {
+                if (trimEndedRef.current) return;
+                trimEndedRef.current = true;
+                if (videoPlayback?.followKind && videoPlayback.voiceKey) {
+                  onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
+                }
+              },
+            });
+          }}
           onVolumeChange={keepCallVideoSilent}
           onEnded={() => {
+            if (trimEndedRef.current) return;
+            trimEndedRef.current = true;
             if (videoPlayback?.followKind && videoPlayback.voiceKey) {
               onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
             }

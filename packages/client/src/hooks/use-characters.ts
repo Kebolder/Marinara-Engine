@@ -381,6 +381,8 @@ export interface CharacterGalleryClip {
   createdAt: string | null;
   updatedAt: string | null;
   durationSeconds: number | null;
+  trimStartSeconds?: number | null;
+  trimEndSeconds?: number | null;
   aspectRatio: string;
   provider: string;
   model: string;
@@ -508,9 +510,10 @@ export function useCharacterGalleryClips(characterId: string | null) {
 export function useGenerateCharacterCallVideoClips(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (input?: { clipKind?: string | null }) =>
       api.post(`/conversation-calls/character-videos/${characterId}/generate`, {
         debugMode: useUIStore.getState().debugMode,
+        ...(input?.clipKind ? { clipKind: input.clipKind } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
@@ -523,6 +526,29 @@ export function useDeleteCharacterGalleryClip(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (clipId: string) => api.delete(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
+export function useUpdateCharacterGalleryClipTrim(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      clipId,
+      trimStartSeconds,
+      trimEndSeconds,
+    }: {
+      clipId: string;
+      trimStartSeconds: number | null;
+      trimEndSeconds: number | null;
+    }) =>
+      api.patch(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}/trim`, {
+        trimStartSeconds,
+        trimEndSeconds,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
       qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });

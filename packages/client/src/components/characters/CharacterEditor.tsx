@@ -3,7 +3,15 @@
 // Replaces the chat area when editing a character.
 // Sections: Metadata, Card, Lorebook, Advanced
 // ──────────────────────────────────────────────
-import { useState, useEffect, useRef, useCallback, type ReactNode, type SyntheticEvent } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type ChangeEvent,
+  type ReactNode,
+  type SyntheticEvent,
+} from "react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,6 +29,7 @@ import {
   useUploadCharacterGalleryImage,
   useDeleteCharacterGalleryImage,
   useDeleteCharacterGalleryClip,
+  useUpdateCharacterGalleryClipTrim,
   useTagCharacterGalleryImage,
   useGenerateCharacterCallVideoClips,
   useUploadSprite,
@@ -80,6 +89,7 @@ import {
   UserPlus,
   History,
   RotateCcw,
+  Scissors,
 } from "lucide-react";
 import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { extractColorsFromImage } from "../../lib/avatar-color-extraction";
@@ -1922,6 +1932,57 @@ function keepCharacterCallClipVideoSilent(event: SyntheticEvent<HTMLVideoElement
   forceSilentCharacterCallClipVideo(event.currentTarget);
 }
 
+function readClipTrimStart(clip: Pick<CharacterGalleryClip, "trimStartSeconds">) {
+  const value = clip.trimStartSeconds;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function readClipTrimEnd(clip: Pick<CharacterGalleryClip, "trimEndSeconds">) {
+  const value = clip.trimEndSeconds;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function roundClipTrimSecond(value: number) {
+  return Math.round(Math.max(0, value) * 1000) / 1000;
+}
+
+function seekCharacterCallClipToTrimStart(video: HTMLVideoElement, clip: CharacterGalleryClip) {
+  const start = readClipTrimStart(clip);
+  const end = readClipTrimEnd(clip);
+  if (video.duration > 0 && end !== null && start >= end) return;
+  if (video.currentTime + 0.03 < start || (end !== null && video.currentTime >= end)) {
+    video.currentTime = start;
+  }
+}
+
+function handleCharacterCallClipTimeUpdate(
+  video: HTMLVideoElement,
+  clip: CharacterGalleryClip,
+  options?: { loop?: boolean },
+) {
+  const end = readClipTrimEnd(clip);
+  if (end === null || video.currentTime < end - 0.03) return;
+  const start = readClipTrimStart(clip);
+  video.currentTime = start;
+  if (options?.loop) {
+    void video.play().catch(() => undefined);
+  } else {
+    video.pause();
+  }
+}
+
+function formatTrimSecond(value: number | null | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "full";
+  return `${roundClipTrimSecond(value).toFixed(2)}s`;
+}
+
+function characterClipTrimLabel(clip: CharacterGalleryClip) {
+  const start = readClipTrimStart(clip);
+  const end = readClipTrimEnd(clip);
+  if (start <= 0 && end === null) return null;
+  return `${formatTrimSecond(start)} -> ${formatTrimSecond(end)}`;
+}
+
 function CharacterGalleryTab({ characterId, characterName }: { characterId: string; characterName?: string }) {
   const [mediaTab, setMediaTab] = useState<CharacterGalleryMediaTab>("images");
   const { data: images, isLoading } = useCharacterGalleryImages(characterId);
@@ -2110,19 +2171,30 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
   const { data, isLoading } = useCharacterGalleryClips(characterId);
   const generateCallClips = useGenerateCharacterCallVideoClips(characterId);
   const deleteClip = useDeleteCharacterGalleryClip(characterId);
+  const updateClipTrim = useUpdateCharacterGalleryClipTrim(characterId);
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
+  const [generatingClipId, setGeneratingClipId] = useState<string | null>(null);
+  const [trimClip, setTrimClip] = useState<CharacterGalleryClip | null>(null);
   const clips = data?.clips ?? [];
   const standardCallClips = clips.filter((clip) => clip.source === "conversation-call");
   const readyCallClipCount = standardCallClips.filter((clip) => clip.status === "ready").length;
-  const hasGeneratingClip =
-    data?.callVideoGenerating === true || clips.some((clip) => clip.status === "generating") || generateCallClips.isPending;
+  const generationLockActive =
+    data?.callVideoGenerating === true ||
+    clips.some((clip) => isCharacterCallVideoClip(clip) && clip.status === "generating") ||
+    generateCallClips.isPending;
+  const batchGenerationPending = generateCallClips.isPending && generatingClipId === null;
 
-  const handleGenerateCallClips = useCallback(async () => {
+  const handleGenerateCallClips = useCallback(async (clip?: CharacterGalleryClip) => {
+    const clipKind = clip?.source === "conversation-call" ? clip.clipKind : null;
+    if (clip && !clipKind) return;
+    setGeneratingClipId(clip?.id ?? null);
     try {
-      await generateCallClips.mutateAsync();
-      toast.success("Call clip generation started.");
+      await generateCallClips.mutateAsync(clipKind ? { clipKind } : undefined);
+      toast.success(clipKind ? `${clip?.label || "Call clip"} generation started.` : "Call clip generation started.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start call clip generation.");
+    } finally {
+      setGeneratingClipId(null);
     }
   }, [generateCallClips]);
 
@@ -2153,6 +2225,22 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
     [deleteClip],
   );
 
+  const handleSaveTrim = useCallback(
+    async (clip: CharacterGalleryClip, trim: { trimStartSeconds: number | null; trimEndSeconds: number | null }) => {
+      try {
+        await updateClipTrim.mutateAsync({
+          clipId: clip.id,
+          ...trim,
+        });
+        toast.success("Clip trim saved.");
+        setTrimClip(null);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not save clip trim.");
+      }
+    },
+    [updateClipTrim],
+  );
+
   if (isLoading) {
     return (
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -2175,13 +2263,13 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
         <button
           type="button"
           onClick={() => void handleGenerateCallClips()}
-          disabled={hasGeneratingClip}
+          disabled={generationLockActive}
           className={cn(
             "inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
           )}
         >
-          {hasGeneratingClip ? <Loader2 size="0.85rem" className="animate-spin" /> : <Wand2 size="0.85rem" />}
-          {hasGeneratingClip ? "Generating" : "Pre-generate"}
+          {batchGenerationPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Wand2 size="0.85rem" />}
+          {batchGenerationPending ? "Generating" : "Pre-generate"}
         </button>
       </div>
 
@@ -2193,7 +2281,11 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
               clip={clip}
               characterName={characterName}
               deleting={deletingClipId === clip.id}
+              generating={generatingClipId === clip.id}
+              generationDisabled={generationLockActive}
+              onGenerate={handleGenerateCallClips}
               onDelete={handleDeleteClip}
+              onEditTrim={setTrimClip}
             />
           ))}
         </div>
@@ -2208,7 +2300,209 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
           </div>
         </div>
       )}
+      <CharacterClipTrimModal
+        clip={trimClip}
+        saving={updateClipTrim.isPending}
+        onClose={() => setTrimClip(null)}
+        onSave={handleSaveTrim}
+      />
     </div>
+  );
+}
+
+function CharacterClipPreviewVideo({ clip }: { clip: CharacterGalleryClip }) {
+  const isCallVideoClip = isCharacterCallVideoClip(clip);
+  return (
+    <video
+      src={clip.url ?? undefined}
+      controls
+      muted={isCallVideoClip}
+      preload="metadata"
+      className="h-full w-full bg-black object-contain"
+      onLoadedMetadata={(event) => {
+        if (isCallVideoClip) keepCharacterCallClipVideoSilent(event);
+        seekCharacterCallClipToTrimStart(event.currentTarget, clip);
+      }}
+      onPlay={(event) => {
+        if (isCallVideoClip) keepCharacterCallClipVideoSilent(event);
+        seekCharacterCallClipToTrimStart(event.currentTarget, clip);
+      }}
+      onTimeUpdate={(event) => handleCharacterCallClipTimeUpdate(event.currentTarget, clip)}
+      onVolumeChange={isCallVideoClip ? keepCharacterCallClipVideoSilent : undefined}
+    />
+  );
+}
+
+function CharacterClipTrimModal({
+  clip,
+  saving,
+  onClose,
+  onSave,
+}: {
+  clip: CharacterGalleryClip | null;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (
+    clip: CharacterGalleryClip,
+    trim: { trimStartSeconds: number | null; trimEndSeconds: number | null },
+  ) => void | Promise<void>;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
+  const [start, setStart] = useState(0);
+  const [end, setEnd] = useState(0);
+  const [endIsNatural, setEndIsNatural] = useState(true);
+
+  useEffect(() => {
+    if (!clip) return;
+    const nextStart = readClipTrimStart(clip);
+    const nextEnd = readClipTrimEnd(clip);
+    setDuration(null);
+    setStart(nextStart);
+    setEnd(nextEnd ?? 0);
+    setEndIsNatural(nextEnd === null);
+  }, [clip]);
+
+  const handleLoadedMetadata = useCallback(
+    (event: SyntheticEvent<HTMLVideoElement>) => {
+      const video = event.currentTarget;
+      keepCharacterCallClipVideoSilent(event);
+      const videoDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+      const nextEnd = readClipTrimEnd(clip ?? { trimEndSeconds: null }) ?? videoDuration;
+      setDuration(videoDuration);
+      setEnd((current) => (current > 0 ? Math.min(current, videoDuration || current) : nextEnd));
+      video.currentTime = readClipTrimStart(clip ?? { trimStartSeconds: null });
+    },
+    [clip],
+  );
+
+  if (!clip || !clip.url || !isCharacterCallVideoClip(clip)) return null;
+
+  const resolvedDuration = duration && duration > 0 ? duration : Math.max(end, readClipTrimEnd(clip) ?? 0, 1);
+  const minGap = Math.min(0.1, Math.max(0.02, resolvedDuration / 20));
+  const safeStart = Math.min(start, Math.max(0, end - minGap));
+  const safeEnd = Math.max(end || resolvedDuration, safeStart + minGap);
+  const canSave = safeEnd > safeStart + 0.01;
+
+  const handleStartChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) return;
+    setStart(Math.min(roundClipTrimSecond(value), Math.max(0, safeEnd - minGap)));
+  };
+
+  const handleEndChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) return;
+    setEnd(Math.max(roundClipTrimSecond(value), safeStart + minGap));
+    setEndIsNatural(false);
+  };
+
+  const handleReset = () => {
+    setStart(0);
+    setEnd(resolvedDuration);
+    setEndIsNatural(true);
+    if (videoRef.current) videoRef.current.currentTime = 0;
+  };
+
+  const handleSave = () => {
+    const trimStartSeconds = safeStart > 0.01 ? roundClipTrimSecond(safeStart) : null;
+    const trimEndSeconds =
+      endIsNatural || (duration !== null && safeEnd >= duration - 0.05) ? null : roundClipTrimSecond(safeEnd);
+    void onSave(clip, { trimStartSeconds, trimEndSeconds });
+  };
+
+  const previewClip: CharacterGalleryClip = {
+    ...clip,
+    trimStartSeconds: safeStart > 0.01 ? safeStart : null,
+    trimEndSeconds: endIsNatural ? null : safeEnd,
+  };
+
+  return (
+    <Modal open={Boolean(clip)} onClose={onClose} title={`Trim ${clip.label || "clip"}`} width="max-w-2xl">
+      <div className="space-y-4">
+        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-black">
+          <video
+            ref={videoRef}
+            key={clip.id}
+            src={clip.url}
+            controls
+            muted
+            playsInline
+            preload="metadata"
+            className="aspect-video w-full object-contain"
+            onLoadedMetadata={handleLoadedMetadata}
+            onPlay={(event) => {
+              keepCharacterCallClipVideoSilent(event);
+              seekCharacterCallClipToTrimStart(event.currentTarget, previewClip);
+            }}
+            onTimeUpdate={(event) => handleCharacterCallClipTimeUpdate(event.currentTarget, previewClip, { loop: true })}
+            onVolumeChange={keepCharacterCallClipVideoSilent}
+          />
+        </div>
+
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted-foreground)]">
+            <span>Start {formatTrimSecond(safeStart)}</span>
+            <span>End {endIsNatural ? "natural end" : formatTrimSecond(safeEnd)}</span>
+          </div>
+          <div className="mt-3 grid gap-3">
+            <label className="grid gap-1 text-xs font-medium text-[var(--foreground)]">
+              Start
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, safeEnd - minGap)}
+                step={0.05}
+                value={safeStart}
+                onChange={handleStartChange}
+                className="w-full accent-[var(--primary)]"
+              />
+            </label>
+            <label className="grid gap-1 text-xs font-medium text-[var(--foreground)]">
+              End
+              <input
+                type="range"
+                min={Math.min(resolvedDuration, safeStart + minGap)}
+                max={resolvedDuration}
+                step={0.05}
+                value={Math.min(safeEnd, resolvedDuration)}
+                onChange={handleEndChange}
+                className="w-full accent-[var(--primary)]"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={handleReset}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50"
+          >
+            <RotateCcw size="0.85rem" />
+            Reset
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !canSave}
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? <Loader2 size="0.85rem" className="animate-spin" /> : <Scissors size="0.85rem" />}
+              Save Trim
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -2216,36 +2510,41 @@ function CharacterClipCard({
   clip,
   characterName,
   deleting,
+  generating,
+  generationDisabled,
+  onGenerate,
   onDelete,
+  onEditTrim,
 }: {
   clip: CharacterGalleryClip;
   characterName?: string;
   deleting: boolean;
+  generating: boolean;
+  generationDisabled: boolean;
+  onGenerate: (clip: CharacterGalleryClip) => void | Promise<void>;
   onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
+  onEditTrim: (clip: CharacterGalleryClip) => void;
 }) {
   const sourceLabel = characterGalleryClipSourceLabel(clip.source);
   const dateLabel = formatClipDate(clip.updatedAt ?? clip.createdAt);
   const isReady = clip.status === "ready" && Boolean(clip.url);
   const canDelete = canDeleteCharacterGalleryClip(clip);
   const isCallVideoClip = isCharacterCallVideoClip(clip);
+  const canTrim = isReady && isCallVideoClip;
+  const canGenerate =
+    clip.source === "conversation-call" &&
+    Boolean(clip.clipKind) &&
+    (clip.status === "missing" || clip.status === "error");
   const clipDetails = [clip.durationSeconds ? `${clip.durationSeconds}s` : null, clip.aspectRatio]
     .filter(Boolean)
     .join(" · ");
+  const trimLabel = characterClipTrimLabel(clip);
 
   return (
     <div className="group overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md">
       <div className="relative aspect-video bg-[var(--secondary)]">
         {isReady && clip.url ? (
-          <video
-            src={clip.url}
-            controls
-            muted={isCallVideoClip}
-            preload="metadata"
-            className="h-full w-full bg-black object-contain"
-            onLoadedMetadata={isCallVideoClip ? keepCharacterCallClipVideoSilent : undefined}
-            onPlay={isCallVideoClip ? keepCharacterCallClipVideoSilent : undefined}
-            onVolumeChange={isCallVideoClip ? keepCharacterCallClipVideoSilent : undefined}
-          />
+          <CharacterClipPreviewVideo clip={clip} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-[var(--muted-foreground)]">
             {clip.status === "generating" ? (
@@ -2256,11 +2555,28 @@ function CharacterClipCard({
               <Film size="1.25rem" className="opacity-50" />
             )}
             <span>{clip.status === "missing" ? "Not generated" : clip.status}</span>
+            {canGenerate ? (
+              <button
+                type="button"
+                onClick={() => void onGenerate(clip)}
+                disabled={generationDisabled || generating}
+                className="mt-1 inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-1 text-[0.7rem] font-semibold text-[var(--foreground)] opacity-0 shadow-sm transition-all hover:border-[var(--primary)]/50 hover:text-[var(--primary)] focus-visible:opacity-100 disabled:cursor-not-allowed disabled:text-[var(--muted-foreground)] group-hover:opacity-100 max-md:opacity-100"
+                title={`Generate ${clip.label || "call clip"}`}
+              >
+                {generating ? <Loader2 size="0.75rem" className="animate-spin" /> : <Wand2 size="0.75rem" />}
+                <span>Generate</span>
+              </button>
+            ) : null}
           </div>
         )}
         <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
           {sourceLabel}
         </div>
+        {trimLabel ? (
+          <div className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
+            {trimLabel}
+          </div>
+        ) : null}
       </div>
       <div className="space-y-2 p-3">
         <div className="flex items-start justify-between gap-2">
@@ -2271,6 +2587,17 @@ function CharacterClipCard({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {canTrim ? (
+              <button
+                type="button"
+                onClick={() => onEditTrim(clip)}
+                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+                title="Trim loop"
+                aria-label={`Trim ${clip.label || "clip"}`}
+              >
+                <Scissors size="0.75rem" />
+              </button>
+            ) : null}
             {isReady && clip.url ? (
               <a
                 href={clip.url}

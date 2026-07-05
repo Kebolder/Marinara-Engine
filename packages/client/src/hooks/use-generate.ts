@@ -391,6 +391,7 @@ import {
   chatKeys,
   forgetRecentMessageContentEdit,
   preserveRecentMessageContentEdit,
+  rememberRecentMessageContentEdit,
 } from "./use-chats";
 import { characterKeys } from "./use-characters";
 import { connectionKeys } from "./use-connections";
@@ -1138,6 +1139,19 @@ export function useGenerate() {
       let gameStatePatchAnchor: { messageId: string; swipeIndex: number } | null = null;
       const normalizeLineBreakSpacing = (text: string) =>
         chatModeForGeneration === "roleplay" ? text.replace(/[ \t]+(\r?\n)/g, "$1") : text;
+      const rememberContinuedMessageContent = (message: Message) => {
+        if (!params.continueMessageId || message.id !== params.continueMessageId) return;
+        const swipeIndex =
+          typeof message.activeSwipeIndex === "number" && Number.isInteger(message.activeSwipeIndex)
+            ? message.activeSwipeIndex
+            : null;
+        rememberRecentMessageContentEdit(
+          params.chatId,
+          message.id,
+          message.content,
+          swipeIndex,
+        );
+      };
       const appendVisibleGeneratedChunk = (chunk: string) => {
         const normalizedChunk = normalizeLineBreakSpacing(chunk);
         if (/^\r?\n/.test(normalizedChunk)) {
@@ -1889,6 +1903,7 @@ export function useGenerate() {
                     content: rewrittenText,
                     extra: heldExtra as unknown as Message["extra"],
                   };
+                  rememberContinuedMessageContent(updatedMessage);
                   persistedMessages.set(updatedMessage.id, updatedMessage);
                   upsertPersistedMessages(qc, params.chatId, [updatedMessage]);
                   clearStreamBuffer(params.chatId);
@@ -1921,6 +1936,7 @@ export function useGenerate() {
                       content: fullBuffer,
                       extra: nextExtra as unknown as Message["extra"],
                     };
+                    rememberContinuedMessageContent(updatedMessage);
                     persistedMessages.set(updatedMessage.id, updatedMessage);
                     upsertPersistedMessages(qc, params.chatId, [updatedMessage]);
                   }
@@ -1994,6 +2010,7 @@ export function useGenerate() {
               // should own the transcript even if post-generation agents
               // (Illustrator, Spotify, etc.) are still running.
               if (params.regenerateMessageId || params.continueMessageId || !streamingEnabled) {
+                rememberContinuedMessageContent(savedMessage);
                 upsertPersistedMessages(qc, params.chatId, [savedMessage]);
               } else if (shouldDisplayRawStream && !isGameGeneration) {
                 await waitForTypewriterDrain();

@@ -891,6 +891,10 @@ async function buildDynamicGameImagePromptMessages(args: {
   const systemPrompt = args.promptOverridesStorage
     ? await loadPrompt(args.promptOverridesStorage, GAME_IMAGE_PROMPT_DIRECTOR, vars)
     : GAME_IMAGE_PROMPT_DIRECTOR.defaultBuilder(vars);
+  const portraitIdentityInstruction =
+    args.request.kind === "portrait"
+      ? "For NPC portraits, copy the Required canonical NPC visual profile / Appearance traits from <asset_context> and <draft_prompt> into the returned prompt. Do not replace them with a generic character design."
+      : "";
 
   return [
     { role: "system", content: systemPrompt },
@@ -902,9 +906,12 @@ async function buildDynamicGameImagePromptMessages(args: {
         `<draft_prompt>\n${sourcePrompt}\n</draft_prompt>`,
         [
           `Rewrite this into one positive prompt for a ${gameDynamicImagePromptKindLabel(args.request.kind)}.`,
+          portraitIdentityInstruction,
           `Maximum length: ${args.request.maxCharacters} characters.`,
           'Return only JSON: {"prompt":"..."}.',
-        ].join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -9371,7 +9378,7 @@ export async function gameRoutes(app: FastifyInstance) {
       .array(
         z.object({
           name: z.string().min(1).max(200),
-          description: z.string().max(1000),
+          description: z.string().max(5000),
           gender: z.string().max(80).nullable().optional(),
           pronouns: z.string().max(80).nullable().optional(),
         }),
@@ -11016,10 +11023,11 @@ export async function gameRoutes(app: FastifyInstance) {
               const candidate = input.npcsNeedingAvatars?.find(
                 (npc) => normalizeJournalMatch(npc.name) === normalizeJournalMatch(generatedAvatar.name),
               );
+              const metadataNpc = findNpcRecordByName(currentNpcs, generatedAvatar.name);
               return {
-                description: candidate?.description ?? "",
-                gender: candidate?.gender,
-                pronouns: candidate?.pronouns,
+                description: candidate?.description?.trim() || metadataNpc?.description || "",
+                gender: candidate?.gender ?? metadataNpc?.gender,
+                pronouns: candidate?.pronouns ?? metadataNpc?.pronouns,
               };
             })(),
           }));

@@ -28,59 +28,50 @@ const CLIP_PROMPT_SEEDS: ClipPromptSeed[] = [
     kind: "idle",
     label: "idle loop",
     instruction:
-      "Create a seamless neutral video-call idle loop. The first frame and final frame must match: same pose, expression, gaze, camera framing, hair, outfit, lighting, and background. Add only subtle breathing, blinking, and tiny natural head movement between those matching endpoints.",
+      "The character stands still with very subtle breathing, maybe a gentle smile, and no mouth movement. If their eyes are visible, they may blink naturally. If a mask, visor, hair, or accessory covers their eyes, keep it exactly as shown and do not invent blinking or visible eyes.",
   },
   {
     kind: "talking",
     label: "talking loop",
     instruction:
-      "Start on the exact same reference-matching neutral video-call pose, animate natural speaking with subtle mouth and face movement, then return to that identical neutral pose by the final frame. The clip must loop cleanly without a visible jump.",
+      "The character makes subtle mouth and face movements as if speaking, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "laughing",
     label: "laughing reaction",
     instruction:
-      "Start on the exact same reference-matching neutral video-call pose, laugh softly with natural face and shoulder movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "The character laughs naturally for a moment with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "angry",
     label: "angry reaction",
     instruction:
-      "Start on the exact same reference-matching neutral video-call pose, show anger or irritation in the face and posture, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "The character shows anger or irritation briefly with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "crying",
     label: "crying reaction",
     instruction:
-      "Start on the exact same reference-matching neutral video-call pose, show a restrained tearful or crying reaction, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "The character shows a restrained tearful reaction briefly with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "sighing",
     label: "sighing reaction",
     instruction:
-      "Start on the exact same reference-matching neutral video-call pose, sigh with a small breath and head movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "The character makes a small sigh-like expression with minimal head movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
-];
-
-const LOCKED_CAMERA_REFERENCE_LINES = [
-  "Use a still camera: the camera must be completely locked off for the entire clip. Do not animate the camera.",
-  "No zoom in, zoom out, push-in, pull-out, dolly, pan, tilt, roll, crop change, reframing, phone movement, handheld drift, or perspective change.",
-  "Keep the character's face at the same screen position and the same apparent size from first frame to final frame. Only the character may move.",
 ];
 
 function buildDefaultPrompt(ctx: ConversationCallVideoClipCtx) {
   return [
-    `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} ${ctx.clipLabel} for an AI character in a private video call.`,
-    `Character name: ${ctx.characterName}.`,
-    ctx.clipInstruction,
-    "Use only the supplied avatar/reference image as the character identity, appearance, outfit, art style, camera framing, and background reference.",
-    "The first frame must match the supplied reference image as closely as the provider allows.",
-    "The final frame must return to that same reference-matching pose, expression, framing, lighting, outfit, and background so the clip loops seamlessly.",
-    "This must be a clean loop with no jump cut, sudden pose reset, snap in expression, or identity drift at the loop point.",
-    ...LOCKED_CAMERA_REFERENCE_LINES,
-    "Preserve the reference image's face, hair, outfit, mask/accessories, colors, proportions, and art style for the entire clip.",
-    "No sudden outfit changes, hairstyle changes, identity drift, lighting shifts, new accessories, or altered facial features.",
-    "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
+    `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} animated portrait loop for an AI video call.`,
+    "Reference: use the attached image as the character identity and first/final frame target.",
+    "Preserve the reference image's crop, background, lighting, colors, face shape, hair, clothing, mask or eyewear, accessories, and art style.",
+    `Action: ${ctx.clipInstruction}`,
+    "Lighting and background: keep them from the reference image; do not invent a new ambience or setting.",
+    "Camera: locked-off still camera, no zoom, pan, tilt, dolly, crop change, reframing, handheld shake, or scene cut.",
+    "Looping: begin and finish on the same pose, scale, framing, lighting, outfit, and background for a seamless loop.",
+    "Focus: single character only, no captions, subtitles, UI, logos, extra people, new clothing, or new facial features.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -88,16 +79,14 @@ function buildDefaultPrompt(ctx: ConversationCallVideoClipCtx) {
 
 function buildDefaultCustomClipPrompt(ctx: ConversationCallCustomVideoClipCtx) {
   return [
-    `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} custom video-call clip for an AI character.`,
-    `Character name: ${ctx.characterName}.`,
-    `Clip label: ${ctx.clipLabel}.`,
-    `Requested custom action or look: ${ctx.customPrompt}.`,
-    "Use only the supplied avatar/reference image as the character identity, appearance, outfit, art style, camera framing, and background reference.",
-    "Begin from the reference-matching neutral video-call pose, perform only the requested visual action or reveal, then settle back into a reference-matching stable pose by the final frame.",
-    ...LOCKED_CAMERA_REFERENCE_LINES,
-    "Preserve the reference image's face, hair, outfit, mask/accessories, colors, proportions, and art style unless the custom request explicitly changes one of those details.",
-    "Only change appearance details that the custom request explicitly asks to change; avoid sudden outfit changes, hairstyle changes, identity drift, lighting shifts, or unrelated new accessories.",
-    "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
+    `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} custom animated portrait loop for an AI video call.`,
+    "Reference: use the attached image as the character identity and first/final frame target.",
+    "Preserve the reference image's crop, base background, lighting, colors, face shape, hair, clothing, mask or eyewear, accessories, and art style unless the custom request explicitly changes one visual detail.",
+    `Action: ${ctx.customPrompt}.`,
+    "Lighting and background: keep them from the reference image unless the custom request explicitly changes them.",
+    "Camera: locked-off still camera, no zoom, pan, tilt, dolly, crop change, reframing, handheld shake, or scene cut.",
+    "Looping: start from a reference-matching frame and return to a reference-matching frame by the final frame so the clip loops cleanly.",
+    "Focus: single character only, no captions, subtitles, UI, logos, extra people, or unrelated costume/accessory changes.",
   ]
     .filter(Boolean)
     .join("\n");

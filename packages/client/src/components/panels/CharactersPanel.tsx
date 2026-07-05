@@ -1395,7 +1395,7 @@ export function CharactersPanel() {
       </div>
 
       {characterPages.hasNextPage && (
-        <div className="relative z-10 mt-2 border-t border-[var(--marinara-chat-chrome-panel-divider)] pt-2 pb-3">
+        <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-[var(--marinara-chat-chrome-panel-divider)] bg-[var(--sidebar)]/95 px-3 pt-2 pb-3 backdrop-blur-md">
           <button
             type="button"
             onClick={() => void characterPages.fetchNextPage()}

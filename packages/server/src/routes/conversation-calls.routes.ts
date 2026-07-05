@@ -2147,6 +2147,15 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "No Default for Videos connection is configured." });
     }
     const body = parseJsonRecord(req.body);
+    const requestedKind =
+      typeof body.clipKind === "string" ? body.clipKind : typeof body.kind === "string" ? body.kind : "";
+    let clipKinds: ConversationCallCharacterVideoClipKind[] | null = null;
+    if (requestedKind) {
+      if (!CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(requestedKind as ConversationCallCharacterVideoClipKind)) {
+        return reply.status(400).send({ error: "Invalid call video clip kind" });
+      }
+      clipKinds = [requestedKind as ConversationCallCharacterVideoClipKind];
+    }
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
@@ -2154,6 +2163,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       characterId: character.id,
       characterName: readName(data, "Character"),
       avatarPath: character.avatarPath ?? null,
+      clipKinds,
       connection: videoConnection,
       promptOverridesStorage: createPromptOverridesStorage(app.db),
       videoSettings,

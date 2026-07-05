@@ -48,6 +48,10 @@ const GOOGLE_VEO_POLL_INTERVAL_MS = readPositiveIntervalEnv("GOOGLE_VEO_VIDEO_PO
 const XAI_POLL_INTERVAL_MS = readPositiveIntervalEnv("XAI_VIDEO_POLL_INTERVAL_MS", 5_000);
 const OPENROUTER_POLL_INTERVAL_MS = readPositiveIntervalEnv("OPENROUTER_VIDEO_POLL_INTERVAL_MS", 10_000);
 
+type GoogleVeoImageEncoding = "inlineData" | "bytesBase64Encoded";
+type GoogleVeoResolution = "720p" | "1080p";
+type GoogleVeoDuration = 4 | 6 | 8;
+
 class VideoGenerationDeadlineError extends Error {
   constructor(timeoutMs: number) {
     super(`Video generation timed out after ${Math.round(timeoutMs / 1000)} seconds`);
@@ -84,6 +88,26 @@ export async function generateVideo(
     );
   }
   throw new Error(`Unsupported video generation service: ${resolvedService || serviceHint || source}`);
+}
+
+export function resolveVideoRequestDuration(
+  source: string,
+  serviceHint: string,
+  request: Pick<VideoGenerationRequest, "durationSeconds" | "referenceImage" | "resolution">,
+): number {
+  const resolvedService = normalizeVideoService(serviceHint || source);
+  const durationSeconds = Math.max(1, Math.trunc(request.durationSeconds));
+  if (resolvedService === "google_veo") {
+    return normalizeGoogleVeoDuration(
+      durationSeconds,
+      !!request.referenceImage,
+      normalizeGoogleVeoResolution(request.resolution),
+    );
+  }
+  if (resolvedService === "xai") {
+    return Math.min(15, durationSeconds);
+  }
+  return durationSeconds;
 }
 
 export async function saveVideoToDisk(chatId: string, base64: string): Promise<string> {
@@ -210,47 +234,41 @@ async function generateGoogleVeoVideo(
   if (!apiKey.trim()) throw new Error("Google Veo requires a Google AI Studio API key");
   const model = request.model?.trim() || DEFAULT_GOOGLE_VEO_MODEL;
   const endpoint = buildGoogleVeoPredictUrl(baseUrl, model);
-  const referenceImage = request.referenceImage ? videoInlineImage(request.referenceImage) : null;
   const resolution = normalizeGoogleVeoResolution(request.resolution);
-  const durationSeconds = normalizeGoogleVeoDuration(request.durationSeconds, !!referenceImage, resolution);
-  const instance: Record<string, unknown> = { prompt: request.prompt };
-  if (referenceImage) {
-    instance.image = referenceImage;
-    instance.lastFrame = referenceImage;
+  const durationSeconds = normalizeGoogleVeoDuration(request.durationSeconds, !!request.referenceImage, resolution);
+
+  let start = await startGoogleVeoGeneration(
+    endpoint,
+    apiKey,
+    buildGoogleVeoStartBody(request, durationSeconds, resolution, "inlineData"),
+    request.signal,
+  );
+
+  if (
+    !start.ok &&
+    request.referenceImage &&
+    shouldRetryGoogleVeoBytesPayload(start.status, start.text)
+  ) {
+    logger.info(
+      "[video-gen/google-veo] Retrying model %s with bytesBase64Encoded image payload after inlineData was rejected",
+      model,
+    );
+    start = await startGoogleVeoGeneration(
+      endpoint,
+      apiKey,
+      buildGoogleVeoStartBody(request, durationSeconds, resolution, "bytesBase64Encoded"),
+      request.signal,
+    );
   }
-  const body = {
-    instances: [instance],
-    parameters: {
-      aspectRatio: request.aspectRatio,
-      durationSeconds,
-      resolution,
-    },
-  };
 
-  const started = await safeFetch(endpoint, {
-    method: "POST",
-    headers: googleVeoHeaders(apiKey),
-    body: JSON.stringify(body),
-    signal: request.signal,
-    policy: {
-      allowLocal: false,
-      allowLoopback: false,
-      allowMdns: false,
-      allowedProtocols: ["https:"],
-    },
-    maxResponseBytes: 2 * 1024 * 1024,
-    decodeCompressedResponse: true,
-  });
-
-  const startText = await started.text();
-  if (!started.ok) {
-    throw new Error(`Google Veo returned ${started.status}: ${formatProviderError(startText)}`);
+  if (!start.ok) {
+    throw new Error(`Google Veo returned ${start.status}: ${formatProviderError(start.text)}`);
   }
   let startJson: unknown;
   try {
-    startJson = JSON.parse(startText) as unknown;
+    startJson = JSON.parse(start.text) as unknown;
   } catch {
-    throw new Error(`Google Veo returned non-JSON response: ${startText.slice(0, 300)}`);
+    throw new Error(`Google Veo returned non-JSON response: ${start.text.slice(0, 300)}`);
   }
   const operationName = readString(asRecord(startJson).name);
   if (!operationName) {
@@ -297,8 +315,13 @@ async function generateGoogleVeoVideo(
     }
     const videoUri = findVideoUri(pollJson);
     if (!videoUri) {
-      logger.debug("[video-gen/google-veo] completed response without video URI: %s", pollText.slice(0, 2000));
-      throw new Error("Google Veo response did not include a downloadable video");
+      const reason = summarizeGoogleVeoMissingVideoReason(pollJson);
+      logger.warn("[video-gen/google-veo] completed response without video URI: %s", pollText.slice(0, 2000));
+      throw new Error(
+        reason
+          ? `Google Veo completed without a downloadable video: ${reason}`
+          : "Google Veo response did not include a downloadable video",
+      );
     }
     return downloadGoogleVeoVideo(videoUri, apiKey, request.signal);
   }
@@ -704,7 +727,82 @@ function referenceImageToDataUri(image: VideoReferenceImage): string {
   return `data:${image.mimeType};base64,${stripDataUrl(image.base64)}`;
 }
 
-function videoInlineImage(image: VideoReferenceImage): { inlineData: { mimeType: string; data: string } } {
+function buildGoogleVeoStartBody(
+  request: VideoGenerationRequest,
+  durationSeconds: GoogleVeoDuration,
+  resolution: GoogleVeoResolution,
+  imageEncoding: GoogleVeoImageEncoding,
+): {
+  instances: Array<Record<string, unknown>>;
+  parameters: {
+    aspectRatio: VideoGenerationRequest["aspectRatio"];
+    durationSeconds: GoogleVeoDuration;
+    resolution: GoogleVeoResolution;
+  };
+} {
+  const instance: Record<string, unknown> = { prompt: request.prompt };
+  if (request.referenceImage) {
+    const referenceImage = googleVeoImage(request.referenceImage, imageEncoding);
+    instance.image = referenceImage;
+    instance.lastFrame = referenceImage;
+  }
+  return {
+    instances: [instance],
+    parameters: {
+      aspectRatio: request.aspectRatio,
+      durationSeconds,
+      resolution,
+    },
+  };
+}
+
+async function startGoogleVeoGeneration(
+  endpoint: string,
+  apiKey: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+): Promise<{ ok: boolean; status: number; text: string }> {
+  const started = await safeFetch(endpoint, {
+    method: "POST",
+    headers: googleVeoHeaders(apiKey),
+    body: JSON.stringify(body),
+    signal,
+    policy: {
+      allowLocal: false,
+      allowLoopback: false,
+      allowMdns: false,
+      allowedProtocols: ["https:"],
+    },
+    maxResponseBytes: 2 * 1024 * 1024,
+    decodeCompressedResponse: true,
+  });
+  return {
+    ok: started.ok,
+    status: started.status,
+    text: await started.text(),
+  };
+}
+
+function shouldRetryGoogleVeoBytesPayload(status: number, text: string): boolean {
+  return (
+    status === 400 &&
+    /inline\s*data/i.test(text) &&
+    /not supported|isn't supported|is not supported|remove it/i.test(text)
+  );
+}
+
+function googleVeoImage(
+  image: VideoReferenceImage,
+  encoding: GoogleVeoImageEncoding,
+):
+  | { inlineData: { mimeType: string; data: string } }
+  | { bytesBase64Encoded: string; mimeType: string } {
+  if (encoding === "bytesBase64Encoded") {
+    return {
+      bytesBase64Encoded: stripDataUrl(image.base64),
+      mimeType: image.mimeType,
+    };
+  }
   return {
     inlineData: {
       mimeType: image.mimeType,
@@ -713,15 +811,15 @@ function videoInlineImage(image: VideoReferenceImage): { inlineData: { mimeType:
   };
 }
 
-function normalizeGoogleVeoResolution(value: VideoGenerationRequest["resolution"]): "720p" | "1080p" {
+function normalizeGoogleVeoResolution(value: VideoGenerationRequest["resolution"]): GoogleVeoResolution {
   return value === "1080p" ? "1080p" : DEFAULT_GOOGLE_VEO_RESOLUTION;
 }
 
 function normalizeGoogleVeoDuration(
   value: number,
   hasReferenceImage: boolean,
-  resolution: "720p" | "1080p",
-): 4 | 6 | 8 {
+  resolution: GoogleVeoResolution,
+): GoogleVeoDuration {
   if (hasReferenceImage || resolution === "1080p") return 8;
   if (value <= 5) return 4;
   if (value <= 7) return 6;
@@ -731,11 +829,22 @@ function normalizeGoogleVeoDuration(
 function extractMp4(value: unknown): string | null {
   const found = findContentRecord(value);
   if (!found) return null;
-  return readString(found.data) ?? readString(found.base64) ?? readString(found.base64_data) ?? null;
+  return (
+    readString(found.data) ??
+    readString(found.base64) ??
+    readString(found.base64_data) ??
+    readString(found.videoBytes) ??
+    readString(found.video_bytes) ??
+    readString(found.bytesBase64Encoded) ??
+    null
+  );
 }
 
 function findVideoUri(value: unknown, depth = 0): string | null {
   if (depth > 8 || value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    return /^https?:\/\//i.test(value.trim()) ? value.trim() : null;
+  }
   if (Array.isArray(value)) {
     for (const item of value) {
       const found = findVideoUri(item, depth + 1);
@@ -745,9 +854,15 @@ function findVideoUri(value: unknown, depth = 0): string | null {
   }
   if (typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  const uri = readString(record.uri);
+  const uri =
+    readString(record.uri) ??
+    readString(record.url) ??
+    readString(record.downloadUri) ??
+    readString(record.download_uri) ??
+    readString(record.fileUri) ??
+    readString(record.file_uri);
   if (uri) return uri;
-  for (const key of ["response", "generateVideoResponse", "generatedSamples", "generatedVideos", "video"]) {
+  for (const key of ["response", "generateVideoResponse", "generatedSamples", "generatedVideos", "video", "file"]) {
     const found = findVideoUri(record[key], depth + 1);
     if (found) return found;
   }
@@ -767,8 +882,14 @@ function findContentRecord(value: unknown, depth = 0): Record<string, unknown> |
   const record = value as Record<string, unknown>;
   const type = readString(record.type)?.toLowerCase();
   const mimeType = (readString(record.mime_type) ?? readString(record.mimeType) ?? "").toLowerCase();
-  const hasData = typeof record.data === "string" || typeof record.base64 === "string" || typeof record.base64_data === "string";
-  if ((type === "video" || mimeType === "video/mp4") && mimeType === "video/mp4" && hasData) {
+  const hasData =
+    typeof record.data === "string" ||
+    typeof record.base64 === "string" ||
+    typeof record.base64_data === "string" ||
+    typeof record.videoBytes === "string" ||
+    typeof record.video_bytes === "string" ||
+    typeof record.bytesBase64Encoded === "string";
+  if (hasData && (type === "video" || mimeType === "video/mp4" || mimeType === "")) {
     return record;
   }
   const inlineData = record.inline_data ?? record.inlineData;
@@ -776,11 +897,70 @@ function findContentRecord(value: unknown, depth = 0): Record<string, unknown> |
     const found = findContentRecord(inlineData, depth + 1);
     if (found) return found;
   }
-  for (const key of ["steps", "content", "parts", "output_video", "outputVideo"]) {
+  for (const key of [
+    "response",
+    "generateVideoResponse",
+    "generatedSamples",
+    "generatedVideos",
+    "video",
+    "inline_data",
+    "inlineData",
+    "steps",
+    "content",
+    "parts",
+    "output_video",
+    "outputVideo",
+  ]) {
     const found = findContentRecord(record[key], depth + 1);
     if (found) return found;
   }
   return null;
+}
+
+function summarizeGoogleVeoMissingVideoReason(value: unknown): string | null {
+  const reasons = new Set<string>();
+  collectGoogleVeoReasonStrings(value, reasons);
+  return [...reasons].slice(0, 5).join("; ") || null;
+}
+
+function collectGoogleVeoReasonStrings(value: unknown, reasons: Set<string>, depth = 0): void {
+  if (depth > 8 || value === null || value === undefined || reasons.size >= 8) return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectGoogleVeoReasonStrings(item, reasons, depth + 1);
+    return;
+  }
+  if (typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  for (const key of [
+    "raiMediaFilteredReasons",
+    "filteredReasons",
+    "blockReason",
+    "blockedReason",
+    "finishReason",
+    "message",
+    "reason",
+  ]) {
+    const raw = record[key];
+    if (typeof raw === "string" && raw.trim()) reasons.add(`${key}: ${raw.trim().slice(0, 300)}`);
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (typeof item === "string" && item.trim()) reasons.add(`${key}: ${item.trim().slice(0, 300)}`);
+        else collectGoogleVeoReasonStrings(item, reasons, depth + 1);
+      }
+    }
+  }
+  for (const key of [
+    "response",
+    "generateVideoResponse",
+    "generatedSamples",
+    "generatedVideos",
+    "safetyRatings",
+    "promptFeedback",
+    "error",
+    "metadata",
+  ]) {
+    collectGoogleVeoReasonStrings(record[key], reasons, depth + 1);
+  }
 }
 
 function isMp4Buffer(buffer: Buffer): boolean {

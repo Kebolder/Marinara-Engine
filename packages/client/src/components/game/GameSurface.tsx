@@ -158,6 +158,7 @@ import { GameReadableDisplay } from "./GameReadableDisplay";
 import {
   buildMissingSceneAssetGenerationPayload,
   normalizeSceneAssetNameForGeneration,
+  type SceneAssetNpcAvatarCandidate,
 } from "./game-asset-generation-payload";
 import { PinnedImageOverlay } from "../chat/PinnedImageOverlay";
 import { ChatBranchSelector } from "../chat/ChatBranchSelector";
@@ -1262,6 +1263,31 @@ function buildNpcAvatarLookup(
   }
 
   return lookup;
+}
+
+function buildNpcAvatarRequests(
+  sceneAssetNpcs: SceneAssetNpcAvatarCandidate[],
+  npcAvatarLookup: Map<string, string>,
+  failedNpcAvatarNames?: Iterable<string>,
+): SceneAssetNpcAvatarCandidate[] {
+  const failedNpcAvatarNameSet = new Set(
+    [...(failedNpcAvatarNames ?? [])].map(normalizeSceneAssetName).filter(Boolean),
+  );
+
+  return sceneAssetNpcs
+    .filter((npc) => {
+      const normalizedName = normalizeSceneAssetName(npc.name);
+      if (!normalizedName || !npc.description) return false;
+      if (failedNpcAvatarNameSet.has(normalizedName)) return true;
+      return !npc.avatarUrl && !npcAvatarLookup.has(normalizedName);
+    })
+    .map((npc) => ({
+      name: npc.name,
+      description: npc.description,
+      gender: npc.gender ?? null,
+      pronouns: npc.pronouns ?? null,
+    }))
+    .slice(0, 10);
 }
 
 const SpriteOverlay = lazy(async () => {
@@ -3631,21 +3657,8 @@ function GameSurfaceComponent({
   );
 
   const npcsNeedingAvatars = useMemo(() => {
-    const npcsNeedingAvatars = sceneAssetNpcs
-      .filter(
-        (npc) =>
-          !npc.avatarUrl && !npcAvatarLookup.has(normalizeSceneAssetName(npc.name)) && npc.description && npc.name,
-      )
-      .map((npc) => ({
-        name: npc.name,
-        description: npc.description,
-        gender: npc.gender ?? null,
-        pronouns: npc.pronouns ?? null,
-      }))
-      .slice(0, 10);
-
-    return npcsNeedingAvatars;
-  }, [npcAvatarLookup, sceneAssetNpcs]);
+    return buildNpcAvatarRequests(sceneAssetNpcs, npcAvatarLookup, failedNpcAvatarNames);
+  }, [failedNpcAvatarNames, npcAvatarLookup, sceneAssetNpcs]);
 
   const gameImageGenerationEnabled =
     chatMeta.enableSpriteGeneration === true &&
@@ -5044,7 +5057,36 @@ function GameSurfaceComponent({
       // met yet — by the time the party encounters them their avatar is ready, and the
       // /generate-assets schema already caps this at 10 per turn so cost stays bounded.
       const pendingIllustration = result.generatedIllustration ? null : result.illustration;
-      if (gameImageAutoGenerationEnabled && (unresolvedBg || pendingIllustration || npcsNeedingAvatars.length > 0)) {
+      const currentGameStateSnapshot = useGameStateStore.getState().current;
+      const currentPresentCharacters =
+        currentGameStateSnapshot?.chatId === activeChatId
+          ? ((currentGameStateSnapshot.presentCharacters as SceneAssetPresentCharacter[] | undefined) ?? [])
+          : ((gameSnapshot?.presentCharacters as SceneAssetPresentCharacter[] | undefined) ?? []);
+      const currentSceneAssetNpcs = mergeSceneAssetNpcCandidates(
+        useGameModeStore.getState().npcs,
+        chatMeta.gameNpcs,
+        currentPresentCharacters,
+        sceneWrapCharacterNames,
+        currentGameStateSnapshot?.chatId === activeChatId
+          ? currentGameStateSnapshot.location
+          : (gameSnapshot?.location ?? null),
+        latestNarrationText,
+      );
+      const currentNpcAvatarLookup = buildNpcAvatarLookup(
+        useGameModeStore.getState().npcs,
+        currentPresentCharacters,
+        chatMeta.gameNpcs,
+      );
+      const currentNpcsNeedingAvatars = buildNpcAvatarRequests(
+        currentSceneAssetNpcs,
+        currentNpcAvatarLookup,
+        failedNpcAvatarNames,
+      );
+
+      if (
+        gameImageAutoGenerationEnabled &&
+        (unresolvedBg || pendingIllustration || currentNpcsNeedingAvatars.length > 0)
+      ) {
         const messageTags = "content" in msg && typeof msg.content === "string" ? parseGmTags(msg.content) : null;
         const combatTransitionTurn = !!(messageTags?.combatEncounter || messageTags?.stateChange === "combat");
         const assetPayload = {
@@ -5052,7 +5094,7 @@ function GameSurfaceComponent({
           backgroundTag: unresolvedBg || undefined,
           illustration: pendingIllustration ?? undefined,
           illustrationNarration: pendingIllustration && messageTags ? messageTags.cleanContent : undefined,
-          npcsNeedingAvatars: npcsNeedingAvatars.length > 0 ? npcsNeedingAvatars : undefined,
+          npcsNeedingAvatars: currentNpcsNeedingAvatars.length > 0 ? currentNpcsNeedingAvatars : undefined,
           debugMode: useUIStore.getState().debugMode,
         };
         const blocksScene = introPresented && !combatTransitionTurn;

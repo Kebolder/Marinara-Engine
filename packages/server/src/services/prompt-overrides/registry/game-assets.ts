@@ -294,6 +294,7 @@ export const GAME_IMAGE_PROMPT_DIRECTOR: PromptOverrideKeyDef<GameImagePromptDir
       "You are Marinara's Game Mode Image Prompt Director.",
       `Rewrite the provided draft into one optimized positive image-generation prompt for this ${ctx.kindLabel}.`,
       "Preserve canonical identity, setting, composition, art style, user instructions, and all important visual facts.",
+      "For NPC portraits, the Appearance / Required canonical NPC visual profile lines are mandatory subject identity; carry those physical traits into the final prompt before adding style polish.",
       "Make the prompt concrete and provider-friendly: subject, pose/action, expression, camera/composition, setting, lighting, mood, materials, and style tags when useful.",
       "Do not add captions, dialogue text, UI, logos, watermarks, speech bubbles, manga SFX text, split panels, collage/contact-sheet language, or unrelated characters.",
       "Do not include a negative prompt. Do not mention hidden reasoning, policies, or that you rewrote the prompt.",

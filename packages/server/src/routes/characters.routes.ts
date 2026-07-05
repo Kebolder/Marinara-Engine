@@ -24,10 +24,15 @@ import { resolveConnectionImageDefaults } from "../services/image/image-generati
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import {
+  ConversationCallVideoClipAvatarMismatchError,
+  ConversationCallVideoClipNotFoundError,
+  ConversationCallVideoClipTrimError,
   ConversationCallVideoGenerationInProgressError,
   deleteConversationCallCharacterVideoClip,
   deleteConversationCallCustomVideoClip,
   getConversationCallCharacterVideoManifest,
+  updateConversationCallCharacterVideoClipTrim,
+  updateConversationCallCustomVideoClipTrim,
 } from "../services/conversation/call-character-videos.service.js";
 import { removeSavedVideoFromDisk } from "../services/video/video-generation.js";
 import { writeFile, mkdir, readFile, readdir } from "fs/promises";
@@ -129,6 +134,14 @@ function parseConversationCallClipKind(value: string): ConversationCallCharacter
   return CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(value as ConversationCallCharacterVideoClipKind)
     ? (value as ConversationCallCharacterVideoClipKind)
     : null;
+}
+
+function parseRouteRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function isRouteTrimSecondValue(value: unknown): value is number | null | undefined {
+  return value === undefined || value === null || (typeof value === "number" && Number.isFinite(value));
 }
 
 function toSafeExportName(name: string, fallback: string) {
@@ -610,6 +623,8 @@ export async function charactersRoutes(app: FastifyInstance) {
       createdAt: clip.updatedAt ?? null,
       updatedAt: clip.updatedAt,
       durationSeconds: null,
+      trimStartSeconds: clip.trimStartSeconds ?? null,
+      trimEndSeconds: clip.trimEndSeconds ?? null,
       aspectRatio: "16:9",
       provider: "",
       model: "",
@@ -627,6 +642,8 @@ export async function charactersRoutes(app: FastifyInstance) {
       createdAt: clip.createdAt,
       updatedAt: clip.updatedAt,
       durationSeconds: null,
+      trimStartSeconds: clip.trimStartSeconds ?? null,
+      trimEndSeconds: clip.trimEndSeconds ?? null,
       aspectRatio: "16:9",
       provider: "",
       model: "",
@@ -659,6 +676,8 @@ export async function charactersRoutes(app: FastifyInstance) {
           createdAt: video.createdAt,
           updatedAt: video.createdAt,
           durationSeconds: video.durationSeconds,
+          trimStartSeconds: null,
+          trimEndSeconds: null,
           aspectRatio: video.aspectRatio,
           provider: video.provider,
           model: video.model,
@@ -676,6 +695,65 @@ export async function charactersRoutes(app: FastifyInstance) {
     });
 
     return { clips, callVideoGenerating: callManifest.generating };
+  });
+
+  app.patch<{ Params: { id: string; clipId: string } }>("/:id/gallery/clips/:clipId/trim", async (req, reply) => {
+    const { id, clipId } = req.params;
+    const char = await storage.getById(id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const characterName = readCharacterDisplayName(char.data, "Character");
+    const body = parseRouteRecord(req.body);
+    const { trimStartSeconds, trimEndSeconds } = body;
+    if (!isRouteTrimSecondValue(trimStartSeconds) || !isRouteTrimSecondValue(trimEndSeconds)) {
+      return reply.status(400).send({ error: "Clip trim values must be numbers, null, or omitted" });
+    }
+
+    try {
+      if (clipId.startsWith("call:")) {
+        const kind = parseConversationCallClipKind(clipId.slice("call:".length));
+        if (!kind) return reply.status(400).send({ error: "Invalid call clip kind" });
+        return updateConversationCallCharacterVideoClipTrim({
+          characterId: id,
+          characterName,
+          avatarPath: char.avatarPath ?? null,
+          kind,
+          trimStartSeconds,
+          trimEndSeconds,
+        });
+      }
+
+      if (clipId.startsWith("custom-call:")) {
+        const customClipId = clipId.slice("custom-call:".length);
+        if (!/^[A-Za-z0-9_-]{6,80}$/.test(customClipId)) {
+          return reply.status(400).send({ error: "Invalid custom clip id" });
+        }
+        return updateConversationCallCustomVideoClipTrim({
+          characterId: id,
+          characterName,
+          avatarPath: char.avatarPath ?? null,
+          clipId: customClipId,
+          trimStartSeconds,
+          trimEndSeconds,
+        });
+      }
+    } catch (error) {
+      if (error instanceof ConversationCallVideoClipNotFoundError) {
+        return reply.status(404).send({ error: error.message });
+      }
+      if (error instanceof ConversationCallVideoClipTrimError) {
+        return reply.status(400).send({ error: error.message });
+      }
+      if (error instanceof ConversationCallVideoClipAvatarMismatchError) {
+        return reply.status(409).send({ error: error.message });
+      }
+      if (error instanceof ConversationCallVideoGenerationInProgressError) {
+        return reply.status(409).send({ error: error.message });
+      }
+      throw error;
+    }
+
+    return reply.status(400).send({ error: "Unsupported clip type" });
   });
 
   app.delete<{ Params: { id: string; clipId: string } }>("/:id/gallery/clips/:clipId", async (req, reply) => {

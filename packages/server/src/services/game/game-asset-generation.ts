@@ -370,7 +370,7 @@ function buildNpcAppearanceLine(req: NpcPortraitRequest, explicitNonHuman: boole
 
   const identityLine = identityTags.length > 0 ? `Appearance: ${identityTags.join(", ")}.` : "";
   if (!context) return identityLine || "Appearance: human or humanoid adult.";
-  return `${identityLine} Canonical visual description from the current game: ${context}.`.trim();
+  return `${identityLine} Required canonical NPC visual profile from the GM-created game state: ${context}. Use these traits as the subject identity.`.trim();
 }
 
 function npcPortraitVariables(req: NpcPortraitRequest) {
@@ -472,7 +472,7 @@ export async function buildNpcPortraitProviderPrompt(req: NpcPortraitRequest): P
     maxCharacters: 1400,
     assetContext: [
       `NPC name: ${req.npcName}`,
-      req.appearance ? `Appearance: ${req.appearance}` : "",
+      req.appearance ? `Required canonical NPC visual profile: ${req.appearance}` : "",
       req.gender ? `Gender: ${req.gender}` : "",
       req.pronouns ? `Pronouns: ${req.pronouns}` : "",
       req.artStyle ? `Art style: ${req.artStyle}` : "",
