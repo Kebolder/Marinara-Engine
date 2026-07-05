@@ -122,11 +122,11 @@ You can configure multiple connections at once and assign different providers pe
 
 Storyboards are created from completed GM narration turns. Marinara does not include your CYOA choice in the storyboard source, because that choice is the input that creates the next turn.
 
-Open **Game Assets** and click **Storyboard turn** to manually create a storyboard for the latest GM narration. The Prompt Director splits the turn into manga keyframes, generates each keyframe illustration, and creates animation clips when a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets.
+Open **Game Assets** and click **Storyboard turn** to manually create a storyboard for the latest GM narration. The Prompt Director splits the turn into manga keyframes and generates each keyframe illustration. It also creates animation clips when **Automatic Storyboard Animations** is enabled and a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets.
 
-Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** if you want Marinara to create storyboard keyframes and clips after each completed GM turn.
+Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Storyboards -> Automatic Storyboard Illustrations** if you want Marinara to create keyframe images after each completed GM turn. Enable **Automatic Storyboard Animations** too if you also want clips.
 
-See [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for setup, prompt-template keys, and troubleshooting.
+See [Storyboard Engine Guide](STORYBOARD_ENGINE_GUIDE.md) for the user workflow, or [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for provider setup, prompt-template keys, and troubleshooting.
 
 </details>
 

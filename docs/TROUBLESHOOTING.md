@@ -215,8 +215,8 @@ For manual scene videos, generate or upload a Gallery illustration first, then u
 For Game Mode storyboards:
 
 - Manual generation starts from **Game Assets -> Storyboard turn** and uses the latest completed GM narration.
-- Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** if you want each completed GM turn to create a storyboard automatically.
-- Keyframe images need the Game Mode image-generation connection. Keyframe clips also need a Video Generation connection, selected in the Game setup wizard, in **Chat Settings -> Game Mode -> Scene Videos**, or marked as the default scene-video connection in Settings.
+- Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Storyboards -> Automatic Storyboard Illustrations** if you want each completed GM turn to create keyframe images automatically. Enable **Automatic Storyboard Animations** too if you also want clips.
+- Keyframe images need the Game Mode image-generation connection. Keyframe clips also need **Automatic Storyboard Animations** plus a Video Generation connection, selected in the Game setup wizard, in **Chat Settings -> Game Mode -> Scene Videos**, or marked as the default scene-video connection in Settings.
 - If the floating viewer was closed, reopen it from the storyboard card in Game Assets.
 
 Storyboards start keyframe media generation concurrently after the prompts are ready, so provider rate limits can surface as partial storyboards. Increase `IMAGE_GEN_TIMEOUT_MS` or `VIDEO_GEN_TIMEOUT_MS` for slow providers, and use `LOG_PRESET=prompt-connections` or `LOG_LEVEL=debug` to inspect `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]` logs.
