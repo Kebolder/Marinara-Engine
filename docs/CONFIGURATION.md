@@ -80,9 +80,9 @@ Official Docker/Podman images keep runtime configuration in `/app/data/.env` so 
 Scene-video provider settings are saved as connections, not environment variables. Create a **Video Generation** connection in **Settings -> Connections**, then choose it per chat:
 
 - Game Mode: **Chat Settings -> Game Mode -> Scene Videos**.
-- Roleplay and Visual Novel: **Chat Settings -> Agents -> Scene Videos**.
+- Roleplay: **Chat Settings -> Agents -> Scene Videos**.
 
-Game Mode storyboard automation is also per chat. **Automatic Storyboard Animations** is off by default so ordinary Game Mode turns do not automatically spend extra image/video calls. Enable it under **Chat Settings -> Game Mode -> Scene Videos** when you want completed GM narration turns to become manga keyframes and animation clips automatically. Manual **Storyboard turn** generation remains available from Game Assets when the toggle is off.
+Game Mode storyboard automation is also per chat. **Automatic Storyboard Illustrations** are **ON** by default. **Automatic Storyboard Animations** are off by default so ordinary Game Mode turns do not automatically spend extra video calls. Enable them under **Chat Settings -> Game Mode -> Storyboards** when you want completed GM narration turns to become manga keyframes automatically. Animations add MP4 clips and require a Video Generation connection. Manual **Storyboard turn** generation remains available from Game Assets when the toggles are off.
 
 The environment variables in the table above still control the underlying provider work. `IMAGE_GEN_TIMEOUT_MS` applies to storyboard keyframe illustrations, `VIDEO_GEN_TIMEOUT_MS` applies to storyboard clips and other scene videos, and `XAI_VIDEO_POLL_INTERVAL_MS` controls xAI Imagine polling.
 

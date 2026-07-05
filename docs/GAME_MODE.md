@@ -289,9 +289,9 @@ Scene videos animate generated Game Mode illustrations into short MP4 clips. Con
 
 Use the Gallery **Video** action to animate the latest scene illustration, or click **Animate** on a specific Gallery illustration to use that image as the first frame/reference. Generated videos appear in the Gallery, can be previewed fullscreen with their prompt, copied, downloaded, pinned, resized, and followed through **View latest**.
 
-Game Mode can also storyboard a completed GM turn. **Storyboard turn** in Game Assets asks the Prompt Director to split the GM narration into manga keyframes, render each keyframe as a gallery illustration, and animate the keyframes when a video connection is available. The floating storyboard viewer follows the current story section while you read and can be closed, dragged, resized, muted, paused, and reopened from Game Assets. Automatic storyboard generation is controlled by **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** and is off by default.
+Game Mode can also storyboard a completed GM turn. **Storyboard turn** in Game Assets asks the Prompt Director to split the GM narration into manga keyframes and render each keyframe as a gallery illustration. When **Automatic Storyboard Animations** is enabled and a video connection is available, keyframes also become MP4 clips. The floating storyboard viewer follows the current story section while you read and can be closed, dragged, resized, muted, paused, and reopened from Game Assets. Automatic storyboard generation is controlled by **Chat Settings -> Agents -> Storyboards**.
 
-See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, storyboard behavior, prompt templates, and troubleshooting.
+See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, storyboard behavior, prompt templates, and troubleshooting. See [Storyboard Engine Guide](STORYBOARD_ENGINE_GUIDE.md) for a step-by-step storyboard workflow.
 
 ## The `game-assets` folder
 

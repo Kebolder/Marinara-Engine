@@ -120,13 +120,13 @@ You can configure multiple connections at once and assign different providers pe
 <summary><strong>How do Game Mode storyboard animations work?</strong></summary>
 <br>
 
-Storyboards are created from completed GM narration turns. Marinara does not include your CYOA choice in the storyboard source, because that choice is the input that creates the next turn.
+Storyboards are created after GM narration turns are created, automatically. 
 
-Open **Game Assets** and click **Storyboard turn** to manually create a storyboard for the latest GM narration. The Prompt Director splits the turn into manga keyframes, generates each keyframe illustration, and creates animation clips when a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets.
+To manually create a storyboard, open **Gallery Assets** and click **Create Storyboard** to manually create a storyboard for the latest GM narration, or to recreate the current storyboard. The Prompt Director splits the turn into manga keyframes and generates each keyframe illustration. It also creates animation clips when **Automatic Storyboard Animations** is enabled and a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets by clicking on **View storyboard**.
 
-Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** if you want Marinara to create storyboard keyframes and clips after each completed GM turn.
+Automatic generation is **on** by default during game creation if image generation is enabled. Enable **Chat Settings -> Game Mode -> Storyboards -> Automatic Storyboard Illustrations** if you want Marinara to create keyframe images after each completed GM turn. Enable **Automatic Storyboard Animations** too if you also want animations.
 
-See [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for setup, prompt-template keys, and troubleshooting.
+See [Storyboard Engine Guide](STORYBOARD_ENGINE_GUIDE.md) for the user workflow, or [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for provider setup, prompt-template keys, and troubleshooting.
 
 </details>
 
