@@ -4,7 +4,7 @@
 import type { FastifyInstance } from "fastify";
 import { logger } from "../lib/logger.js";
 import { existsSync } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, readFile, realpath, stat } from "fs/promises";
 import { join, resolve } from "path";
 import { getMonorepoRoot } from "../config/runtime-config.js";
 import { assertInsideDir } from "../utils/security.js";
@@ -66,6 +66,11 @@ function isSafeSegment(value: string): boolean {
     !value.includes("\\") &&
     !value.includes("\0")
   );
+}
+
+async function assertRealDocsPath(candidatePath: string): Promise<string> {
+  const [root, candidate] = await Promise.all([realpath(DOCS_DIR), realpath(candidatePath)]);
+  return assertInsideDir(root, candidate);
 }
 
 async function extractTitle(filePath: string, fallback: string): Promise<string> {
@@ -202,13 +207,13 @@ export async function docsRoutes(app: FastifyInstance) {
 
     let filePath: string;
     try {
-      filePath = assertInsideDir(DOCS_DIR, join(DOCS_DIR, ...segments));
+      const candidatePath = assertInsideDir(DOCS_DIR, join(DOCS_DIR, ...segments));
+      if (!existsSync(candidatePath)) {
+        return reply.status(404).send({ error: "Not found" });
+      }
+      filePath = await assertRealDocsPath(candidatePath);
     } catch {
       return reply.status(400).send({ error: "Invalid path" });
-    }
-
-    if (!existsSync(filePath)) {
-      return reply.status(404).send({ error: "Not found" });
     }
 
     try {
