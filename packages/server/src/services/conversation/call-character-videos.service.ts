@@ -747,6 +747,84 @@ export async function startConversationCallCustomVideoClipGeneration(input: {
   return getConversationCallCharacterVideoManifest(input);
 }
 
+export async function deleteConversationCallCharacterVideoClip(input: {
+  characterId: string;
+  characterName: string;
+  avatarPath: string | null;
+  kind: ConversationCallCharacterVideoClipKind;
+}): Promise<boolean> {
+  assertSafeCharacterId(input.characterId);
+  if (!CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(input.kind)) {
+    throw new Error("Invalid call video clip kind");
+  }
+
+  const file = clipPath(input.characterId, input.kind);
+  const fileExisted = existsSync(file);
+  await unlink(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+
+  let hadManifestEntry = false;
+  const updatedAt = nowIso();
+  await updateDiskManifest({
+    characterId: input.characterId,
+    characterName: input.characterName,
+    avatarPath: input.avatarPath,
+    update: (current) => {
+      hadManifestEntry = Boolean(current.clips[input.kind]);
+      return {
+        ...current,
+        characterName: input.characterName,
+        sourceAvatarPath: input.avatarPath,
+        updatedAt,
+        clips: {
+          ...current.clips,
+          [input.kind]: { status: "missing", error: null, updatedAt },
+        },
+      };
+    },
+  });
+
+  return fileExisted || hadManifestEntry;
+}
+
+export async function deleteConversationCallCustomVideoClip(input: {
+  characterId: string;
+  characterName: string;
+  avatarPath: string | null;
+  clipId: string;
+}): Promise<boolean> {
+  assertSafeCharacterId(input.characterId);
+  const clipId = assertSafeCustomClipId(input.clipId);
+  const file = customClipPath(input.characterId, clipId);
+  const fileExisted = existsSync(file);
+  await unlink(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+
+  let hadManifestEntry = false;
+  const updatedAt = nowIso();
+  await updateDiskManifest({
+    characterId: input.characterId,
+    characterName: input.characterName,
+    avatarPath: input.avatarPath,
+    update: (current) => {
+      hadManifestEntry = Boolean(current.customClips[clipId]);
+      const customClips = { ...current.customClips };
+      delete customClips[clipId];
+      return {
+        ...current,
+        characterName: input.characterName,
+        sourceAvatarPath: input.avatarPath,
+        updatedAt,
+        customClips,
+      };
+    },
+  });
+
+  return fileExisted || hadManifestEntry;
+}
+
 export function getConversationCallCharacterVideoFile(characterId: string, kind: ConversationCallCharacterVideoClipKind) {
   assertSafeCharacterId(characterId);
   if (!CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(kind)) return null;

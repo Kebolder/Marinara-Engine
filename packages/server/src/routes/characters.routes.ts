@@ -10,8 +10,9 @@ import {
   createPersonaGroupSchema,
   updatePersonaGroupSchema,
   PROFESSOR_MARI_ID,
+  CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
 } from "@marinara-engine/shared";
-import type { ExportEnvelope } from "@marinara-engine/shared";
+import type { ConversationCallCharacterVideoClipKind, ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
@@ -22,7 +23,12 @@ import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
-import { getConversationCallCharacterVideoManifest } from "../services/conversation/call-character-videos.service.js";
+import {
+  deleteConversationCallCharacterVideoClip,
+  deleteConversationCallCustomVideoClip,
+  getConversationCallCharacterVideoManifest,
+} from "../services/conversation/call-character-videos.service.js";
+import { removeSavedVideoFromDisk } from "../services/video/video-generation.js";
 import { writeFile, mkdir, readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -116,6 +122,12 @@ function parseCharacterIdList(raw: unknown): string[] {
   } catch {
     return [];
   }
+}
+
+function parseConversationCallClipKind(value: string): ConversationCallCharacterVideoClipKind | null {
+  return CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(value as ConversationCallCharacterVideoClipKind)
+    ? (value as ConversationCallCharacterVideoClipKind)
+    : null;
 }
 
 function toSafeExportName(name: string, fallback: string) {
@@ -655,6 +667,63 @@ export async function charactersRoutes(app: FastifyInstance) {
     return { clips, callVideoGenerating: callManifest.generating };
   });
 
+  app.delete<{ Params: { id: string; clipId: string } }>("/:id/gallery/clips/:clipId", async (req, reply) => {
+    const { id, clipId } = req.params;
+    const char = await storage.getById(id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const characterName = readCharacterDisplayName(char.data, "Character");
+
+    if (clipId.startsWith("call:")) {
+      const kind = parseConversationCallClipKind(clipId.slice("call:".length));
+      if (!kind) return reply.status(400).send({ error: "Invalid call clip kind" });
+
+      await deleteConversationCallCharacterVideoClip({
+        characterId: id,
+        characterName,
+        avatarPath: char.avatarPath ?? null,
+        kind,
+      });
+      return { success: true };
+    }
+
+    if (clipId.startsWith("custom-call:")) {
+      const customClipId = clipId.slice("custom-call:".length);
+      if (!/^[A-Za-z0-9_-]{6,80}$/.test(customClipId)) {
+        return reply.status(400).send({ error: "Invalid custom clip id" });
+      }
+      const deleted = await deleteConversationCallCustomVideoClip({
+        characterId: id,
+        characterName,
+        avatarPath: char.avatarPath ?? null,
+        clipId: customClipId,
+      });
+      if (!deleted) return reply.status(404).send({ error: "Clip not found" });
+      return { success: true };
+    }
+
+    if (clipId.startsWith("scene:")) {
+      const sceneVideoId = clipId.slice("scene:".length);
+      if (!sceneVideoId) return reply.status(400).send({ error: "Invalid scene clip id" });
+
+      const chatsStorage = createChatsStorage(app.db);
+      const sceneVideos = createGameSceneVideosStorage(app.db);
+      const video = await sceneVideos.getById(sceneVideoId);
+      if (!video) return reply.status(404).send({ error: "Clip not found" });
+
+      const chat = await chatsStorage.getById(video.chatId);
+      if (!chat || !parseCharacterIdList(chat.characterIds).includes(id)) {
+        return reply.status(404).send({ error: "Clip not found" });
+      }
+
+      await removeSavedVideoFromDisk(video.filePath);
+      await sceneVideos.remove(video.id);
+      return { success: true };
+    }
+
+    return reply.status(400).send({ error: "Unsupported clip type" });
+  });
+
   app.post<{ Params: { id: string } }>("/:id/gallery/upload", async (req, reply) => {
     const { id } = req.params;
     const char = await storage.getById(id);
@@ -1165,6 +1234,33 @@ export async function charactersRoutes(app: FastifyInstance) {
       });
 
     return { clips, callVideoGenerating: false };
+  });
+
+  app.delete<{ Params: { id: string; clipId: string } }>("/personas/:id/gallery/clips/:clipId", async (req, reply) => {
+    const { id, clipId } = req.params;
+    const persona = await storage.getPersona(id);
+    if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+    if (!clipId.startsWith("scene:")) {
+      return reply.status(400).send({ error: "Unsupported clip type" });
+    }
+
+    const sceneVideoId = clipId.slice("scene:".length);
+    if (!sceneVideoId) return reply.status(400).send({ error: "Invalid scene clip id" });
+
+    const chatsStorage = createChatsStorage(app.db);
+    const sceneVideos = createGameSceneVideosStorage(app.db);
+    const video = await sceneVideos.getById(sceneVideoId);
+    if (!video) return reply.status(404).send({ error: "Clip not found" });
+
+    const chat = await chatsStorage.getById(video.chatId);
+    if (!chat || chat.personaId !== id) {
+      return reply.status(404).send({ error: "Clip not found" });
+    }
+
+    await removeSavedVideoFromDisk(video.filePath);
+    await sceneVideos.remove(video.id);
+    return { success: true };
   });
 
   app.post<{ Params: { id: string } }>("/personas/:id/gallery/upload", async (req, reply) => {

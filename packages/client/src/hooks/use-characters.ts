@@ -516,6 +516,17 @@ export function useGenerateCharacterCallVideoClips(characterId: string) {
   });
 }
 
+export function useDeleteCharacterGalleryClip(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (clipId: string) => api.delete(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
 export function useUploadCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -602,6 +613,17 @@ export function usePersonaGalleryClips(personaId: string | null) {
     queryFn: () => api.get<CharacterGalleryClipsResponse>(`/characters/personas/${personaId}/gallery/clips`),
     enabled: !!personaId,
     staleTime: 15_000,
+  });
+}
+
+export function useDeletePersonaGalleryClip(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (clipId: string) =>
+      api.delete(`/characters/personas/${personaId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+    },
   });
 }
 

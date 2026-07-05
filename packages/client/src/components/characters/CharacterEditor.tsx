@@ -20,6 +20,7 @@ import {
   useCharacterGalleryClips,
   useUploadCharacterGalleryImage,
   useDeleteCharacterGalleryImage,
+  useDeleteCharacterGalleryClip,
   useTagCharacterGalleryImage,
   useGenerateCharacterCallVideoClips,
   useUploadSprite,
@@ -1893,6 +1894,19 @@ function formatClipDate(value: string | null) {
   return new Date(value).toLocaleDateString();
 }
 
+function canDeleteCharacterGalleryClip(clip: CharacterGalleryClip) {
+  if (clip.status === "generating") return false;
+  if (clip.source === "conversation-call" && clip.status === "missing") return false;
+  return true;
+}
+
+function characterGalleryClipDeleteMessage(clip: CharacterGalleryClip) {
+  if (clip.source === "conversation-call") {
+    return "Delete this generated call clip? The standard slot will stay available for regeneration.";
+  }
+  return "Delete this clip everywhere it appears in Marinara? This cannot be undone.";
+}
+
 function CharacterGalleryTab({ characterId, characterName }: { characterId: string; characterName?: string }) {
   const [mediaTab, setMediaTab] = useState<CharacterGalleryMediaTab>("images");
   const { data: images, isLoading } = useCharacterGalleryImages(characterId);
@@ -2080,6 +2094,8 @@ function CharacterGalleryTab({ characterId, characterName }: { characterId: stri
 function CharacterClipsGallery({ characterId, characterName }: { characterId: string; characterName?: string }) {
   const { data, isLoading } = useCharacterGalleryClips(characterId);
   const generateCallClips = useGenerateCharacterCallVideoClips(characterId);
+  const deleteClip = useDeleteCharacterGalleryClip(characterId);
+  const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
   const clips = data?.clips ?? [];
   const standardCallClips = clips.filter((clip) => clip.source === "conversation-call");
   const readyCallClipCount = standardCallClips.filter((clip) => clip.status === "ready").length;
@@ -2094,6 +2110,33 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
       toast.error(error instanceof Error ? error.message : "Could not start call clip generation.");
     }
   }, [generateCallClips]);
+
+  const handleDeleteClip = useCallback(
+    async (clip: CharacterGalleryClip) => {
+      if (!canDeleteCharacterGalleryClip(clip)) return;
+      if (
+        !(await showConfirmDialog({
+          title: "Delete Clip",
+          message: characterGalleryClipDeleteMessage(clip),
+          confirmLabel: "Delete",
+          tone: "destructive",
+        }))
+      ) {
+        return;
+      }
+
+      setDeletingClipId(clip.id);
+      try {
+        await deleteClip.mutateAsync(clip.id);
+        toast.success(clip.source === "conversation-call" ? "Call clip reset." : "Clip deleted.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not delete clip.");
+      } finally {
+        setDeletingClipId(null);
+      }
+    },
+    [deleteClip],
+  );
 
   if (isLoading) {
     return (
@@ -2130,7 +2173,13 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
       {clips.length > 0 ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {clips.map((clip) => (
-            <CharacterClipCard key={clip.id} clip={clip} characterName={characterName} />
+            <CharacterClipCard
+              key={clip.id}
+              clip={clip}
+              characterName={characterName}
+              deleting={deletingClipId === clip.id}
+              onDelete={handleDeleteClip}
+            />
           ))}
         </div>
       ) : (
@@ -2148,10 +2197,21 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
   );
 }
 
-function CharacterClipCard({ clip, characterName }: { clip: CharacterGalleryClip; characterName?: string }) {
+function CharacterClipCard({
+  clip,
+  characterName,
+  deleting,
+  onDelete,
+}: {
+  clip: CharacterGalleryClip;
+  characterName?: string;
+  deleting: boolean;
+  onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
+}) {
   const sourceLabel = characterGalleryClipSourceLabel(clip.source);
   const dateLabel = formatClipDate(clip.updatedAt ?? clip.createdAt);
   const isReady = clip.status === "ready" && Boolean(clip.url);
+  const canDelete = canDeleteCharacterGalleryClip(clip);
   const clipDetails = [clip.durationSeconds ? `${clip.durationSeconds}s` : null, clip.aspectRatio]
     .filter(Boolean)
     .join(" · ");
@@ -2185,16 +2245,30 @@ function CharacterClipCard({ clip, characterName }: { clip: CharacterGalleryClip
               {clip.chatName ? `${clip.chatName} · ${dateLabel}` : dateLabel}
             </p>
           </div>
-          {isReady && clip.url ? (
-            <a
-              href={clip.url}
-              download
-              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
-              title="Download"
-            >
-              <Download size="0.75rem" />
-            </a>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {isReady && clip.url ? (
+              <a
+                href={clip.url}
+                download
+                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+                title="Download"
+              >
+                <Download size="0.75rem" />
+              </a>
+            ) : null}
+            {canDelete ? (
+              <button
+                type="button"
+                onClick={() => void onDelete(clip)}
+                disabled={deleting}
+                className="rounded-lg border border-red-500/25 bg-red-500/10 p-1.5 text-red-400 transition-colors hover:border-red-500/45 hover:bg-red-500/20 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Delete"
+                aria-label={`Delete ${clip.label || "clip"}`}
+              >
+                {deleting ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
+              </button>
+            ) : null}
+          </div>
         </div>
         {clip.prompt ? (
           <p className="line-clamp-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{clip.prompt}</p>
