@@ -1,6 +1,6 @@
 {
   "name": "marinara-engine",
-  "version": "2.0.9",
+  "version": "2.1.0",
   "private": true,
   "description": "AI Chat & Roleplay Frontend — Conversation, Roleplay, Visual Novel",
   "author": "Marianna",
@@ -13,6 +13,7 @@
   },
   "scripts": {
     "preinstall": "node ./scripts/clean-stale-client-artifacts.mjs",
+    "postinstall": "node ./scripts/ensure-native-deps.mjs",
     "dev": "node ./scripts/dev.mjs",
     "dev:server": "pnpm --filter @marinara-engine/server dev",
     "dev:client": "pnpm build:shared && pnpm --filter @marinara-engine/client dev",
@@ -22,6 +23,7 @@
     "build:client": "pnpm build:shared && pnpm --filter @marinara-engine/client build",
     "check": "pnpm clean:stale-client && pnpm impeccable:check && pnpm lint && pnpm build",
     "start": "node packages/server/dist/index.js",
+    "mari": "node scripts/run-mari.mjs",
     "format": "prettier --write \"packages/**/*.{ts,tsx}\"",
     "clean:stale-client": "node ./scripts/clean-stale-client-artifacts.mjs",
     "impeccable:check": "node ./scripts/check-impeccable-context.mjs",

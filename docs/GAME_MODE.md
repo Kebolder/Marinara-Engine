@@ -281,7 +281,17 @@ Generates NPC portraits, location backgrounds, and inventory imagery via your se
 
 This toggle adds the most cost per turn — one or more image API calls each time the scene changes. If you do enable it, expect a meaningful per-session cost increase compared to running without.
 
-Game Mode image generation waits up to 5 minutes by default. Slow providers can be given more time by setting `IMAGE_GEN_TIMEOUT_MS` in `.env`; ComfyUI workflows also use `COMFYUI_GEN_TIMEOUT` (seconds) for the post-queue polling window. Restart Marinara after changing either timeout.
+Game Mode image generation waits up to 30 minutes by default. Slow providers can be given more time by setting `IMAGE_GEN_TIMEOUT_MS` in `.env`; ComfyUI workflows also use `COMFYUI_GEN_TIMEOUT` (seconds) for the post-queue polling window, defaulting to 40 minutes. Restart Marinara after changing either timeout.
+
+### Scene Video Generation
+
+Scene videos animate generated Game Mode illustrations into short MP4 clips. Configure a **Video Generation** connection in Settings, then choose it in the Game setup wizard or in **Chat Settings -> Game Mode -> Scene Videos** for an existing game.
+
+Use the Gallery **Video** action to animate the latest scene illustration, or click **Animate** on a specific Gallery illustration to use that image as the first frame/reference. Generated videos appear in the Gallery, can be previewed fullscreen with their prompt, copied, downloaded, pinned, resized, and followed through **View latest**.
+
+Game Mode can also storyboard a completed GM turn. **Storyboard turn** in Game Assets asks the Prompt Director to split the GM narration into manga keyframes and render each keyframe as a gallery illustration. When **Automatic Storyboard Animations** is enabled and a video connection is available, keyframes also become MP4 clips. The floating storyboard viewer follows the current story section while you read and can be closed, dragged, resized, muted, paused, and reopened from Game Assets. Automatic storyboard generation is controlled by **Chat Settings -> Agents -> Storyboards**.
+
+See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, storyboard behavior, prompt templates, and troubleshooting. See [Storyboard Engine Guide](STORYBOARD_ENGINE_GUIDE.md) for a step-by-step storyboard workflow.
 
 ## The `game-assets` folder
 

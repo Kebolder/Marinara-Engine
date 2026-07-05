@@ -11,6 +11,7 @@ import {
 } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks, applyInlineMarkdownHTML } from "../../lib/markdown";
 import { normalizeCardAssetImageSyntax, resolveCardAssetUrl } from "../../lib/card-asset-links";
+import { PendingTypingDots } from "./PendingTypingDots";
 import {
   User,
   Bot,
@@ -523,9 +524,32 @@ function highlightDialogue(text: string, dialogueColor?: string, boldDialogue = 
   return result;
 }
 
+const HTML_TAG_NAME_SOURCE =
+  "div|span|style|table|p|br|img|a|ul|ol|li|h[1-6]|em|strong|b|i|pre|code|section|article|header|footer|nav|button|input|form|label|select|option|textarea|canvas|svg|video|audio|source|iframe|hr|blockquote|details|summary|figure|figcaption|main|aside|mark|small|sub|sup|del|ins|abbr|time|progress|meter|output|dialog|template|slot|ruby|rt|rp|bdi|bdo|wbr|area|map|track|embed|object|param|picture|portal|datalist|fieldset|legend|optgroup|caption|col|colgroup|thead|tbody|tfoot|th|td|dl|dt|dd|kbd|samp|var|cite|dfn|q|s|u|font|center";
+
 /** Check whether text contains meaningful HTML tags. */
-const HTML_TAG_RE =
-  /<(?:div|span|style|table|p|br|img|a|ul|ol|li|h[1-6]|em|strong|b|i|pre|code|section|article|header|footer|nav|button|input|form|label|select|option|textarea|canvas|svg|video|audio|source|iframe|hr|blockquote|details|summary|figure|figcaption|main|aside|mark|small|sub|sup|del|ins|abbr|time|progress|meter|output|dialog|template|slot|ruby|rt|rp|bdi|bdo|wbr|area|map|track|embed|object|param|picture|portal|datalist|fieldset|legend|optgroup|caption|col|colgroup|thead|tbody|tfoot|th|td|dl|dt|dd|kbd|samp|var|cite|dfn|q|s|u|font|center)\b[^>]*>/i;
+const HTML_TAG_RE = new RegExp(`<(?:${HTML_TAG_NAME_SOURCE})\\b[^>]*>`, "i");
+const ENCODED_HTML_TAG_RE = new RegExp(
+  `&(?:lt|#0*60|#x0*3c);(\\/?\\s*(?:${HTML_TAG_NAME_SOURCE})\\b[^<>]*?)&(?:gt|#0*62|#x0*3e);`,
+  "gi",
+);
+
+function decodeHtmlTagAttributeEntities(value: string): string {
+  return value
+    .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
+    .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+}
+
+function decodeEncodedChatHtmlTags(value: string): string {
+  return value.replace(
+    ENCODED_HTML_TAG_RE,
+    (_match, tagBody: string) => `<${decodeHtmlTagAttributeEntities(tagBody)}>`,
+  );
+}
+
+function containsChatHtml(value: string): boolean {
+  return HTML_TAG_RE.test(decodeEncodedChatHtmlTags(value));
+}
 
 const CHAT_HTML_ALLOWED_TAGS = [
   "a",
@@ -728,7 +752,7 @@ function renderContent(
   htmlScopeClass = "mari-html-message-content",
   quoteFormat: QuoteFormat = "straight",
 ): ReactNode {
-  const normalized = formatTextQuotes(text, quoteFormat);
+  const normalized = decodeEncodedChatHtmlTags(formatTextQuotes(text, quoteFormat));
 
   // Strip speaker tags before HTML detection (they aren't real HTML)
   const withoutSpeakerTags = normalized.replace(/<\/?speaker(?:="[^"]*")?>/g, "");
@@ -1450,7 +1474,10 @@ export const ChatMessage = memo(function ChatMessage({
       primaryCharacter: primaryCharInfo ?? { name: charName },
       characters: macroCharacters,
     };
-    const macroRandomSeed = `${message.id}:${message.content}`;
+    // #3164: seed display randomness by message identity, not content — a
+    // content-based seed re-rolls every {{random}}/{{roll}} on each streamed
+    // chunk (visible churn) and on every edit. Swipes keep distinct picks.
+    const macroRandomSeed = `${message.id}:${message.activeSwipeIndex ?? 0}`;
     const resolveDisplayMacros = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
     const text =
       isUser || isSystem
@@ -1470,6 +1497,7 @@ export const ChatMessage = memo(function ChatMessage({
     isSystem,
     isUser,
     macroCharacters,
+    message.activeSwipeIndex,
     message.content,
     messageDepth,
     message.id,
@@ -1624,7 +1652,7 @@ export const ChatMessage = memo(function ChatMessage({
 
   // Render content with dialogue highlighting (or HTML rendering)
   const text = typeof displayContent === "string" ? displayContent : message.content;
-  const isHtmlContent = HTML_TAG_RE.test(text);
+  const isHtmlContent = containsChatHtml(text);
   const htmlScopeClass = useMemo(() => {
     const suffix = message.id.replace(/[^a-zA-Z0-9_-]/g, "");
     return `mari-html-message-${suffix || "content"}`;
@@ -1753,11 +1781,7 @@ export const ChatMessage = memo(function ChatMessage({
         style={messageTextStyle}
       >
         {isStreaming && !message.content ? (
-          <div className="mari-message-typing flex items-center gap-1 py-0.5">
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:0ms]" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:150ms]" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:300ms]" />
-          </div>
+          <PendingTypingDots className="mari-message-typing py-0.5" dotClassName="bg-blue-400/60" />
         ) : (
           <>
             {renderedContent}
@@ -2598,11 +2622,10 @@ export const ChatMessage = memo(function ChatMessage({
                   style={messageTextStyle}
                 >
                   {isStreaming && !message.content ? (
-                    <div className="mari-message-typing flex items-center gap-1 py-0.5">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:150ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:300ms]" />
-                    </div>
+                    <PendingTypingDots
+                      className="mari-message-typing py-0.5"
+                      dotClassName="bg-[var(--muted-foreground)]/60"
+                    />
                   ) : (
                     <>
                       {renderedContent}

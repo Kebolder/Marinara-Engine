@@ -138,4 +138,13 @@ export const PROVIDERS: Record<APIProvider, ProviderDefinition> = {
     usesAuthHeader: true,
     apiKeyHeader: null,
   },
+  video_generation: {
+    id: "video_generation",
+    name: "Video Generation",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    modelsEndpoint: "",
+    supportsStreaming: false,
+    usesAuthHeader: false,
+    apiKeyHeader: "x-goog-api-key",
+  },
 };

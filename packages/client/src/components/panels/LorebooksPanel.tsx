@@ -34,13 +34,15 @@ import {
 import { useUIStore, type LorebookPanelCategory, type LorebookPanelSort } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import {
-  useLorebooks,
+  fetchAllLorebookPages,
+  flattenLorebookPages,
+  useLorebookPages,
   useCreateLorebook,
   useDeleteLorebook,
   useUpdateLorebook,
   useUploadLorebookImage,
+  type LorebookListItem,
 } from "../../hooks/use-lorebooks";
-import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import type { Lorebook, LorebookCategory, LorebookEntry, LorebookFolder } from "@marinara-engine/shared";
 import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
@@ -153,12 +155,22 @@ export function LorebooksPanel() {
   const activePersonaId = activeChat?.personaId ?? null;
   const activeChatId = activeChat?.id ?? null;
 
-  // When "active" category is selected, fetch all lorebooks (no category filter) — we filter client-side
-  const { data: lorebooks, isLoading } = useLorebooks(
-    activeCategory === "active" || activeCategory === "all" ? undefined : activeCategory,
-  );
-  const { data: rawCharacters } = useCharacters();
-  const { data: rawPersonas } = usePersonas();
+  const lorebookPages = useLorebookPages({
+    category: activeCategory === "active" || activeCategory === "all" ? undefined : activeCategory,
+    search: searchQuery,
+    sort,
+    active:
+      activeCategory === "active"
+        ? {
+            lorebookIds: activeLorebookIds,
+            characterIds: activeCharacterIds,
+            personaId: activePersonaId,
+            chatId: activeChatId,
+          }
+        : undefined,
+  });
+  const lorebooks = useMemo(() => flattenLorebookPages(lorebookPages.data), [lorebookPages.data]);
+  const isLoading = lorebookPages.isLoading;
   const createLorebook = useCreateLorebook();
   const deleteLorebook = useDeleteLorebook();
   const updateLorebook = useUpdateLorebook();
@@ -171,46 +183,27 @@ export function LorebooksPanel() {
   const openModal = useUIStore((s) => s.openModal);
   const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
 
-  const characterNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!rawCharacters) return map;
-    for (const c of rawCharacters as Array<{ id: string; data: string | Record<string, unknown> }>) {
-      try {
-        const d = typeof c.data === "string" ? JSON.parse(c.data) : c.data;
-        map.set(c.id, d?.name ?? "Unknown");
-      } catch {
-        map.set(c.id, "Unknown");
-      }
-    }
-    return map;
-  }, [rawCharacters]);
-  const personaNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!rawPersonas) return map;
-    for (const p of rawPersonas as Array<{ id: string; name: string; comment?: string | null }>) {
-      map.set(p.id, p.comment ? `${p.name} - ${p.comment}` : p.name || "Unknown");
-    }
-    return map;
-  }, [rawPersonas]);
   const getCharacterNames = useCallback(
-    (lb: Lorebook) => {
+    (lb: LorebookListItem) => {
+      if (Array.isArray(lb.characterNames) && lb.characterNames.length > 0) return lb.characterNames;
       const ids =
         Array.isArray(lb.characterIds) && lb.characterIds.length > 0
           ? lb.characterIds
           : lb.characterId
             ? [lb.characterId]
             : [];
-      return ids.map((id) => characterNameById.get(id) ?? id);
+      return ids;
     },
-    [characterNameById],
+    [],
   );
   const getPersonaNames = useCallback(
-    (lb: Lorebook) => {
+    (lb: LorebookListItem) => {
+      if (Array.isArray(lb.personaNames) && lb.personaNames.length > 0) return lb.personaNames;
       const ids =
         Array.isArray(lb.personaIds) && lb.personaIds.length > 0 ? lb.personaIds : lb.personaId ? [lb.personaId] : [];
-      return ids.map((id) => personaNameById.get(id) ?? id);
+      return ids;
     },
-    [personaNameById],
+    [],
   );
 
   const parseTags = (lb: Lorebook): string[] => {
@@ -249,8 +242,8 @@ export function LorebooksPanel() {
         return;
       }
       try {
-        if (!lorebooks) return;
-        const affected = (lorebooks as Lorebook[]).filter((lb) => parseTags(lb).includes(tag));
+        const allLorebooks = await fetchAllLorebookPages({ sort });
+        const affected = allLorebooks.filter((lb) => parseTags(lb).includes(tag));
         for (const lb of affected) {
           const newTags = parseTags(lb).filter((t) => t !== tag);
           await updateLorebook.mutateAsync({ id: lb.id, tags: newTags });
@@ -260,13 +253,13 @@ export function LorebooksPanel() {
         toast.error("Failed to remove tag from some lorebooks");
       }
     },
-    [lorebooks, updateLorebook, activeTag, setActiveTag],
+    [sort, updateLorebook, activeTag, setActiveTag],
   );
 
   // Filter by search
   const filtered = useMemo(() => {
     if (!lorebooks) return [];
-    let list = lorebooks as Lorebook[];
+    let list = lorebooks as LorebookListItem[];
     // "Active" filter: show lorebooks active in the current chat
     // Mirrors server-side filterRelevantLorebooks: global + pinned + character-linked + persona-linked + chat-scoped
     if (activeCategory === "active") {
@@ -288,7 +281,7 @@ export function LorebooksPanel() {
     if (!searchQuery) return list;
     const q = searchQuery.toLowerCase();
     return list.filter(
-      (lb: Lorebook) =>
+      (lb: LorebookListItem) =>
         lb.name.toLowerCase().includes(q) ||
         lb.description.toLowerCase().includes(q) ||
         getCharacterNames(lb).some((name) => name.toLowerCase().includes(q)) ||
@@ -345,7 +338,7 @@ export function LorebooksPanel() {
   // Group by category for "all" view
   const grouped = useMemo(() => {
     if (activeCategory !== "all") return null;
-    const map = new Map<string, Lorebook[]>();
+    const map = new Map<string, LorebookListItem[]>();
     for (const lb of rootLorebooks) {
       const cat = lb.category || "uncategorized";
       const list = map.get(cat) ?? [];
@@ -651,7 +644,7 @@ export function LorebooksPanel() {
   });
 
   const renderLorebookRow = useCallback(
-    (lb: Lorebook) => {
+    (lb: LorebookListItem) => {
       const combinedNames = [...getCharacterNames(lb), ...getPersonaNames(lb)].join(", ") || undefined;
       return (
         <LorebookRow
@@ -943,7 +936,7 @@ export function LorebooksPanel() {
           const isEditing = editingFolderId === folder.id;
           const folderItems = folder.itemIds
             .map((id) => lorebookById.get(id))
-            .filter((item): item is Lorebook => Boolean(item));
+            .filter((item): item is LorebookListItem => Boolean(item));
           if (folderFilterActive && folderItems.length === 0) return null;
           const isExpanded = (folderFilterActive && folderItems.length > 0) || expandedFolderId === folder.id;
           return (
@@ -1122,9 +1115,20 @@ export function LorebooksPanel() {
                   );
                 })
               : // Flat view
-                rootLorebooks.map((lb: Lorebook) => renderLorebookRow(lb))}
+                rootLorebooks.map((lb) => renderLorebookRow(lb))}
           </div>
         </>
+      )}
+
+      {lorebookPages.hasNextPage && (
+        <button
+          type="button"
+          onClick={() => void lorebookPages.fetchNextPage()}
+          disabled={lorebookPages.isFetchingNextPage}
+          className="mari-chrome-control mari-chrome-control--primary justify-center text-xs"
+        >
+          {lorebookPages.isFetchingNextPage ? "Loading..." : `Load more (${lorebooks.length} loaded)`}
+        </button>
       )}
 
       {selectionMode && (

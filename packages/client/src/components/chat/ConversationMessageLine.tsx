@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { User } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { PendingTypingDots } from "./PendingTypingDots";
 import {
   HiddenFromAIConversationSummary,
   MessageContent,
@@ -147,11 +148,7 @@ export function ConversationMessageLine({ ctx }: { ctx: MessageRenderContext }) 
             style={messageTextStyle}
           >
             {isStreaming && !renderedContent ? (
-              <div className="flex items-center gap-1">
-                <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
-                <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:150ms]" />
-                <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:300ms]" />
-              </div>
+              <PendingTypingDots dotClassName="bg-[var(--muted-foreground)]/60" />
             ) : (
               <>
                 {renderedContentParts ? (

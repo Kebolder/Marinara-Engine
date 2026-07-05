@@ -31,6 +31,8 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   getDefaultAgentPrompt,
   type ConnectionFolder,
+  type SidecarSpeechModelId,
+  type SidecarSpeechRuntimeDiagnostics,
 } from "@marinara-engine/shared";
 import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import {
@@ -56,6 +58,9 @@ import {
   Camera,
   Sparkles,
   ImageIcon,
+  Film,
+  Mic,
+  HardDriveDownload,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sortBasicPanelItems } from "../../lib/panel-sort";
@@ -94,12 +99,39 @@ const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; 
   xai: CONNECTION_ICON_COLORS,
   custom: CONNECTION_ICON_COLORS,
   image_generation: CONNECTION_ICON_COLORS,
+  video_generation: CONNECTION_ICON_COLORS,
 };
 const DEFAULT_COLOR = CONNECTION_ICON_COLORS;
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function describeSpeechRuntimeUnavailable(runtime: SidecarSpeechRuntimeDiagnostics | null): string {
+  if (!runtime) {
+    return "Local Whisper needs the native ONNX runtime for this platform. Reinstall dependencies with the same Node architecture used to run Marinara.";
+  }
+
+  const runtimeTuple = `${runtime.platform}/${runtime.arch}`;
+  const installed =
+    runtime.installedBindingArchs.length > 0
+      ? runtime.installedBindingArchs.map((arch) => `${runtime.platform}/${arch}`).join(", ")
+      : "";
+
+  if (runtime.liteMode) {
+    return "Local Whisper is disabled in Lite mode. Use a full Marinara install to download and run the local speech model.";
+  }
+
+  if (!runtime.packageFound) {
+    return `Local Whisper needs onnxruntime-node. Run pnpm install with Node ${runtime.nodeVersion} (${runtimeTuple}), then restart Marinara.`;
+  }
+
+  if (installed && !runtime.installedBindingArchs.includes(runtime.arch)) {
+    return `Marinara is running with ${runtimeTuple} Node, but this install has ONNX runtime for ${installed}. Restart Marinara with the matching Node architecture, or reinstall dependencies using the same Node architecture you use to run Marinara.`;
+  }
+
+  return `Local Whisper cannot find the ONNX runtime for ${runtimeTuple}. Run pnpm install --force --frozen-lockfile with the same Node architecture used to run Marinara, then restart.`;
 }
 
 function formatRuntimeVariantLabel(variant: string | null): string | null {
@@ -129,14 +161,27 @@ function SidecarCard() {
     failedRuntimeVariant,
     curatedModels,
     downloadProgress,
+    speechStatus,
+    speechAvailable,
+    speechModelDownloaded,
+    speechModelDisplayName,
+    speechModelSize,
+    speechModels,
+    speechRuntime,
+    speechDownloadProgress,
+    speechError,
     setShowDownloadModal,
     startDownload,
+    startSpeechDownload,
+    deleteSpeechModel,
     updateConfig,
     fetchStatus,
+    fetchSpeechStatus,
   } = useSidecarStore();
   const isDownloaded = modelDownloaded;
   const [assigningTrackers, setAssigningTrackers] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [speechModelChoice, setSpeechModelChoice] = useState<SidecarSpeechModelId>("whisper_tiny");
   const activeModelName = isDownloaded ? modelDisplayName : null;
   const backendLabel = config.backend === "mlx" ? "MLX" : "GGUF";
   const nativeToolLabel =
@@ -154,7 +199,15 @@ function SidecarCard() {
   // Fetch status on mount (handles HMR store resets and initial load)
   useEffect(() => {
     fetchStatus();
-  }, [fetchStatus]);
+    fetchSpeechStatus();
+  }, [fetchSpeechStatus, fetchStatus]);
+
+  useEffect(() => {
+    const firstModel = speechModels[0]?.id;
+    if (firstModel && !speechModels.some((model) => model.id === speechModelChoice)) {
+      setSpeechModelChoice(firstModel);
+    }
+  }, [speechModelChoice, speechModels]);
 
   const handleAssignTrackersToLocal = async () => {
     if (!isDownloaded || assigningTrackers) return;
@@ -212,6 +265,21 @@ function SidecarCard() {
   };
 
   const isDownloading = downloadProgress?.status === "downloading";
+  const speechDownloading = speechDownloadProgress?.status === "downloading" || speechStatus === "downloading_model";
+  const activeSpeechModel = speechModels.find((model) => model.id === speechModelChoice) ?? speechModels[0];
+  const speechStatusLabel = speechModelDownloaded
+    ? `${speechModelDisplayName ?? "Whisper"}${
+        speechStatus === "ready" ? " • Ready" : speechStatus === "loading" ? " • Loading" : " • Downloaded"
+      }${speechModelSize ? ` • ${formatBytes(speechModelSize)}` : ""}`
+    : speechAvailable
+      ? "Not downloaded"
+      : "Unavailable on this install";
+  const speechUnavailableMessage = describeSpeechRuntimeUnavailable(speechRuntime);
+
+  const handleDownloadWhisper = () => {
+    if (!activeSpeechModel || speechDownloading) return;
+    void startSpeechDownload(activeSpeechModel.id);
+  };
 
   return (
     <div
@@ -282,6 +350,108 @@ function SidecarCard() {
               The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
               background tasks only.
             </p>
+          </div>
+          <div className="mt-2.5 rounded-lg border border-sky-400/15 bg-sky-400/5 p-2.5">
+            <div className="flex items-start gap-2">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-400/10 text-sky-300">
+                <Mic size="0.875rem" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-[var(--foreground)]">Local Speech Model</div>
+                  {speechModelDownloaded && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteSpeechModel()}
+                      className="mari-chrome-control mari-chrome-control--small p-1"
+                      title="Delete Local Whisper"
+                    >
+                      <Trash2 size="0.75rem" />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">{speechStatusLabel}</div>
+                {!speechAvailable && (
+                  <div className="mt-1 space-y-1">
+                    <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {speechUnavailableMessage}
+                    </p>
+                    {speechRuntime && (
+                      <p className="text-[0.59375rem] leading-relaxed text-[var(--muted-foreground)]/80">
+                        Node {speechRuntime.nodeVersion} at {speechRuntime.nodeExecPath}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {!speechModelDownloaded && speechAvailable && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <select
+                      value={speechModelChoice}
+                      onChange={(event) => setSpeechModelChoice(event.target.value as SidecarSpeechModelId)}
+                      className="mari-chrome-field h-8 text-xs"
+                      disabled={speechDownloading || speechModels.length === 0}
+                    >
+                      {speechModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.label}
+                        </option>
+                      ))}
+                    </select>
+                    {activeSpeechModel && (
+                      <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                        {activeSpeechModel.description} About {formatBytes(activeSpeechModel.sizeBytes)} download,{" "}
+                        {formatBytes(activeSpeechModel.ramBytes)} RAM while running.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleDownloadWhisper}
+                      disabled={speechDownloading || !activeSpeechModel}
+                      className="mari-chrome-control w-full justify-center px-3 py-2 text-xs"
+                    >
+                      {speechDownloading ? (
+                        <>
+                          <HardDriveDownload size="0.8125rem" className="animate-pulse" />
+                          Downloading Whisper...
+                        </>
+                      ) : (
+                        <>
+                          <HardDriveDownload size="0.8125rem" />
+                          Download Whisper
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+                {speechDownloading && speechDownloadProgress && (
+                  <div className="mt-2">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-sky-400/10">
+                      <div
+                        className="h-full rounded-full bg-sky-300 transition-[width]"
+                        style={{
+                          width: `${
+                            speechDownloadProgress.total > 0
+                              ? Math.min(
+                                  100,
+                                  Math.round((speechDownloadProgress.downloaded / speechDownloadProgress.total) * 100),
+                                )
+                              : 12
+                          }%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                      {speechDownloadProgress.label ?? "Downloading Local Whisper"}
+                    </div>
+                  </div>
+                )}
+                {speechError && (
+                  <div className="mt-2 rounded-md border border-[var(--destructive)]/20 bg-[var(--destructive)]/10 px-2 py-1.5 text-[0.625rem] text-[var(--destructive)]">
+                    {speechError}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
           {isDownloaded && (
             <div className="mt-2.5 flex flex-col gap-1.5 border-t border-sky-400/10 pt-2.5">
@@ -380,6 +550,7 @@ type ConnectionRowData = {
   isDefault?: boolean | string;
   defaultForAgents?: boolean | string;
   enableCaching?: boolean | string;
+  anthropicExtendedCacheTtl?: boolean | string;
   cachingAtDepth?: number;
   embeddingModel?: string | null;
   embeddingBaseUrl?: string | null;
@@ -389,6 +560,8 @@ type ConnectionRowData = {
   comfyuiWorkflow?: string | null;
   imageService?: string | null;
   imageEndpointId?: string | null;
+  videoGenerationSource?: string | null;
+  videoService?: string | null;
   defaultParameters?: string | null;
   promptPresetId?: string | null;
   maxContext?: number;
@@ -409,6 +582,8 @@ function connectionMatchesSearch(conn: ConnectionRowData, query: string) {
     conn.baseUrl,
     conn.imageService,
     conn.imageGenerationSource,
+    conn.videoService,
+    conn.videoGenerationSource,
     conn.openrouterProvider,
     conn.embeddingModel,
   ]
@@ -428,13 +603,15 @@ function DefaultAgentConnectionCard({ connectionsList }: { connectionsList: Conn
   const updateConnection = useUpdateConnection();
   const qc = useQueryClient();
   const agentConnections = useMemo(
-    () => connectionsList.filter((conn) => conn.provider !== "image_generation"),
+    () => connectionsList.filter((conn) => conn.provider !== "image_generation" && conn.provider !== "video_generation"),
     [connectionsList],
   );
   const defaultConnection =
     agentConnections.find(
       (conn) =>
-        conn.provider !== "image_generation" && (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
+        conn.provider !== "image_generation" &&
+        conn.provider !== "video_generation" &&
+        (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
     ) ?? null;
   const hasConnections = agentConnections.length > 0;
 
@@ -554,6 +731,77 @@ function DefaultIllustratorConnectionCard({ connectionsList }: { connectionsList
             onClick={() => openFreshConnectionDetail(defaultConnection.id)}
             className="mari-chrome-control mari-chrome-control--small p-1.5"
             title="Open default Illustrator connection"
+          >
+            <Settings2 size="0.8125rem" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DefaultVideoConnectionCard({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
+  const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
+  const updateConnection = useUpdateConnection();
+  const qc = useQueryClient();
+  const videoConnections = useMemo(
+    () => connectionsList.filter((conn) => conn.provider === "video_generation"),
+    [connectionsList],
+  );
+  const defaultConnection =
+    videoConnections.find(
+      (conn) =>
+        conn.provider === "video_generation" && (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
+    ) ?? null;
+  const hasConnections = videoConnections.length > 0;
+
+  const handleDefaultChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextConnectionId = event.target.value;
+    if (nextConnectionId === defaultConnection?.id) return;
+    if (!nextConnectionId) {
+      if (defaultConnection) {
+        updateConnection.mutate({ id: defaultConnection.id, defaultForAgents: false });
+      }
+      return;
+    }
+    updateConnection.mutate({ id: nextConnectionId, defaultForAgents: true });
+  };
+  const openFreshConnectionDetail = (id: string) => {
+    qc.removeQueries({ queryKey: connectionKeys.detail(id) });
+    openConnectionDetail(id);
+  };
+
+  return (
+    <div className="rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3">
+      <div className="flex items-center gap-2.5 max-sm:items-start">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
+          <Film size="1rem" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Default for Scene Videos</div>
+          <select
+            value={defaultConnection?.id ?? ""}
+            onChange={handleDefaultChange}
+            disabled={updateConnection.isPending || (!hasConnections && !defaultConnection)}
+            className="mt-1 w-full rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.75rem] text-[var(--foreground)] ring-1 ring-[var(--border)] transition focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Default scene video connection"
+          >
+            <option value="">
+              {hasConnections ? "No default scene video connection" : "No video connections available"}
+            </option>
+            {videoConnections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {formatDefaultConnectionOption(connection, "Video generation")}
+              </option>
+            ))}
+          </select>
+        </div>
+        {defaultConnection && (
+          <button
+            type="button"
+            onClick={() => openFreshConnectionDetail(defaultConnection.id)}
+            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            title="Open default scene video connection"
           >
             <Settings2 size="0.8125rem" />
           </button>
@@ -1324,6 +1572,7 @@ export function ConnectionsPanel() {
 
       <DefaultAgentConnectionCard connectionsList={connectionsList} />
       <DefaultIllustratorConnectionCard connectionsList={connectionsList} />
+      <DefaultVideoConnectionCard connectionsList={connectionsList} />
 
       {isLoading && (
         <div className="flex flex-col gap-2 py-2">

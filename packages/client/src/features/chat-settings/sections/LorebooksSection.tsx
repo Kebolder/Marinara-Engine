@@ -2,18 +2,10 @@ import { useEffect, useState } from "react";
 import { BookOpen, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { LIMITS, type Lorebook } from "@marinara-engine/shared";
 import { isLorebookScopeActiveForChat } from "../../../lib/lorebook-scope";
+import type { ActiveLorebookView } from "../../../lib/chat-lorebooks";
 import { HelpTooltip } from "../../../components/ui/HelpTooltip";
 import { ChatSettingsSection } from "../ChatSettingsSection";
 import { PickerDropdown } from "../PickerDropdown";
-
-type LorebookActiveReason = "Global" | "Character" | "Persona" | "Chat";
-
-export type ActiveLorebookView = Lorebook & {
-  activeReasons: LorebookActiveReason[];
-  isPinned: boolean;
-  /** User disabled this auto-activated book for the chat (in excludedLorebookIds). */
-  isExcluded: boolean;
-};
 
 interface LorebooksSectionProps {
   chatId: string;

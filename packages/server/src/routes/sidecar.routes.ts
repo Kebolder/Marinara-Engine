@@ -7,6 +7,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import { z } from "zod";
 import { sidecarModelService } from "../services/sidecar/sidecar-model.service.js";
+import { sidecarSpeechService } from "../services/sidecar/sidecar-speech.service.js";
 import { mlxRuntimeService } from "../services/sidecar/mlx-runtime.service.js";
 import { sidecarRuntimeService } from "../services/sidecar/sidecar-runtime.service.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
@@ -28,16 +29,21 @@ import { postProcessSceneResult, type PostProcessContext } from "../services/sid
 import {
   SIDECAR_EMBEDDING_POOLING_TYPES,
   SIDECAR_RUNTIME_PREFERENCES,
+  SIDECAR_SPEECH_MODELS,
   scoreAmbient,
   scoreMusic,
   type GameActiveState,
   type SidecarDownloadProgress,
   type SidecarQuantization,
+  type SidecarSpeechModelId,
 } from "@marinara-engine/shared";
 import { isSidecarRuntimeInstallEnabled } from "../config/runtime-config.js";
 import { isAdminAuthorized, requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 
 const quantizationSchema = z.enum(["q8_0", "q4_k_m"]);
+const speechModelIdSchema = z.enum(
+  SIDECAR_SPEECH_MODELS.map((model) => model.id) as [SidecarSpeechModelId, ...SidecarSpeechModelId[]],
+);
 const hfRepoSchema = z
   .string()
   .trim()
@@ -81,6 +87,8 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
       failedRuntimeVariant: sidecarProcessService.getFailedRuntimeVariant(),
     };
   });
+
+  app.get("/speech/status", async () => sidecarSpeechService.getStatus());
 
   const configSchema = z.object({
     useForTrackers: z.boolean().optional(),
@@ -275,6 +283,74 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
       }
     }
   }
+
+  async function handleSpeechDownloadSse(
+    reply: FastifyReply,
+    task: (onProgress: (progress: SidecarDownloadProgress) => void) => Promise<void>,
+  ): Promise<void> {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const sendEvent = (data: unknown) => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return;
+      try {
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        // Client disconnected between the guard and the write.
+      }
+    };
+
+    let lastProgressPhase: SidecarDownloadProgress["phase"] = "model";
+    let lastProgressLabel: string | undefined;
+    try {
+      await task((progress) => {
+        lastProgressPhase = progress.phase;
+        lastProgressLabel = progress.label;
+        if (progress.status === "downloading") sendEvent(progress);
+      });
+      sendEvent({ done: true });
+    } catch (error) {
+      if (!reply.raw.destroyed) {
+        sendEvent({
+          status: "error",
+          phase: lastProgressPhase,
+          label: lastProgressLabel,
+          error: error instanceof Error ? error.message : "Local Whisper download failed",
+        });
+      }
+    } finally {
+      if (!reply.raw.destroyed && !reply.raw.writableEnded) {
+        try {
+          reply.raw.end();
+        } catch {
+          // Client disconnected between the guard and the end call.
+        }
+      }
+    }
+  }
+
+  app.post<{
+    Body: { modelId?: SidecarSpeechModelId };
+  }>("/speech/download", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Local Whisper download" })) return;
+    const body = z.object({ modelId: speechModelIdSchema.optional() }).parse(req.body ?? {});
+    await handleSpeechDownloadSse(reply, async (onProgress) => {
+      await sidecarSpeechService.download(body.modelId, onProgress);
+    });
+  });
+
+  app.delete<{
+    Body: { modelId?: SidecarSpeechModelId };
+  }>("/speech/model", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Local Whisper model deletion" })) return;
+    const body = z.object({ modelId: speechModelIdSchema.optional() }).parse(req.body ?? {});
+    await sidecarSpeechService.deleteModel(body.modelId);
+    return { ok: true };
+  });
 
   app.post<{
     Body: { quantization: SidecarQuantization };

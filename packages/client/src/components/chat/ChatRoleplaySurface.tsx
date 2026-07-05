@@ -81,6 +81,7 @@ import type {
   PeekPromptData,
   PersonaInfo,
 } from "./chat-area.types";
+import type { ChatImage } from "../../hooks/use-gallery";
 
 type ChatData = ComponentProps<typeof ChatCommonOverlays>["chat"];
 type LorebookEntryStatus = "normal" | "constant" | "selective";
@@ -1109,6 +1110,8 @@ type RoleplaySurfaceProps = {
   onCloseGallery: () => void;
   onIllustrate?: () => void;
   onGenerateBackground?: () => void | Promise<void>;
+  onGenerateVideo?: () => void | Promise<void>;
+  onAnimateImage?: (image: ChatImage) => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onResetSpritePlacements: () => void;
@@ -1219,6 +1222,8 @@ export function ChatRoleplaySurface({
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
+  onGenerateVideo,
+  onAnimateImage,
   onWizardFinish,
   onClosePeekPrompt,
   onResetSpritePlacements,
@@ -1335,7 +1340,7 @@ export function ChatRoleplaySurface({
     previousEndIndex: number;
   } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTranscriptWindowStart(null);
     pendingLoadMoreRevealRef.current = null;
   }, [activeChatId]);
@@ -1932,7 +1937,7 @@ export function ChatRoleplaySurface({
                 <div ref={messagesEndRef} />
               </div>
             </div>
-            <PinnedImageOverlay activeChatId={activeChatId} />
+            <PinnedImageOverlay activeChatId={activeChatId} includeSceneVideos />
 
             <div
               ref={inputChromeRef}
@@ -2015,6 +2020,8 @@ export function ChatRoleplaySurface({
         onCloseGallery={onCloseGallery}
         onOpenScheduleEditor={onOpenScheduleEditor}
         onIllustrate={onIllustrate}
+        onGenerateVideo={onGenerateVideo}
+        onAnimateImage={onAnimateImage}
         onGenerateBackground={onGenerateBackground}
         onWizardFinish={onWizardFinish}
         onClosePeekPrompt={onClosePeekPrompt}

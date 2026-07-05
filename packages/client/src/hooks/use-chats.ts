@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // React Query: Chat hooks
 // ──────────────────────────────────────────────
+import { useCallback } from "react";
 import {
   useQuery,
   useInfiniteQuery,
@@ -33,6 +34,8 @@ import type {
   DaySummaryEntry,
   WeekSummaryEntry,
 } from "@marinara-engine/shared";
+
+import { useRollingBackfillStore } from "../stores/backfill.store";
 
 export const chatKeys = {
   all: ["chats"] as const,
@@ -788,6 +791,185 @@ export function useBackfillConversationSummaries() {
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.chatId) });
     },
   });
+}
+
+export interface RollingSummaryBackfillInput {
+  chatId: string;
+  summaryEntries: ChatSummaryEntry[];
+  batchSize: number;
+  maxMessagesPerBatch: number;
+  promptTemplateId?: string | null;
+}
+
+export function useRollingSummaryBackfill() {
+  const qc = useQueryClient();
+
+  const startBackfill = useCallback(async (input: RollingSummaryBackfillInput) => {
+    const { chatId, summaryEntries, batchSize, maxMessagesPerBatch, promptTemplateId } = input;
+
+    const store = useRollingBackfillStore.getState();
+    if (store.status === "running") return;
+    
+    // Flip to "running" synchronously before any await
+    store.startBackfill(chatId);
+
+    let allMessages: Array<{ id: string; role: string; extra?: unknown }>;
+    try {
+      allMessages = await api.get(`/chats/${chatId}/messages`);
+    } catch {
+      useRollingBackfillStore.getState().stopBackfill();
+      toast.error("Could not start backfill: failed to load messages.");
+      return;
+    }
+    if (!Array.isArray(allMessages) || allMessages.length === 0) {
+      useRollingBackfillStore.getState().stopBackfill();
+      return;
+    }
+
+    const messageIds = allMessages.map((m) => m.id);
+    const totalMessageCount = messageIds.length;
+
+    const summarizedIds = new Set<string>();
+    for (const entry of summaryEntries) {
+      if (Array.isArray(entry.messageIds)) {
+        for (const id of entry.messageIds) summarizedIds.add(id);
+      }
+    }
+
+    const isMessageHidden = (msg: { extra?: unknown }) => {
+      let extra = msg.extra;
+      if (typeof extra === "string") {
+        try {
+          extra = JSON.parse(extra);
+        } catch {
+          return false;
+        }
+      }
+      return !!extra && typeof extra === "object" && (extra as any).hiddenFromAI === true;
+    };
+
+    const safeBatchSize = Math.max(1, Math.min(totalMessageCount, batchSize));
+    const batches: Array<{ rangeStart: number; rangeEnd: number }> = [];
+    let cursor = 0;
+    while (cursor < totalMessageCount) {
+      while (cursor < totalMessageCount) {
+        const msg = allMessages[cursor]!;
+        if (summarizedIds.has(msg.id) || isMessageHidden(msg)) {
+          cursor++;
+        } else {
+          break;
+        }
+      }
+      if (cursor >= totalMessageCount) break;
+
+      let userCount = 0;
+      let msgCount = 0;
+      let endCursor = cursor;
+      while (endCursor < totalMessageCount && userCount < safeBatchSize && msgCount < maxMessagesPerBatch) {
+        const msg = allMessages[endCursor]!;
+        if (!isMessageHidden(msg)) {
+          if (msg.role === "user") {
+            userCount++;
+          }
+          msgCount++;
+        }
+        endCursor++;
+      }
+
+      batches.push({ rangeStart: cursor + 1, rangeEnd: endCursor });
+      cursor = endCursor;
+    }
+
+    if (batches.length === 0) {
+      useRollingBackfillStore.getState().stopBackfill();
+      toast.info("Everything is already summarized.");
+      return;
+    }
+
+    const abortController = new AbortController();
+    useRollingBackfillStore.setState({ abortController });
+
+    const currentStore = useRollingBackfillStore.getState();
+    currentStore.setTotalBatches(batches.length);
+
+    const debugMode = useUIStore.getState().debugMode;
+
+    console.warn(
+      `[Backfill] Starting — ${batches.length} batch(es) covering ${totalMessageCount} messages` +
+        (debugMode ? "" : " (enable Advanced > Debug Mode for per-batch logs)"),
+    );
+
+    let failedBatches = 0;
+
+    for (let i = 0; i < batches.length; i++) {
+      if (abortController.signal.aborted) break;
+
+      const batch = batches[i]!;
+      currentStore.updateProgress(i + 1, batch.rangeStart, batch.rangeEnd);
+
+      if (debugMode) {
+        console.warn(
+          `[Backfill] Batch ${i + 1}/${batches.length}: messages ${batch.rangeStart}-${batch.rangeEnd}`,
+        );
+      }
+
+      try {
+        const result = await api.post<{
+          summary: string | null;
+          entry: ChatSummaryEntry | null;
+          entries: ChatSummaryEntry[];
+          messageIds: string[];
+          hideMessageIds: string[];
+        }>(
+          `/chats/${chatId}/generate-summary`,
+          { rangeStartIndex: batch.rangeStart, rangeEndIndex: batch.rangeEnd, promptTemplateId },
+          { signal: abortController.signal },
+        );
+
+        const existing = qc.getQueryData<Chat>(chatKeys.detail(chatId));
+        if (existing) {
+          syncCachedChat(qc, {
+            ...existing,
+            metadata: {
+              ...(normalizeChatMetadataValue(existing.metadata) as Record<string, unknown>),
+              summary: result.summary,
+              summaryEntries: result.entries,
+            } as Chat["metadata"],
+          });
+        }
+        qc.invalidateQueries({ queryKey: chatKeys.detail(chatId) });
+
+        if (debugMode) {
+          console.warn(`[Backfill] Batch ${i + 1} complete`);
+        }
+      } catch (err) {
+        if (abortController.signal.aborted) break;
+        failedBatches++;
+        if (debugMode) {
+          console.warn(`[Backfill] Batch ${i + 1} failed:`, err);
+        }
+      }
+    }
+
+    if (abortController.signal.aborted) {
+      useRollingBackfillStore.setState({ status: "idle", abortController: null });
+      console.warn(`[Backfill] Stopped`);
+    } else {
+      currentStore.stopBackfill();
+      if (failedBatches > 0) {
+        console.warn(`[Backfill] Done — ${batches.length - failedBatches}/${batches.length} batch(es) succeeded, ${failedBatches} failed`);
+        toast.error(`Backfill finished with ${failedBatches} failed batch(es).`);
+      } else {
+        console.warn(`[Backfill] Done — ${batches.length} batch(es) completed`);
+      }
+    }
+  }, [qc]);
+
+  const stopBackfill = useCallback(() => {
+    useRollingBackfillStore.getState().stopBackfill();
+  }, []);
+
+  return { startBackfill, stopBackfill };
 }
 
 export function useCreateMessage(chatId: string | null) {

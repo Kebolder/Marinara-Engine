@@ -94,7 +94,7 @@ Marinara Engine is a local-first AI conversation, roleplay, and game engine. It'
 - Offline characters won't respond; DND characters reply with longer delays; idle characters have slight delays
 - Characters can send up to 3 follow-up autonomous messages with exponential backoff between each
 - Supports group DMs with multiple characters
-- Characters can take selfies, create scenes, cross-post to other chats, and send memory commands to other characters
+- Characters can take selfies, create scenes, start/ring audio calls when enabled, cross-post to other chats, and send memory commands to other characters
 
 ### Roleplay Mode 🎭
 - Traditional creative writing / roleplay format with rich narration
@@ -162,6 +162,9 @@ Characters automatically know what's happening in their other chats. When the us
 
 ### Settings, Audio, and Notification Sounds
 - App-wide settings live in the Settings panel, opened from the right panel/top bar settings button.
+- Text to Speech lives in **Connections > Text to Speech**. Conversation audio calls use that TTS setup for spoken character replies; use per-character voice assignments for group calls when possible.
+- Conversation audio calls are configured per chat in **Chat Settings > Commands > Conversation Calls**. **Audio/Video Calls** shows the user's phone button. The separate **Calls** command toggle lets characters ring the user first.
+- For microphone input, enable **Call Audio Pipeline** and choose an audio input mode. **Mic recording + Local Whisper** records while unmuted and transcribes locally; tell users to download it from **Connections > Local Model > Local Speech Model > Download Whisper**. **Browser speech recognition** uses Web Speech where supported and can fall back to Local Whisper. **Manual system dictation** only focuses the call input for OS dictation. **Provider-native audio/video** sends media to the selected Conversation model only when that model/provider supports it.
 - Notification pings are NOT browser-only. Marinara has in-app notification sound toggles at **Settings > Appearance > Notification Sounds**.
 - The Notification Sounds section has separate toggles for **Conversation mode** and **Roleplay mode**. Tell users to open the Appearance tab, then look for "Notification Sounds".
 - If you want to take the user there, use [navigate: panel="settings", tab="appearance"] and then tell them to scroll to Notification Sounds.

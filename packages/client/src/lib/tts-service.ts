@@ -15,6 +15,8 @@ export interface TTSSpeakOptions {
   throwOnError?: boolean;
   cacheKey?: string;
   cacheAliases?: string[];
+  volume?: number;
+  muted?: boolean;
 }
 
 export interface TTSSpeakRequest {
@@ -26,8 +28,13 @@ export interface TTSSpeakRequest {
   cacheAliases?: string[];
 }
 
-export interface TTSSpeakSequenceOptions extends Pick<TTSSpeakOptions, "signal" | "throwOnError"> {
+export interface TTSSpeakSequenceOptions extends Pick<TTSSpeakOptions, "signal" | "throwOnError" | "volume" | "muted"> {
   progressive?: boolean;
+}
+
+function clampPlaybackVolume(volume: number | undefined): number {
+  if (typeof volume !== "number" || !Number.isFinite(volume)) return 1;
+  return Math.max(0, Math.min(1, volume));
 }
 
 function waitForBlobWithAbort(promise: Promise<Blob>, signal?: AbortSignal): Promise<Blob> {
@@ -111,6 +118,17 @@ class TTSService {
 
   // ── Playback ──────────────────────────────────
 
+  private applyPlaybackOptions(audio: HTMLAudioElement, options: Pick<TTSSpeakOptions, "volume" | "muted">): void {
+    const volume = clampPlaybackVolume(options.volume);
+    audio.volume = volume;
+    audio.muted = options.muted === true || volume <= 0;
+  }
+
+  setCurrentPlaybackVolume(volume: number, muted = false): void {
+    if (!this.audio) return;
+    this.applyPlaybackOptions(this.audio, { volume, muted });
+  }
+
   async generateAudio(text: string, options: TTSSpeakOptions = {}): Promise<Blob> {
     const res = await fetch("/api/tts/speak", {
       method: "POST",
@@ -180,6 +198,7 @@ class TTSService {
     this.currentObjectUrl = objectUrl;
 
     const audio = new Audio(objectUrl);
+    this.applyPlaybackOptions(audio, options);
     this.audio = audio;
 
     audio.onended = () => {
@@ -265,21 +284,42 @@ class TTSService {
       this.currentObjectUrl = objectUrl;
 
       const audio = new Audio(objectUrl);
+      this.applyPlaybackOptions(audio, options);
       this.audio = audio;
 
       await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        const finish = (callback: () => void) => {
+          if (settled) return;
+          settled = true;
+          abortController.signal.removeEventListener("abort", onAbort);
+          callback();
+        };
+        const onAbort = () => {
+          try {
+            audio.pause();
+          } catch {
+            /* ignore interrupted playback cleanup */
+          }
+          finish(resolve);
+        };
         const fail = (error: Error) => {
           if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
-          this.cleanup();
-          this.lastError = error.message;
-          this.setState("error");
-          reject(error);
+          finish(() => {
+            this.cleanup();
+            this.lastError = error.message;
+            this.setState("error");
+            reject(error);
+          });
         };
 
+        abortController.signal.addEventListener("abort", onAbort, { once: true });
         audio.onended = () => {
           if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
-          this.cleanup();
-          resolve();
+          finish(() => {
+            this.cleanup();
+            resolve();
+          });
         };
         audio.onerror = () => fail(new Error("Audio playback failed"));
 

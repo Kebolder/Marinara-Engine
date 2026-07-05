@@ -66,6 +66,9 @@ export interface AgentExecConfig {
   settings: Record<string, unknown>;
   customParameters?: Record<string, unknown>;
   maxOutputTokens?: number | null;
+  enableCaching?: boolean;
+  anthropicExtendedCacheTtl?: boolean;
+  cachingAtDepth?: number;
 }
 
 /** Optional tool context for agents that need function calling. */
@@ -494,6 +497,9 @@ export async function executeAgent(
       model,
       temperature,
       maxTokens,
+      enableCaching: config.enableCaching,
+      anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+      cachingAtDepth: config.cachingAtDepth,
       customParameters,
       stream: streamResponses,
       onToken: streamResponses
@@ -537,6 +543,9 @@ export async function executeAgent(
         model,
         temperature,
         maxTokens,
+        enableCaching: config.enableCaching,
+        anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+        cachingAtDepth: config.cachingAtDepth,
         customParameters,
         stream: streamResponses,
         onToken: streamResponses
@@ -632,6 +641,9 @@ async function executeAgentWithTools(
       model,
       temperature,
       maxTokens,
+      enableCaching: config.enableCaching,
+      anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+      cachingAtDepth: config.cachingAtDepth,
       customParameters,
       stream: streamResponses,
       tools: toolContext.tools,
@@ -713,6 +725,9 @@ async function executeAgentWithTools(
     model,
     temperature,
     maxTokens,
+    enableCaching: config.enableCaching,
+    anthropicExtendedCacheTtl: config.anthropicExtendedCacheTtl,
+    cachingAtDepth: config.cachingAtDepth,
     customParameters,
     stream: streamResponses,
     signal: toolLoopSignal,
@@ -826,6 +841,9 @@ export async function executeAgentBatch(
   const perAgentTokens = configs.map((c) => normalizeAgentMaxTokens(c.settings.maxTokens));
   const temperature = Math.min(...configs.map((c) => normalizeAgentTemperature(c.settings.temperature)));
   const customParameters = agentCustomParameters(configs[0]!);
+  const enableCaching = configs[0]!.enableCaching;
+  const anthropicExtendedCacheTtl = configs[0]!.anthropicExtendedCacheTtl;
+  const cachingAtDepth = configs[0]!.cachingAtDepth;
   const rawBatchMaxTokens = perAgentTokens.reduce((sum, tokens) => sum + tokens, 0);
   const modelMaxOutput = configs[0]!.maxOutputTokens;
   const batchMaxTokens = applyAgentMaxTokensCaps(provider, rawBatchMaxTokens, modelMaxOutput);
@@ -885,6 +903,9 @@ export async function executeAgentBatch(
       model,
       temperature,
       maxTokens: batchMaxTokens,
+      enableCaching,
+      anthropicExtendedCacheTtl,
+      cachingAtDepth,
       customParameters,
       stream: streamResponses,
       onToken: streamResponses
@@ -1926,8 +1947,9 @@ function buildAgentMessages(
     finalParts.push(`</agent_results>`);
   }
 
-  // Echo Chamber is a parallel agent, so group-chat history can end on assistant.
-  // Anthropic treats a trailing assistant turn as prefill and rejects some models.
+  // Echo Chamber prompts can be assembled from group-chat history that ends on
+  // assistant. Anthropic treats a trailing assistant turn as prefill and rejects
+  // some models, so add a terminal user instruction for that agent type too.
   const requiresTerminalUserInstruction = finalParts.length > 0 || contextAgentTypes.includes("echo-chamber");
 
   if (requiresTerminalUserInstruction) {

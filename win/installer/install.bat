@@ -11,14 +11,14 @@ set "NODE_DOWNLOAD_URL=https://nodejs.org/dist/v24.15.0/node-v24.15.0-x64.msi"
 set "NODE_SHA256=feffb8e5cb5ac47f793666636d496ef3e975be82c84c4da5d20e6aa8fa4eb806"
 set "GIT_DOWNLOAD_URL=https://github.com/git-for-windows/git/releases/download/v2.54.0.windows.1/Git-2.54.0-64-bit.exe"
 set "GIT_SHA256=2b96e7854f0520f0f6b709c21041d9801b1be44d5e1a0d9fa621b2fbc40f1983"
-set "RELEASE_TAG=v2.0.9"
+set "RELEASE_TAG=v2.1.0"
 if not defined MARINARA_RELEASE_COMMIT set "MARINARA_RELEASE_COMMIT="
 set "RELEASE_COMMIT=%MARINARA_RELEASE_COMMIT%"
 
 echo.
 echo  +==========================================+
 echo  ^|   Marinara Engine - Windows Installer     ^|
-echo  ^|   v2.0.9                                  ^|
+echo  ^|   v2.1.0                                  ^|
 
 echo  +==========================================+
 echo.
@@ -308,7 +308,7 @@ echo  [OK] Repository updated
 :: -- Install dependencies --
 echo.
 echo  [..] Installing dependencies (this may take a few minutes)...
-call :run_pnpm install
+call :run_pnpm install --force
 if %errorlevel% neq 0 (
     set "INSTALL_ERROR=Failed to install dependencies."
     goto :fatal
@@ -368,11 +368,11 @@ goto :eof
 
 :run_pnpm
 if /I "%PNPM_RUNNER%"=="corepack" (
-    call corepack pnpm@%PNPM_VERSION% %*
+    call corepack pnpm@%PNPM_VERSION% --config.trustPolicy=off --config.confirmModulesPurge=false %*
 ) else if /I "%PNPM_RUNNER%"=="npx" (
-    call npx --yes pnpm@%PNPM_VERSION% %*
+    call npx --yes pnpm@%PNPM_VERSION% --config.trustPolicy=off --config.confirmModulesPurge=false %*
 ) else (
-    call pnpm %*
+    call pnpm --config.trustPolicy=off --config.confirmModulesPurge=false %*
 )
 exit /b %errorlevel%
 

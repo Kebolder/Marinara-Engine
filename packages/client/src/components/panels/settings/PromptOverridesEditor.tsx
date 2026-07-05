@@ -68,10 +68,13 @@ function buildEditableDefaultTemplate(
     const example = value === undefined || value === null ? "" : String(value);
     return { example, token: "$" + "{" + variable.name + "}" };
   });
-  const exampleCounts = candidates.reduce<Record<string, number>>((counts, item) => {
-    if (item.example.length > 1) counts[item.example] = (counts[item.example] ?? 0) + 1;
-    return counts;
-  }, Object.create(null) as Record<string, number>);
+  const exampleCounts = candidates.reduce<Record<string, number>>(
+    (counts, item) => {
+      if (item.example.length > 1) counts[item.example] = (counts[item.example] ?? 0) + 1;
+      return counts;
+    },
+    Object.create(null) as Record<string, number>,
+  );
   const replacements = candidates
     .filter((item) => item.example.length > 1 && exampleCounts[item.example] === 1)
     .sort((a, b) => b.example.length - a.example.length);
@@ -103,7 +106,7 @@ function renderTemplatePreview(
 export function PromptOverridesEditor({
   title = "Prompt Overrides",
   description = "Edit the templates used by image and sprite prompt builders.",
-  help = "Global templates for registered prompt builders. Chat-specific selfie prompts still override the global conversation selfie template.",
+  help = "Global templates for registered prompt builders, including the conversation selfie prompt writer.",
   keys,
   preferredKey = PREFERRED_PROMPT_KEY,
   defaultOpen = false,

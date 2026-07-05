@@ -1,13 +1,4 @@
-import {
-  GripVertical,
-  Music2,
-  Pause,
-  Play,
-  Volume2,
-  VolumeX,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import { GripVertical, Music2, Pause, Play, Volume2, VolumeX, X, type LucideIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -23,17 +14,19 @@ import { cn } from "../../lib/utils";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
 
-const MUSIC_NEUTRAL_SHELL_BORDER_CLASS = "border-[#f7f3ef]/15";
-const MUSIC_NEUTRAL_SHELL_BG_CLASS = "bg-[#0f0f0f]/95";
-const MUSIC_NEUTRAL_BUTTON_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_NEUTRAL_TILE_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_NEUTRAL_TEXT_CLASS = "text-[#f7f3ef]";
-const MUSIC_NEUTRAL_MUTED_CLASS = "text-[#aaa]";
-const MUSIC_NEUTRAL_ICON_CLASS = "text-[#aaa]";
-const MUSIC_NEUTRAL_ICON_HOVER_CLASS = "hover:bg-[#f7f3ef]/10 hover:text-[#f7f3ef]";
-const MUSIC_NEUTRAL_ACTION_BG_CLASS = "bg-[var(--primary)]";
-const MUSIC_NEUTRAL_ACTION_TEXT_CLASS = "text-[var(--primary-foreground)]";
-const MUSIC_NEUTRAL_PROGRESS_BG_CLASS = "bg-[#f7f3ef]/15";
+const MUSIC_NEUTRAL_SHELL_BORDER_CLASS = "border-[var(--marinara-music-player-shell-border)]";
+const MUSIC_NEUTRAL_SHELL_BG_CLASS = "bg-[var(--marinara-music-player-shell-bg)]";
+const MUSIC_NEUTRAL_BUTTON_BG_CLASS = "bg-[var(--marinara-music-player-button-bg)]";
+const MUSIC_NEUTRAL_TILE_BG_CLASS = "bg-[var(--marinara-music-player-tile-bg)]";
+const MUSIC_NEUTRAL_TILE_RING_CLASS = "ring-[var(--marinara-music-player-tile-ring)]";
+const MUSIC_NEUTRAL_TEXT_CLASS = "text-[var(--marinara-music-player-text)]";
+const MUSIC_NEUTRAL_MUTED_CLASS = "text-[var(--marinara-music-player-muted)]";
+const MUSIC_NEUTRAL_ICON_CLASS = "text-[var(--marinara-music-player-icon)]";
+const MUSIC_NEUTRAL_ICON_HOVER_CLASS =
+  "hover:bg-[var(--marinara-music-player-button-bg-hover)] hover:text-[var(--marinara-music-player-icon-hover)]";
+const MUSIC_NEUTRAL_ACTION_BG_CLASS = "bg-[var(--marinara-music-player-action-bg)]";
+const MUSIC_NEUTRAL_ACTION_TEXT_CLASS = "text-[var(--marinara-music-player-action-text)]";
+const MUSIC_NEUTRAL_PROGRESS_BG_CLASS = "bg-[var(--marinara-music-player-progress-bg)]";
 const MOBILE_WIDGET_COLLAPSED_SIZE = 48;
 const MOBILE_WIDGET_EXPANDED_MAX_WIDTH = 320;
 const MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER = 24;
@@ -322,8 +315,9 @@ export function LocalMusicPlayer({ mobile = false }: { mobile?: boolean } = {}) 
         <MusicSourceButton source="custom" className={MUSIC_NEUTRAL_BUTTON_BG_CLASS} />
         <div
           className={cn(
-            "flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[0.375rem] ring-1 ring-[#f7f3ef]/10",
+            "flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[0.375rem] ring-1",
             MUSIC_NEUTRAL_TILE_BG_CLASS,
+            MUSIC_NEUTRAL_TILE_RING_CLASS,
           )}
         >
           <LocalPlayerIcon icon={Music2} />
@@ -375,7 +369,7 @@ export function LocalMusicPlayer({ mobile = false }: { mobile?: boolean } = {}) 
         <audio ref={audioRef} className="hidden" />
         {showPlayer && (
           <div
-            className="fixed z-[35] touch-none select-none md:hidden"
+            className="fixed z-[45] touch-none select-none md:hidden"
             style={mobileWidgetStyle}
             onPointerDown={startDrag}
             onPointerMove={moveDrag}

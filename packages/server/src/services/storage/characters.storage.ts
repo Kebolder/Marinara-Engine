@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Characters, Personas & Groups
 // ──────────────────────────────────────────────
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, like, ne, or } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import {
   characters,
@@ -12,8 +12,9 @@ import {
   personaGroups,
 } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
-import type { CharacterData, PersonaCardSnapshot } from "@marinara-engine/shared";
+import { PROFESSOR_MARI_ID, type CharacterData, type PersonaCardSnapshot } from "@marinara-engine/shared";
 import { normalizeTimestampOverrides, type TimestampOverrides } from "../import/import-timestamps.js";
+import { toPaginatedList } from "../../utils/list-pagination.js";
 
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
   const normalized = normalizeTimestampOverrides(overrides);
@@ -67,6 +68,75 @@ function mergeCharacterData(
 }
 
 type PersonaRow = typeof personas.$inferSelect;
+type CharacterListPageOptions = {
+  includeBuiltIn?: boolean;
+  limit: number;
+  offset: number;
+  search?: string;
+  sort?: string;
+};
+type PersonaListPageOptions = {
+  limit: number;
+  offset: number;
+  search?: string;
+  sort?: string;
+};
+
+function likePattern(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? `%${trimmed}%` : "";
+}
+
+function characterOrder(sort: string | undefined) {
+  switch (sort) {
+    case "oldest":
+      return [asc(characters.createdAt), asc(characters.id)];
+    case "newest":
+      return [desc(characters.createdAt), asc(characters.id)];
+    default:
+      return [desc(characters.updatedAt), asc(characters.id)];
+  }
+}
+
+function personaOrder(sort: string | undefined) {
+  switch (sort) {
+    case "name-desc":
+      return [desc(personas.name), asc(personas.id)];
+    case "newest":
+      return [desc(personas.createdAt), asc(personas.id)];
+    case "oldest":
+      return [asc(personas.createdAt), asc(personas.id)];
+    case "name-asc":
+    default:
+      return [asc(personas.name), asc(personas.id)];
+  }
+}
+
+function getCharacterSummaryFromRow(row: typeof characters.$inferSelect) {
+  try {
+    const parsed = parseCharacterData(row.data);
+    const extensions =
+      parsed.extensions && typeof parsed.extensions === "object"
+        ? (parsed.extensions as Record<string, unknown>)
+        : {};
+    return {
+      id: row.id,
+      name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Unknown",
+      avatarUrl: row.avatarPath ?? null,
+      avatarCrop: extensions.avatarCrop ?? null,
+      conversationStatus:
+        typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : undefined,
+    };
+  } catch {
+    return {
+      id: row.id,
+      name: "Unknown",
+      avatarUrl: row.avatarPath ?? null,
+      avatarCrop: null,
+      conversationStatus: undefined,
+    };
+  }
+}
 
 function buildPersonaSnapshot(persona: PersonaRow): PersonaCardSnapshot {
   return {
@@ -129,6 +199,36 @@ export function createCharactersStorage(db: DB) {
 
     async list() {
       return db.select().from(characters).orderBy(desc(characters.updatedAt));
+    },
+
+    async listPage(options: CharacterListPageOptions) {
+      const clauses = [];
+      if (!options.includeBuiltIn) clauses.push(ne(characters.id, PROFESSOR_MARI_ID));
+      const pattern = likePattern(options.search);
+      if (pattern) clauses.push(or(like(characters.data, pattern), like(characters.comment, pattern)));
+      const whereClause = clauses.length > 0 ? and(...clauses) : undefined;
+      const rows = await (whereClause
+        ? db
+            .select()
+            .from(characters)
+            .where(whereClause)
+            .orderBy(...characterOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset)
+        : db
+            .select()
+            .from(characters)
+            .orderBy(...characterOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset));
+      return toPaginatedList(rows, options.limit, options.offset);
+    },
+
+    async listSummariesByIds(ids: string[]) {
+      const uniqueIds = Array.from(new Set(ids.filter((id) => id.trim().length > 0)));
+      if (uniqueIds.length === 0) return [];
+      const rows = await db.select().from(characters).where(inArray(characters.id, uniqueIds));
+      return rows.map(getCharacterSummaryFromRow);
     },
 
     async getById(id: string) {
@@ -339,6 +439,38 @@ export function createCharactersStorage(db: DB) {
 
     async listPersonas() {
       return db.select().from(personas).orderBy(desc(personas.updatedAt));
+    },
+
+    async listPersonasPage(options: PersonaListPageOptions) {
+      const pattern = likePattern(options.search);
+      const whereClause = pattern
+        ? or(
+            like(personas.name, pattern),
+            like(personas.comment, pattern),
+            like(personas.creator, pattern),
+            like(personas.description, pattern),
+            like(personas.personality, pattern),
+            like(personas.scenario, pattern),
+            like(personas.backstory, pattern),
+            like(personas.appearance, pattern),
+            like(personas.tags, pattern),
+          )
+        : undefined;
+      const rows = await (whereClause
+        ? db
+            .select()
+            .from(personas)
+            .where(whereClause)
+            .orderBy(...personaOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset)
+        : db
+            .select()
+            .from(personas)
+            .orderBy(...personaOrder(options.sort))
+            .limit(options.limit + 1)
+            .offset(options.offset));
+      return toPaginatedList(rows, options.limit, options.offset);
     },
 
     async getPersona(id: string) {

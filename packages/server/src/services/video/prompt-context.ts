@@ -1,0 +1,117 @@
+export interface SceneVideoPromptLimits {
+  narrationSummary: number;
+  illustrationPrompt: number;
+  artStyle: number;
+  title: number;
+  finalPrompt: number | null;
+}
+
+const XAI_PROMPT_MAX_LENGTH = 3800;
+
+const BOILERPLATE_PROMPT_CHUNK_PATTERNS = [
+  /^(anime style|illustration|best quality|detailed eyes|clean lineart)$/i,
+  /^(visual novel CG|game CG|cinematic composition|full-frame single scene)$/i,
+  /^image type:/i,
+  /^camera \/ pov:/i,
+  /^sd\/illustrious tags:/i,
+  /^composition:/i,
+  /^avoid:/i,
+  /not a selfie/i,
+  /comic page|manga panel|background-only plate/i,
+  /subtitles|captions|speech bubbles|watermarks|logos|signatures|ui/i,
+];
+
+export function getSceneVideoPromptLimits(isXai: boolean): SceneVideoPromptLimits {
+  return isXai
+    ? {
+        narrationSummary: 360,
+        illustrationPrompt: 900,
+        artStyle: 260,
+        title: 96,
+        finalPrompt: XAI_PROMPT_MAX_LENGTH,
+      }
+    : {
+        narrationSummary: 650,
+        illustrationPrompt: 1400,
+        artStyle: 420,
+        title: 120,
+        finalPrompt: null,
+      };
+}
+
+export function compactVideoPromptText(value: unknown, maxLength: number): string {
+  if (typeof value !== "string" || maxLength <= 0) return "";
+  const clean = normalizePromptWhitespace(value);
+  if (clean.length <= maxLength) return clean;
+  return clipAtBoundary(clean, maxLength);
+}
+
+export function summarizeVideoNarration(value: unknown, maxLength: number): string {
+  if (typeof value !== "string" || maxLength <= 0) return "";
+  const withoutDialogue = value
+    .replace(/\[[^\]\r\n]{1,80}\]\s*:?\s*/g, " ")
+    .replace(/"[^"\r\n]{1,500}"/g, " ")
+    .replace(/\u201c[^\u201d\r\n]{1,500}\u201d/g, " ");
+  const clean = normalizePromptWhitespace(withoutDialogue);
+  if (!clean) return "";
+  if (clean.length <= maxLength) return clean;
+
+  const chunks = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [clean];
+  const useful = chunks.map((chunk) => chunk.trim()).filter((chunk) => chunk.length > 24 && !/^\[[^\]]+\]/.test(chunk));
+  const selected: string[] = [];
+  let length = 0;
+  for (const chunk of useful) {
+    const nextLength = length + chunk.length + (selected.length ? 1 : 0);
+    if (nextLength > maxLength) break;
+    selected.push(chunk);
+    length = nextLength;
+  }
+  return selected.length ? selected.join(" ") : clipAtBoundary(clean, maxLength);
+}
+
+export function excerptIllustrationPromptForVideo(value: unknown, maxLength: number): string {
+  if (typeof value !== "string" || maxLength <= 0) return "";
+  const clean = normalizePromptWhitespace(value);
+  if (!clean) return "";
+  const chunks = clean
+    .split(/(?:\r?\n|,\s+|;\s+)/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  const filtered = dedupeInOrder(
+    chunks.filter((chunk) => !BOILERPLATE_PROMPT_CHUNK_PATTERNS.some((pattern) => pattern.test(chunk))),
+  );
+  const candidate = (filtered.length ? filtered : chunks).join(", ");
+  return compactVideoPromptText(candidate, maxLength);
+}
+
+export function limitSceneVideoPromptForProvider(prompt: string, maxLength: number | null): string {
+  if (!maxLength || prompt.length <= maxLength) return prompt;
+  const suffix = "\nUse the reference image as the visual source and keep the motion coherent.";
+  const bodyLimit = Math.max(0, maxLength - suffix.length);
+  return `${clipAtBoundary(prompt, bodyLimit)}${suffix}`;
+}
+
+function normalizePromptWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function clipAtBoundary(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const limit = Math.max(0, maxLength - 3);
+  const slice = value.slice(0, limit);
+  const boundary = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf(", "), slice.lastIndexOf("; "));
+  const clipped = (boundary > Math.floor(limit * 0.55) ? slice.slice(0, boundary + 1) : slice).trim();
+  return `${clipped}...`;
+}
+
+function dedupeInOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
+}

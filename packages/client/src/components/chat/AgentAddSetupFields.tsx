@@ -281,7 +281,7 @@ export function buildInitialAgentAddSetupState({
       typeof metadata.illustratorUseAvatarReferences === "boolean"
         ? metadata.illustratorUseAvatarReferences
         : settings.useAvatarReferences === true,
-    spriteCharacterIds: normalizeStringArray(metadata.spriteCharacterIds).slice(0, 3),
+    spriteCharacterIds: normalizeStringArray(metadata.spriteCharacterIds),
     spriteDisplayModes: normalizeSpriteDisplayModes(metadata.spriteDisplayModes),
     expressionAvatarsEnabled: metadata.expressionAvatarsEnabled === true,
     spritePosition: metadata.spritePosition === "right" ? "right" : "left",
@@ -916,7 +916,6 @@ function ExpressionSetupFields({
       onChange({ spriteCharacterIds: selectedSpriteIds.filter((current) => current !== id) });
       return;
     }
-    if (selectedSpriteIds.length >= 3) return;
     onChange({ spriteCharacterIds: [...selectedSpriteIds, id] });
   };
 
@@ -943,12 +942,11 @@ function ExpressionSetupFields({
           <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--background)]/75 p-2">
             {subjectsWithSprites.map((subject) => {
               const active = selectedSpriteIds.includes(subject.id);
-              const maxed = !active && selectedSpriteIds.length >= 3;
               return (
                 <button
                   key={subject.id}
                   type="button"
-                  disabled={disabled || maxed}
+                  disabled={disabled}
                   onClick={() => toggleSprite(subject.id)}
                   className={cn(
                     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all disabled:cursor-not-allowed disabled:opacity-50",

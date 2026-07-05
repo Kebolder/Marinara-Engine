@@ -2,7 +2,7 @@
 
 Conversation Mode is one of Marinara Engine's chat modes, alongside Roleplay, Visual Novel, and Game. Where Game Mode runs a structured RPG and Roleplay drops you into an immersive scene with sprites and backgrounds, **Conversation is Discord-style DMs** — one or more characters, an input bar, and a message history. No GM, no scene chrome, no required mechanics. It's the lightest-weight mode and the one most users will spend the most time in.
 
-This guide is a getting-started reference. It covers what Conversation Mode does, how to set up a chat, the difference between 1:1 and group chats, the Conversation-specific features (schedules, autonomous messages, character exchanges, selfies), how connected chats work, and what models and parameters tend to fit well.
+This guide is a getting-started reference. It covers what Conversation Mode does, how to set up a chat, the difference between 1:1 and group chats, the Conversation-specific features (schedules, autonomous messages, character exchanges, audio calls, selfies), how connected chats work, and what models and parameters tend to fit well.
 
 **What this guide does not cover:** deep agent customization, regex scripts, branching/swipe internals (those work the same across modes), and the lorebook authoring UI itself (covered in the lorebook editor's in-app help). Ask in the Marinara Discord (or open a GitHub issue) for help with those.
 
@@ -27,6 +27,7 @@ The quick setup has these controls:
 - **Persona** (optional) — the character _you_ play, if you want to be more than a generic user.
 - **Character(s)** — tap to add one or more characters from your library. One = 1:1 chat. More than one = group chat. The chat name auto-generates from the picked characters' names unless you've renamed it.
 - **Autonomous messages toggle** — defaults to ON. When enabled, characters can message you on their own when you're idle (see [Autonomous messages](#autonomous-messages) below).
+- **Audio/Video Calls toggle** — enables the phone button for this Conversation so you can start a call with the selected character(s).
 - **Generate schedules toggle** — defaults to OFF. When enabled and you click Start chatting, the engine runs the Schedule Planner agent to generate weekly availability grids for each character.
 - **Customize generation parameters toggle** — defaults to OFF. When enabled, you can override the connection's default temperature, max tokens, etc.
 
@@ -95,6 +96,24 @@ A toggle in the chat settings drawer (and in the quick-setup modal). When enable
 Schedules are optional. Without schedules, chatty characters can still reach out based on talkativeness and whether your status is active or idle. If your status is DND, Marinara suppresses autonomous messages.
 
 Autonomous messages **default to ON** when you complete the quick-setup modal. Turn them off in the chat settings drawer if you want messages only when you initiate.
+
+### Audio/video calls
+
+Conversation Mode supports audio-first calls with characters. Calls use a Discord-style call screen, a separate call-only chat, TTS playback for characters with voices, microphone transcription for your speech, incoming character-call accept/decline controls, and a post-call summary injected back into the normal conversation.
+
+To enable calls for a chat:
+
+1. Open **Chat Settings -> Commands**.
+2. Open **Conversation Calls**.
+3. Enable **Audio/Video Calls** to show the phone button for you.
+4. Enable **Call Audio Pipeline** if you want Marinara to listen while your mic is unmuted.
+5. Choose an **Audio input mode**.
+
+Use **Connections -> Text to Speech** to configure the voice provider and character voices. Use **Connections -> Local Model -> Local Speech Model -> Download Whisper** if you want local microphone transcription, especially on Firefox or other browsers where browser speech recognition is unavailable.
+
+The **Calls** command toggle is separate from the phone button. If the Calls command is enabled, characters may ring you and you can accept or decline. If it is disabled, you can still call them yourself when Audio/Video Calls are enabled.
+
+See [Conversation Audio Calls](CONVERSATION_CALLS.md) for the full setup guide, audio input modes, Local Whisper notes, and troubleshooting.
 
 ### Selfies and per-character image generation
 

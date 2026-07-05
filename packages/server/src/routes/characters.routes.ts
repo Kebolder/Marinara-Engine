@@ -27,6 +27,7 @@ import { createWriteStream, existsSync, rmSync, unlinkSync } from "fs";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
+import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
 import AdmZip from "adm-zip";
 import { extname } from "path";
@@ -310,10 +311,29 @@ export async function charactersRoutes(app: FastifyInstance) {
 
   // ── Characters ──
 
-  app.get<{ Querystring: { includeBuiltIn?: string } }>("/", async (req) => {
-    const characters = await storage.list();
-    if (req.query.includeBuiltIn === "true") return characters;
-    return characters.filter((character) => character.id !== PROFESSOR_MARI_ID);
+  app.get<{ Querystring: { includeBuiltIn?: string; limit?: string; offset?: string; search?: string; sort?: string } }>(
+    "/",
+    async (req) => {
+      const includeBuiltIn = req.query.includeBuiltIn === "true";
+      const page = parseLibraryPageQuery(req.query);
+      if (page.hasPaging) {
+        return storage.listPage({
+          includeBuiltIn,
+          limit: page.limit,
+          offset: page.offset,
+          search: page.search,
+          sort: page.sort,
+        });
+      }
+      const characters = await storage.list();
+      if (includeBuiltIn) return characters;
+      return characters.filter((character) => character.id !== PROFESSOR_MARI_ID);
+    },
+  );
+
+  app.post<{ Body: { ids?: unknown } }>("/summaries", async (req) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id): id is string => typeof id === "string") : [];
+    return storage.listSummariesByIds(ids);
   });
 
   app.post("/avatar-generation/preview", async (req, reply) => {
@@ -826,9 +846,21 @@ export async function charactersRoutes(app: FastifyInstance) {
 
   // ── Personas ──
 
-  app.get("/personas/list", async () => {
-    return storage.listPersonas();
-  });
+  app.get<{ Querystring: { limit?: string; offset?: string; search?: string; sort?: string } }>(
+    "/personas/list",
+    async (req) => {
+      const page = parseLibraryPageQuery(req.query);
+      if (page.hasPaging) {
+        return storage.listPersonasPage({
+          limit: page.limit,
+          offset: page.offset,
+          search: page.search,
+          sort: page.sort,
+        });
+      }
+      return storage.listPersonas();
+    },
+  );
 
   app.get("/personas/active", async () => {
     const personas = await storage.listPersonas();

@@ -150,17 +150,18 @@ const SPOTIFY_GREEN_CLASS = "text-[#1DB954]";
 const SPOTIFY_GREEN_BG_CLASS = "bg-[#1DB954]";
 const MUSIC_PLAYER_SHELL_BORDER_CLASS = "border-[var(--marinara-music-player-shell-border)]";
 const MUSIC_PLAYER_SHELL_BG_CLASS = "bg-[var(--marinara-music-player-shell-bg)]";
-const MUSIC_PLAYER_BORDER_CLASS = "border-[#f7f3ef]/15";
-const MUSIC_PLAYER_BUTTON_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_PLAYER_TILE_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_PLAYER_TILE_RING_CLASS = "ring-[#f7f3ef]/10";
-const MUSIC_PLAYER_TEXT_CLASS = "text-[#f7f3ef]";
-const MUSIC_PLAYER_MUTED_CLASS = "text-[#b3b3b3]";
-const MUSIC_PLAYER_ICON_CLASS = "text-[#b3b3b3]";
-const MUSIC_PLAYER_ICON_HOVER_CLASS = "hover:bg-[#f7f3ef]/10 hover:text-[#f7f3ef]";
-const MUSIC_PLAYER_ACTION_BG_CLASS = "bg-[#f7f3ef]";
-const MUSIC_PLAYER_ACTION_TEXT_CLASS = "text-[#191414]";
-const MUSIC_PLAYER_PROGRESS_BG_CLASS = "bg-[#f7f3ef]/15";
+const MUSIC_PLAYER_BORDER_CLASS = "border-[var(--marinara-music-player-button-border)]";
+const MUSIC_PLAYER_BUTTON_BG_CLASS = "bg-[var(--marinara-music-player-button-bg)]";
+const MUSIC_PLAYER_TILE_BG_CLASS = "bg-[var(--marinara-music-player-tile-bg)]";
+const MUSIC_PLAYER_TILE_RING_CLASS = "ring-[var(--marinara-music-player-tile-ring)]";
+const MUSIC_PLAYER_TEXT_CLASS = "text-[var(--marinara-music-player-text)]";
+const MUSIC_PLAYER_MUTED_CLASS = "text-[var(--marinara-music-player-muted)]";
+const MUSIC_PLAYER_ICON_CLASS = "text-[var(--marinara-music-player-icon)]";
+const MUSIC_PLAYER_ICON_HOVER_CLASS =
+  "hover:bg-[var(--marinara-music-player-button-bg-hover)] hover:text-[var(--marinara-music-player-icon-hover)]";
+const MUSIC_PLAYER_ACTION_BG_CLASS = "bg-[var(--marinara-music-player-action-bg)]";
+const MUSIC_PLAYER_ACTION_TEXT_CLASS = "text-[var(--marinara-music-player-action-text)]";
+const MUSIC_PLAYER_PROGRESS_BG_CLASS = "bg-[var(--marinara-music-player-progress-bg)]";
 const REPEAT_TRACK_END_GRACE_MS = 15_000;
 const REPEAT_TRACK_REPLAY_COOLDOWN_MS = 8_000;
 const MANUAL_CONTROL_REPEAT_SUPPRESS_MS = 15_000;
@@ -259,24 +260,20 @@ function getMobileWidgetStyle(
     top: Math.max(
       MOBILE_WIDGET_VIEWPORT_PADDING,
       Math.min(
-        height - (collapsed ? MOBILE_WIDGET_COLLAPSED_SIZE : MOBILE_WIDGET_EXPANDED_HEIGHT) - MOBILE_WIDGET_VIEWPORT_PADDING,
+        height -
+          (collapsed ? MOBILE_WIDGET_COLLAPSED_SIZE : MOBILE_WIDGET_EXPANDED_HEIGHT) -
+          MOBILE_WIDGET_VIEWPORT_PADDING,
         position.y,
       ),
     ),
   };
 }
 
-function getMobileExpandedPanelStyle(
-  position: { x: number; y: number },
-  viewportWidth?: number,
-): CSSProperties {
+function getMobileExpandedPanelStyle(position: { x: number; y: number }, viewportWidth?: number): CSSProperties {
   if (typeof window === "undefined") return {};
   const availableWidth = viewportWidth ?? window.innerWidth;
 
-  const width = Math.min(
-    MOBILE_WIDGET_EXPANDED_MAX_WIDTH,
-    availableWidth - MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER,
-  );
+  const width = Math.min(MOBILE_WIDGET_EXPANDED_MAX_WIDTH, availableWidth - MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER);
   const opensLeft =
     position.x + width > availableWidth - MOBILE_WIDGET_VIEWPORT_PADDING ||
     position.x + MOBILE_WIDGET_COLLAPSED_SIZE / 2 > availableWidth / 2;
@@ -873,7 +870,7 @@ export function SpotifyMiniPlayer({
       "--range-thumb-color": "#1DB954",
       "--range-thumb-size": "0.6875rem",
       "--range-track-height": "0.25rem",
-      "--range-thumb-shadow": "0 0 0 0.125rem #191414",
+      "--range-thumb-shadow": "0 0 0 0.125rem var(--marinara-music-player-shell-bg)",
     }),
     [volumeDraft],
   );
@@ -895,7 +892,7 @@ export function SpotifyMiniPlayer({
         <button
           type="button"
           className={cn(
-            "flex w-full shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-[#f7f3ef]/10",
+            "flex w-full shrink-0 items-center gap-1 rounded-md px-1 py-0.5 text-left transition-colors",
             MUSIC_PLAYER_ICON_CLASS,
             MUSIC_PLAYER_ICON_HOVER_CLASS,
           )}
@@ -1076,7 +1073,11 @@ export function SpotifyMiniPlayer({
               )}
               title={sdkDeviceId ? "Use Marinara player" : "Enable Marinara player"}
             >
-              {browserPlaybackLoading ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Laptop size="0.8125rem" />}
+              {browserPlaybackLoading ? (
+                <Loader2 size="0.8125rem" className="animate-spin" />
+              ) : (
+                <Laptop size="0.8125rem" />
+              )}
             </button>
           )}
           <button
@@ -1125,7 +1126,7 @@ export function SpotifyMiniPlayer({
   if (floating) {
     return (
       <div
-        className={cn("fixed z-[35] touch-none select-none", mobile && "md:hidden")}
+        className={cn("fixed z-[45] touch-none select-none", mobile && "md:hidden")}
         style={mobileWidgetStyle}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}

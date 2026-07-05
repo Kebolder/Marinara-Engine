@@ -58,7 +58,7 @@ If you prefer to run commands yourself without the launcher:
 ```bash
 git clone https://github.com/Pasta-Devs/Marinara-Engine.git
 cd Marinara-Engine
-pnpm install
+pnpm install --force
 pnpm build
 pnpm start
 ```
@@ -113,7 +113,7 @@ When you launch Marinara Engine via `./start.sh` from a git checkout, the launch
 1. Fetches the latest code for the current update branch, then fast-forwards normal clones or moves detached release checkouts to that commit. Local `staging` branches follow `origin/staging`; all other launcher checkouts follow stable `origin/main`.
 2. Detects whether the checkout changed
 3. Temporarily stashes tracked local changes if needed, then reapplies them
-4. Reinstalls dependencies and rebuilds when needed
+4. Reinstalls dependencies, refreshes native packages for the current Node architecture, and rebuilds when needed
 5. Starts the app on the current version
 
 ### In-App Update Check
@@ -129,7 +129,7 @@ If you use a git checkout without the launcher or the in-app updater:
 ```bash
 git fetch origin +refs/heads/main:refs/remotes/origin/main
 git merge --ff-only origin/main || git checkout --detach origin/main
-pnpm install
+pnpm install --force
 pnpm build
 ```
 
@@ -138,7 +138,7 @@ For tester builds, use the staging target instead:
 ```bash
 git fetch origin +refs/heads/staging:refs/remotes/origin/staging
 git checkout -B staging origin/staging
-pnpm install
+pnpm install --force
 pnpm build
 ```
 

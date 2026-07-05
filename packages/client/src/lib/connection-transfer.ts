@@ -12,6 +12,7 @@ export type ConnectionTransferRow = {
   promptPresetId?: unknown;
   defaultParameters?: unknown;
   enableCaching?: unknown;
+  anthropicExtendedCacheTtl?: unknown;
   cachingAtDepth?: unknown;
   isDefault?: unknown;
   useForRandom?: unknown;
@@ -22,6 +23,8 @@ export type ConnectionTransferRow = {
   openrouterProvider?: unknown;
   imageGenerationSource?: unknown;
   imageService?: unknown;
+  videoGenerationSource?: unknown;
+  videoService?: unknown;
   service?: unknown;
   imageEndpointId?: unknown;
   comfyuiWorkflow?: unknown;
@@ -40,6 +43,7 @@ export type SafeConnectionExport = {
   promptPresetId: string | null;
   defaultParameters: Record<string, unknown> | null;
   enableCaching: boolean;
+  anthropicExtendedCacheTtl: boolean;
   cachingAtDepth: number;
   isDefault: boolean;
   useForRandom: boolean;
@@ -50,6 +54,8 @@ export type SafeConnectionExport = {
   openrouterProvider: string | null;
   imageGenerationSource: string | null;
   imageService: string | null;
+  videoGenerationSource: string | null;
+  videoService: string | null;
   imageEndpointId: string | null;
   comfyuiWorkflow: string | null;
   treatAsLocalEndpoint: boolean;
@@ -95,6 +101,8 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
   const defaultParameters = parseDefaultParameters(value.defaultParameters);
   const imageService = asNullableString(value.imageService ?? value.service);
+  const videoService =
+    provider === "video_generation" ? asNullableString(value.videoService ?? value.service) : null;
 
   return {
     connection: {
@@ -108,6 +116,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       useForRandom: false,
       defaultForAgents: false,
       enableCaching: asBoolean(value.enableCaching),
+      anthropicExtendedCacheTtl: asBoolean(value.anthropicExtendedCacheTtl),
       cachingAtDepth: asNonNegativeInteger(value.cachingAtDepth, 5),
       embeddingModel: asString(value.embeddingModel),
       embeddingBaseUrl: asString(value.embeddingBaseUrl),
@@ -117,6 +126,8 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       comfyuiWorkflow: asNullableString(value.comfyuiWorkflow),
       imageService,
       imageEndpointId: asNullableString(value.imageEndpointId),
+      videoGenerationSource: provider === "video_generation" ? asNullableString(value.videoGenerationSource) : null,
+      videoService,
       promptPresetId: null,
       maxTokensOverride: asNullablePositiveInteger(value.maxTokensOverride),
       maxParallelJobs: asBoundedPositiveInteger(value.maxParallelJobs, 1, MAX_PARALLEL_JOBS),
@@ -130,6 +141,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
 function serializeConnectionForExport(connection: ConnectionTransferRow): SafeConnectionExport {
   const provider = asProvider(connection.provider) ?? "custom";
+  const isVideoProvider = provider === "video_generation";
   return {
     name: asString(connection.name) || "Unnamed Connection",
     provider,
@@ -141,6 +153,7 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     promptPresetId: asNullableString(connection.promptPresetId),
     defaultParameters: parseDefaultParameters(connection.defaultParameters),
     enableCaching: asBoolean(connection.enableCaching),
+    anthropicExtendedCacheTtl: asBoolean(connection.anthropicExtendedCacheTtl),
     cachingAtDepth: asNonNegativeInteger(connection.cachingAtDepth, 5),
     isDefault: asBoolean(connection.isDefault),
     useForRandom: asBoolean(connection.useForRandom),
@@ -151,6 +164,8 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     openrouterProvider: asNullableString(connection.openrouterProvider),
     imageGenerationSource: asNullableString(connection.imageGenerationSource),
     imageService: asNullableString(connection.imageService ?? connection.service),
+    videoGenerationSource: isVideoProvider ? asNullableString(connection.videoGenerationSource) : null,
+    videoService: isVideoProvider ? asNullableString(connection.videoService ?? connection.service) : null,
     imageEndpointId: asNullableString(connection.imageEndpointId),
     comfyuiWorkflow: asNullableString(connection.comfyuiWorkflow),
     treatAsLocalEndpoint: asBoolean(connection.treatAsLocalEndpoint),

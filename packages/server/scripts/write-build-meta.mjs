@@ -24,7 +24,6 @@ function resolveCommit() {
       execFileSync("git", ["rev-parse", `--short=${COMMIT_LENGTH}`, "HEAD"], {
         cwd: MONOREPO_ROOT,
         encoding: "utf8",
-        shell: process.platform === "win32",
         stdio: ["ignore", "pipe", "ignore"],
       }),
     );

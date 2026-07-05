@@ -16,8 +16,8 @@ interface MessageReactionsProps {
   reactions: MessageReaction[];
   /** Resolve a reactor id ("user" or a character id) to a display name for tooltips. */
   resolveReactorName: (reactorId: string) => string;
-  /** Toggle the user's reaction with this emoji token (unicode or `:name:`) + its image url. */
-  onToggle: (emoji: string, imageUrl: string | null) => void;
+  /** Toggle the user's membership in this reaction entry (identity: emoji + segment). */
+  onToggle: (reaction: MessageReaction) => void;
 }
 
 export function MessageReactions({ reactions, resolveReactorName, onToggle }: MessageReactionsProps) {
@@ -26,11 +26,13 @@ export function MessageReactions({ reactions, resolveReactorName, onToggle }: Me
     <div className="mari-message-reactions flex flex-wrap items-center gap-1">
       {reactions.map((reaction) => (
         <ReactionPill
-          key={reaction.emoji}
+          // A whole-message row can also hold orphaned segment entries, so the same
+          // emoji may legitimately appear more than once — key by segment too.
+          key={`${reaction.segment ?? "m"}:${reaction.segmentSpeaker ?? ""}:${reaction.emoji}`}
           reaction={reaction}
           mine={reaction.by.includes(USER_REACTOR)}
           who={reaction.by.map(resolveReactorName).join(", ")}
-          onToggle={() => onToggle(reaction.emoji, reaction.imageUrl ?? null)}
+          onToggle={() => onToggle(reaction)}
         />
       ))}
     </div>

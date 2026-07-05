@@ -38,7 +38,7 @@ import {
   useReorderFolders,
   useMoveChat,
 } from "../../hooks/use-chat-folders";
-import { useCharacters } from "../../hooks/use-characters";
+import { useCharacterSummaries } from "../../hooks/use-characters";
 import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/use-folder-rename-gesture";
 import { useChatStore } from "../../stores/chat.store";
 import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
@@ -65,6 +65,7 @@ import { SelectionActionBar } from "../ui/SelectionActionBar";
 import { SmoothFolderContent } from "../ui/SmoothFolderContent";
 
 type ChatSortOption = "newest" | "oldest" | "name-asc" | "name-desc";
+const CHAT_LIST_PAGE_SIZE = 100;
 
 const CONVERSATION_STATUS_PRIORITY: Record<ConversationPresenceStatus, number> = {
   online: 0,
@@ -220,7 +221,6 @@ export function ChatSidebar() {
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
   const unreadCounts = useChatStore((s) => s.unreadCounts);
   const hydrateUnread = useChatStore((s) => s.hydrateUnread);
-  const { data: allCharacters } = useCharacters({ includeBuiltIn: true });
   // One interval for the whole list: a 60s-cadence clock so schedule/override-derived
   // status dots refresh when time alone changes them, without per-row timers.
   const presenceNow = usePresenceClock();
@@ -239,46 +239,12 @@ export function ChatSidebar() {
   const reorderFoldersMut = useReorderFolders();
   const moveChatMut = useMoveChat();
 
-  // Build character lookup: id → { name, avatarUrl, avatarCrop, conversationStatus }
-  const charLookup = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        name: string;
-        avatarUrl: string | null;
-        avatarCrop?: AvatarCropValue | null;
-        conversationStatus?: string;
-      }
-    >();
-    if (!allCharacters) return map;
-    for (const char of allCharacters as Array<{ id: string; data: unknown; avatarPath: string | null }>) {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-        const extensions =
-          record.extensions && typeof record.extensions === "object"
-            ? (record.extensions as Record<string, unknown>)
-            : {};
-        const name = typeof record.name === "string" && record.name.trim() ? record.name.trim() : "Unknown";
-        const conversationStatus =
-          typeof extensions.conversationStatus === "string" ? extensions.conversationStatus : undefined;
-        map.set(char.id, {
-          name,
-          avatarUrl: char.avatarPath ?? null,
-          avatarCrop: (extensions.avatarCrop as AvatarCropValue | undefined) ?? null,
-          conversationStatus,
-        });
-      } catch {
-        map.set(char.id, { name: "Unknown", avatarUrl: null });
-      }
-    }
-    return map;
-  }, [allCharacters]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sort, setSort] = useState<ChatSortOption>("newest");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"conversation" | "roleplay" | "game">("conversation");
+  const [visibleChatLimit, setVisibleChatLimit] = useState(CHAT_LIST_PAGE_SIZE);
   const [deleteTarget, setDeleteTarget] = useState<{
     chatId: string;
     groupId: string | null;
@@ -332,6 +298,10 @@ export function ChatSidebar() {
     setTagsExpanded(false);
   }, [activeTab, exitMultiSelect]);
 
+  useEffect(() => {
+    setVisibleChatLimit(CHAT_LIST_PAGE_SIZE);
+  }, [activeTab, searchQuery, activeTag, sort]);
+
   const modeChats = useMemo(
     () =>
       (chats ?? []).filter(
@@ -339,6 +309,37 @@ export function ChatSidebar() {
       ),
     [chats, activeTab],
   );
+  const sidebarCharacterIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const chat of chats ?? []) {
+      for (const id of normalizeChatCharacterIds((chat as { characterIds?: unknown }).characterIds)) ids.add(id);
+    }
+    return Array.from(ids);
+  }, [chats]);
+  const { data: characterSummaries } = useCharacterSummaries(sidebarCharacterIds);
+
+  // Build character lookup: id → { name, avatarUrl, avatarCrop, conversationStatus }
+  const charLookup = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        name: string;
+        avatarUrl: string | null;
+        avatarCrop?: AvatarCropValue | null;
+        conversationStatus?: string;
+      }
+    >();
+    if (!characterSummaries) return map;
+    for (const character of characterSummaries) {
+      map.set(character.id, {
+        name: character.name,
+        avatarUrl: character.avatarUrl,
+        avatarCrop: (character.avatarCrop as AvatarCropValue | undefined) ?? null,
+        conversationStatus: character.conversationStatus,
+      });
+    }
+    return map;
+  }, [characterSummaries]);
 
   const allTags = useMemo(() => {
     const tags = new Set<string>();
@@ -421,6 +422,24 @@ export function ChatSidebar() {
     return result;
   }, [chats, filtered, sort]);
 
+  // Detect if active chat belongs to a group so its group row highlights and stays mounted.
+  const activeChat = chats?.find((c) => c.id === activeChatId);
+  const activeGroupId = activeChat?.groupId ?? null;
+  const activeDisplayChatIndex = useMemo(
+    () =>
+      displayChats.findIndex(
+        (entry) => activeChatId === entry.chat.id || (activeGroupId != null && entry.chat.groupId === activeGroupId),
+      ),
+    [activeChatId, activeGroupId, displayChats],
+  );
+  const effectiveVisibleChatLimit =
+    activeDisplayChatIndex >= 0 ? Math.max(visibleChatLimit, activeDisplayChatIndex + 1) : visibleChatLimit;
+  const visibleDisplayChats = useMemo(
+    () => displayChats.slice(0, effectiveVisibleChatLimit),
+    [displayChats, effectiveVisibleChatLimit],
+  );
+  const hasMoreDisplayChats = visibleDisplayChats.length < displayChats.length;
+
   // ── Folder grouping ──
   const modeFolders = useMemo(() => {
     if (!folders) return [] as ChatFolder[];
@@ -428,11 +447,11 @@ export function ChatSidebar() {
   }, [folders, activeTab]);
 
   const { unfiledChats, folderChatsMap } = useMemo(() => {
-    if (!displayChats.length)
-      return { unfiledChats: displayChats, folderChatsMap: new Map<string, typeof displayChats>() };
+    if (!visibleDisplayChats.length)
+      return { unfiledChats: visibleDisplayChats, folderChatsMap: new Map<string, typeof displayChats>() };
     const unfiled: typeof displayChats = [];
     const map = new Map<string, typeof displayChats>();
-    for (const entry of displayChats) {
+    for (const entry of visibleDisplayChats) {
       const fid = entry.chat.folderId;
       if (!fid) {
         unfiled.push(entry);
@@ -442,7 +461,7 @@ export function ChatSidebar() {
       map.get(fid)!.push(entry);
     }
     return { unfiledChats: unfiled, folderChatsMap: map };
-  }, [displayChats]);
+  }, [visibleDisplayChats]);
   const folderChatCounts = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const chat of modeChats) {
@@ -462,10 +481,6 @@ export function ChatSidebar() {
     if (!folders) return;
     setLocalFolderOrder(modeFolders.map((f) => f.id));
   }, [folders, modeFolders]);
-
-  // Detect if active chat belongs to a group (so its group row highlights)
-  const activeChat = chats?.find((c) => c.id === activeChatId);
-  const activeGroupId = activeChat?.groupId ?? null;
 
   useEffect(() => {
     const allChats = chats ?? [];
@@ -1441,6 +1456,16 @@ export function ChatSidebar() {
 
           {/* Unfiled chats */}
           {unfiledChats.map(renderChatRow)}
+
+          {hasMoreDisplayChats && (
+            <button
+              type="button"
+              onClick={() => setVisibleChatLimit((limit) => limit + CHAT_LIST_PAGE_SIZE)}
+              className="mari-chrome-control mari-chrome-control--primary justify-center text-xs"
+            >
+              Load more ({visibleDisplayChats.length} loaded)
+            </button>
+          )}
         </div>
       </div>
 

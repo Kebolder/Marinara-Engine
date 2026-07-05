@@ -47,9 +47,18 @@ import { resolveMemoryRecallEmbeddingSource } from "../services/memory-recall-em
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../utils/security.js";
+import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import AdmZip from "adm-zip";
 
 const LOREBOOK_IMAGES_DIR = join(DATA_DIR, "lorebooks", "images");
+
+function parseCsvQuery(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 function toSafeExportName(name: string, fallback: string) {
   const sanitized = name
@@ -381,6 +390,25 @@ export async function lorebooksRoutes(app: FastifyInstance) {
 
   app.get("/", async (req) => {
     const query = req.query as Record<string, string>;
+    const page = parseLibraryPageQuery(query);
+    if (page.hasPaging) {
+      return storage.listPage({
+        limit: page.limit,
+        offset: page.offset,
+        search: page.search,
+        sort: page.sort,
+        category: query.category,
+        active:
+          query.active === "true"
+            ? {
+                lorebookIds: parseCsvQuery(query.activeLorebookIds),
+                characterIds: parseCsvQuery(query.characterIds),
+                personaId: query.personaId || null,
+                chatId: query.chatId || null,
+              }
+            : undefined,
+      });
+    }
     if (query.category) return storage.listByCategory(query.category);
     if (query.characterId) return storage.listByCharacter(query.characterId);
     if (query.personaId) return storage.listByPersona(query.personaId);
@@ -1169,7 +1197,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       ) {
         return reply.status(409).send({
           error:
-            "Embedding dimensions changed. Re-vectorize all entries instead of only missing entries before switching embedding models.",
+            "Embedding dimensions changed. Use Re-vectorize all entries instead of only missing entries before switching embedding models.",
         });
       }
       for (let j = 0; j < batchEntries.length; j++) {

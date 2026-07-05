@@ -12,6 +12,7 @@ import {
 import { DraftNumberInput } from "../../../components/ui/DraftNumberInput";
 import { SettingsSwitch } from "../../../components/panels/settings/SettingControls";
 import { useSaveConnectionDefaults } from "../../../hooks/use-connections";
+import { isLanguageGenerationConnection, type ConnectionProviderLike } from "../../../lib/connection-filters";
 import { cn } from "../../../lib/utils";
 
 const EDITABLE_PARAMETER_KEYS: Array<keyof EditableGenerationParameters> = [
@@ -30,35 +31,13 @@ const EDITABLE_PARAMETER_KEYS: Array<keyof EditableGenerationParameters> = [
   "enabledParameters",
 ];
 
-const GENERIC_VISION_MODEL_RE =
-  /\b(?:vision|visual|multimodal|omni|vl|llava|pixtral|internvl|molmo|mllama|idefics)\b|qwen[\w.-]*vl/i;
-
-function isLikelyVisionConnection(connection: Record<string, unknown>): boolean {
-  const provider = typeof connection.provider === "string" ? connection.provider : "";
-  const model = typeof connection.model === "string" ? connection.model.toLowerCase() : "";
-  if (!model || provider === "image_generation") return false;
-  if (GENERIC_VISION_MODEL_RE.test(model)) return true;
-  if (provider === "google" || provider === "google_vertex") return model.includes("gemini");
-  if (provider === "anthropic" || provider === "claude_subscription") {
-    return /\bclaude-(?:3|4|fable|mythos|opus|sonnet|haiku)/i.test(model);
-  }
-  if (provider === "openai" || provider === "openai_chatgpt") {
-    return /\b(?:gpt-4o|gpt-4\.1|gpt-5|chatgpt|chat-latest|o3|o4)\b/i.test(model);
-  }
-  if (provider === "cohere") return /(?:aya-vision|command-a-vision)/i.test(model);
-  if (provider === "mistral") return /(?:pixtral|mistral-(?:small|medium|large)-3)/i.test(model);
-  if (provider === "xai") return /(?:grok.*vision|grok-[34])/i.test(model);
-  if (provider === "openrouter" || provider === "nanogpt" || provider === "custom") {
-    return /(?:gpt-4o|gpt-4\.1|gpt-5|gemini|claude-(?:3|4)|pixtral|aya-vision|command-a-vision)/i.test(model);
-  }
-  return false;
-}
+type AdvancedConnection = ConnectionProviderLike & Record<string, unknown>;
 
 interface AdvancedParametersSectionProps {
   metadata: Record<string, unknown>;
   isConversation: boolean;
   connectionId: string | null;
-  connections: Record<string, unknown>[];
+  connections: AdvancedConnection[];
   contextMessageLimit: number | null | undefined;
   excludePastReasoning: boolean | undefined;
   imageCaptioningEnabled: boolean | undefined;
@@ -100,11 +79,11 @@ export function AdvancedParametersSection({
   const effectiveParams = getEditableGenerationParameters(defaults, params);
   const excludeReasoningEnabled = excludePastReasoning !== false;
   const captioningEnabled = imageCaptioningEnabled === true;
-  const chatConnectionCanCaption = !!conn && isLikelyVisionConnection(conn);
+  const chatConnectionCanCaption = !!conn && isLanguageGenerationConnection(conn);
   const connectionOptions = useMemo(
     () =>
       connections.flatMap((connection) => {
-        if (!isLikelyVisionConnection(connection)) return [];
+        if (!isLanguageGenerationConnection(connection)) return [];
         const id = typeof connection.id === "string" ? connection.id : "";
         if (!id) return [];
         const name = typeof connection.name === "string" && connection.name.trim() ? connection.name.trim() : id;
@@ -238,8 +217,8 @@ export function AdvancedParametersSection({
               label="Image Captioning"
               description={
                 hasCaptioningConnection
-                  ? "Describe image attachments with a selected vision-capable connection instead of sending native images."
-                  : "Add a vision-capable connection before enabling image captioning."
+                  ? "Describe image attachments with a selected connection instead of sending native images. Text-only endpoints may fail."
+                  : "Add a connection before enabling image captioning."
               }
               checked={captioningEnabled}
               onChange={(checked) =>
@@ -278,7 +257,7 @@ export function AdvancedParametersSection({
                     <option value="">Use chat connection</option>
                   ) : (
                     <option value="" disabled>
-                      Select a vision connection
+                      Select a captioning connection
                     </option>
                   )}
                   {connectionOptions.map((connection) => (

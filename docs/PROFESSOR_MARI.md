@@ -13,6 +13,7 @@ Think of Mari as an in-app guide who can also take a few safe content actions fo
 Use Mari when you want help with:
 
 - Setting up your first connection, character, persona, conversation, roleplay, or Game Mode session.
+- Setting up Conversation audio calls, including Text to Speech, Local Whisper, and per-chat call toggles.
 - Understanding the difference between Conversation, Roleplay, and Game Mode.
 - Creating a new character card or persona from a rough description.
 - Updating an existing character card or persona.
@@ -116,6 +117,7 @@ The most useful report includes:
 ## Related Docs
 
 - [Conversation Mode](CONVERSATION.md)
+- [Conversation Audio Calls](CONVERSATION_CALLS.md)
 - [Roleplay Mode](ROLEPLAY.md)
 - [Game Mode](GAME_MODE.md)
 - [FAQ](FAQ.md)

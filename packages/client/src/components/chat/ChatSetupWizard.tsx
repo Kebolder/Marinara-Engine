@@ -21,6 +21,7 @@ import {
   Sparkles,
   Feather,
   RotateCcw,
+  Phone,
 } from "lucide-react";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { useConnections } from "../../hooks/use-connections";
@@ -162,6 +163,8 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "haptic", label: "Haptics", description: "Let characters control connected haptic devices." },
   { id: "influence", label: "Influence", description: "Let characters influence a connected chat." },
   { id: "note", label: "Notes", description: "Let characters save durable notes for a connected chat." },
+  { id: "call", label: "Calls", description: "Let characters ring you for a Conversation call." },
+  { id: "react", label: "Reactions", description: "Let characters react to messages with emoji badges." },
   { id: "uno", label: "UNO", description: "Let characters start a game of UNO at the table when you agree to play." },
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
 ];
@@ -728,6 +731,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const metadata = useMemo(() => {
     return readChatMetadata(chat);
   }, [chat]);
+  const [callsEnabled, setCallsEnabled] = useState(() => metadata.conversationCallsEnabled === true);
   const [commandsEnabled, setCommandsEnabled] = useState(() => metadata.characterCommands !== false);
   const [conversationCommandToggles, setConversationCommandToggles] = useState<
     Partial<Record<ConversationCommandKey, boolean>>
@@ -763,6 +767,10 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   useEffect(() => {
     setCustomizeParameters(!!parseEditableGenerationParameters(metadata.chatParameters));
   }, [metadata.chatParameters]);
+
+  useEffect(() => {
+    setCallsEnabled(metadata.conversationCallsEnabled === true);
+  }, [metadata.conversationCallsEnabled]);
 
   const chatCharIds: string[] = useMemo(() => {
     return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
@@ -913,6 +921,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       id: chat.id,
       autonomousMessages: autonomousEnabled,
       conversationSchedulesEnabled: autonomousEnabled && generateSchedule,
+      conversationCallsEnabled: callsEnabled,
       characterCommands: commandsEnabled,
       conversationCommandToggles,
       chatParameters: customizeParameters ? generationParameters : null,
@@ -944,6 +953,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     chatCharIds,
     onFinish,
     autonomousEnabled,
+    callsEnabled,
     generateSchedule,
     updateMeta,
     customizeParameters,
@@ -1285,6 +1295,45 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
         </button>
       )}
 
+      <div
+        className={cn(
+          "mari-chat-option-field rounded-lg transition-all",
+          callsEnabled && "mari-chat-option-field--active",
+        )}
+      >
+        <button
+          type="button"
+          onClick={() => setCallsEnabled((value) => !value)}
+          className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Phone
+              size="0.875rem"
+              className={callsEnabled ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+            />
+            <div>
+              <span className="text-xs font-medium">Audio/Video Calls</span>
+              <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                Add a call button and call-only transcript to this conversation.
+              </p>
+            </div>
+          </div>
+          <div
+            className={cn(
+              "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+              callsEnabled && "mari-chat-option-switch--active",
+            )}
+          >
+            <div
+              className={cn(
+                "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                callsEnabled && "translate-x-3.5",
+              )}
+            />
+          </div>
+        </button>
+      </div>
+
       <button
         onClick={() => setCommandsEnabled((value) => !value)}
         className={cn(
@@ -1371,9 +1420,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       ? renderConnectionStep()
       : currentStep.key === "prompt"
         ? renderPromptStep()
-      : currentStep.key === "participants"
-        ? renderParticipantsStep()
-        : renderAutomationStep();
+        : currentStep.key === "participants"
+          ? renderParticipantsStep()
+          : renderAutomationStep();
   const busyContent =
     scheduleState === "generating" ? (
       <div className="flex items-center justify-center gap-2 py-1">

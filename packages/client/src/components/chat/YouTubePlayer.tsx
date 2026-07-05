@@ -34,19 +34,21 @@ interface SearchResult {
 
 let ytApiPromise: Promise<void> | null = null;
 
-const MUSIC_NEUTRAL_BORDER_CLASS = "border-[#f7f3ef]/15";
-const MUSIC_NEUTRAL_SHELL_BORDER_CLASS = "border-[#f7f3ef]/15";
-const MUSIC_NEUTRAL_SHELL_BG_CLASS = "bg-[#0f0f0f]/95";
-const MUSIC_NEUTRAL_BUTTON_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_NEUTRAL_TILE_BG_CLASS = "bg-[#f7f3ef]/5";
-const MUSIC_NEUTRAL_TEXT_CLASS = "text-[#f7f3ef]";
-const MUSIC_NEUTRAL_MUTED_CLASS = "text-[#aaa]";
-const MUSIC_NEUTRAL_ICON_CLASS = "text-[#aaa]";
-const MUSIC_NEUTRAL_ICON_HOVER_CLASS = "hover:bg-[#f7f3ef]/10 hover:text-[#f7f3ef]";
-const MUSIC_NEUTRAL_PROGRESS_BG_CLASS = "bg-[#f7f3ef]/15";
+const MUSIC_NEUTRAL_BORDER_CLASS = "border-[var(--marinara-music-player-button-border)]";
+const MUSIC_NEUTRAL_SHELL_BORDER_CLASS = "border-[var(--marinara-music-player-shell-border)]";
+const MUSIC_NEUTRAL_SHELL_BG_CLASS = "bg-[var(--marinara-music-player-shell-bg)]";
+const MUSIC_NEUTRAL_BUTTON_BG_CLASS = "bg-[var(--marinara-music-player-button-bg)]";
+const MUSIC_NEUTRAL_TILE_BG_CLASS = "bg-[var(--marinara-music-player-tile-bg)]";
+const MUSIC_NEUTRAL_TILE_RING_CLASS = "ring-[var(--marinara-music-player-tile-ring)]";
+const MUSIC_NEUTRAL_TEXT_CLASS = "text-[var(--marinara-music-player-text)]";
+const MUSIC_NEUTRAL_MUTED_CLASS = "text-[var(--marinara-music-player-muted)]";
+const MUSIC_NEUTRAL_ICON_CLASS = "text-[var(--marinara-music-player-icon)]";
+const MUSIC_NEUTRAL_ICON_HOVER_CLASS =
+  "hover:bg-[var(--marinara-music-player-button-bg-hover)] hover:text-[var(--marinara-music-player-icon-hover)]";
+const MUSIC_NEUTRAL_PROGRESS_BG_CLASS = "bg-[var(--marinara-music-player-progress-bg)]";
 const MUSIC_NEUTRAL_PROGRESS_FILL_CLASS = "bg-[#FF0000]";
-const MUSIC_NEUTRAL_ACTION_BG_CLASS = "bg-[#f7f3ef]";
-const MUSIC_NEUTRAL_ACTION_TEXT_CLASS = "text-[#0f0f0f]";
+const MUSIC_NEUTRAL_ACTION_BG_CLASS = "bg-[var(--marinara-music-player-action-bg)]";
+const MUSIC_NEUTRAL_ACTION_TEXT_CLASS = "text-[var(--marinara-music-player-action-text)]";
 const YOUTUBE_LOGO_CLASS = "text-[#FF0000]";
 const MOBILE_WIDGET_COLLAPSED_SIZE = 48;
 const MOBILE_WIDGET_EXPANDED_MAX_WIDTH = 320;
@@ -427,6 +429,7 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
         className="mari-youtube-volume-slider w-full"
         title="Volume"
         aria-label="YouTube volume"
+        style={{ "--range-progress": `${playerVolume}%` } as CSSProperties}
       />
     </div>
   );
@@ -439,7 +442,7 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
           className={cn(
             "flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[0.375rem] ring-1",
             MUSIC_NEUTRAL_TILE_BG_CLASS,
-            "ring-[#f7f3ef]/10",
+            MUSIC_NEUTRAL_TILE_RING_CLASS,
           )}
         >
           {loading ? (
@@ -540,7 +543,7 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
       <>
         {showPlayer && (
           <div
-            className="fixed z-[35] touch-none select-none md:hidden"
+            className="fixed z-[45] touch-none select-none md:hidden"
             style={mobileWidgetStyle}
             onPointerDown={startDrag}
             onPointerMove={moveDrag}

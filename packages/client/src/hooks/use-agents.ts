@@ -2,12 +2,15 @@
 // Hooks: Agent Configs (React Query)
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api-client";
+import type { AgentSuiteRewriteInput } from "@marinara-engine/shared";
+import { ApiError, api } from "../lib/api-client";
 
 export const agentKeys = {
   all: ["agents"] as const,
   detail: (id: string) => ["agents", id] as const,
   customRuns: (chatId: string) => ["agents", "runs", "custom", chatId] as const,
+  // Same key shape SecretPlotPanel uses inline, so invalidations stay coherent.
+  memory: (agentType: string, chatId: string) => ["agent-memory", agentType, chatId] as const,
 };
 
 export interface AgentConfigRow {
@@ -119,6 +122,60 @@ export function useCreateAgent() {
       }
       qc.invalidateQueries({ queryKey: agentKeys.all });
     },
+  });
+}
+
+export interface AgentMemoryResponse {
+  agentConfigId: string;
+  memory: Record<string, unknown>;
+}
+
+export function useAgentMemory(agentType: string | null, chatId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: agentKeys.memory(agentType ?? "", chatId ?? ""),
+    queryFn: async (): Promise<AgentMemoryResponse> => {
+      try {
+        return await api.get<AgentMemoryResponse>(
+          `/agents/memory/${encodeURIComponent(agentType ?? "")}/${encodeURIComponent(chatId ?? "")}`,
+        );
+      } catch (err) {
+        // Agents without a saved config 404 here — that just means no stored memory.
+        if (err instanceof ApiError && err.status === 404) {
+          return { agentConfigId: "", memory: {} };
+        }
+        throw err;
+      }
+    },
+    enabled: !!agentType && !!chatId && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useUpdateAgentMemory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentType,
+      chatId,
+      patch,
+    }: {
+      agentType: string;
+      chatId: string;
+      patch: Record<string, unknown>;
+    }) =>
+      api.patch<AgentMemoryResponse>(
+        `/agents/memory/${encodeURIComponent(agentType)}/${encodeURIComponent(chatId)}`,
+        { patch },
+      ),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: agentKeys.memory(variables.agentType, variables.chatId) });
+    },
+  });
+}
+
+export function useAgentSuiteRewrite() {
+  return useMutation({
+    mutationFn: (body: AgentSuiteRewriteInput) => api.post<{ rewrittenText: string }>("/agents/suite/rewrite", body),
   });
 }
 

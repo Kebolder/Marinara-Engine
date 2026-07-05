@@ -24,9 +24,11 @@ export * from "./types/chat-preset.js";
 export * from "./types/game.js";
 export * from "./types/sidecar.js";
 export * from "./types/image-generation-defaults.js";
+export * from "./types/video-generation-defaults.js";
 export * from "./types/image-style-profile.js";
 export * from "./types/professor-mari-workspace.js";
 export * from "./types/achievement.js";
+export * from "./types/conversation-call.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -43,6 +45,7 @@ export * from "./schemas/custom-sticker.schema.js";
 export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
+export * from "./schemas/conversation-call.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -54,6 +57,7 @@ export * from "./constants/agent-prompts.js";
 export * from "./constants/agent-activation.js";
 export * from "./constants/impersonate.js";
 export * from "./constants/image-generation-defaults.js";
+export * from "./constants/video-generation-defaults.js";
 export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
@@ -98,5 +102,6 @@ export * from "./utils/thinking-tags.js";
 export * from "./utils/rpg-stats.js";
 export * from "./utils/lorebook-folder-tree.js";
 export * from "./utils/text-matching.js";
+export * from "./utils/speaker-segments.js";
 export * from "./utils/sprite-labels.js";
 export * from "./utils/conversation-presence.js";

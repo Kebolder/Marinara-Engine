@@ -198,8 +198,8 @@ if /I not "!NEW_HEAD!"=="!TARGET_HEAD!" (
 if "!STASHED!"=="1" call :restore_stashed_changes
 if exist "!UPDATE_LOG!" del /q "!UPDATE_LOG!" >nul 2>&1
 echo  [OK] Updated to latest version
-echo  [..] Reinstalling dependencies...
-call :run_pnpm install
+echo  [..] Reinstalling dependencies and refreshing native packages...
+call :run_pnpm install --force
 if exist "packages\shared\dist" rmdir /s /q "packages\shared\dist"
 if exist "packages\server\dist" rmdir /s /q "packages\server\dist"
 if exist "packages\client\dist" rmdir /s /q "packages\client\dist"
@@ -221,7 +221,7 @@ for /f "usebackq delims=" %%i in (`node -e "try{const m=require('./packages/serv
 if not "!SOURCE_VER!"=="" if not "!DIST_VER!"=="" if not "!SOURCE_VER!"=="!DIST_VER!" (
     echo  [WARN] Version mismatch: source v!SOURCE_VER! but dist has v!DIST_VER!
     echo  [..] Forcing rebuild to apply update...
-    call :run_pnpm install
+    call :run_pnpm install --force
     if exist "packages\shared\dist" rmdir /s /q "packages\shared\dist"
     if exist "packages\server\dist" rmdir /s /q "packages\server\dist"
     if exist "packages\client\dist" rmdir /s /q "packages\client\dist"
@@ -232,7 +232,7 @@ if not "!SOURCE_VER!"=="" if not "!DIST_VER!"=="" if not "!SOURCE_VER!"=="!DIST_
 if not "!SOURCE_COMMIT!"=="" if /I not "!SOURCE_COMMIT!"=="!DIST_COMMIT!" (
     echo  [WARN] Build commit mismatch: source !SOURCE_COMMIT! but dist has !DIST_COMMIT!
     echo  [..] Forcing rebuild to apply update...
-    call :run_pnpm install
+    call :run_pnpm install --force
     if exist "packages\shared\dist" rmdir /s /q "packages\shared\dist"
     if exist "packages\server\dist" rmdir /s /q "packages\server\dist"
     if exist "packages\client\dist" rmdir /s /q "packages\client\dist"
@@ -243,12 +243,16 @@ if not "!SOURCE_COMMIT!"=="" if /I not "!SOURCE_COMMIT!"=="!DIST_COMMIT!" (
 :skip_version_check
 
 :: Install dependencies if needed
-if exist "node_modules" goto :skip_install
+if not exist "node_modules" goto :install_deps
+node scripts\check-workspace-install.mjs >nul 2>&1
+if errorlevel 1 goto :install_deps
+goto :skip_install
+:install_deps
 echo.
-echo  [..] Installing dependencies (first run)...
+echo  [..] Installing dependencies...
 echo      This may take a few minutes.
 echo.
-call :run_pnpm install
+call :run_pnpm install --force
 if errorlevel 1 echo  [ERROR] Failed to install dependencies. & pause & exit /b 1
 
 :skip_install
@@ -343,12 +347,12 @@ goto :eof
 
 :run_pnpm
 if /I "%PNPM_RUNNER%"=="corepack" (
-    call corepack pnpm@%PNPM_VERSION% %*
+    call corepack pnpm@%PNPM_VERSION% --config.trustPolicy=off --config.confirmModulesPurge=false %*
 ) else (
     if /I "%PNPM_RUNNER%"=="npx" (
-        call npx --yes pnpm@%PNPM_VERSION% %*
+        call npx --yes pnpm@%PNPM_VERSION% --config.trustPolicy=off --config.confirmModulesPurge=false %*
     ) else (
-        call pnpm %*
+        call pnpm --config.trustPolicy=off --config.confirmModulesPurge=false %*
     )
 )
 exit /b %errorlevel%

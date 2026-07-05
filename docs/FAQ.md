@@ -102,6 +102,32 @@ See [Professor Mari](PROFESSOR_MARI.md) for the full capabilities and safety not
 ---
 
 <details>
+<summary><strong>How do I set up Conversation audio calls?</strong></summary>
+<br>
+
+Conversation audio calls are only available in Conversation Mode. They need three pieces: calls enabled for the chat, Text to Speech for character voices, and an audio input mode if you want to speak through your microphone.
+
+Quick setup:
+
+1. Open **Connections -> Text to Speech**, enable TTS, choose a source, save it, and confirm the preview plays.
+2. If you want local microphone transcription, open **Connections -> Local Model**, expand the card, find **Local Speech Model**, choose Whisper Tiny or Whisper Base, then click **Download Whisper**.
+3. Open the Conversation chat, go to **Chat Settings -> Commands -> Conversation Calls**, and enable **Audio/Video Calls**.
+4. Enable **Call Audio Pipeline** if you want mic input.
+5. Pick an **Audio input mode**:
+   - **Mic recording + Local Whisper** for local hands-free transcription. This is the best fallback for Firefox.
+   - **Browser speech recognition** where Web Speech is supported.
+   - **Manual system dictation** if you want your OS dictation to type into the call input.
+   - **Provider-native audio/video** only when the selected Conversation model supports native media input.
+
+The phone button lets you start a call. The separate **Calls** command toggle controls whether characters are allowed to ring you first. Turning off that command does not stop you from calling them.
+
+See [Conversation Audio Calls](CONVERSATION_CALLS.md) for the full guide.
+
+</details>
+
+---
+
+<details>
 <summary><strong>Which AI providers are supported?</strong></summary>
 <br>
 
@@ -111,6 +137,22 @@ Marinara Engine supports a wide range of LLM and image generation providers:
 - **Image generation:** Stability AI, ComfyUI, AUTOMATIC1111 / SD Web UI, Draw Things (Apple Silicon Macs — runs locally on Metal + Apple Neural Engine), and providers that support image output through their chat API
 
 You can configure multiple connections at once and assign different providers per chat. API keys are encrypted at rest with AES-256.
+
+</details>
+
+---
+
+<details>
+<summary><strong>How do Game Mode storyboard animations work?</strong></summary>
+<br>
+
+Storyboards are created after GM narration turns are created, automatically. 
+
+To manually create a storyboard, open **Gallery Assets** and click **Create Storyboard** to manually create a storyboard for the latest GM narration, or to recreate the current storyboard. The Prompt Director splits the turn into manga keyframes and generates each keyframe illustration. It also creates animation clips when **Automatic Storyboard Animations** is enabled and a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets by clicking on **View storyboard**.
+
+Automatic generation is **on** by default during game creation if image generation is enabled. Enable **Chat Settings -> Game Mode -> Storyboards -> Automatic Storyboard Illustrations** if you want Marinara to create keyframe images after each completed GM turn. Enable **Automatic Storyboard Animations** too if you also want animations.
+
+See [Storyboard Engine Guide](STORYBOARD_ENGINE_GUIDE.md) for the user workflow, or [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for provider setup, prompt-template keys, and troubleshooting.
 
 </details>
 

@@ -110,6 +110,24 @@ interface MessageRow {
   characterId: string | null;
   content: string;
   createdAt: string;
+  extra?: unknown;
+}
+
+function parseMessageExtra(extra: unknown): Record<string, unknown> {
+  if (!extra) return {};
+  if (typeof extra === "string") {
+    try {
+      const parsed = JSON.parse(extra) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof extra === "object" && !Array.isArray(extra) ? (extra as Record<string, unknown>) : {};
+}
+
+function isMessageHiddenFromAI(message: { extra?: unknown }): boolean {
+  return parseMessageExtra(message.extra).hiddenFromAI === true;
 }
 
 /**
@@ -236,11 +254,12 @@ export async function buildAwarenessBlock(
         characterId: messages.characterId,
         content: messages.content,
         createdAt: messages.createdAt,
+        extra: messages.extra,
       })
       .from(messages)
       .where(eq(messages.chatId, chat.id))
       .orderBy(messages.createdAt)) as MessageRow[];
-    const filteredRows = rows.filter((row) => isWithinRequestedWindow(row.createdAt));
+    const filteredRows = rows.filter((row) => !isMessageHiddenFromAI(row) && isWithinRequestedWindow(row.createdAt));
 
     if (filteredRows.length > 0) {
       chatMessages.set(chat.id, {

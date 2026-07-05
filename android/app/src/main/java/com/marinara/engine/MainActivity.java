@@ -193,7 +193,10 @@ public class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
+        // Android's system picker returns content:// URIs to <input type="file">.
+        // Keep direct file:// access disabled, but allow the WebView to read
+        // picker-granted content URIs for uploads such as chat backgrounds.
+        settings.setAllowContentAccess(true);
         settings.setAllowFileAccessFromFileURLs(false);
         settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMediaPlaybackRequiresUserGesture(false);
@@ -760,9 +763,7 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == FILE_CHOOSER_REQUEST) {
             if (fileUploadCallback != null) {
-                Uri[] result = (resultCode == RESULT_OK && data != null)
-                        ? new Uri[]{data.getData()}
-                        : null;
+                Uri[] result = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
                 fileUploadCallback.onReceiveValue(result);
                 fileUploadCallback = null;
             }

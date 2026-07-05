@@ -124,8 +124,8 @@ export function withTTSVoiceRequestCacheKeys(
     const messageHash = hashTTSCacheKey(`${messageId}\n${index}\n${requestSignature}`);
     return {
       ...request,
-      cacheKey: `chat-voice-line-v1:${messageId}:${index}:${messageHash}`,
-      cacheAliases: [`chat-voice-line-text-v1:${textHash}`],
+      cacheKey: `chat-voice-line-v2:${messageId}:${index}:${messageHash}`,
+      cacheAliases: [`chat-voice-line-text-v2:${textHash}`],
     };
   });
 }
@@ -158,22 +158,23 @@ function resolveNpcDefaultVoice(
   >,
   npcHint?: TTSNpcVoiceHint | null,
 ): string {
-  if (config.source !== "elevenlabs" || !config.npcDefaultVoicesEnabled || !npcHint) return "";
+  if (!config.npcDefaultVoicesEnabled || !npcHint) return "";
 
   const maleVoices = (config.npcDefaultMaleVoices ?? []).filter(Boolean);
   const femaleVoices = (config.npcDefaultFemaleVoices ?? []).filter(Boolean);
+  const combinedVoices = [...new Set([...femaleVoices, ...maleVoices])];
   const gender = inferTTSNpcVoiceGender(npcHint);
   const poolsAreUnpartitioned = sameVoicePool(maleVoices, femaleVoices);
   const pool =
     gender === "female"
       ? !poolsAreUnpartitioned && femaleVoices.length > 0
         ? femaleVoices
-        : []
+        : combinedVoices
       : gender === "male"
         ? !poolsAreUnpartitioned && maleVoices.length > 0
           ? maleVoices
-          : []
-        : [...new Set([...femaleVoices, ...maleVoices])];
+          : combinedVoices
+        : combinedVoices;
 
   if (pool.length === 0) return "";
   const seed = normalizeTTSCharacterName(npcHint.name) || npcHint.name;
@@ -238,8 +239,15 @@ export function resolveTTSNarratorVoice(
   return config.narratorVoiceEnabled ? config.narratorVoice || fallbackVoice : fallbackVoice;
 }
 
+const VN_TTS_LINE_PREFIX_RE =
+  /^\s*(?:Dialogue\s*)?\[[^\]\r\n]+\]\s*(?:\[(?:main|side|extra|action|thought|whisper(?::[^\]\r\n]+)?)\])?\s*(?:\[[^\]\r\n]+\])?\s*:\s*/gim;
+
+const VN_TTS_METADATA_TAG_RE =
+  /\[(?:main|side|extra|action|thought|whisper(?::[^\]\r\n]+)?|neutral|happy|sad|angry|surprised|scared|disgusted|thinking|laughing|crying|blushing|smirk|embarrassed|determined|confused|sleepy|custom)\]/gi;
+
 export function cleanTTSInputText(value: string): string {
   return value
+    .replace(VN_TTS_LINE_PREFIX_RE, "")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/~~~[\s\S]*?~~~/g, " ")
     .replace(/`[^`\n]*`/g, " ")
@@ -256,6 +264,7 @@ export function cleanTTSInputText(value: string): string {
     .replace(/[*~`]/g, "")
     .replace(/\{(shake|shout|whisper|glow|pulse|wave|flicker|drip|bounce|tremble|glitch|expand):([^}]+)\}/gi, "$2")
     .replace(/\[[a-z_]+:[^\]]*\]/gi, "")
+    .replace(VN_TTS_METADATA_TAG_RE, " ")
     .replace(/<[^>]+>/g, "")
     .replace(/\s+/g, " ")
     .trim();

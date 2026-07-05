@@ -1,8 +1,15 @@
 // ──────────────────────────────────────────────
 // React Query: Character, Group & Persona hooks
 // ──────────────────────────────────────────────
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
+import {
+  collectAllPaginatedItems,
+  flattenPaginatedItems,
+  getNextPageOffset,
+  LIBRARY_PAGE_SIZE,
+  type PaginatedList,
+} from "../lib/list-pagination";
 import { achievementKeys, trackAchievementEvent } from "./use-achievements";
 import {
   parseTrackerCardColorConfig,
@@ -37,6 +44,10 @@ export const characterKeys = {
   all: ["characters"] as const,
   list: () => [...characterKeys.all, "list"] as const,
   listWithBuiltIns: () => [...characterKeys.all, "list", "with-built-ins"] as const,
+  page: (includeBuiltIn: boolean, search: string, sort: string) =>
+    [...characterKeys.list(), "page", includeBuiltIn, search, sort] as const,
+  summariesRoot: () => [...characterKeys.all, "summaries"] as const,
+  summaries: (idsKey: string) => [...characterKeys.all, "summaries", idsKey] as const,
   detail: (id: string) => [...characterKeys.all, "detail", id] as const,
   versions: (id: string) => [...characterKeys.detail(id), "versions"] as const,
   gallery: (id: string) => [...characterKeys.all, "gallery", id] as const,
@@ -49,6 +60,14 @@ export const characterKeys = {
   groupDetail: (id: string) => ["character-groups", "detail", id] as const,
   personaGroups: ["persona-groups"] as const,
   personaGroupDetail: (id: string) => ["persona-groups", "detail", id] as const,
+};
+
+export type CharacterSummary = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  avatarCrop?: unknown;
+  conversationStatus?: string;
 };
 
 // ── Characters ──
@@ -78,6 +97,74 @@ export function useCharacters(options: UseCharactersOptions = true) {
   });
 }
 
+export function useCharacterPages(options: {
+  enabled?: boolean;
+  includeBuiltIn?: boolean;
+  search?: string;
+  sort?: string;
+}) {
+  const enabled = options.enabled ?? true;
+  const includeBuiltIn = options.includeBuiltIn === true;
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return useInfiniteQuery({
+    queryKey: characterKeys.page(includeBuiltIn, search, sort),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        limit: String(LIBRARY_PAGE_SIZE),
+        offset: String(Number(pageParam) || 0),
+      });
+      if (includeBuiltIn) params.set("includeBuiltIn", "true");
+      if (search) params.set("search", search);
+      if (sort) params.set("sort", sort);
+      return api.get<PaginatedList<Record<string, unknown>>>(`/characters?${params.toString()}`);
+    },
+    getNextPageParam: getNextPageOffset,
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function flattenCharacterPages(data: { pages?: Array<PaginatedList<Record<string, unknown>>> } | undefined) {
+  return flattenPaginatedItems(data?.pages);
+}
+
+export function fetchAllCharacterPages(options: {
+  includeBuiltIn?: boolean;
+  search?: string;
+  sort?: string;
+} = {}) {
+  const includeBuiltIn = options.includeBuiltIn === true;
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return collectAllPaginatedItems<Record<string, unknown>>((offset) => {
+    const params = new URLSearchParams({
+      limit: String(LIBRARY_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (includeBuiltIn) params.set("includeBuiltIn", "true");
+    if (search) params.set("search", search);
+    if (sort) params.set("sort", sort);
+    return api.get<PaginatedList<Record<string, unknown>>>(`/characters?${params.toString()}`);
+  });
+}
+
+export function useCharacterSummaries(ids: string[], enabled = true) {
+  const uniqueIds = Array.from(new Set(ids.filter((id) => id.trim().length > 0))).sort();
+  const idsKey = uniqueIds.join(",");
+
+  return useQuery({
+    queryKey: characterKeys.summaries(idsKey),
+    queryFn: () => api.post<CharacterSummary[]>("/characters/summaries", { ids: uniqueIds }),
+    enabled: enabled && uniqueIds.length > 0,
+    placeholderData: (previousData) => previousData,
+    staleTime: 5 * 60_000,
+  });
+}
+
 export function useCharacter(id: string | null) {
   return useQuery({
     queryKey: characterKeys.detail(id ?? ""),
@@ -93,6 +180,7 @@ export function useCreateCharacter() {
     mutationFn: (data: Record<string, unknown>) => api.post("/characters", data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
       void trackAchievementEvent("library_changed")
         .finally(() => qc.invalidateQueries({ queryKey: achievementKeys.all }))
         .catch(() => undefined);
@@ -133,6 +221,7 @@ export function useUpdateCharacter() {
         });
       }
       qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
       qc.invalidateQueries({ queryKey: characterKeys.detail(updatedId) });
       qc.invalidateQueries({ queryKey: characterKeys.versions(updatedId) });
     },
@@ -178,6 +267,7 @@ export function useUploadAvatar() {
     mutationFn: ({ id, avatar }: { id: string; avatar: string }) => api.post(`/characters/${id}/avatar`, { avatar }),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
       qc.invalidateQueries({ queryKey: characterKeys.detail(variables.id) });
     },
   });
@@ -189,6 +279,7 @@ export function useRemoveAvatar() {
     mutationFn: (id: string) => api.delete(`/characters/${id}/avatar`),
     onSuccess: (_data, id) => {
       qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
       qc.invalidateQueries({ queryKey: characterKeys.detail(id) });
     },
   });
@@ -198,7 +289,10 @@ export function useDeleteCharacter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/characters/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.list() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
+    },
   });
 }
 
@@ -206,7 +300,10 @@ export function useDuplicateCharacter() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.post(`/characters/${id}/duplicate`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: characterKeys.list() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.list() });
+      qc.invalidateQueries({ queryKey: characterKeys.summariesRoot() });
+    },
   });
 }
 
@@ -508,6 +605,48 @@ export function usePersonas(enabled = true) {
     queryFn: () => api.get<unknown[]>("/characters/personas/list"),
     enabled,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function usePersonaPages(options: { enabled?: boolean; search?: string; sort?: string }) {
+  const enabled = options.enabled ?? true;
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return useInfiniteQuery({
+    queryKey: [...characterKeys.personas, "page", search, sort] as const,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        limit: String(LIBRARY_PAGE_SIZE),
+        offset: String(Number(pageParam) || 0),
+      });
+      if (search) params.set("search", search);
+      if (sort) params.set("sort", sort);
+      return api.get<PaginatedList<unknown>>(`/characters/personas/list?${params.toString()}`);
+    },
+    getNextPageParam: getNextPageOffset,
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function flattenPersonaPages(data: { pages?: Array<PaginatedList<unknown>> } | undefined) {
+  return flattenPaginatedItems(data?.pages);
+}
+
+export function fetchAllPersonaPages(options: { search?: string; sort?: string } = {}) {
+  const search = (options.search ?? "").trim();
+  const sort = options.sort ?? "";
+
+  return collectAllPaginatedItems<Record<string, unknown>>((offset) => {
+    const params = new URLSearchParams({
+      limit: String(LIBRARY_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (search) params.set("search", search);
+    if (sort) params.set("sort", sort);
+    return api.get<PaginatedList<Record<string, unknown>>>(`/characters/personas/list?${params.toString()}`);
   });
 }
 

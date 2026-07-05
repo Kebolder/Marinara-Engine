@@ -145,6 +145,10 @@ function resolveImageBackend(source: string, baseUrl: string, serviceHint: strin
   return explicitSource;
 }
 
+/** Default 30-minute timeout for image generation API calls (overridable via env). */
+const IMAGE_GEN_TIMEOUT = Number(process.env.IMAGE_GEN_TIMEOUT_MS ?? 1_800_000);
+const COMFYUI_GEN_TIMEOUT_SECONDS = Number(process.env.COMFYUI_GEN_TIMEOUT ?? 2400);
+
 /**
  * Generate an image using the configured image generation connection.
  * Returns the base64 data and metadata needed to save it.
@@ -156,9 +160,14 @@ export async function generateImage(
   serviceHint: string,
   request: ImageGenRequest,
 ): Promise<ImageGenResult> {
-  return withImageGenerationDeadline(request, async (signal) => {
-    const resolvedSource = resolveImageBackend(source, baseUrl, serviceHint, request.model);
-    const normalizedBaseUrl = normalizeImageUrl(baseUrl);
+  const resolvedSource = resolveImageBackend(source, baseUrl, serviceHint, request.model);
+  const normalizedBaseUrl = normalizeImageUrl(baseUrl);
+  const generationTimeoutMs =
+    resolvedSource === "comfyui" || resolvedSource === "runpod_comfyui"
+      ? Math.max(IMAGE_GEN_TIMEOUT, COMFYUI_GEN_TIMEOUT_SECONDS * 1000)
+      : IMAGE_GEN_TIMEOUT;
+
+  return withImageGenerationDeadline(request, generationTimeoutMs, async (signal) => {
     const scopedRequest = {
       ...request,
       signal,
@@ -234,8 +243,6 @@ export function saveImageToDisk(chatId: string, base64: string, ext: string): st
 
 // ── Provider Implementations ──
 
-/** Default 5-minute timeout for image generation API calls (overridable via env). */
-const IMAGE_GEN_TIMEOUT = Number(process.env.IMAGE_GEN_TIMEOUT_MS ?? 300_000);
 const MAX_IMAGE_RESPONSE_BYTES = 30 * 1024 * 1024;
 const LOCAL_IMAGE_BACKENDS = new Set(["comfyui", "automatic1111"]);
 
@@ -248,6 +255,7 @@ class ImageGenerationDeadlineError extends Error {
 
 function withImageGenerationDeadline<T>(
   request: Pick<ImageGenRequest, "signal">,
+  timeoutMs: number,
   run: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
@@ -261,10 +269,10 @@ function withImageGenerationDeadline<T>(
   let timeout: ReturnType<typeof setTimeout> | null = null;
   const deadline = new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
-      const error = new ImageGenerationDeadlineError(IMAGE_GEN_TIMEOUT);
+      const error = new ImageGenerationDeadlineError(timeoutMs);
       controller.abort(error);
       reject(error);
-    }, IMAGE_GEN_TIMEOUT);
+    }, timeoutMs);
     timeout.unref?.();
   });
 
@@ -2010,7 +2018,6 @@ const DEFAULT_COMFYUI_WORKFLOW: Record<string, unknown> = {
   },
 };
 
-const COMFYUI_GEN_TIMEOUT_SECONDS = Number(process.env.COMFYUI_GEN_TIMEOUT ?? 300);
 const COMFYUI_PLACEHOLDER_REFERENCE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 const COMFYUI_MAX_REFERENCE_IMAGES = 4;
@@ -2268,8 +2275,8 @@ async function generateComfyUI(baseUrl: string, request: ImageGenRequest): Promi
     throw new Error(`ComfyUI queue did not return a prompt_id${details ? `: ${details}` : ""}`);
   }
 
-  // Poll for completion. Default is 5 minutes to match shared image request timeout.
-  const pollTimeoutMs = Math.max(1000, Math.min(COMFYUI_GEN_TIMEOUT_SECONDS * 1000, IMAGE_GEN_TIMEOUT - 1000));
+  // Poll for completion. Default is longer than most image requests so slow/editing workflows can finish.
+  const pollTimeoutMs = Math.max(1000, COMFYUI_GEN_TIMEOUT_SECONDS * 1000);
   const pollStartedAt = Date.now();
   while (Date.now() - pollStartedAt < pollTimeoutMs) {
     await sleepWithAbort(1000, request.signal);

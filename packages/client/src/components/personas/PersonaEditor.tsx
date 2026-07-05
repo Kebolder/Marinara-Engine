@@ -62,6 +62,7 @@ import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { api } from "../../lib/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
+import { estimateTextTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import {
   useCharacterSprites,
   useUploadSprite,
@@ -119,6 +120,10 @@ const PERSONA_CARD_SECTIONS = [
   { id: "persona-card-appearance", label: "Appearance" },
   { id: "persona-card-scenario", label: "Scenario" },
 ] as const;
+
+function formatPersonaTextTokens(value: string): string {
+  return formatEstimatedTokens(estimateTextTokens(value));
+}
 
 const PERSONA_METADATA_HELP =
   "Use metadata for identity, sharing, and library organization. Name is injected as your persona name, creator/version help track authorship and revisions, tags make the persona searchable, and creator notes stay private.";
@@ -904,28 +909,6 @@ export function PersonaEditor() {
             <p className="mari-editor-meta text-[0.625rem]">
               {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.personaVersion || "1.0"}
             </p>
-            {personaId && (
-              <div className="mt-2 flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/70 px-2 py-1.5">
-                <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-                  Persona ID
-                </span>
-                <code className="min-w-0 flex-1 break-all rounded-md bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
-                  {personaId}
-                </code>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(personaId);
-                    toast.success("Persona ID copied");
-                  }}
-                  className="mari-editor-action inline-flex h-7 px-2 text-[0.6875rem]"
-                  title="Copy persona ID"
-                >
-                  <Copy size="0.75rem" />
-                  Copy
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
@@ -2258,6 +2241,29 @@ function PersonaMetadataTab({
         helpText={PERSONA_METADATA_HELP}
       />
 
+      {personaId && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
+          <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Persona ID
+          </span>
+          <code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
+            {personaId}
+          </code>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(personaId);
+              toast.success("Persona ID copied");
+            }}
+            className="mari-editor-action inline-flex h-8 px-2 text-[0.6875rem]"
+            title="Copy persona ID"
+          >
+            <Copy size="0.75rem" />
+            Copy
+          </button>
+        </div>
+      )}
+
       {avatarPreview && (
         <AvatarCropWidget
           src={avatarPreview}
@@ -2780,7 +2786,7 @@ function DescriptionTab({
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
       <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
-        {formData.description.length} characters
+        {formatPersonaTextTokens(formData.description)}
       </p>
     </div>
   );
@@ -2836,7 +2842,9 @@ function TextareaTab({
         title={title}
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
-      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
+      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
+        {formatPersonaTextTokens(value)}
+      </p>
     </div>
   );
 }

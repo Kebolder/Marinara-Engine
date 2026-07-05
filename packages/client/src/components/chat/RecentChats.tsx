@@ -5,7 +5,7 @@
 import { useMemo } from "react";
 import { MessageSquare, BookOpen, Theater } from "lucide-react";
 import { useChats } from "../../hooks/use-chats";
-import { useCharacters } from "../../hooks/use-characters";
+import { useCharacterSummaries } from "../../hooks/use-characters";
 import { useChatStore } from "../../stores/chat.store";
 import { compareChatsByActivityDesc } from "../../lib/chat-recency";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
@@ -35,33 +35,44 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; label: string; logoMod
     },
   };
 
+function parseRecentChatCharacterIds(value: Chat["characterIds"]): string[] {
+  let rawIds: unknown = [];
+  try {
+    rawIds = value ? (typeof value === "string" ? (JSON.parse(value) as unknown) : value) : [];
+  } catch {
+    rawIds = [];
+  }
+  return Array.isArray(rawIds) ? rawIds.filter((id): id is string => typeof id === "string") : [];
+}
+
 export function RecentChats() {
   const { data: chats } = useChats();
-  const { data: allCharacters } = useCharacters();
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
-
-  const charLookup = useMemo(() => {
-    const map = new Map<string, { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }>();
-    if (!allCharacters) return map;
-    for (const char of allCharacters as Array<{ id: string; data: string; avatarPath: string | null }>) {
-      try {
-        const parsed = typeof char.data === "string" ? JSON.parse(char.data) : char.data;
-        map.set(char.id, {
-          name: parsed.name ?? "Unknown",
-          avatarUrl: char.avatarPath ?? null,
-          avatarCrop: parsed.extensions?.avatarCrop ?? null,
-        });
-      } catch {
-        map.set(char.id, { name: "Unknown", avatarUrl: null });
-      }
-    }
-    return map;
-  }, [allCharacters]);
 
   const recentChats = useMemo(() => {
     if (!chats || chats.length === 0) return [];
     return [...chats].sort(compareChatsByActivityDesc).slice(0, 3);
   }, [chats]);
+  const recentCharacterIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const chat of recentChats) {
+      for (const id of parseRecentChatCharacterIds(chat.characterIds)) ids.add(id);
+    }
+    return Array.from(ids);
+  }, [recentChats]);
+  const { data: characterSummaries } = useCharacterSummaries(recentCharacterIds);
+  const charLookup = useMemo(() => {
+    const map = new Map<string, { name: string; avatarUrl: string | null; avatarCrop?: AvatarCropValue | null }>();
+    if (!characterSummaries) return map;
+    for (const character of characterSummaries) {
+      map.set(character.id, {
+        name: character.name,
+        avatarUrl: character.avatarUrl,
+        avatarCrop: (character.avatarCrop as AvatarCropValue | undefined) ?? null,
+      });
+    }
+    return map;
+  }, [characterSummaries]);
 
   return (
     <div className="mari-chrome-token-scope flex w-full max-w-md flex-col items-center gap-1.5">
@@ -98,10 +109,7 @@ function RecentChatChip({
 }) {
   const mode = MODE_BADGE[chat.mode] ?? MODE_BADGE.conversation;
 
-  const charIds: string[] = useMemo(() => {
-    if (!chat.characterIds) return [];
-    return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : chat.characterIds;
-  }, [chat.characterIds]);
+  const charIds = useMemo(() => parseRecentChatCharacterIds(chat.characterIds), [chat.characterIds]);
 
   const firstAvatar = useMemo(() => {
     for (const id of charIds) {

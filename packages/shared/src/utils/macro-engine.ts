@@ -1242,14 +1242,20 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{idle_duration\}\}/gi, ctx.idleDuration ?? "");
 
   // ── Date/time ──
+  // #3164: formatting the date/time parts constructs Intl.DateTimeFormat — a
+  // large share of the pipeline's fixed cost — so build them only when a
+  // date/time macro is actually present. `now` is still captured once per
+  // invocation so all six macros agree on the instant. (Function replacers
+  // are output-identical here: date strings never contain "$" sequences.)
   const now = new Date();
-  const macroDateTime = formatMacroDateTime(now, ctx.timeZone);
-  result = result.replace(/\{\{date\}\}/gi, macroDateTime.date);
-  result = result.replace(/\{\{time\}\}/gi, macroDateTime.time);
-  result = result.replace(/\{\{datetime\}\}/gi, macroDateTime.datetime);
-  result = result.replace(/\{\{isotime\}\}/gi, macroDateTime.isoTime);
-  result = result.replace(/\{\{weekday\}\}/gi, macroDateTime.weekday);
-  result = result.replace(/\{\{timezone\}\}/gi, macroDateTime.timeZone);
+  let macroDateTime: ReturnType<typeof formatMacroDateTime> | null = null;
+  const getMacroDateTime = () => (macroDateTime ??= formatMacroDateTime(now, ctx.timeZone));
+  result = result.replace(/\{\{date\}\}/gi, () => getMacroDateTime().date);
+  result = result.replace(/\{\{time\}\}/gi, () => getMacroDateTime().time);
+  result = result.replace(/\{\{datetime\}\}/gi, () => getMacroDateTime().datetime);
+  result = result.replace(/\{\{isotime\}\}/gi, () => getMacroDateTime().isoTime);
+  result = result.replace(/\{\{weekday\}\}/gi, () => getMacroDateTime().weekday);
+  result = result.replace(/\{\{timezone\}\}/gi, () => getMacroDateTime().timeZone);
 
   // ── Random values ──
   result = result.replace(/\{\{random\}\}/gi, (original) => {

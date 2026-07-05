@@ -7,16 +7,32 @@
 // On mobile, multiple notifications collapse into a single tappable group.
 
 import { useState } from "react";
-import { X, MessageCircle } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Loader2, Phone, PhoneIncoming, PhoneOff, X, MessageCircle } from "lucide-react";
 import { useChatStore } from "../../stores/chat.store";
 import { useGameModeStore } from "../../stores/game-mode.store";
 import { useUIStore } from "../../stores/ui.store";
+import { api } from "../../lib/api-client";
 import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 
+type ChatNotification = {
+  chatId: string;
+  characterName: string;
+  avatarUrl: string | null;
+  avatarCrop?: AvatarCropValue | null;
+  count: number;
+  kind?: "message" | "call";
+  callId?: string | null;
+  reason?: string | null;
+};
+
 export function ChatNotificationBubbles() {
+  const queryClient = useQueryClient();
   const chatNotifications = useChatStore((s) => s.chatNotifications);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
+  const autoDismissNotification = useChatStore((s) => s.autoDismissNotification);
   const dismissNotification = useChatStore((s) => s.dismissNotification);
   const setShouldOpenSettings = useChatStore((s) => s.setShouldOpenSettings);
   const setShouldOpenWizard = useChatStore((s) => s.setShouldOpenWizard);
@@ -25,6 +41,7 @@ export function ChatNotificationBubbles() {
   const setSetupActive = useGameModeStore((s) => s.setSetupActive);
   const closeAllDetails = useUIStore((s) => s.closeAllDetails);
   const [mobileExpanded, setMobileExpanded] = useState(false);
+  const [pendingCallAction, setPendingCallAction] = useState<string | null>(null);
 
   /** Navigate to a chat — close any editor/detail view first so ChatArea is visible. */
   const navigateToChat = (chatId: string) => {
@@ -35,6 +52,43 @@ export function ChatNotificationBubbles() {
     setShouldOpenWizardInShortcutMode(false);
     setSetupActive(false);
     setActiveChatId(chatId);
+  };
+
+  const refreshCallState = (chatId: string) => {
+    queryClient.invalidateQueries({ queryKey: ["conversation-calls", "status", chatId] });
+    queryClient.invalidateQueries({ queryKey: ["chats", "messages", chatId] });
+    queryClient.invalidateQueries({ queryKey: ["chats", "list"] });
+  };
+
+  const acceptCall = async (notif: ChatNotification) => {
+    if (!notif.callId) return;
+    setPendingCallAction(`accept:${notif.callId}`);
+    try {
+      await api.post(`/conversation-calls/${notif.callId}/accept`, {});
+      autoDismissNotification(notif.chatId);
+      refreshCallState(notif.chatId);
+      navigateToChat(notif.chatId);
+      setMobileExpanded(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not answer the call.");
+    } finally {
+      setPendingCallAction(null);
+    }
+  };
+
+  const declineCall = async (notif: ChatNotification) => {
+    if (!notif.callId) return;
+    setPendingCallAction(`decline:${notif.callId}`);
+    try {
+      await api.post(`/conversation-calls/${notif.callId}/decline`, {});
+      autoDismissNotification(notif.chatId);
+      refreshCallState(notif.chatId);
+      setMobileExpanded(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not decline the call.");
+    } finally {
+      setPendingCallAction(null);
+    }
   };
 
   const notifications = Array.from(chatNotifications.values());
@@ -54,6 +108,9 @@ export function ChatNotificationBubbles() {
               notif={notif}
               onNavigate={() => navigateToChat(notif.chatId)}
               onDismiss={() => dismissNotification(notif.chatId)}
+              onAcceptCall={() => void acceptCall(notif)}
+              onDeclineCall={() => void declineCall(notif)}
+              pendingCallAction={pendingCallAction}
             />
           ))}
         </AnimatePresence>
@@ -76,6 +133,9 @@ export function ChatNotificationBubbles() {
                   dismissNotification(notif.chatId);
                   if (notifications.length <= 2) setMobileExpanded(false);
                 }}
+                onAcceptCall={() => void acceptCall(notif)}
+                onDeclineCall={() => void declineCall(notif)}
+                pendingCallAction={pendingCallAction}
               />
             ))
           ) : (
@@ -140,17 +200,22 @@ function NotificationBubble({
   notif,
   onNavigate,
   onDismiss,
+  onAcceptCall,
+  onDeclineCall,
+  pendingCallAction,
 }: {
-  notif: {
-    chatId: string;
-    characterName: string;
-    avatarUrl: string | null;
-    avatarCrop?: AvatarCropValue | null;
-    count: number;
-  };
+  notif: ChatNotification;
   onNavigate: () => void;
   onDismiss: () => void;
+  onAcceptCall: () => void;
+  onDeclineCall: () => void;
+  pendingCallAction: string | null;
 }) {
+  const isCall = notif.kind === "call" && !!notif.callId;
+  const accepting = isCall && pendingCallAction === `accept:${notif.callId}`;
+  const declining = isCall && pendingCallAction === `decline:${notif.callId}`;
+  const disabled = accepting || declining;
+
   return (
     <motion.div
       key={notif.chatId}
@@ -164,7 +229,8 @@ function NotificationBubble({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          onDismiss();
+          if (isCall) onDeclineCall();
+          else onDismiss();
         }}
         className={cn(
           "absolute -left-1 -top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full",
@@ -181,10 +247,12 @@ function NotificationBubble({
         onClick={onNavigate}
         className={cn(
           "relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full",
-          "bg-[var(--accent)]/20 shadow-lg ring-2 ring-[var(--accent)]/40",
+          isCall
+            ? "bg-emerald-500/15 shadow-lg ring-2 ring-emerald-400/60"
+            : "bg-[var(--accent)]/20 shadow-lg ring-2 ring-[var(--accent)]/40",
           "transition-transform hover:scale-110 active:scale-95",
         )}
-        title={`${notif.characterName} sent a message`}
+        title={isCall ? `${notif.characterName} is calling` : `${notif.characterName} sent a message`}
       >
         {notif.avatarUrl ? (
           <img
@@ -195,19 +263,52 @@ function NotificationBubble({
             style={getAvatarCropStyle(notif.avatarCrop)}
           />
         ) : (
-          <MessageCircle className="h-5 w-5 text-[var(--accent)]" />
+          <MessageCircle className={cn("h-5 w-5", isCall ? "text-emerald-400" : "text-[var(--accent)]")} />
+        )}
+        {isCall && (
+          <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-[var(--background)]">
+            <PhoneIncoming size="0.6875rem" />
+          </span>
         )}
       </button>
 
-      {/* Red unread badge */}
-      <span
-        className={cn(
-          "absolute -bottom-0.5 -left-0.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1",
-          "bg-red-500 text-[10px] font-bold text-white shadow",
-        )}
-      >
-        {notif.count > 99 ? "99+" : notif.count}
-      </span>
+      {isCall ? (
+        <div className="absolute right-14 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-full bg-[var(--popover)] px-1.5 py-1 shadow-lg ring-1 ring-[var(--border)]">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeclineCall();
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--destructive)] text-white shadow-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
+            title="Decline call"
+          >
+            {declining ? <Loader2 size="0.8125rem" className="animate-spin" /> : <PhoneOff size="0.8125rem" />}
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAcceptCall();
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm transition-transform hover:scale-105 active:scale-95 disabled:opacity-60"
+            title="Answer call"
+          >
+            {accepting ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Phone size="0.8125rem" />}
+          </button>
+        </div>
+      ) : (
+        <span
+          className={cn(
+            "absolute -bottom-0.5 -left-0.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1",
+            "bg-red-500 text-[10px] font-bold text-white shadow",
+          )}
+        >
+          {notif.count > 99 ? "99+" : notif.count}
+        </span>
+      )}
     </motion.div>
   );
 }

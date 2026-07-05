@@ -203,6 +203,9 @@ export const ChatInput = memo(function ChatInput({
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
   const focusAfterMobileRestoreRef = useRef(false);
+  const textareaFocusedRef = useRef(false);
+  const restoreFocusAfterBusyRef = useRef(false);
+  const wasInputBusyRef = useRef(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attachmentsRef = useRef<Attachment[]>([]);
   const pendingAttachmentDraftsRef = useRef<Map<string, Attachment[]>>(new Map());
@@ -1426,6 +1429,32 @@ export const ChatInput = memo(function ChatInput({
   }, []);
 
   useEffect(() => {
+    const wasInputBusy = wasInputBusyRef.current;
+    wasInputBusyRef.current = isInputBusy;
+
+    if (isInputBusy) {
+      if (textareaFocusedRef.current) restoreFocusAfterBusyRef.current = true;
+      return;
+    }
+
+    if (!wasInputBusy || !restoreFocusAfterBusyRef.current) return;
+    restoreFocusAfterBusyRef.current = false;
+    if (!activeChatId || shouldShowMobileCollapsedComposer) return;
+
+    const focus = () => {
+      const textarea = textareaRef.current;
+      if (!textarea || textarea.disabled) return;
+      const activeElement = document.activeElement;
+      if (activeElement && activeElement !== document.body && activeElement !== textarea) return;
+      textarea.focus({ preventScroll: true });
+      textareaFocusedRef.current = true;
+      ensureInputVisible();
+    };
+
+    requestAnimationFrame(focus);
+  }, [activeChatId, ensureInputVisible, isInputBusy, shouldShowMobileCollapsedComposer]);
+
+  useEffect(() => {
     if (mobileHistoryCollapsed || !focusAfterMobileRestoreRef.current) return;
     focusAfterMobileRestoreRef.current = false;
     const focus = () => {
@@ -1620,7 +1649,13 @@ export const ChatInput = memo(function ChatInput({
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          onFocus={ensureInputVisible}
+          onFocus={() => {
+            textareaFocusedRef.current = true;
+            ensureInputVisible();
+          }}
+          onBlur={() => {
+            if (!isInputBusy) textareaFocusedRef.current = false;
+          }}
           placeholder={inputPlaceholder}
           disabled={!activeChatId || isInputBusy}
           rows={1}
@@ -1727,8 +1762,10 @@ export const ChatInput = memo(function ChatInput({
                 : "text-foreground/20",
           )}
         >
-          {isInputBusy ? (
+          {isStreaming ? (
             <StopCircle size="1rem" />
+          ) : isInputBusy ? (
+            <Loader2 size="1rem" className="animate-spin" />
           ) : (
             <Send size="0.9375rem" className={cn(hasInput && "translate-x-[1px]")} />
           )}

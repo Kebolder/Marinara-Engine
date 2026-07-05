@@ -447,7 +447,9 @@ export function AgentEditor() {
     connectionIndexRef.current = {
       loaded: Array.isArray(connections),
       llmIds: new Set(
-        rows.filter((connection) => connection.provider !== "image_generation").map((connection) => connection.id),
+        rows
+          .filter((connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation")
+          .map((connection) => connection.id),
       ),
       imageIds: new Set(
         rows.filter((connection) => connection.provider === "image_generation").map((connection) => connection.id),
@@ -933,11 +935,16 @@ export function AgentEditor() {
       | Array<{ id: string; name: string; provider: string; defaultForAgents?: boolean | string }>
       | undefined) ?? [];
 
-  const llmConnections = allConnections.filter((conn) => conn.provider !== "image_generation");
+  const llmConnections = allConnections.filter(
+    (conn) => conn.provider !== "image_generation" && conn.provider !== "video_generation",
+  );
   const imageConnections = allConnections.filter((conn) => conn.provider === "image_generation");
 
   const defaultAgentConn = allConnections.find(
-    (c) => c.provider !== "image_generation" && (c.defaultForAgents === true || c.defaultForAgents === "true"),
+    (c) =>
+      c.provider !== "image_generation" &&
+      c.provider !== "video_generation" &&
+      (c.defaultForAgents === true || c.defaultForAgents === "true"),
   );
 
   const defaultAgentImageConn = imageConnections.find(

@@ -8,6 +8,7 @@ import {
   isRetiredBuiltInAgentId,
   LOCAL_SIDECAR_CONNECTION_ID,
   mergeBuiltInAgentSettings,
+  normalizeAgentPhaseValue,
   resolveAgentPromptTemplate,
   findKnownModel,
   type APIProvider,
@@ -50,6 +51,9 @@ type ResolveAgentPipelineAgentsArgs = {
   chatCustomParameters: Record<string, unknown>;
   chatMaxOutputTokens: number | null;
   chatMaxParallelJobs: number;
+  chatEnableCaching: boolean;
+  chatAnthropicExtendedCacheTtl: boolean;
+  chatCachingAtDepth: number;
   activeMusicPlayerSource?: "spotify" | "youtube" | "custom" | null;
   chatMetadata?: Record<string, unknown>;
   resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string;
@@ -61,6 +65,9 @@ type AgentProviderCacheEntry = {
   customParameters: Record<string, unknown>;
   maxOutputTokens: number | null;
   maxParallelJobs: number;
+  enableCaching: boolean;
+  anthropicExtendedCacheTtl: boolean;
+  cachingAtDepth: number;
 };
 
 type AgentConnectionResolution = {
@@ -105,10 +112,8 @@ export type ResolvedAgentPipelineAgents = {
   agentConnectionWarnings: AgentConnectionWarning[];
 };
 
-function resolveAgentRuntimePhase(agentType: string, configuredPhase: string): string {
-  if (agentType === "prose-guardian" || agentType === "continuity" || agentType === "html") return "post_processing";
-  if (agentType === "echo-chamber") return "parallel";
-  return configuredPhase;
+function resolveAgentRuntimePhase(_agentType: string, configuredPhase: string): string {
+  return normalizeAgentPhaseValue(configuredPhase);
 }
 
 function parseAgentSettings(settings: unknown): Record<string, unknown> {
@@ -172,6 +177,9 @@ async function resolveAgentConnectionProvider(args: {
   fallbackCustomParameters: Record<string, unknown>;
   fallbackMaxOutputTokens: number | null;
   fallbackMaxParallelJobs: number;
+  fallbackEnableCaching: boolean;
+  fallbackAnthropicExtendedCacheTtl: boolean;
+  fallbackCachingAtDepth: number;
   resolveBaseUrl(connection: { baseUrl: string | null; provider: string }): string;
 }): Promise<AgentConnectionResolution> {
   if (!args.connectionId) {
@@ -182,6 +190,9 @@ async function resolveAgentConnectionProvider(args: {
         customParameters: args.fallbackCustomParameters,
         maxOutputTokens: args.fallbackMaxOutputTokens,
         maxParallelJobs: args.fallbackMaxParallelJobs,
+        enableCaching: args.fallbackEnableCaching,
+        anthropicExtendedCacheTtl: args.fallbackAnthropicExtendedCacheTtl,
+        cachingAtDepth: args.fallbackCachingAtDepth,
       },
     };
   }
@@ -225,6 +236,9 @@ async function resolveAgentConnectionProvider(args: {
     customParameters: resolveConnectionCustomParameters(agentConn),
     maxOutputTokens: resolveConnectionMaxOutputTokens({ provider: agentConn.provider, model }),
     maxParallelJobs: Number(agentConn.maxParallelJobs) || 1,
+    enableCaching: agentConn.enableCaching === "true",
+    anthropicExtendedCacheTtl: agentConn.anthropicExtendedCacheTtl === "true",
+    cachingAtDepth: Number(agentConn.cachingAtDepth) || 5,
   };
   args.agentProviderCache.set(args.connectionId, resolved);
   return { entry: resolved };
@@ -243,6 +257,9 @@ export async function resolveAgentPipelineAgents({
   chatCustomParameters,
   chatMaxOutputTokens,
   chatMaxParallelJobs,
+  chatEnableCaching,
+  chatAnthropicExtendedCacheTtl,
+  chatCachingAtDepth,
   activeMusicPlayerSource,
   chatMetadata,
   resolveBaseUrl,
@@ -271,6 +288,9 @@ export async function resolveAgentPipelineAgents({
       customParameters: {},
       maxOutputTokens: null,
       maxParallelJobs: 1,
+      enableCaching: false,
+      anthropicExtendedCacheTtl: false,
+      cachingAtDepth: 5,
     });
   }
 
@@ -360,6 +380,9 @@ export async function resolveAgentPipelineAgents({
       fallbackCustomParameters: chatCustomParameters,
       fallbackMaxOutputTokens: chatMaxOutputTokens,
       fallbackMaxParallelJobs: chatMaxParallelJobs,
+      fallbackEnableCaching: chatEnableCaching,
+      fallbackAnthropicExtendedCacheTtl: chatAnthropicExtendedCacheTtl,
+      fallbackCachingAtDepth: chatCachingAtDepth,
       resolveBaseUrl,
     });
     if (!resolvedProvider.entry) {
@@ -390,6 +413,9 @@ export async function resolveAgentPipelineAgents({
       customParameters: resolvedProvider.entry.customParameters,
       maxOutputTokens: resolvedProvider.entry.maxOutputTokens,
       maxParallelJobs: resolvedProvider.entry.maxParallelJobs,
+      enableCaching: resolvedProvider.entry.enableCaching,
+      anthropicExtendedCacheTtl: resolvedProvider.entry.anthropicExtendedCacheTtl,
+      cachingAtDepth: resolvedProvider.entry.cachingAtDepth,
     });
   }
 
@@ -432,6 +458,9 @@ export async function resolveAgentPipelineAgents({
       fallbackCustomParameters: chatCustomParameters,
       fallbackMaxOutputTokens: chatMaxOutputTokens,
       fallbackMaxParallelJobs: chatMaxParallelJobs,
+      fallbackEnableCaching: chatEnableCaching,
+      fallbackAnthropicExtendedCacheTtl: chatAnthropicExtendedCacheTtl,
+      fallbackCachingAtDepth: chatCachingAtDepth,
       resolveBaseUrl,
     });
     if (!builtInConnection.entry) {
@@ -488,6 +517,9 @@ export async function resolveAgentPipelineAgents({
       customParameters: builtInConnection.entry.customParameters,
       maxOutputTokens: builtInConnection.entry.maxOutputTokens,
       maxParallelJobs: builtInConnection.entry.maxParallelJobs,
+      enableCaching: builtInConnection.entry.enableCaching,
+      anthropicExtendedCacheTtl: builtInConnection.entry.anthropicExtendedCacheTtl,
+      cachingAtDepth: builtInConnection.entry.cachingAtDepth,
     });
   }
 

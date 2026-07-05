@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Chat Gallery — Image grid for per-chat generated images
 // ──────────────────────────────────────────────
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Image,
@@ -15,20 +15,35 @@ import {
   Loader2,
   Images,
   Search,
+  Film,
+  PanelsTopLeft,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   useChatAssetBrowser,
   useGalleryImages,
+  useSceneVideos,
   useUploadGalleryImage,
   useDeleteGalleryImage,
   type ChatAssetBrowserItem,
   type ChatImage,
 } from "../../hooks/use-gallery";
+import type { GeneratedSceneVideo } from "@marinara-engine/shared";
 import { useGalleryStore } from "../../stores/gallery.store";
+import type { PinnedGalleryMedia } from "../../stores/gallery.store";
 import { toast } from "sonner";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { buildCardAssetMarkdown, dispatchCardAssetInsert } from "../../lib/card-asset-links";
-import { ChatImageLightbox, getChatImageDownloadName } from "./ChatImageLightbox";
+import { cn, copyToClipboard } from "../../lib/utils";
+import {
+  ChatImageLightbox,
+  ChatVideoLightbox,
+  getChatImageDownloadName,
+  getSceneVideoDownloadName,
+} from "./ChatImageLightbox";
 
 interface ChatGalleryProps {
   chatId: string;
@@ -37,7 +52,18 @@ interface ChatGalleryProps {
   onIllustrate?: () => void | Promise<void>;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
+  /** Generate a storyboard for the latest completed Game Mode GM turn. */
+  onGenerateStoryboard?: () => void | Promise<void>;
+  /** Show the latest Game Mode storyboard viewer. */
+  onViewStoryboard?: () => void;
+  /** Generate a scene video from the latest illustration. */
+  onGenerateVideo?: () => void | Promise<void>;
+  /** Generate a scene video from a specific gallery illustration. */
+  onAnimateImage?: (image: ChatImage) => void | Promise<void>;
 }
+
+const EMPTY_SCENE_VIDEOS: GeneratedSceneVideo[] = [];
+type GalleryTab = "images" | "videos";
 
 function formatAssetKind(asset: ChatAssetBrowserItem) {
   if (asset.kind === "chat-gallery") return "Chat gallery";
@@ -52,20 +78,45 @@ function getAssetMeta(asset: ChatAssetBrowserItem) {
   return details.join(" | ");
 }
 
-export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }: ChatGalleryProps) {
+export function ChatGallery({
+  chatId,
+  mode,
+  onIllustrate,
+  onGenerateBackground,
+  onGenerateStoryboard,
+  onViewStoryboard,
+  onGenerateVideo,
+  onAnimateImage,
+}: ChatGalleryProps) {
   const { data: images, isLoading } = useGalleryImages(chatId);
+  const sceneVideosEnabled = mode === "game" || mode === "roleplay" || mode === "visual_novel";
+  const sceneVideosQuery = useSceneVideos(chatId, sceneVideosEnabled);
+  const sceneVideos = sceneVideosQuery.data ?? EMPTY_SCENE_VIDEOS;
   const upload = useUploadGalleryImage(chatId);
   const remove = useDeleteGalleryImage(chatId);
   const [lightbox, setLightbox] = useState<ChatImage | null>(null);
+  const [videoLightbox, setVideoLightbox] = useState<GeneratedSceneVideo | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [assetBrowserOpen, setAssetBrowserOpen] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
+  const [copiedPromptImageId, setCopiedPromptImageId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<GalleryTab>("images");
+  const copyResetTimerRef = useRef<number | null>(null);
   const isIllustrating = useGalleryStore((s) => s.illustratingChatIds.has(chatId));
+  const isGeneratingVideo = useGalleryStore((s) => s.videoGeneratingChatIds.has(chatId));
   const isGeneratingBackground = useGalleryStore((s) => s.backgroundGeneratingChatIds.has(chatId));
+  const isGeneratingStoryboard = useGalleryStore((s) => s.storyboardGeneratingChatIds.has(chatId));
   const pinImage = useGalleryStore((s) => s.pinImage);
+  const pinVideo = useGalleryStore((s) => s.pinVideo);
+  const latestViewerChatId = useGalleryStore((s) => s.latestViewerChatId);
+  const startLatestViewer = useGalleryStore((s) => s.startLatestViewer);
+  const syncLatestViewer = useGalleryStore((s) => s.syncLatestViewer);
+  const clearViewerMedia = useGalleryStore((s) => s.clearViewerMedia);
   const unpinImage = useGalleryStore((s) => s.unpinImage);
   const setChatIllustrating = useGalleryStore((s) => s.setChatIllustrating);
+  const setChatGeneratingVideo = useGalleryStore((s) => s.setChatGeneratingVideo);
   const setChatGeneratingBackground = useGalleryStore((s) => s.setChatGeneratingBackground);
+  const setChatGeneratingStoryboard = useGalleryStore((s) => s.setChatGeneratingStoryboard);
   const canBrowseAssets = mode === "roleplay";
   const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(
     chatId,
@@ -82,6 +133,25 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
       ),
     );
   }, [assetItems, assetSearch]);
+  const latestMedia = useMemo<PinnedGalleryMedia | null>(() => {
+    const imageMedia = (images ?? []).map((image) => ({ ...image, kind: "image" as const }));
+    const videoMedia = sceneVideos.map((video) => ({ ...video, kind: "video" as const }));
+    return [...imageMedia, ...videoMedia].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+  }, [images, sceneVideos]);
+  const isFollowingLatest = latestViewerChatId === chatId;
+
+  useEffect(() => {
+    if (!isFollowingLatest || !latestMedia) return;
+    syncLatestViewer(latestMedia);
+  }, [isFollowingLatest, latestMedia, syncLatestViewer]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const handleUpload = useCallback(
     (files: File[]) => {
@@ -134,12 +204,90 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
     }
   };
 
+  const handleGenerateVideo = async () => {
+    if (!onGenerateVideo || useGalleryStore.getState().videoGeneratingChatIds.has(chatId)) return;
+
+    setChatGeneratingVideo(chatId, true);
+    try {
+      await onGenerateVideo();
+      await sceneVideosQuery.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Video generation failed.");
+    } finally {
+      setChatGeneratingVideo(chatId, false);
+    }
+  };
+
+  const handleGenerateStoryboard = async () => {
+    if (!onGenerateStoryboard || useGalleryStore.getState().storyboardGeneratingChatIds.has(chatId)) return;
+
+    setChatGeneratingStoryboard(chatId, true);
+    try {
+      await onGenerateStoryboard();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Storyboard generation failed.");
+    } finally {
+      setChatGeneratingStoryboard(chatId, false);
+    }
+  };
+
+  const handleAnimateImage = async (image: ChatImage) => {
+    if (!onAnimateImage || useGalleryStore.getState().videoGeneratingChatIds.has(chatId)) return;
+
+    setChatGeneratingVideo(chatId, true);
+    try {
+      await onAnimateImage(image);
+      await sceneVideosQuery.refetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Video generation failed.");
+    } finally {
+      setChatGeneratingVideo(chatId, false);
+    }
+  };
+
   const handlePinImage = useCallback(
     (image: ChatImage) => {
       pinImage({ ...image, chatId });
     },
     [chatId, pinImage],
   );
+
+  const handleCopyPrompt = useCallback(async (image: ChatImage) => {
+    const prompt = image.prompt.trim();
+    if (!prompt) return;
+
+    const ok = await copyToClipboard(prompt);
+    if (!ok) {
+      toast.error("Could not copy prompt.");
+      return;
+    }
+
+    setCopiedPromptImageId(image.id);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopiedPromptImageId(null);
+      copyResetTimerRef.current = null;
+    }, 1400);
+    toast.success("Prompt copied.");
+  }, []);
+
+  const handlePinVideo = useCallback(
+    (video: GeneratedSceneVideo) => {
+      pinVideo({ ...video, chatId });
+    },
+    [chatId, pinVideo],
+  );
+
+  const handleViewLatest = useCallback(() => {
+    if (isFollowingLatest) {
+      clearViewerMedia();
+      return;
+    }
+    if (!latestMedia) return;
+    startLatestViewer(chatId, latestMedia);
+  }, [chatId, clearViewerMedia, isFollowingLatest, latestMedia, startLatestViewer]);
 
   const handleInsertAsset = useCallback(
     (asset: ChatAssetBrowserItem) => {
@@ -151,11 +299,29 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
     [chatId],
   );
 
+  const actionCount = [onIllustrate, onGenerateStoryboard, onGenerateVideo, onGenerateBackground].filter(Boolean).length;
+  const actionGridClass =
+    actionCount >= 4
+      ? "grid grid-cols-2 gap-2"
+      : actionCount === 3
+        ? "grid grid-cols-3 gap-2"
+        : actionCount === 2
+          ? "grid grid-cols-2 gap-2"
+          : "grid gap-2";
+  const hasImages = !!images && images.length > 0;
+  const hasVideos = sceneVideos.length > 0;
+  const imageCount = images?.length ?? 0;
+  const videoCount = sceneVideos.length;
+
+  useEffect(() => {
+    if (!sceneVideosEnabled && activeTab === "videos") setActiveTab("images");
+  }, [activeTab, sceneVideosEnabled]);
+
   return (
     <>
       <div className="flex flex-col gap-3 p-4">
-        {(onIllustrate || onGenerateBackground) && (
-          <div className={onIllustrate && onGenerateBackground ? "grid grid-cols-2 gap-2" : "grid gap-2"}>
+        {(onIllustrate || onGenerateStoryboard || onGenerateVideo || onGenerateBackground) && (
+          <div className={actionGridClass}>
             {onIllustrate && (
               <button
                 type="button"
@@ -170,6 +336,40 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
                   <Paintbrush size="1rem" className="shrink-0" />
                 )}
                 <span className="min-w-0 truncate">{isIllustrating ? "Generating..." : "Illustrate"}</span>
+              </button>
+            )}
+            {onGenerateStoryboard && (
+              <button
+                type="button"
+                onClick={() => void handleGenerateStoryboard()}
+                disabled={isGeneratingStoryboard}
+                aria-busy={isGeneratingStoryboard}
+                className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-3 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
+              >
+                {isGeneratingStoryboard ? (
+                  <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                ) : (
+                  <PanelsTopLeft size="1rem" className="shrink-0" />
+                )}
+                <span className="min-w-0 truncate">
+                  {isGeneratingStoryboard ? "Creating..." : "Create storyboard"}
+                </span>
+              </button>
+            )}
+            {onGenerateVideo && (
+              <button
+                type="button"
+                onClick={() => void handleGenerateVideo()}
+                disabled={isGeneratingVideo}
+                aria-busy={isGeneratingVideo}
+                className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-3 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
+              >
+                {isGeneratingVideo ? (
+                  <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                ) : (
+                  <Film size="1rem" className="shrink-0" />
+                )}
+                <span className="min-w-0 truncate">{isGeneratingVideo ? "Generating..." : "Video"}</span>
               </button>
             )}
             {onGenerateBackground && (
@@ -202,18 +402,97 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
           </button>
         )}
 
-        {(isIllustrating || isGeneratingBackground) && (
+        {latestMedia && (
+          <button
+            type="button"
+            onClick={handleViewLatest}
+            aria-pressed={isFollowingLatest}
+            className={
+              isFollowingLatest
+                ? "flex items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-4 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25"
+                : "flex items-center justify-center gap-2 rounded-xl bg-[var(--secondary)] px-4 py-3 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)]"
+            }
+          >
+            {isFollowingLatest ? <EyeOff size="1rem" /> : <Eye size="1rem" />}
+            {isFollowingLatest ? "Following latest" : "View latest"}
+          </button>
+        )}
+
+        {onViewStoryboard && (
+          <button
+            type="button"
+            onClick={onViewStoryboard}
+            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--secondary)] px-4 py-3 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)]"
+          >
+            <PanelsTopLeft size="1rem" />
+            View storyboard
+          </button>
+        )}
+
+        {(isIllustrating || isGeneratingVideo || isGeneratingBackground || isGeneratingStoryboard) && (
           <div
             className="rounded-xl border border-[var(--primary)]/25 bg-[var(--primary)]/10 px-3 py-2 text-xs text-[var(--primary)]"
             role="status"
             aria-live="polite"
           >
-            {isGeneratingBackground
-              ? "AI background generation is running. The new background will be applied when it finishes."
-              : "AI image generation is running. The new image will appear here when it finishes."}
+            {isGeneratingVideo
+              ? "AI video generation is running. The new video will appear here when it finishes."
+              : isGeneratingStoryboard
+                ? "Storyboard generation is running. Keyframes will appear in the game storyboard viewer when ready."
+                : isGeneratingBackground
+                  ? "AI background generation is running. The new background will be applied when it finishes."
+                  : "AI image generation is running. The new image will appear here when it finishes."}
           </div>
         )}
 
+        <div
+          className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/60 p-1"
+          role="tablist"
+          aria-label="Gallery media type"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "images"}
+            onClick={() => setActiveTab("images")}
+            className={cn(
+              "flex min-w-0 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+              activeTab === "images"
+                ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            )}
+          >
+            <Image size="0.875rem" className="shrink-0" />
+            <span className="truncate">Images</span>
+            <span className="rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+              {imageCount}
+            </span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "videos"}
+            onClick={() => setActiveTab("videos")}
+            disabled={!sceneVideosEnabled}
+            className={cn(
+              "flex min-w-0 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+              !sceneVideosEnabled
+                ? "cursor-not-allowed text-[var(--muted-foreground)] opacity-50"
+                : activeTab === "videos"
+                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+            )}
+          >
+            <Film size="0.875rem" className="shrink-0" />
+            <span className="truncate">Videos</span>
+            <span className="rounded-md bg-[var(--muted)] px-1.5 py-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+              {videoCount}
+            </span>
+          </button>
+        </div>
+
+        {activeTab === "images" && (
+          <>
         <ImageUploadDropzone
           label="Upload Images"
           pending={upload.isPending}
@@ -227,18 +506,18 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
         {isLoading && <p className="text-center text-xs text-[var(--muted-foreground)]">Loading gallery…</p>}
 
         {/* Empty state */}
-        {!isLoading && (!images || images.length === 0) && (
+        {!isLoading && !hasImages && (
           <div className="flex flex-col items-center gap-2 py-8 text-[var(--muted-foreground)]">
             <Sparkles size="1.5rem" className="opacity-40" />
             <p className="text-xs">No images yet</p>
-            <p className="text-[0.625rem] opacity-60">Upload images or generate them to build your gallery</p>
+            <p className="text-[0.625rem] opacity-60">Upload images or generate illustrations to build your gallery</p>
           </div>
         )}
 
         {/* Image grid */}
-        {images && images.length > 0 && (
+        {hasImages && (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-2">
-            {images.map((img) => (
+            {images!.map((img) => (
               <div
                 key={img.id}
                 className="group relative overflow-hidden rounded-lg bg-[var(--secondary)] ring-1 ring-transparent transition-all hover:ring-[var(--primary)]/40 hover:shadow-lg focus-within:ring-2 focus-within:ring-[var(--primary)]"
@@ -279,6 +558,32 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
                       >
                         <Download size="0.75rem" />
                       </a>
+                      {onAnimateImage && (
+                        <button
+                          type="button"
+                          onClick={() => void handleAnimateImage(img)}
+                          disabled={isGeneratingVideo}
+                          aria-label="Animate gallery illustration"
+                          className="pointer-events-auto rounded-md bg-white/20 p-1.5 text-white transition-colors hover:bg-white/30 disabled:cursor-wait disabled:opacity-60"
+                          title="Animate illustration"
+                        >
+                          {isGeneratingVideo ? <Loader2 size="0.75rem" className="animate-spin" /> : <Film size="0.75rem" />}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void handleCopyPrompt(img);
+                        }}
+                        disabled={!img.prompt.trim()}
+                        aria-label="Copy image prompt"
+                        className="pointer-events-auto rounded-md bg-white/20 p-1.5 text-white transition-colors hover:bg-white/30 disabled:cursor-not-allowed disabled:opacity-45"
+                        title={img.prompt.trim() ? "Copy prompt" : "No prompt saved"}
+                      >
+                        {copiedPromptImageId === img.id ? <Check size="0.75rem" /> : <Copy size="0.75rem" />}
+                      </button>
                     </div>
                     <button
                       type="button"
@@ -293,6 +598,87 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
               </div>
             ))}
           </div>
+        )}
+
+          </>
+        )}
+
+        {activeTab === "videos" && (
+          <>
+        {sceneVideosQuery.isLoading && sceneVideosEnabled && (
+          <p className="text-center text-xs text-[var(--muted-foreground)]">Loading scene videos...</p>
+        )}
+
+        {!sceneVideosQuery.isLoading && !hasVideos && (
+          <div className="flex flex-col items-center gap-2 py-8 text-[var(--muted-foreground)]">
+            <Film size="1.5rem" className="opacity-40" />
+            <p className="text-xs">No videos yet</p>
+            <p className="text-[0.625rem] opacity-60">Generate or animate scene videos to fill this tab</p>
+          </div>
+        )}
+
+        {hasVideos && (
+          <section className="space-y-2">
+            <div className="flex items-center gap-2 text-[0.6875rem] font-medium uppercase text-[var(--muted-foreground)]">
+              <Film size="0.75rem" />
+              Scene videos
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {sceneVideos.map((video) => (
+                <div
+                  key={video.id}
+                  className="group relative overflow-hidden rounded-lg bg-[var(--secondary)] ring-1 ring-transparent transition-all hover:ring-[var(--primary)]/40 hover:shadow-lg focus-within:ring-2 focus-within:ring-[var(--primary)]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setVideoLightbox(video)}
+                    className="block w-full"
+                    aria-label="Open scene video"
+                  >
+                    <video
+                      src={video.url}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="aspect-video w-full bg-black object-contain"
+                    />
+                  </button>
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end bg-gradient-to-t from-black/70 via-black/20 to-transparent opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 max-md:opacity-100">
+                    <div className="flex w-full items-center justify-between gap-2 p-2">
+                      <div className="min-w-0 text-white">
+                        <div className="truncate text-[0.6875rem] font-medium">
+                          {video.durationSeconds}s scene video
+                        </div>
+                        <div className="truncate text-[0.625rem] text-white/70">{video.model}</div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handlePinVideo(video)}
+                          aria-label="Pin video to chat"
+                          className="pointer-events-auto rounded-md bg-white/20 p-1.5 text-white transition-colors hover:bg-white/30"
+                          title="Pin to chat"
+                        >
+                          <Pin size="0.75rem" />
+                        </button>
+                        <a
+                          href={video.url}
+                          download={getSceneVideoDownloadName(video)}
+                          aria-label="Download scene video"
+                          className="pointer-events-auto rounded-md bg-white/20 p-1.5 text-white transition-colors hover:bg-white/30"
+                          title="Download video"
+                        >
+                          <Download size="0.75rem" />
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+          </>
         )}
       </div>
 
@@ -411,6 +797,9 @@ export function ChatGallery({ chatId, mode, onIllustrate, onGenerateBackground }
 
       {/* Lightbox */}
       {lightbox && <ChatImageLightbox image={lightbox} onPin={handlePinImage} onClose={() => setLightbox(null)} />}
+      {videoLightbox && (
+        <ChatVideoLightbox video={videoLightbox} onPin={handlePinVideo} onClose={() => setVideoLightbox(null)} />
+      )}
     </>
   );
 }

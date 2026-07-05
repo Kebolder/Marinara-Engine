@@ -23,19 +23,13 @@ export function normalizeAgentPhaseValue(value: unknown, fallback: AgentPhase = 
 }
 
 export function normalizeAgentPhaseForType(
-  agentType: string,
+  _agentType: string,
   configuredPhase: unknown,
   fallback: AgentPhase = "post_processing",
 ): AgentPhase {
-  if (
-    agentType === "prose-guardian" ||
-    agentType === "continuity" ||
-    agentType === "html" ||
-    agentType === "expression" ||
-    agentType === "spotify"
-  ) {
-    return "post_processing";
-  }
+  // Keep the historical helper name for call-site compatibility, but do not
+  // coerce built-ins by type. If the agent editor lets a user choose a phase,
+  // that valid phase must survive storage, UI hydration, and runtime resolution.
   return normalizeAgentPhaseValue(configuredPhase, fallback);
 }
 

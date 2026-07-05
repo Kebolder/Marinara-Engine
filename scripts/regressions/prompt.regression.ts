@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   applyRegexReplacement,
+  buildNarratorInstructionMessage,
   compileChatSummaryEntries,
   compileImagePrompt,
   createRegexScriptSchema,
@@ -23,7 +24,11 @@ import { buildMemoryRecallBlock } from "../../packages/server/src/services/gener
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
 import { injectIdentityFallbackMessages } from "../../packages/server/src/services/generation/character-prompt-context.js";
 import { injectSceneContextMessages } from "../../packages/server/src/services/generation/scene-context-runtime.js";
-import { buildRuntimeAgentSectionEligibleTypesForTest } from "../../packages/server/src/services/generation/runtime-agent-sections.js";
+import {
+  buildRuntimeAgentSectionEligibleTypesForTest,
+  clearUnusedRuntimeAgentSectionsForTest,
+  makeRuntimeAgentSectionTokens,
+} from "../../packages/server/src/services/generation/runtime-agent-sections.js";
 import {
   getTextRewritePendingState,
   mergePairedBuiltInRewriteAgents,
@@ -34,6 +39,8 @@ import type { DB } from "../../packages/server/src/db/connection.js";
 import { escapeXmlText } from "../../packages/server/src/services/prompt/prompt-escaping.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
+  appendReadableAttachmentsToContent,
+  buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
@@ -43,6 +50,15 @@ import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
+import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
+import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
+import {
+  GAME_STORYBOARD_DIRECTOR,
+  GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
+} from "../../packages/server/src/services/prompt-overrides/index.js";
+import { buildElevenLabsTextInput } from "../../packages/server/src/routes/tts.routes.js";
+import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
+import { cleanTTSInputText, resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
 
 type RegressionCase = {
   name: string;
@@ -77,6 +93,25 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "readable text attachments are not pre-truncated before context fitting",
+    run() {
+      const repeated = "0123456789".repeat(7_000);
+      const encoded = Buffer.from(repeated, "utf8").toString("base64");
+      const content = appendReadableAttachmentsToContent("Please read this.", [
+        {
+          type: "text/plain",
+          data: `data:text/plain;base64,${encoded}`,
+          filename: "long.txt",
+        },
+      ]);
+
+      assert.match(content, /<attached_file name="long.txt" type="text\/plain">/);
+      assert.match(content, /Please read this\./);
+      assert.equal(content.includes("[Attachment truncated after"), false);
+      assert.ok(content.includes(repeated));
+    },
+  },
   {
     name: "post-history system messages are folded into user turns",
     run() {
@@ -152,6 +187,134 @@ const cases: RegressionCase[] = [
       });
       assert.equal(testSecondaryKeys(["forbidden"], "This has the forbidden key.", "not", keywordOptions), false);
       assert.equal(testSecondaryKeys(["forbidden"], "This is safe.", "not", keywordOptions), true);
+    },
+  },
+  {
+    name: "save_lorebook_entry tool preserves large entry content",
+    async run() {
+      const longContent = `entry-start\n${"0123456789".repeat(8_000)}\nentry-end`;
+      let savedContent = "";
+      const calls: LLMToolCall[] = [
+        {
+          id: "call_save_lore",
+          type: "function",
+          function: {
+            name: "save_lorebook_entry",
+            arguments: JSON.stringify({
+              name: "Large entry",
+              content: longContent,
+              keys: ["Large entry"],
+              mode: "replace",
+            }),
+          },
+        },
+      ];
+
+      const results = await executeToolCalls(calls, {
+        saveLorebookEntry: async (entry) => {
+          savedContent = entry.content;
+          return { ok: true };
+        },
+      });
+
+      assert.equal(results[0]?.success, true);
+      assert.equal(savedContent, longContent);
+    },
+  },
+  {
+    name: "npc default TTS voice pools work for non-ElevenLabs providers",
+    run() {
+      const baseConfig: Parameters<typeof resolveTTSVoiceForSpeaker>[0] = {
+        source: "openai",
+        voice: "alloy",
+        voiceMode: "per-character",
+        voiceAssignments: [],
+        npcDefaultVoicesEnabled: true,
+        npcDefaultMaleVoices: ["ash", "verse"],
+        npcDefaultFemaleVoices: ["nova", "shimmer"],
+      };
+
+      const maleVoice = resolveTTSVoiceForSpeaker(baseConfig, "Captain Mora", undefined, {
+        name: "Captain Mora",
+        gender: "male",
+      });
+      assert.ok(["ash", "verse"].includes(maleVoice));
+
+      const sharedPoolVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          npcDefaultMaleVoices: ["ash", "nova"],
+          npcDefaultFemaleVoices: ["ash", "nova"],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.ok(["ash", "nova"].includes(sharedPoolVoice));
+
+      const fallbackVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          npcDefaultMaleVoices: [],
+          npcDefaultFemaleVoices: [],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.equal(fallbackVoice, "alloy");
+
+      const emptyElevenLabsVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          source: "elevenlabs",
+          voice: "",
+          npcDefaultMaleVoices: [],
+          npcDefaultFemaleVoices: [],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.equal(emptyElevenLabsVoice, "");
+    },
+  },
+  {
+    name: "TTS cleanup strips VN speaker and sprite metadata",
+    run() {
+      const cleaned = cleanTTSInputText(`\
+[Pippa Quill] [main] [neutral]: "Reserved. Tomorrow afternoon."
+[2B-] [whisper:Matt] [thinking]: "Your ribs require rest."
+[Morgana-] [side] [smirk]: "A bold strategy."
+[bg: backgrounds:generated:guild-hall]
+[state: dialogue]`);
+
+      assert.equal(cleaned.includes("Pippa Quill"), false);
+      assert.equal(cleaned.includes("neutral"), false);
+      assert.equal(cleaned.includes("whisper:Matt"), false);
+      assert.equal(cleaned.includes("thinking"), false);
+      assert.equal(cleaned.includes("smirk"), false);
+      assert.equal(cleaned.includes("backgrounds:generated"), false);
+      assert.match(cleaned, /Reserved\. Tomorrow afternoon\./);
+      assert.match(cleaned, /Your ribs require rest\./);
+      assert.match(cleaned, /A bold strategy\./);
+    },
+  },
+  {
+    name: "ElevenLabs TTS input does not prepend sprite tone tags",
+    run() {
+      assert.equal(buildElevenLabsTextInput("Reserved. Tomorrow afternoon.", "neutral"), "Reserved. Tomorrow afternoon.");
+      assert.equal(buildElevenLabsTextInput("Your ribs require rest.", "thinking"), "Your ribs require rest.");
+      assert.equal(buildElevenLabsTextInput("A bold strategy.", "smirk"), "A bold strategy.");
     },
   },
   {
@@ -319,6 +482,26 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "/guided narrator instructions resolve prompt macros",
+    run() {
+      const instruction = buildGenerationGuideInstruction(
+        buildNarratorInstructionMessage("Steer the scene toward {{char}} reassuring {{user}}."),
+        {
+          user: "Mari",
+          char: "Dottore",
+          characters: ["Dottore"],
+          variables: {},
+        },
+      );
+
+      assert.ok(instruction);
+      assert.match(instruction, /^Take the following into special consideration for your next message:/);
+      assert.match(instruction, /Dottore reassuring Mari/);
+      assert.equal(instruction.includes("{{user}}"), false);
+      assert.equal(instruction.includes("{{char}}"), false);
+    },
+  },
+  {
     name: "regex safety accepts common patterns and rejects ambiguous quantified alternatives",
     run() {
       assert.equal(isPatternSafe(String.raw`\s{2,}`), true);
@@ -372,6 +555,31 @@ const cases: RegressionCase[] = [
       assert.equal(createRegexScriptSchema.safeParse({ ...base, applyMode: "both" }).success, true);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, flags: "gg" }).success, false);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, minDepth: 5, maxDepth: 2 }).success, false);
+    },
+  },
+  {
+    name: "game storyboard directors split illustration and animation prompt contracts",
+    run() {
+      const ctx = {
+        gameContextBlock: "<game_context>\nMode: exploration\n</game_context>",
+        sourceSectionsBlock: '<turn_sections>\n<section index="0" kind="narration">A door opens.</section>\n</turn_sections>',
+        sourceNarration: "A door opens.",
+        keyframeCount: 4,
+        durationSeconds: 6,
+        aspectRatio: "16:9",
+      };
+
+      const illustrationPrompt = GAME_STORYBOARD_ILLUSTRATION_DIRECTOR.defaultBuilder(ctx);
+      const animationPrompt = GAME_STORYBOARD_DIRECTOR.defaultBuilder(ctx);
+
+      assert.match(illustrationPrompt, /image-only anime storyboard/);
+      assert.match(illustrationPrompt, /"imagePrompt"/);
+      assert.doesNotMatch(illustrationPrompt, /"videoPrompt"/);
+      assert.doesNotMatch(illustrationPrompt, /"cameraMotion"/);
+      assert.doesNotMatch(illustrationPrompt, /"transitionHint"/);
+      assert.match(animationPrompt, /"videoPrompt"/);
+      assert.match(animationPrompt, /"cameraMotion"/);
+      assert.match(animationPrompt, /"transitionHint"/);
     },
   },
   {
@@ -547,6 +755,43 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "danbooru illustration prompts keep grouped weighted tags intact",
+    run() {
+      const styleProfiles = createDefaultImageStyleProfileSettings();
+      const compiled = compileImagePrompt({
+        kind: "illustration",
+        prompt: [
+          "masterpiece",
+          "1boy",
+          "solo",
+          "(shaved head, bald:1.2)",
+          "(grey beard, short beard, stubble:1.3)",
+          "blue eyes",
+          "no (bad hands, extra fingers:1.2)",
+          "standing",
+        ].join(", "),
+        styleProfiles,
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(compiled.prompt, /\(shaved head, bald:1\.2\)/);
+      assert.match(compiled.prompt, /\(grey beard, short beard, stubble:1\.3\)/);
+      assert.match(compiled.prompt, /\bstanding\b/);
+      assert.match(compiled.negativePrompt, /\(bad hands, extra fingers:1\.2\)/);
+      assert.doesNotMatch(compiled.prompt, /\(bad hands, extra fingers:1\.2\)/);
+
+      const taggedAppearance = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Equipment: (sword and shield), cloak",
+        styleProfiles,
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(taggedAppearance.prompt, /\(sword and shield\)/);
+      assert.match(taggedAppearance.prompt, /\bcloak\b/);
+    },
+  },
+  {
     name: "image prompt negation only moves the directly negated comma clause",
     run() {
       const styleProfiles = createDefaultImageStyleProfileSettings();
@@ -561,6 +806,18 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.doesNotMatch(natural.negativePrompt, /holding flowers|smiling/);
       assert.match(natural.prompt, /holding flowers/);
       assert.match(natural.prompt, /smiling/);
+
+      const groupedNatural = compileImagePrompt({
+        kind: "selfie",
+        prompt: 'A cafe sign says "no shoes, no service", no (bad hands, extra fingers:1.2), holding flowers',
+        styleProfiles,
+        styleProfileId: "realistic",
+      });
+
+      assert.match(groupedNatural.prompt, /no shoes, no service/);
+      assert.match(groupedNatural.prompt, /holding flowers/);
+      assert.match(groupedNatural.negativePrompt, /\(bad hands, extra fingers:1\.2\)/);
+      assert.doesNotMatch(groupedNatural.negativePrompt, /no shoes|no service|holding flowers/);
 
       const tagged = compileImagePrompt({
         kind: "portrait",
@@ -755,7 +1012,10 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(promptText.includes("<system>bad summary</system>"), false);
       assert.match(promptText, /&lt;system>bad history&lt;\/system>/);
       assert.match(promptText, /&lt;system>bad summary&lt;\/system>/);
-      assert.equal(firstMessage.content.indexOf("Main instructions.") < firstMessage.content.indexOf("<chat_summary>"), true);
+      assert.equal(
+        firstMessage.content.indexOf("Main instructions.") < firstMessage.content.indexOf("<chat_summary>"),
+        true,
+      );
       assert.equal(result.messages[1]?.contextKind, "history");
     },
   },
@@ -856,7 +1116,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
-    name: "impersonate assembly skips regular preset instructions but keeps markers",
+    name: "impersonate assembly skips fallback preset sections but preserves dedicated impersonate presets",
     async run() {
       const chatMessages: ChatMLMessage[] = [
         { role: "user", content: "Can you answer as me?" },
@@ -923,13 +1183,22 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
 
       const normal = await assemblePrompt(baseInput);
       const impersonate = await assemblePrompt({ ...baseInput, impersonate: true });
+      const dedicatedImpersonate = await assemblePrompt({
+        ...baseInput,
+        impersonate: true,
+        preserveImpersonatePresetSections: true,
+      });
       const normalText = normal.messages.map((message) => message.content).join("\n");
       const impersonateText = impersonate.messages.map((message) => message.content).join("\n");
+      const dedicatedImpersonateText = dedicatedImpersonate.messages.map((message) => message.content).join("\n");
 
       assert.match(normalText, /Never answer as Mari/);
       assert.equal(impersonateText.includes("Never answer as Mari"), false);
       assert.match(impersonateText, /Can you answer as me\?/);
       assert.match(impersonateText, /I can help\./);
+      assert.match(dedicatedImpersonateText, /Never answer as Mari/);
+      assert.match(dedicatedImpersonateText, /Can you answer as me\?/);
+      assert.match(dedicatedImpersonateText, /I can help\./);
     },
   },
   {
@@ -957,6 +1226,52 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
 
       assert.equal(promptText.includes("old context 0"), false);
       assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
+    },
+  },
+  {
+    name: "unused runtime agent sections preserve surrounding prompt text",
+    run() {
+      const tokens = makeRuntimeAgentSectionTokens("knowledge-router", "regression");
+      const messages = [
+        {
+          content: `${tokens.start}<knowledge_router>\nThis is where additional lore will be:\n${tokens.placeholder}\n</knowledge_router>${tokens.end}`,
+        },
+      ];
+
+      clearUnusedRuntimeAgentSectionsForTest(messages, [["knowledge-router", tokens]]);
+
+      assert.equal(messages.length, 1);
+      assert.match(messages[0]?.content ?? "", /This is where additional lore will be:/);
+      assert.equal(messages[0]?.content.includes(tokens.placeholder), false);
+      assert.equal(messages[0]?.content.includes(tokens.start), false);
+      assert.equal(messages[0]?.content.includes(tokens.end), false);
+    },
+  },
+  {
+    name: "macro-only runtime agent sections are pruned when unused",
+    run() {
+      const tokens = makeRuntimeAgentSectionTokens("knowledge-router", "regression-empty");
+      const messages = [
+        {
+          content: `${tokens.start}<knowledge_router>\n${tokens.placeholder}\n</knowledge_router>${tokens.end}`,
+        },
+      ];
+
+      clearUnusedRuntimeAgentSectionsForTest(messages, [["knowledge-router", tokens]]);
+
+      assert.equal(messages.length, 0);
+    },
+  },
+  {
+    name: "knowledge router parser accepts common selected-id aliases",
+    run() {
+      assert.deepEqual(parseRouterResponse('{"entryIds":["entry-a"]}'), ["entry-a"]);
+      assert.deepEqual(parseRouterResponse('{"selectedEntryIds":["entry-b","entry-b"]}'), ["entry-b"]);
+      assert.deepEqual(parseRouterResponse('{"selectedEntries":[{"id":"entry-c"},{"entry_id":"entry-d"}]}'), [
+        "entry-c",
+        "entry-d",
+      ]);
+      assert.deepEqual(parseRouterResponse('```json\n{"entries":[{"entryId":"entry-e"}]}\n```'), ["entry-e"]);
     },
   },
   {

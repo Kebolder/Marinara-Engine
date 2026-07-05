@@ -72,6 +72,7 @@ import {
   Wand2,
   FlaskConical,
   FolderPlus,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -2592,7 +2593,7 @@ function VectorizeSection({
     [connections, sidecarEmbeddingConnections],
   );
   const [selectedConnectionId, setSelectedConnectionId] = useState<string>("");
-  const [vectorizing, setVectorizing] = useState(false);
+  const [vectorizingMode, setVectorizingMode] = useState<"missing" | "all" | null>(null);
   const [clearingVectors, setClearingVectors] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
   const excludedCount = excludeFromVectorization
@@ -2610,6 +2611,9 @@ function VectorizeSection({
   ).length;
   const missingCount = Math.max(0, vectorizableEntryCount - vectorizedCount);
   const allVectorized = vectorizableEntryCount > 0 && missingCount === 0;
+  const vectorizing = vectorizingMode !== null;
+  const primaryVectorizeMode: "missing" | "all" = missingCount > 0 ? "missing" : "all";
+  const showRevectorizeAllAction = missingCount > 0 && storedVectorCount > 0;
 
   useEffect(() => {
     if (import.meta.env.VITE_MARINARA_LITE !== "true") {
@@ -2651,29 +2655,43 @@ function VectorizeSection({
     }
   };
 
-  const handleVectorize = async () => {
+  const handleVectorize = async (mode: "missing" | "all") => {
     if (!selectedConnectionId) return;
-    setVectorizing(true);
+    if (mode === "missing" && missingCount === 0) return;
+    const conn = embeddingConnections.find((c) => c.id === selectedConnectionId);
+    if (mode === "all" && storedVectorCount > 0) {
+      const confirmed = await showConfirmDialog({
+        title: "Re-vectorize All Entries",
+        message: `Re-vectorize all ${vectorizableEntryCount} vectorizable entr${
+          vectorizableEntryCount === 1 ? "y" : "ies"
+        } with ${conn?.name ?? "the selected connection"}? Existing stored vectors will be overwritten.`,
+        confirmLabel: "Re-vectorize all",
+        cancelLabel: "Cancel",
+        tone: "default",
+      });
+      if (!confirmed) return;
+    }
+
+    setVectorizingMode(mode);
     setResult(null);
     try {
-      const conn = embeddingConnections.find((c) => c.id === selectedConnectionId);
       const res = await api.post(`/lorebooks/${lorebookId}/vectorize`, {
         connectionId: selectedConnectionId,
         model: conn?.embeddingModel ?? "",
-        onlyMissing: !allVectorized,
+        onlyMissing: mode === "missing",
       });
       const data = res as { vectorized: number; total?: number; skipped?: number };
       await queryClient.invalidateQueries({ queryKey: lorebookKeys.entries(lorebookId) });
       setResult({
         success: true,
-        message: allVectorized
+        message: mode === "all"
           ? `Re-vectorized ${data.vectorized} entries`
           : `Vectorized ${data.vectorized} missing entries`,
       });
     } catch (err) {
       setResult({ success: false, message: err instanceof Error ? err.message : "Vectorization failed" });
     } finally {
-      setVectorizing(false);
+      setVectorizingMode(null);
     }
   };
 
@@ -2798,11 +2816,11 @@ function VectorizeSection({
         </p>
       ) : (
         <>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
               value={selectedConnectionId}
               onChange={(e) => handleConnectionChange(e.target.value)}
-              className="mari-editor-field flex-1 px-2.5 py-1.5 text-xs"
+              className="mari-editor-field min-w-44 flex-1 px-2.5 py-1.5 text-xs"
             >
               <option value="">No semantic search</option>
               {embeddingConnections.map((c) => (
@@ -2812,19 +2830,42 @@ function VectorizeSection({
               ))}
             </select>
             <button
-              onClick={handleVectorize}
+              onClick={() => handleVectorize(primaryVectorizeMode)}
               disabled={vectorizing || vectorizableEntryCount === 0 || !selectedConnectionId}
               className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-all active:scale-[0.98] disabled:opacity-50"
             >
-              {vectorizing ? <Loader2 size="0.75rem" className="animate-spin" /> : <Sparkles size="0.75rem" />}
-              {vectorizing
-                ? "Vectorizing..."
+              {vectorizingMode === primaryVectorizeMode ? (
+                <Loader2 size="0.75rem" className="animate-spin" />
+              ) : primaryVectorizeMode === "all" ? (
+                <RefreshCw size="0.75rem" />
+              ) : (
+                <Sparkles size="0.75rem" />
+              )}
+              {vectorizingMode === primaryVectorizeMode
+                ? primaryVectorizeMode === "all"
+                  ? "Re-vectorizing..."
+                  : "Vectorizing..."
                 : !selectedConnectionId
                   ? "Select connection"
-                  : allVectorized
+                  : primaryVectorizeMode === "all"
                     ? `Re-vectorize ${vectorizableEntryCount} entries`
                     : `Vectorize ${missingCount} missing`}
             </button>
+            {showRevectorizeAllAction && (
+              <button
+                onClick={() => handleVectorize("all")}
+                disabled={vectorizing || vectorizableEntryCount === 0 || !selectedConnectionId}
+                className="flex items-center gap-1.5 rounded-xl bg-[var(--secondary)]/70 px-3 py-1.5 text-xs font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-all hover:bg-[var(--secondary)] active:scale-[0.98] disabled:opacity-50"
+                title="Overwrite every stored vector in this lorebook with the selected embedding model"
+              >
+                {vectorizingMode === "all" ? (
+                  <Loader2 size="0.75rem" className="animate-spin" />
+                ) : (
+                  <RefreshCw size="0.75rem" />
+                )}
+                {vectorizingMode === "all" ? "Re-vectorizing..." : "Re-vectorize all"}
+              </button>
+            )}
             <button
               onClick={handleClearVectors}
               disabled={clearingVectors || vectorizing || storedVectorCount === 0}

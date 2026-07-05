@@ -494,6 +494,31 @@ export interface ImageGenSource {
   requiresApiKey: boolean;
 }
 
+export interface VideoGenSource {
+  id: string;
+  name: string;
+  description: string;
+  defaultBaseUrl: string;
+  requiresApiKey: boolean;
+}
+
+export const VIDEO_GENERATION_SOURCES: VideoGenSource[] = [
+  {
+    id: "gemini_omni",
+    name: "Gemini Omni",
+    description: "Gemini Omni Flash image-to-video via the Gemini Interactions API.",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    requiresApiKey: true,
+  },
+  {
+    id: "xai",
+    name: "xAI Imagine",
+    description: "Grok Imagine video and image-to-video via the xAI Videos API.",
+    defaultBaseUrl: "https://api.x.ai/v1",
+    requiresApiKey: true,
+  },
+];
+
 export const IMAGE_GENERATION_SOURCES: ImageGenSource[] = [
   {
     id: "openai",
@@ -648,6 +673,23 @@ const IMAGE_GEN_MODELS: KnownModel[] = [
   { id: "pollinations", name: "Pollinations (Auto)", context: 0, maxOutput: 0 },
 ];
 
+const VIDEO_GEN_MODELS: KnownModel[] = [
+  { id: "gemini-omni-flash-preview", name: "Gemini Omni Flash Preview", context: 0, maxOutput: 0 },
+  { id: "grok-imagine-video-1.5", name: "Grok Imagine Video 1.5", context: 0, maxOutput: 0 },
+  { id: "grok-imagine-video", name: "Grok Imagine Video", context: 0, maxOutput: 0 },
+];
+
+export function inferVideoSource(model: string, baseUrl: string): string {
+  const m = model.toLowerCase();
+  const u = baseUrl.toLowerCase();
+  if (m === "xai" || u.includes("api.x.ai") || u.includes("x.ai")) return "xai";
+  if (m.includes("grok") && m.includes("imagine") && m.includes("video")) return "xai";
+  if (m === "gemini_omni" || m.includes("omni") || u.includes("generativelanguage.googleapis.com")) {
+    return "gemini_omni";
+  }
+  return "gemini_omni";
+}
+
 /**
  * Infer which image generation API source to use from the model name and base URL.
  * The caller should fall back to "openai" (OpenAI-compatible) if no match is found.
@@ -712,6 +754,7 @@ export const MODEL_LISTS: Record<APIProvider, KnownModel[]> = {
   // Seed OAI-compatible endpoints with the OpenAI catalog; remote /models still merge on top.
   custom: OPENAI_MODELS,
   image_generation: IMAGE_GEN_MODELS,
+  video_generation: VIDEO_GEN_MODELS,
 };
 
 /**

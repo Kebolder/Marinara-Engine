@@ -62,8 +62,17 @@ export interface ChatMessage {
     data: string;
     filename?: string;
   }>;
+  /** Base64 data URLs for provider-native audio/video inputs */
+  media?: ChatMediaAttachment[];
   /** Provider-specific metadata (e.g. Gemini parts with thought signatures) */
   providerMetadata?: Record<string, unknown>;
+}
+
+export interface ChatMediaAttachment {
+  kind: "audio" | "video";
+  data: string;
+  mimeType: string;
+  filename?: string;
 }
 
 export interface LLMToolCall {
@@ -101,6 +110,8 @@ export interface ChatOptions {
   tools?: LLMToolDefinition[];
   /** Enable provider-native prompt caching when supported */
   enableCaching?: boolean;
+  /** Anthropic only: use 1-hour prompt-cache TTL instead of the default 5-minute TTL */
+  anthropicExtendedCacheTtl?: boolean;
   /** Anthropic cache breakpoint depth from the newest message. 0 = newest message. */
   cachingAtDepth?: number;
   /** Callback for streaming thinking/reasoning content */
@@ -256,6 +267,9 @@ function estimateMessageTokens(message: ChatMessage): number {
   if (message.files?.length) {
     total += message.files.reduce((sum, file) => sum + estimateFileTokens(file), 0);
   }
+  if (message.media?.length) {
+    total += message.media.reduce((sum, media) => sum + estimateFileTokens({ data: media.data }), 0);
+  }
   if (message.providerMetadata) {
     total += Math.min(estimateStructuredTokens(message.providerMetadata), 512);
   }
@@ -271,6 +285,7 @@ function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
     ...message,
     ...(message.images ? { images: [...message.images] } : {}),
     ...(message.files ? { files: message.files.map((file) => ({ ...file })) } : {}),
+    ...(message.media ? { media: message.media.map((media) => ({ ...media })) } : {}),
     ...(message.tool_calls
       ? { tool_calls: message.tool_calls.map((call) => ({ ...call, function: { ...call.function } })) }
       : {}),

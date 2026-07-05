@@ -35,7 +35,10 @@ import {
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
   normalizeTextForMatch,
+  parseGroupedSpeakerSegments,
+  stripLeadingMessageTimestamps,
   type APIProvider,
+  type GroupedSegment,
 } from "@marinara-engine/shared";
 import type {
   AgentContext,
@@ -65,6 +68,8 @@ import { createCustomEmojisStorage } from "../services/storage/custom-emojis.sto
 import { createCustomStickersStorage } from "../services/storage/custom-stickers.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
+import { createConversationCallsStorage } from "../services/storage/conversation-calls.storage.js";
+import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
 import { localEmbed, isLocalEmbedderAvailable } from "../services/local-embedder.js";
 import { buildLorebookSemanticEmbeddingsById, cosineSimilarity } from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
@@ -99,7 +104,12 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
-import { yieldToEventLoop, type BaseLLMProvider, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
+import {
+  yieldToEventLoop,
+  type BaseLLMProvider,
+  type ChatMessage,
+  type LLMUsage,
+} from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -118,6 +128,7 @@ import {
   type CrossPostCommand,
   type SelfieCommand,
   type MemoryCommand,
+  type CallCommand,
   type InfluenceCommand,
   type NoteCommand,
   type DirectMessageCommand,
@@ -203,6 +214,7 @@ import {
   appendReadableAttachmentsToContent,
   extractFileAttachmentInputs,
   getAttachmentFilename,
+  buildGenerationGuideInstruction,
   buildUserMessageRegenerationPromptFromSource,
   buildLockedPlayerStatsArrayPatch,
   buildLockedPersonaTrackerPatch,
@@ -807,6 +819,8 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "memory";
     case "scene":
       return "scene";
+    case "call":
+      return "call";
     case "uno":
       return "uno";
     case "chess":
@@ -820,6 +834,8 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "influence";
     case "note":
       return "note";
+    case "react":
+      return "react";
     default:
       return null;
   }
@@ -1036,6 +1052,9 @@ type ImageCaptionConnection = {
   maxTokensOverride?: number | null;
   claudeFastMode?: string | null;
   treatAsLocalEndpoint?: string | null;
+  enableCaching?: string | null;
+  anthropicExtendedCacheTtl?: string | null;
+  cachingAtDepth?: number | null;
 };
 
 type ImageCaptioningRuntime = {
@@ -1081,10 +1100,7 @@ function normalizeImageCaptionText(value: unknown): string | null {
   return text.length > IMAGE_CAPTION_MAX_CHARS ? `${text.slice(0, IMAGE_CAPTION_MAX_CHARS).trim()}...` : text;
 }
 
-function readCachedImageCaption(
-  attachment: PromptAttachment,
-  imageCaptioning: ImageCaptioningRuntime,
-): string | null {
+function readCachedImageCaption(attachment: PromptAttachment, imageCaptioning: ImageCaptioningRuntime): string | null {
   const caption = normalizeImageCaptionText(attachment.imageCaption);
   if (!caption || !imageCaptioning.connection) return null;
   if (attachment.imageCaptionConnectionId !== imageCaptioning.connectionId) return null;
@@ -1136,6 +1152,9 @@ async function generateImageCaptionForAttachment(
         model: imageCaptioning.connection.model,
         temperature: 0.2,
         maxTokens: applyProviderMaxTokensOverride(imageCaptioning.provider, IMAGE_CAPTION_MAX_TOKENS),
+        enableCaching: imageCaptioning.connection.enableCaching === "true",
+        anthropicExtendedCacheTtl: imageCaptioning.connection.anthropicExtendedCacheTtl === "true",
+        cachingAtDepth: imageCaptioning.connection.cachingAtDepth ?? 5,
         stream: false,
         signal,
       },
@@ -1312,10 +1331,136 @@ function buildCustomStickerAdvertisement(
  * leaves it intact. `resolveReactorName` maps a reactor id ("user" or a character
  * id) to a display name. Returns "" when there is nothing to annotate.
  */
-function buildReactionAnnotation(reactions: unknown, resolveReactorName: (reactorId: string) => string): string {
-  if (!Array.isArray(reactions) || reactions.length === 0) return "";
-  const parts: string[] = [];
-  for (const entry of reactions as Array<{ emoji?: unknown; by?: unknown }>) {
+/** Single-line excerpt of a grouped segment's text for reaction attribution. */
+function excerptSegmentText(lines: string[]): string {
+  const text = lines.join(" ").replace(/\s+/g, " ").trim();
+  const MAX = 80;
+  // Truncate on code points, not UTF-16 units — a sliced surrogate pair would
+  // put a lone surrogate in the prompt payload.
+  const chars = Array.from(text);
+  if (chars.length <= MAX) return text;
+  return `${chars.slice(0, MAX).join("").trimEnd()}…`;
+}
+
+/**
+ * Content cap for reaction-annotation segmentation. The tag parser backtracks
+ * on unclosed `<speaker=` openers, so a pathological pasted message could stall
+ * the prompt-build hot path; past the cap we skip attribution (plain wording).
+ */
+const REACTION_ANNOTATION_CONTENT_CAP = 32_000;
+
+/** Whether a grouped segment is a reaction-attributable speaker part (has a speaker + text). */
+function isAttributableGroup(group: GroupedSegment): boolean {
+  return group.speaker != null && group.lines.some((line) => line.trim().length > 0);
+}
+
+/**
+ * Annotate a prompt message with its reactions and return the new content.
+ *
+ * Segment-targeted reactions are injected INLINE — a `[X reacted with E]` line
+ * directly under the part they were aimed at (position conveys the target, the
+ * way a chat app renders reactions under a specific message) — grouped so one
+ * part's reactions share a line: `[User reacted with 😹, Aurey reacted with 🙄]`.
+ *
+ * Because `promptContent` (regex-scripted, command-bearing) can be shaped
+ * differently from the content the client stored the segment index against,
+ * the target is resolved in two steps: the stored index is resolved against
+ * `clientShapeContent` (timestamp-stripped stored content — client parity),
+ * then mapped into `promptContent`'s segmentation by (speaker, ordinal). When
+ * the mapping fails, the reaction falls back to an end-of-message note —
+ * quoting the part when it resolved, naming just the speaker when only the
+ * speaker matched, plain otherwise. Whole-message reactions always use the
+ * end-of-message note. Only canonical character names are echoed; the stored
+ * segmentSpeaker string is used solely for normalized matching.
+ */
+function annotateContentWithReactions(
+  promptContent: string,
+  clientShapeContent: string,
+  reactions: unknown,
+  knownSpeakersByNorm: Map<string, string>,
+  resolveReactorName: (reactorId: string) => string,
+): string {
+  if (!Array.isArray(reactions) || reactions.length === 0) return promptContent;
+  const knownNames = new Set(knownSpeakersByNorm.keys());
+  const clientGroups: GroupedSegment[] | null =
+    clientShapeContent.length <= REACTION_ANNOTATION_CONTENT_CAP
+      ? parseGroupedSpeakerSegments(clientShapeContent, knownNames)
+      : null;
+  const promptGroups: GroupedSegment[] | null =
+    promptContent.length <= REACTION_ANNOTATION_CONTENT_CAP
+      ? parseGroupedSpeakerSegments(promptContent, knownNames)
+      : null;
+
+  // Map a resolved client-shape group onto the prompt-shape segmentation. The
+  // prompt side can carry extra attributable parts the client shape doesn't
+  // (command-only parts in conversationCommandContent, leaked-timestamp lines),
+  // so a plain per-speaker ordinal can drift — the mapped group must also
+  // CONTAIN the client part's identifying first line, or we scan the speaker's
+  // other prompt parts for it, or give up (end-note fallback). Position is the
+  // inline note's only targeting signal; never inject on an unverified match.
+  const promptGroupFor = (clientIndex: number): GroupedSegment | null => {
+    if (!clientGroups || !promptGroups) return null;
+    const target = clientGroups[clientIndex]!;
+    const norm = normalizeTextForMatch(target.speaker!);
+    const marker =
+      target.lines
+        .flatMap((chunk) => chunk.split("\n"))
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? "";
+    if (!marker) return null;
+    const sameSpeaker = promptGroups.filter(
+      (g) => isAttributableGroup(g) && normalizeTextForMatch(g.speaker!) === norm,
+    );
+    if (sameSpeaker.length === 0) return null;
+    let ordinal = 0;
+    for (let i = 0; i < clientIndex; i++) {
+      const g = clientGroups[i]!;
+      if (isAttributableGroup(g) && normalizeTextForMatch(g.speaker!) === norm) ordinal++;
+    }
+    // Whole-line equality, not substring: the marker line quoted inside another
+    // part (command args, a longer sentence) must not count as that part.
+    const hasMarkerLine = (g: GroupedSegment) =>
+      g.lines.some((chunk) => chunk.split("\n").some((line) => line.trim() === marker));
+    const ordinalPick = sameSpeaker[ordinal];
+    if (ordinalPick && hasMarkerLine(ordinalPick)) return ordinalPick;
+    // Several parts can repeat the marker line — prefer the one nearest the
+    // expected ordinal instead of the first hit.
+    let best: GroupedSegment | null = null;
+    let bestDistance = Infinity;
+    for (let ci = 0; ci < sameSpeaker.length; ci++) {
+      const candidate = sameSpeaker[ci]!;
+      if (!hasMarkerLine(candidate)) continue;
+      const distance = Math.abs(ci - ordinal);
+      if (distance < bestDistance) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  };
+
+  type ResolvedNote =
+    | { kind: "inline"; phrase: string; speakerNorm: string; group: GroupedSegment }
+    | {
+        kind: "end";
+        phrase: string;
+        speakerNorm: string | null;
+        text: string;
+        /**
+         * True for the speaker-only stale-index tier — the shape a cross-swipe
+         * twin of an inlined reaction takes, safe to collapse into the inline
+         * note. Quoted-tier notes are client-resolved distinct reactions (the
+         * excerpt disambiguates) and must never be suppressed.
+         */
+        staleTwinShape: boolean;
+      };
+  const notes: ResolvedNote[] = [];
+  for (const entry of reactions as Array<{
+    emoji?: unknown;
+    by?: unknown;
+    segment?: unknown;
+    segmentSpeaker?: unknown;
+  }>) {
     const emoji = typeof entry.emoji === "string" ? entry.emoji : null;
     const reactors = Array.isArray(entry.by) ? entry.by.filter((id): id is string => typeof id === "string") : [];
     if (!emoji || reactors.length === 0) continue;
@@ -1326,9 +1471,101 @@ function buildReactionAnnotation(reactions: unknown, resolveReactorName: (reacto
         : names.length === 2
           ? `${names[0]} and ${names[1]}`
           : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-    parts.push(`${who} reacted with ${emoji}`);
+    const phrase = `${who} reacted with ${emoji}`;
+
+    const storedSpeaker =
+      typeof entry.segmentSpeaker === "string" && entry.segmentSpeaker.trim() ? entry.segmentSpeaker : null;
+    const wanted = storedSpeaker !== null ? normalizeTextForMatch(storedSpeaker) : null;
+    const segIdx = typeof entry.segment === "number" && Number.isInteger(entry.segment) ? entry.segment : null;
+    const seg = clientGroups && segIdx !== null && segIdx >= 0 && segIdx < clientGroups.length
+      ? clientGroups[segIdx]
+      : undefined;
+    const segSpeakerNorm = seg?.speaker != null ? normalizeTextForMatch(seg.speaker) : null;
+    // Entries without a stored speaker align by index alone (client legacy branch).
+    const segAligned =
+      seg !== undefined &&
+      segSpeakerNorm !== null &&
+      (wanted === null || segSpeakerNorm === wanted) &&
+      isAttributableGroup(seg);
+
+    if (segAligned) {
+      const promptGroup = promptGroupFor(segIdx!);
+      if (promptGroup) {
+        notes.push({ kind: "inline", phrase, speakerNorm: segSpeakerNorm!, group: promptGroup });
+        continue;
+      }
+      // Part exists but isn't locatable in the prompt-shaped content — fall
+      // back to the quoted end note so the target stays unambiguous.
+      const canonical = knownSpeakersByNorm.get(segSpeakerNorm!);
+      if (canonical) {
+        notes.push({
+          kind: "end",
+          phrase,
+          speakerNorm: segSpeakerNorm!,
+          text: `${phrase} to ${canonical}'s part ("${excerptSegmentText(seg!.lines)}")`,
+          staleTwinShape: false,
+        });
+        continue;
+      }
+    } else if (wanted !== null && clientGroups) {
+      const speakerGroup = clientGroups.find(
+        (g) => isAttributableGroup(g) && normalizeTextForMatch(g.speaker!) === wanted,
+      );
+      const canonical = speakerGroup ? knownSpeakersByNorm.get(wanted) : undefined;
+      if (canonical) {
+        notes.push({
+          kind: "end",
+          phrase,
+          speakerNorm: wanted,
+          text: `${phrase} to ${canonical}'s part`,
+          staleTwinShape: true,
+        });
+        continue;
+      }
+    }
+    notes.push({ kind: "end", phrase, speakerNorm: null, text: phrase, staleTwinShape: false });
   }
-  return parts.length === 0 ? "" : `\n[${parts.join("; ")}]`;
+
+  const inlineByGroup = new Map<GroupedSegment, string[]>();
+  const inlineKeys = new Set<string>();
+  for (const note of notes) {
+    if (note.kind !== "inline") continue;
+    const lines = inlineByGroup.get(note.group) ?? [];
+    if (!lines.includes(note.phrase)) lines.push(note.phrase);
+    inlineByGroup.set(note.group, lines);
+    inlineKeys.add(`${note.phrase}\u0000${note.speakerNorm}`);
+  }
+  const endParts: string[] = [];
+  for (const note of notes) {
+    if (note.kind !== "end") continue;
+    // A stale cross-swipe twin of an inlined reaction (same wording, same target
+    // speaker) would double-report it — the inline note already covers it.
+    // Quoted-tier notes are distinct client-resolved reactions and always stay.
+    if (
+      note.staleTwinShape &&
+      note.speakerNorm !== null &&
+      inlineKeys.has(`${note.phrase}\u0000${note.speakerNorm}`)
+    ) {
+      continue;
+    }
+    endParts.push(note.text);
+  }
+
+  // Inject inline notes back-to-front so earlier offsets stay valid. When the
+  // injection point isn't a line end (tag segments can have same-line trailing
+  // narration), push the following text onto its own line.
+  let annotated = promptContent;
+  const injections = [...inlineByGroup.entries()].sort((a, b) => b[0].end - a[0].end);
+  for (const [group, lines] of injections) {
+    const nextChar = annotated.charAt(group.end);
+    const trailingBreak = nextChar && nextChar !== "\n" && nextChar !== "\r" ? "\n" : "";
+    annotated = `${annotated.slice(0, group.end)}\n[${lines.join(", ")}]${trailingBreak}${annotated.slice(group.end)}`;
+  }
+  // Dedupe end notes: entries for the same emoji+speaker can exist at different
+  // stale indices (targets synced across swipes) and collapse to one wording.
+  const uniqueEndParts = [...new Set(endParts)];
+  if (uniqueEndParts.length > 0) annotated += `\n[${uniqueEndParts.join("; ")}]`;
+  return annotated;
 }
 
 /**
@@ -1342,12 +1579,29 @@ function addMessageReactor(
   emoji: string,
   reactor: string,
   imageUrl: string | null,
+  target?: { segment: number; speaker: string | null } | null,
 ): MessageReaction[] {
   const current = Array.isArray(reactions) ? (reactions as MessageReaction[]) : [];
-  const index = current.findIndex((r) => r.emoji === emoji);
+  // Entry identity is (emoji, segment target) — the same rule as the client's
+  // toggleReaction (issue #3210): an untargeted character reaction only merges
+  // into a whole-message entry, a targeted one only into its own segment's.
+  const targetSegment = target?.segment ?? null;
+  const targetSpeakerNorm = target?.speaker != null ? normalizeTextForMatch(target.speaker) : null;
+  const index = current.findIndex((r) => {
+    if (r.emoji !== emoji) return false;
+    if ((r.segment ?? null) !== targetSegment) return false;
+    if (targetSegment === null) return true;
+    // Same-index leftovers from a different segmentation (other speaker) stay distinct.
+    if (r.segmentSpeaker === undefined) return true;
+    return (r.segmentSpeaker != null ? normalizeTextForMatch(r.segmentSpeaker) : null) === targetSpeakerNorm;
+  });
   if (index === -1) {
     const entry: MessageReaction = { emoji, by: [reactor] };
     if (imageUrl) entry.imageUrl = imageUrl;
+    if (target) {
+      entry.segment = target.segment;
+      entry.segmentSpeaker = target.speaker ?? null;
+    }
     return [...current, entry];
   }
   const entry = current[index]!;
@@ -1739,8 +1993,12 @@ export async function generateRoutes(app: FastifyInstance) {
     const onClose = () => {
       clientDisconnected = true;
       if (generationComplete) return;
-      if (!shouldAbortOnPassiveGenerationDisconnect({ chatMode: requestChatMode, impersonate: input.impersonate })) {
-        logger.info("[generate] Conversation client disconnected; generation will continue for chat: %s", input.chatId);
+      if (!shouldAbortOnPassiveGenerationDisconnect({ impersonate: input.impersonate })) {
+        logger.info(
+          "[generate] Client disconnected; generation will continue for %s chat: %s",
+          requestChatMode,
+          input.chatId,
+        );
         return;
       }
       logger.info("[abort] Client disconnected — aborting generation");
@@ -2077,15 +2335,15 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
       const selectedPresetDiffersFromChat = !!resolvedPreset && !!presetId && presetId !== chatPromptPresetId;
-      const resolvedPresetDefaultChoices =
-        resolvedPreset ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {}) : {};
-      const chatChoices: Record<string, string | string[]> =
-        resolveGenerationPromptPresetChoices({
-          presetSource,
-          selectedPresetDiffersFromChat,
-          presetDefaultChoices: resolvedPresetDefaultChoices,
-          chatPresetChoices: (chatMeta.presetChoices ?? {}) as Record<string, string | string[]>,
-        });
+      const resolvedPresetDefaultChoices = resolvedPreset
+        ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {})
+        : {};
+      const chatChoices: Record<string, string | string[]> = resolveGenerationPromptPresetChoices({
+        presetSource,
+        selectedPresetDiffersFromChat,
+        presetDefaultChoices: resolvedPresetDefaultChoices,
+        chatPresetChoices: (chatMeta.presetChoices ?? {}) as Record<string, string | string[]>,
+      });
       let groupHistoryCharacterNamesByIdPromise: Promise<Map<string, string>> | null = null;
       const getGroupHistoryCharacterNamesById = () => {
         groupHistoryCharacterNamesByIdPromise ??= resolveCharacterNameMap(allCharacterIds, (id) => chars.getById(id));
@@ -2516,6 +2774,7 @@ export async function generateRoutes(app: FastifyInstance) {
             idleDuration: promptIdleDuration,
             timeZone: promptTimeZone,
             impersonate: input.impersonate === true,
+            preserveImpersonatePresetSections: input.impersonate === true && presetSource === "impersonate",
             deferCharacterMacros,
           };
 
@@ -2826,11 +3085,72 @@ export async function generateRoutes(app: FastifyInstance) {
           // any other id is a character.
           const reactorDisplayName = (reactorId: string): string =>
             reactorId === "user" ? personaName : (charIdToName.get(reactorId) ?? "a character");
-          for (let i = 0; i < finalMessages.length; i++) {
-            const raw = chatMessages[i];
-            if (!raw) continue;
-            const note = buildReactionAnnotation(parseExtra(raw.extra).reactions, reactorDisplayName);
-            if (note) finalMessages[i]!.content += note;
+          const anyReactedMessage = chatMessages.some((m: any) => {
+            const r = parseExtra(m.extra).reactions;
+            return Array.isArray(r) && r.length > 0;
+          });
+          if (anyReactedMessage) {
+            // Canonical speaker names for reaction attribution, keyed by their
+            // normalized form. Must cover every speaker the CLIENT can segment
+            // against — all chat characters (the client's known-name set keeps
+            // disabled ones) plus each message's own author (still segmentable
+            // after removal from the chat) — or segment indexes drift.
+            const reactionSpeakersByNorm = new Map<string, string>();
+            const addReactionSpeaker = (name: unknown) => {
+              if (typeof name !== "string") return;
+              const norm = normalizeTextForMatch(name);
+              const canonical = name.replace(/\s+/g, " ").trim();
+              if (norm && canonical && !reactionSpeakersByNorm.has(norm)) reactionSpeakersByNorm.set(norm, canonical);
+            };
+            for (const name of charIdToName.values()) addReactionSpeaker(name);
+            const extraSpeakerIds = new Set<string>();
+            for (const cid of allCharacterIds) if (!charIdToName.has(cid)) extraSpeakerIds.add(cid);
+            for (const m of chatMessages as Array<{ characterId?: unknown }>) {
+              const cid = m.characterId;
+              if (typeof cid === "string" && cid && !charIdToName.has(cid)) extraSpeakerIds.add(cid);
+            }
+            for (const cid of extraSpeakerIds) {
+              const row = await chars.getById(cid);
+              if (!row) continue;
+              try {
+                addReactionSpeaker(JSON.parse(row.data as string)?.name);
+              } catch {
+                // Malformed character data — skip; that speaker just won't be attributable.
+              }
+            }
+            // Pair prompt messages with their stored rows by id (index pairing
+            // can misalign on a follow-up pass after a mid-delay history refresh).
+            const rawMessagesById = new Map<string, any>();
+            for (const m of chatMessages as Array<{ id?: unknown }>) {
+              if (typeof m.id === "string") rawMessagesById.set(m.id, m);
+            }
+            for (let i = 0; i < finalMessages.length; i++) {
+              const promptMsgId = (finalMessages[i] as { id?: unknown }).id;
+              const raw = typeof promptMsgId === "string" ? rawMessagesById.get(promptMsgId) : undefined;
+              if (!raw) continue;
+              // Segment indexes resolve against the DISPLAY shape of the stored
+              // content (shared stripLeadingMessageTimestamps — exactly what the
+              // client renders and segments), then map into the prompt-shaped
+              // content for the inline injection. Replace the message object
+              // rather than mutating it: finalMessages shares objects with the
+              // follow-up/agent message arrays, and a mutated object would get
+              // annotated a second time on a follow-up generation pass.
+              const rawContentStr = typeof raw.content === "string" ? raw.content : String(raw.content ?? "");
+              finalMessages[i] = {
+                ...finalMessages[i]!,
+                content: annotateContentWithReactions(
+                  finalMessages[i]!.content,
+                  // Oversized content skips segmentation inside annotate anyway —
+                  // don't pay the strip on it either.
+                  rawContentStr.length > REACTION_ANNOTATION_CONTENT_CAP
+                    ? rawContentStr
+                    : stripLeadingMessageTimestamps(rawContentStr),
+                  parseExtra(raw.extra).reactions,
+                  reactionSpeakersByNorm,
+                  reactorDisplayName,
+                ),
+              };
+            }
           }
 
           // Separate into past-day groups and today's messages, preserving order
@@ -2873,6 +3193,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 stripLeakedTimestamps(msg.content),
                 msg.role,
                 personaName,
+                msg.role === "assistant" ? author : null,
               );
               buckets.push({ ...msg, content: `[${fmtTime(ts)}] ${promptContent}` });
             } else {
@@ -3036,13 +3357,18 @@ export async function generateRoutes(app: FastifyInstance) {
           };
           const buildTailTurns = () => {
             if (tailEntries.length === 0) return [];
-            // Match today's verbatim format: timestamp prefix, with user turns speaker-labeled.
+            // Match today's verbatim format: timestamp prefix, with visible speaker labels.
             // The [DD.MM HH:MM] prefix unambiguously distinguishes tail turns
             // from today's [HH:MM] turns, so no wrapper tag is needed — the
             // model can see from the timestamps alone where today begins.
             return tailEntries.map((m) => ({
               role: m.role as "user" | "assistant" | "system",
-              content: `${fmtTailPrefix(m.ts)} ${formatConversationPromptTurn(m.content, m.role, personaName)}`,
+              content: `${fmtTailPrefix(m.ts)} ${formatConversationPromptTurn(
+                m.content,
+                m.role,
+                personaName,
+                m.role === "assistant" ? m.author : null,
+              )}`,
             }));
           };
 
@@ -3163,6 +3489,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const selfieCommandEnabled = isConversationCommandEnabled(chatMeta, "selfie");
             const memoryCommandEnabled = isConversationCommandEnabled(chatMeta, "memory");
             const sceneCommandEnabled = isConversationCommandEnabled(chatMeta, "scene");
+            const callCommandEnabled = isConversationCommandEnabled(chatMeta, "call");
             const musicCommandEnabled = isConversationCommandEnabled(chatMeta, "music");
             const hapticCommandEnabled = isConversationCommandEnabled(chatMeta, "haptic");
             const activeMusicCommandSource =
@@ -3286,6 +3613,12 @@ export async function generateRoutes(app: FastifyInstance) {
               );
             }
 
+            if (callCommandEnabled && chatMode === "conversation") {
+              addCommandLines(
+                `- [call] or [call: reason="brief reason"] - ring ${personaName} for an audio call. Use this only when a live call naturally fits, such as when you urgently want to talk, when typing is awkward, or when ${personaName} asks you to call. The system will show an incoming call request; do not assume it was answered unless the call starts.`,
+              );
+            }
+
             // Turn-games — conversation mode only, when no game is running yet
             // and at least one other character is present to play with.
             const unoAdvertisable =
@@ -3362,13 +3695,21 @@ export async function generateRoutes(app: FastifyInstance) {
           // conversation asset context below. Whether
           // to react — and how warmly or dryly — is emergent from personality, not
           // dictated here.
-          // Gated on `conversationCommandsEnabled`: the `[react: …]` tag is parsed,
-          // stripped, and applied inside the command pipeline, which only runs when
-          // Character Commands are enabled. Advertising the syntax while that pipeline
-          // is off leaves the raw tag in the visible message with no badge (#2877).
-          if (conversationCommandsEnabled) {
+          // Gated on `conversationCommandsEnabled` + the per-command "react"
+          // toggle (#3219): the `[react: …]` tag is parsed, stripped, and applied
+          // inside the command pipeline, which only runs when Character Commands
+          // are enabled. Advertising the syntax while that pipeline is off leaves
+          // the raw tag in the visible message with no badge (#2877).
+          if (conversationCommandsEnabled && isConversationCommandEnabled(chatMeta, "react")) {
             conversationSystemPrompt +=
-              '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
+              '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. You can also react to another character instead by adding their name: [react: emoji="🙄" to "Character Name"] puts the badge on that character\'s most recent message. Only the [react: …] tag posts a badge — an emoji typed in your message body is just text. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
+            // Merged group replies only: individual-order group chats forbid
+            // name-prefixed sections entirely (matching the other name-prefix
+            // instructions gated on earlyGroupMode !== "individual").
+            if (characterIds.length > 1 && earlyGroupMode !== "individual") {
+              conversationSystemPrompt +=
+                " In this group chat, each character reacts for themselves: write the tag inside that character's own section of the reply, directly under their name line, so the reaction is credited to them — never above the first name line. One reaction per reply is not a limit — every character who would plausibly react may include their own tag in their own section, the way several people tap a reaction on the same message in a real chat.";
+            }
           }
           // ── Home Professor Mari: inject assistant knowledge & commands ──
           if (isHomeProfessorMariAssistantChat) {
@@ -4143,6 +4484,9 @@ export async function generateRoutes(app: FastifyInstance) {
           chatCustomParameters: connectionParams?.customParameters ?? {},
           chatMaxOutputTokens: chatConnectionMaxOutputTokens,
           chatMaxParallelJobs: chatConnectionMaxParallelJobs,
+          chatEnableCaching: conn.enableCaching === "true",
+          chatAnthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
+          chatCachingAtDepth: conn.cachingAtDepth ?? 5,
           activeMusicPlayerSource,
           chatMetadata: chatMeta,
           resolveBaseUrl,
@@ -5454,8 +5798,8 @@ export async function generateRoutes(app: FastifyInstance) {
           pipelineAgents = pipelineAgents.filter((a) => !trackerIds.has(a.type));
         }
 
-        // Echo Chamber should only fire on fresh user messages, not swipes/regenerates
-        if (input.regenerateMessageId) {
+        // Echo Chamber should only fire on fresh user messages, not swipes/regenerates/continues.
+        if (input.regenerateMessageId || input.continueMessageId) {
           pipelineAgents = pipelineAgents.filter((a) => a.type !== "echo-chamber");
         }
 
@@ -6301,7 +6645,8 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Determine characters to generate for ──
         // Individual group mode: each character responds separately
         // Merged/single: one generation for the first (or mentioned) character
-        const useIndividualLoop = isGroupChat && groupChatMode === "individual" && !input.regenerateMessageId; // regeneration always targets one message
+        const useIndividualLoop =
+          isGroupChat && groupChatMode === "individual" && !input.regenerateMessageId && !input.impersonate; // regeneration/impersonate always target one message
         const regenGroupChatIndividual = isGroupChat && groupChatMode === "individual" && input.regenerateMessageId;
         const mentionedConversationCharacters =
           chatMode === "conversation" && isGroupChat && !input.impersonate
@@ -6312,10 +6657,21 @@ export async function generateRoutes(app: FastifyInstance) {
               )
             : [];
 
-        const needsSmartResponseQueue = useIndividualLoop && groupResponseOrder === "smart" && !input.forCharacterId;
+        const hasExplicitGenerationDirective = input.impersonate === true || Boolean(input.generationGuide?.trim());
+        const selectExplicitOrFallbackSmartGroupResponder = (): string[] => {
+          const explicitMentionIds = getExplicitlyMentionedCharacterIds();
+          return explicitMentionIds.length > 0 ? explicitMentionIds : selectFallbackSmartGroupResponder();
+        };
+        const needsSmartResponseQueue =
+          useIndividualLoop &&
+          groupResponseOrder === "smart" &&
+          !input.forCharacterId &&
+          !hasExplicitGenerationDirective;
         let smartResponseQueue =
           useIndividualLoop && groupResponseOrder === "smart" && !input.forCharacterId
-            ? await selectSmartGroupResponders()
+            ? hasExplicitGenerationDirective
+              ? selectExplicitOrFallbackSmartGroupResponder()
+              : await selectSmartGroupResponders()
             : null;
 
         if (needsSmartResponseQueue && (!smartResponseQueue || smartResponseQueue.length === 0)) {
@@ -6631,6 +6987,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   stop: stopSequences.length ? stopSequences : undefined,
                   tools: toolDefs,
                   enableCaching: conn.enableCaching === "true",
+                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
                   cachingAtDepth: conn.cachingAtDepth ?? 5,
                   enableThinking,
                   captureReasoning,
@@ -6786,6 +7143,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   minP: minP || undefined,
                   stop: stopSequences.length ? stopSequences : undefined,
                   enableCaching: conn.enableCaching === "true",
+                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
                   cachingAtDepth: conn.cachingAtDepth ?? 5,
                   enableThinking,
                   captureReasoning,
@@ -6842,6 +7200,7 @@ export async function generateRoutes(app: FastifyInstance) {
               stop: stopSequences.length ? stopSequences : undefined,
               stream: input.streaming,
               enableCaching: conn.enableCaching === "true",
+              anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
               cachingAtDepth: conn.cachingAtDepth ?? 5,
               enableThinking,
               captureReasoning,
@@ -6965,6 +7324,7 @@ export async function generateRoutes(app: FastifyInstance) {
           // Parallel to parsedCommands: per-command character attribution for merged
           // group conversations (null elsewhere — caller falls back to the message char).
           let parsedCommandCharacterIds: (string | null)[] | null = null;
+          let parsedRawCommandCount = 0;
           let conversationCommandContent: string | null = null;
           let contentReplaced = false;
           if (tailMessages.assistantPrefillInjected && assistantPrefill && fullResponse.startsWith(assistantPrefill)) {
@@ -7022,6 +7382,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 )
               : null;
             if (parsed.commands.length > 0) {
+              parsedRawCommandCount += parsed.commands.length;
               parsedCommands = filterEnabledConversationCommands(parsed.commands, chatMeta);
               if (parsedCommands.length > 0) {
                 conversationCommandContent = responseBeforeCommandParsing.trim();
@@ -7198,10 +7559,11 @@ export async function generateRoutes(app: FastifyInstance) {
           // no surrounding prose, treat the commands as the useful output. Skip saving
           // a blank assistant bubble but still return the commands so they execute.
           if (!fullResponse.trim()) {
-            if (!input.impersonate && parsedCommands.length > 0) {
+            if (!input.impersonate && (parsedCommands.length > 0 || parsedRawCommandCount > 0)) {
               logger.info(
-                "[generate] Model emitted %d command(s) with no visible prose for chat %s; saving hidden command anchor",
+                "[generate] Model emitted %d enabled command(s) (%d parsed) with no visible prose for chat %s; saving hidden command anchor",
                 parsedCommands.length,
+                parsedRawCommandCount,
                 input.chatId,
               );
               const savedMsg = await chats.createMessage({
@@ -7467,20 +7829,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // (firstSavedMsg/lastSavedMsg/collectedCommands/collectedOocMessages
         // are declared above the follow-up loop so they survive iterations.)
 
-        const rawGenerationGuide = typeof input.generationGuide === "string" ? input.generationGuide.trim() : "";
-        const normalizedGenerationGuide = rawGenerationGuide
-          ? resolveMacros(
-              rawGenerationGuide,
-              {
-                ...promptMacroContext,
-                variables: { ...promptMacroContext.variables },
-              },
-              { trimResult: false },
-            ).trim()
-          : "";
-        const generationGuideInstruction = normalizedGenerationGuide
-          ? `Take the following into special consideration for your next message: ${normalizedGenerationGuide}`
-          : null;
+        const generationGuideInstruction = buildGenerationGuideInstruction(input.generationGuide, promptMacroContext);
         const filterManualTargetProfileBlocks = (messages: typeof finalMessages, targetCharId: string) => {
           if (groupResponseOrder !== "manual") return messages;
           const otherNames = charInfo.filter((c) => c.id !== targetCharId).map((c) => c.name);
@@ -9578,6 +9927,28 @@ export async function generateRoutes(app: FastifyInstance) {
             type: "assistant_commands_start",
             data: { count: collectedCommands.length, professorMariCommandCount },
           });
+          // React target resolution needs the FULL chat-member list (disabled
+          // members included — the client segments with them). Built lazily once
+          // per request: each getById is a full-table scan in the file-native
+          // store, and a multi-react group reply runs several react commands.
+          let reactChatMembersCache: Array<{ id: string; name: string }> | null = null;
+          const getReactChatMembers = async (): Promise<Array<{ id: string; name: string }>> => {
+            if (reactChatMembersCache) return reactChatMembersCache;
+            const members: Array<{ id: string; name: string }> = charInfo.map((c) => ({ id: c.id, name: c.name }));
+            for (const cid of allCharacterIds) {
+              if (members.some((m) => m.id === cid)) continue;
+              const row = await chars.getById(cid);
+              if (!row) continue;
+              try {
+                const name = JSON.parse(row.data as string)?.name;
+                if (typeof name === "string" && name.trim()) members.push({ id: cid, name });
+              } catch {
+                // Malformed character data — not addressable as a react target.
+              }
+            }
+            reactChatMembersCache = members;
+            return members;
+          };
           try {
             for (const { command, characterId, messageId, swipeIndex } of collectedCommands) {
               try {
@@ -9777,7 +10148,9 @@ export async function generateRoutes(app: FastifyInstance) {
                           ? `${imagePrompt}, ${selfiePositivePrompt}`
                           : imagePrompt;
                         let selfieReferenceImages: string[] | undefined;
-                        if (chatMeta.selfieUseAvatarReferences === true) {
+                        const selfieUseAvatarReferences = chatMeta.selfieUseAvatarReferences === true;
+                        const selfieIncludeCharacterAppearance = chatMeta.selfieIncludeCharacterAppearance === true;
+                        if (selfieUseAvatarReferences || selfieIncludeCharacterAppearance) {
                           const referenceResolution = await resolveIllustratorCharacterReferences({
                             charactersStore: chars,
                             chatCharacters: charInfo.map((character) => ({
@@ -9799,7 +10172,14 @@ export async function generateRoutes(app: FastifyInstance) {
                             fallbackToChatCharacters: false,
                             maxReferences: 1,
                           });
-                          if (referenceResolution.referenceImages.length > 0) {
+                          if (selfieIncludeCharacterAppearance && referenceResolution.appearanceBlock) {
+                            finalSelfiePrompt += `\n\n${referenceResolution.appearanceBlock}`;
+                            logger.debug(
+                              "[selfie] Added character appearance notes for: %s",
+                              referenceResolution.appearanceNames.join(", "),
+                            );
+                          }
+                          if (selfieUseAvatarReferences && referenceResolution.referenceImages.length > 0) {
                             selfieReferenceImages = referenceResolution.referenceImages;
                             if (referenceResolution.referenceLine && !suppressReferencePromptLine) {
                               finalSelfiePrompt += `\n\n${referenceResolution.referenceLine}`;
@@ -9934,6 +10314,87 @@ export async function generateRoutes(app: FastifyInstance) {
                         },
                       })}\n\n`,
                     );
+                  }
+                } else if (command.type === "call") {
+                  // ── Call: create a ringing Conversation call request ──
+                  const callCmd = command as CallCommand;
+                  if (chatMode !== "conversation") continue;
+                  const freshChat = await chats.getById(input.chatId);
+                  const freshMeta =
+                    typeof freshChat?.metadata === "string"
+                      ? JSON.parse(freshChat.metadata)
+                      : (freshChat?.metadata ?? {});
+                  if (freshMeta.characterCommands === false || !isConversationCommandEnabled(freshMeta, "call")) {
+                    logger.debug(
+                      "[commands] Ignored call command because calls are disabled for chat %s",
+                      input.chatId,
+                    );
+                    continue;
+                  }
+                  const ttsSettingsRaw = await createAppSettingsStorage(app.db).get("tts");
+                  let ttsSettings: Record<string, unknown> = {};
+                  if (ttsSettingsRaw && typeof ttsSettingsRaw === "string") {
+                    try {
+                      const parsed = JSON.parse(ttsSettingsRaw);
+                      ttsSettings =
+                        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                          ? (parsed as Record<string, unknown>)
+                          : {};
+                    } catch {
+                      ttsSettings = {};
+                    }
+                  }
+                  if (ttsSettings.callAudioEnabled !== true) {
+                    logger.debug(
+                      "[commands] Ignored call command because Conversation call audio is globally disabled",
+                    );
+                    continue;
+                  }
+                  const callStore = createConversationCallsStorage(app.db);
+                  const existingActive = await callStore.getActiveForChat(input.chatId);
+                  const existingRinging = await callStore.getRingingForChat(input.chatId);
+                  const session =
+                    existingActive ??
+                    existingRinging ??
+                    (await callStore.createSession({
+                      chatId: input.chatId,
+                      mode: "audio",
+                      initiator: "character",
+                      initiatorCharacterId: characterId,
+                      metadata: {
+                        reason: callCmd.reason ?? null,
+                        sourceMessageId: messageId ?? null,
+                      },
+                    }));
+                  if (session && !existingActive && !existingRinging) {
+                    await chats.createMessagesBatch(input.chatId, [
+                      {
+                        role: "system",
+                        characterId,
+                        content: callCmd.reason ? `Incoming call: ${callCmd.reason}` : "Incoming call",
+                        extra: {
+                          displayText: null,
+                          isGenerated: true,
+                          tokenCount: null,
+                          generationInfo: null,
+                          conversationCallEvent: {
+                            callId: session.id,
+                            status: session.status,
+                            mode: session.mode,
+                            initiator: session.initiator,
+                            reason: callCmd.reason ?? null,
+                            sourceMessageId: messageId ?? null,
+                          },
+                        },
+                      },
+                    ]);
+                  }
+                  if (session) {
+                    trySendSseEvent(reply, {
+                      type: "conversation_call_ringing",
+                      data: { session, reason: callCmd.reason ?? null, characterId },
+                    });
+                    logger.info("[commands] Conversation call ringing for chat %s", input.chatId);
                   }
                 } else if (command.type === "memory") {
                   // ── Memory: store a fake memory on the target character ──
@@ -10094,40 +10555,221 @@ export async function generateRoutes(app: FastifyInstance) {
                     continue;
                   }
                   if (characterId && reactCmd.emoji) {
-                    // React to the user's most recent message — the turn being answered.
-                    const targetId = [...chatMessages].reverse().find((m: any) => m.role === "user")?.id as
+                    // Resolve a custom-emoji (:name:) image so the chip renders without
+                    // re-resolving the gallery on the client (same URL form the picker uses).
+                    let imageUrl: string | null = null;
+                    const customName = reactCmd.emoji.match(/^:([a-zA-Z0-9_]+):$/)?.[1];
+                    if (customName) {
+                      const emojiLookupKeys = [
+                        characterId ? buildConversationCustomEmojiKey("character", characterId, customName) : null,
+                        personaId ? buildConversationCustomEmojiKey("persona", personaId, customName) : null,
+                        buildConversationCustomEmojiKey("global", null, customName),
+                      ].filter((key): key is string => Boolean(key));
+                      for (const key of emojiLookupKeys) {
+                        imageUrl = conversationCustomEmojiUrlByName.get(key) ?? null;
+                        if (imageUrl) break;
+                      }
+                      if (!imageUrl) {
+                        const row = await customEmojisStore.getByName(customName);
+                        if (row?.filePath) imageUrl = buildGlobalCustomEmojiUrl(String(row.filePath));
+                      }
+                    }
+
+                    // Resolve the target. Default: the user's most recent message —
+                    // the turn being answered — as a whole-message reaction.
+                    // `[react: E to "Name"]`: that character's most recent part —
+                    // looked for in the reply this command came from first, then
+                    // backwards through recent history — as a segment reaction
+                    // (issue #3210). An unresolvable name falls back to the default.
+                    let targetId = [...chatMessages].reverse().find((m: any) => m.role === "user")?.id as
                       | string
                       | undefined;
-                    if (targetId) {
-                      // Resolve a custom-emoji (:name:) image so the chip renders without
-                      // re-resolving the gallery on the client (same URL form the picker uses).
-                      let imageUrl: string | null = null;
-                      const customName = reactCmd.emoji.match(/^:([a-zA-Z0-9_]+):$/)?.[1];
-                      if (customName) {
-                        const emojiLookupKeys = [
-                          characterId ? buildConversationCustomEmojiKey("character", characterId, customName) : null,
-                          personaId ? buildConversationCustomEmojiKey("persona", personaId, customName) : null,
-                          buildConversationCustomEmojiKey("global", null, customName),
-                        ].filter((key): key is string => Boolean(key));
-                        for (const key of emojiLookupKeys) {
-                          imageUrl = conversationCustomEmojiUrlByName.get(key) ?? null;
-                          if (imageUrl) break;
+                    let segmentTarget: { segment: number; speaker: string | null } | null = null;
+                    // The saved reply row, prefetched when the targeted-resolution
+                    // path already loaded it — the write below reuses it instead
+                    // of re-scanning the messages table.
+                    let prefetchedTargetMsg: Awaited<ReturnType<typeof chats.getMessage>> | null = null;
+                    if (reactCmd.targetCharacter) {
+                      const chatMembers = await getReactChatMembers();
+                      const wanted = normalizeTextForMatch(reactCmd.targetCharacter);
+                      const targetChar = chatMembers.find((m) => normalizeTextForMatch(m.name) === wanted);
+                      if (!targetChar) {
+                        // Chat members take precedence; with none matching, a react
+                        // aimed at the human — the persona's name or "User" — IS the
+                        // default target, so keep it silently. Other unknown names
+                        // fall back the same way, with a log.
+                        const targetsPersona =
+                          wanted === normalizeTextForMatch(personaName) || wanted === "user";
+                        if (!targetsPersona) {
+                          logger.debug(
+                            '[react/conversation] Unknown react target "%s" — falling back to the user message',
+                            reactCmd.targetCharacter,
+                          );
                         }
-                        if (!imageUrl) {
-                          const row = await customEmojisStore.getByName(customName);
-                          if (row?.filePath) imageUrl = buildGlobalCustomEmojiUrl(String(row.filePath));
+                      } else {
+                        const baseNames = new Set(chatMembers.map((m) => normalizeTextForMatch(m.name)));
+                        // A walked message's author may have been removed from the
+                        // chat; the client still segments with their name (author
+                        // fallback), so include it. Cache store lookups by id.
+                        const authorNameCache = new Map<string, string | null>();
+                        const authorNameOf = async (cid: unknown): Promise<string | null> => {
+                          if (typeof cid !== "string" || !cid) return null;
+                          const member = chatMembers.find((m) => m.id === cid);
+                          if (member) return member.name;
+                          if (authorNameCache.has(cid)) return authorNameCache.get(cid)!;
+                          let name: string | null = null;
+                          const row = await chars.getById(cid);
+                          if (row) {
+                            try {
+                              const parsedName = JSON.parse(row.data as string)?.name;
+                              if (typeof parsedName === "string" && parsedName.trim()) name = parsedName;
+                            } catch {
+                              // Malformed character data — segment without the author name.
+                            }
+                          }
+                          authorNameCache.set(cid, name);
+                          return name;
+                        };
+                        // Last part by the target speaker in a message, or null.
+                        // Segments the DISPLAY shape (shared timestamp strip) with
+                        // the client's known-name set so the stored index lands on
+                        // the same part the client renders the chip under.
+                        // `beforePartByNorm`: only consider parts BEFORE that
+                        // speaker's first part — a reactor can't have been reacting
+                        // to something written after their own turn in the same reply.
+                        const lastPartBy = async (
+                          content: unknown,
+                          authorId: unknown,
+                          beforePartByNorm?: string | null,
+                        ): Promise<{ segment: number; speaker: string | null } | null> => {
+                          const rawText = typeof content === "string" ? content : String(content ?? "");
+                          // Cap BEFORE the strip so pathological content skips all
+                          // regex work, not just the segmentation.
+                          if (!rawText.trim() || rawText.length > REACTION_ANNOTATION_CONTENT_CAP) return null;
+                          const text = stripLeadingMessageTimestamps(rawText);
+                          if (!text) return null;
+                          const names = new Set(baseNames);
+                          const author = await authorNameOf(authorId);
+                          if (author) names.add(normalizeTextForMatch(author));
+                          const groups = parseGroupedSpeakerSegments(text, names);
+                          if (!groups) return null;
+                          let cutoff = groups.length;
+                          if (beforePartByNorm) {
+                            const reactorFirst = groups.findIndex(
+                              (g) => g.speaker != null && normalizeTextForMatch(g.speaker) === beforePartByNorm,
+                            );
+                            if (reactorFirst >= 0) cutoff = reactorFirst;
+                          }
+                          for (let gi = cutoff - 1; gi >= 0; gi--) {
+                            const g = groups[gi]!;
+                            if (
+                              g.speaker != null &&
+                              normalizeTextForMatch(g.speaker) === wanted &&
+                              g.lines.some((line) => line.trim().length > 0)
+                            ) {
+                              return { segment: gi, speaker: g.speaker };
+                            }
+                          }
+                          return null;
+                        };
+                        let resolved: {
+                          id: string;
+                          target: { segment: number; speaker: string | null } | null;
+                        } | null = null;
+                        // The reply this command came from (already saved) — same-turn
+                        // reactions like reacting to another speaker's part above
+                        // yours. Only parts before the reactor's own turn count;
+                        // otherwise the search falls through to earlier messages.
+                        if (messageId) {
+                          const ownMsg = await chats.getMessage(messageId);
+                          if (ownMsg) {
+                            const reactorName = chatMembers.find((m) => m.id === characterId)?.name ?? null;
+                            const part = await lastPartBy(
+                              ownMsg.content,
+                              (ownMsg as { characterId?: unknown }).characterId,
+                              reactorName ? normalizeTextForMatch(reactorName) : null,
+                            );
+                            if (part) {
+                              resolved = { id: messageId, target: part };
+                              prefetchedTargetMsg = ownMsg;
+                            }
+                          }
+                        }
+                        if (!resolved) {
+                          // Recent history, newest first: a merged part by the target,
+                          // or a message they authored outright (whole-message react).
+                          const recent = [...chatMessages].slice(-30).reverse() as Array<{
+                            id?: unknown;
+                            role?: unknown;
+                            content?: unknown;
+                            characterId?: unknown;
+                            extra?: unknown;
+                          }>;
+                          for (const m of recent) {
+                            if (typeof m.id !== "string" || m.role === "user") continue;
+                            // Hidden command-anchor rows never render — a reaction
+                            // written there would be invisible. Keep walking. An
+                            // empty-text message WITH attachments (image-only reply)
+                            // does render, so it stays a valid whole-message target.
+                            const mExtra = parseExtra(m.extra) as Record<string, unknown>;
+                            if (mExtra.hiddenFromUser === true || mExtra.commandOnly === true) continue;
+                            const contentStr = typeof m.content === "string" ? m.content : String(m.content ?? "");
+                            const hasAttachments = Array.isArray(mExtra.attachments) && mExtra.attachments.length > 0;
+                            if (!contentStr.trim() && !hasAttachments) continue;
+                            if (m.characterId === targetChar.id) {
+                              resolved = { id: m.id, target: await lastPartBy(m.content, m.characterId) };
+                              break;
+                            }
+                            const part = await lastPartBy(m.content, m.characterId);
+                            if (part) {
+                              resolved = { id: m.id, target: part };
+                              break;
+                            }
+                          }
+                        }
+                        if (resolved) {
+                          targetId = resolved.id;
+                          segmentTarget = resolved.target;
+                        } else {
+                          logger.debug(
+                            '[react/conversation] No recent part by "%s" to react to — skipping targeted react',
+                            targetChar.name,
+                          );
+                          continue;
                         }
                       }
-                      const targetMsg = await chats.getMessage(targetId);
+                    }
+
+                    if (targetId) {
+                      const targetMsg =
+                        prefetchedTargetMsg && targetId === messageId
+                          ? prefetchedTargetMsg
+                          : await chats.getMessage(targetId);
                       if (targetMsg) {
                         const ex = parseExtra(targetMsg.extra);
-                        const reactions = addMessageReactor(ex.reactions, reactCmd.emoji, characterId, imageUrl);
+                        const reactions = addMessageReactor(
+                          ex.reactions,
+                          reactCmd.emoji,
+                          characterId,
+                          imageUrl,
+                          segmentTarget,
+                        );
+                        // updateMessageExtra mirrors the ACTIVE swipe itself; the
+                        // loop below covers the remaining swipes so swiping the
+                        // target message doesn't drop the character's reaction
+                        // (same message-level semantics as the client PATCH route).
                         await chats.updateMessageExtra(targetId, { reactions });
+                        const targetSwipes = await chats.getSwipes(targetId);
+                        for (const swipe of targetSwipes) {
+                          if (swipe.index === targetMsg.activeSwipeIndex) continue;
+                          await chats.updateSwipeExtra(targetId, swipe.index, { reactions });
+                        }
                         logger.info(
-                          "[react/conversation] %s reacted with %s on message %s",
+                          "[react/conversation] %s reacted with %s on message %s%s",
                           characterId,
                           reactCmd.emoji,
                           targetId,
+                          segmentTarget ? ` (segment ${segmentTarget.segment})` : "",
                         );
                       }
                     }
@@ -11452,6 +12094,15 @@ export async function generateRoutes(app: FastifyInstance) {
 
   // Expose the map so the route handler can register/unregister generations
   app.decorate("activeGenerations", activeGenerations);
+
+  /**
+   * GET /api/generate/status/:chatId
+   * Lets clients recover from passive mobile/browser stream disconnects by
+   * waiting until the server-side generation has finished saving.
+   */
+  app.get<{ Params: { chatId: string } }>("/status/:chatId", async (req) => ({
+    active: activeGenerations.has(req.params.chatId),
+  }));
 
   /**
    * POST /api/generate/abort

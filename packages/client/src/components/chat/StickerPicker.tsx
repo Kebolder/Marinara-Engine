@@ -55,7 +55,7 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [pos, setPos] = useState<{ bottom: number; right?: number; left?: number; maxHeight?: number }>({ bottom: 0 });
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number; maxHeight?: number }>({ top: 0 });
 
   const updatePosition = useCallback(() => {
     if (!anchorRef?.current) return;
@@ -65,17 +65,28 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
     const pickerWidth = 336;
     const pickerHeight = 352;
     const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
     const vw = viewport?.width ?? window.innerWidth;
-    const vh = viewport?.height ?? window.innerHeight;
+    const visibleLeft = viewportLeft;
+    const visibleTop = viewportTop;
+    const visibleRight = viewportLeft + vw;
+    const panelWidth = Math.min(pickerWidth, Math.max(0, vw - 2 * pad));
     const refTop = barRect ? barRect.top : btnRect.top;
-    const bottom = vh - refTop + pad;
-    const maxHeight = Math.min(pickerHeight, Math.max(0, refTop - 2 * pad));
+    const anchorTop = refTop + viewportTop;
+    const maxHeight = Math.min(pickerHeight, Math.max(0, anchorTop - visibleTop - 2 * pad));
+    const top = Math.max(visibleTop + pad, anchorTop - maxHeight - pad);
     if (vw < 480) {
-      const left = Math.max(8, (vw - Math.min(pickerWidth, vw - 16)) / 2);
-      setPos({ bottom, left, maxHeight });
+      const left = visibleLeft + Math.max(pad, (vw - panelWidth) / 2);
+      setPos({ top, left, maxHeight });
     } else {
-      const right = Math.max(8, vw - btnRect.right);
-      setPos({ bottom, right, maxHeight });
+      const btnRight = btnRect.right + viewportLeft;
+      const alignedLeft = btnRight - panelWidth;
+      if (alignedLeft < visibleLeft + pad) {
+        setPos({ top, left: visibleLeft + pad, maxHeight });
+      } else {
+        setPos({ top, right: Math.max(pad, visibleRight - btnRight), maxHeight });
+      }
     }
   }, [anchorRef, containerRef]);
 
@@ -356,8 +367,8 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
               <>No stickers match “{query.trim()}”.</>
             ) : (
               <>
-                No stickers yet. Upload one (max 512×512) to send it as{" "}
-                <span className="font-mono">sticker:name:</span>.
+                No stickers yet. Upload one (max 512×512) to send it as <span className="font-mono">sticker:name:</span>
+                .
               </>
             )}
           </p>
@@ -375,7 +386,11 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
                         title={editing ? `Rename sticker:${sticker.name}:` : `Send sticker:${sticker.name}:`}
                         className={cellClass}
                       >
-                        <img src={sticker.url} alt={`sticker:${sticker.name}:`} className="max-h-16 max-w-full object-contain" />
+                        <img
+                          src={sticker.url}
+                          alt={`sticker:${sticker.name}:`}
+                          className="max-h-16 max-w-full object-contain"
+                        />
                       </button>
                       {editing && (
                         <button
@@ -405,7 +420,11 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
                         title={`Send sticker:${sticker.name}: — ${source}`}
                         className={cellClass}
                       >
-                        <img src={sticker.url} alt={`sticker:${sticker.name}:`} className="max-h-16 max-w-full object-contain" />
+                        <img
+                          src={sticker.url}
+                          alt={`sticker:${sticker.name}:`}
+                          className="max-h-16 max-w-full object-contain"
+                        />
                       </button>
                     </div>
                   ))}
@@ -427,9 +446,9 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
       ref={panelRef}
       className="fixed z-[9999] flex h-[22rem] w-[21rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl"
       style={{
-        bottom: pos.bottom,
-        ...(pos.right != null ? { right: pos.right } : {}),
+        top: pos.top,
         ...(pos.left != null ? { left: pos.left } : {}),
+        ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.maxHeight != null ? { maxHeight: pos.maxHeight } : {}),
       }}
     >

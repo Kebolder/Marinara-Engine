@@ -419,7 +419,13 @@ const GAME_ASSET_CATEGORIES = [
   },
 ] as const;
 
-const GAME_IMAGE_PROMPT_TEMPLATE_KEYS = ["game.npcPortrait", "game.background", "game.sceneIllustration"] as const;
+const GAME_IMAGE_PROMPT_TEMPLATE_KEYS = [
+  "game.npcPortrait",
+  "game.background",
+  "game.sceneIllustration",
+  "game.narrationSummarizer",
+  "game.video",
+] as const;
 
 type GameAssetCategoryId = (typeof GAME_ASSET_CATEGORIES)[number]["id"];
 const GAME_ASSET_CATEGORY_BY_ID = new Map(GAME_ASSET_CATEGORIES.map((category) => [category.id, category]));
@@ -5880,9 +5886,9 @@ function AdvancedSettings() {
 
       <ImageGenerationSettings />
       <PromptOverridesEditor
-        title="Image Prompt Templates"
-        description="Edit the reusable templates used for NPC portraits, scene backgrounds, and scene illustrations."
-        help="These templates render before recurring Game image requests and manual Gallery background generation. One-off prompt review edits still only affect the current request."
+        title="Game Prompt Templates"
+        description="Edit the reusable templates used for NPC portraits, scene backgrounds, scene illustrations, narration summarization, and Omni scene videos."
+        help="These templates render before recurring Game image requests, narration-to-illustration summarization, Omni scene video generation, and manual Gallery background generation. One-off prompt review edits still only affect the current request."
         keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
         preferredKey="game.npcPortrait"
       />

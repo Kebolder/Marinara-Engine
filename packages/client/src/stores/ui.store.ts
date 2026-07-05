@@ -571,6 +571,10 @@ interface UIState {
   youtubePlayerVolume: number;
   /** User-set local Custom music player volume (0–100). The DJ can also steer this. */
   localMusicPlayerVolume: number;
+  /** User-set Conversation Call character voice volume (0–100). */
+  conversationCallVoiceVolume: number;
+  /** When true, mute character voices in Conversation Calls. */
+  conversationCallVoiceMuted: boolean;
   /** Mobile Spotify widget collapsed state. */
   spotifyMobileWidgetCollapsed: boolean;
   /** Mobile Spotify widget position in viewport pixels. */
@@ -840,6 +844,8 @@ interface UIState {
   setYoutubePlayerEnabled: (v: boolean) => void;
   setYoutubePlayerVolume: (v: number) => void;
   setLocalMusicPlayerVolume: (v: number) => void;
+  setConversationCallVoiceVolume: (v: number) => void;
+  setConversationCallVoiceMuted: (v: boolean) => void;
   setSpotifyMobileWidgetCollapsed: (v: boolean) => void;
   setSpotifyMobileWidgetPosition: (position: FloatingWidgetPosition) => void;
   setIntuitiveSwipeNavigation: (v: boolean) => void;
@@ -1037,6 +1043,8 @@ export function pickSyncedSettings(state: UIState) {
     youtubePlayerEnabled: state.youtubePlayerEnabled,
     youtubePlayerVolume: state.youtubePlayerVolume,
     localMusicPlayerVolume: state.localMusicPlayerVolume,
+    conversationCallVoiceVolume: state.conversationCallVoiceVolume,
+    conversationCallVoiceMuted: state.conversationCallVoiceMuted,
     spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
     spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,
     intuitiveSwipeNavigation: state.intuitiveSwipeNavigation,
@@ -1210,6 +1218,8 @@ export const useUIStore = create<UIState>()(
       youtubePlayerEnabled: true,
       youtubePlayerVolume: 70,
       localMusicPlayerVolume: 70,
+      conversationCallVoiceVolume: 100,
+      conversationCallVoiceMuted: false,
       spotifyMobileWidgetCollapsed: true,
       spotifyMobileWidgetPosition: { x: 16, y: 96 },
       intuitiveSwipeNavigation: false,
@@ -1769,6 +1779,9 @@ export const useUIStore = create<UIState>()(
       setYoutubePlayerEnabled: (v) => set({ youtubePlayerEnabled: v }),
       setYoutubePlayerVolume: (v) => set({ youtubePlayerVolume: Math.max(0, Math.min(100, Math.round(v))) }),
       setLocalMusicPlayerVolume: (v) => set({ localMusicPlayerVolume: Math.max(0, Math.min(100, Math.round(v))) }),
+      setConversationCallVoiceVolume: (v) =>
+        set({ conversationCallVoiceVolume: Math.max(0, Math.min(100, Math.round(v))) }),
+      setConversationCallVoiceMuted: (v) => set({ conversationCallVoiceMuted: v }),
       setSpotifyMobileWidgetCollapsed: (v) => set({ spotifyMobileWidgetCollapsed: v }),
       setSpotifyMobileWidgetPosition: (position) =>
         set({
@@ -1952,7 +1965,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 67,
+      version: 68,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2318,6 +2331,16 @@ export const useUIStore = create<UIState>()(
         if (version <= 65 && persisted.includeReasoningInExports === undefined) {
           persisted.includeReasoningInExports = false;
         }
+        if (typeof persisted.conversationCallVoiceVolume !== "number") {
+          persisted.conversationCallVoiceVolume = 100;
+        }
+        persisted.conversationCallVoiceVolume = Math.max(
+          0,
+          Math.min(100, Math.round(persisted.conversationCallVoiceVolume)),
+        );
+        if (typeof persisted.conversationCallVoiceMuted !== "boolean") {
+          persisted.conversationCallVoiceMuted = false;
+        }
         // v42 -> v44: reconcile parallel v43 UI preference additions.
         if (version <= 43 && persisted.youtubePlayerEnabled === undefined) {
           persisted.youtubePlayerEnabled = true;
@@ -2557,6 +2580,8 @@ export const useUIStore = create<UIState>()(
         youtubePlayerEnabled: state.youtubePlayerEnabled,
         youtubePlayerVolume: state.youtubePlayerVolume,
         localMusicPlayerVolume: state.localMusicPlayerVolume,
+        conversationCallVoiceVolume: state.conversationCallVoiceVolume,
+        conversationCallVoiceMuted: state.conversationCallVoiceMuted,
         spotifyMobileWidgetCollapsed: state.spotifyMobileWidgetCollapsed,
         spotifyMobileWidgetPosition: state.spotifyMobileWidgetPosition,
         intuitiveSwipeNavigation: state.intuitiveSwipeNavigation,

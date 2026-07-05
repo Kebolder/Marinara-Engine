@@ -16,6 +16,8 @@ import {
   User,
   Plug,
   Image,
+  Film,
+  PanelsTopLeft,
   BookOpen,
   Music2,
   Volume2,
@@ -75,6 +77,15 @@ interface GameSetupWizardProps {
 interface PersonaDisplayInfo {
   name: string;
   comment?: string | null;
+}
+
+interface WizardConnection {
+  id: string;
+  name: string;
+  model?: string;
+  provider?: string;
+  defaultParameters?: string | null;
+  isDefault?: boolean | string;
 }
 
 function CharacterAvatar({
@@ -180,7 +191,7 @@ const GAME_SETUP_STEPS = [
   {
     key: "features",
     title: "Features",
-    body: "Choose optional visual, music, lore, and HUD features for the session.",
+    body: "Choose optional visual, storyboard, music, lore, and HUD features for the session.",
   },
   {
     key: "gm",
@@ -203,6 +214,14 @@ function normalizeGameSpotifySourceType(value: unknown): GameSpotifySourceType {
 }
 
 type LearnedOptionGroup = "genres" | "tones" | "settings" | "goals" | "preferences";
+
+function getPreferredConnectionId(connections: WizardConnection[]): string | null {
+  return (
+    connections.find((connection) => connection.isDefault === true || connection.isDefault === "true")?.id ??
+    connections[0]?.id ??
+    null
+  );
+}
 
 function optionKey(value: string) {
   return value.trim().toLowerCase();
@@ -366,6 +385,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [gameSpotifyArtist, setGameSpotifyArtist] = useState("");
   const [enableLorebookKeeper, setEnableLorebookKeeper] = useState(false);
   const [imageConnectionId, setImageConnectionId] = useState<string | null>(null);
+  const [videoConnectionId, setVideoConnectionId] = useState<string | null>(null);
+  const [enableStoryboardIllustrations, setEnableStoryboardIllustrations] = useState(false);
+  const [enableStoryboardAnimations, setEnableStoryboardAnimations] = useState(false);
   const [sceneConnectionId, setSceneConnectionId] = useState<string | null>(null);
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
   const [lbSearch, setLbSearch] = useState("");
@@ -435,13 +457,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
 
   const connections = useMemo(
     () =>
-      (connectionsList as Array<{
-        id: string;
-        name: string;
-        model?: string;
-        provider?: string;
-        defaultParameters?: string | null;
-      }>) ?? [],
+      (connectionsList as WizardConnection[]) ?? [],
     [connectionsList],
   );
   const selectedGmConnection = useMemo(
@@ -453,6 +469,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
     [selectedGmConnection?.defaultParameters],
   );
   const imageConnections = useMemo(() => connections.filter((c) => c.provider === "image_generation"), [connections]);
+  const videoConnections = useMemo(() => connections.filter((c) => c.provider === "video_generation"), [connections]);
+  const preferredImageConnectionId = useMemo(() => getPreferredConnectionId(imageConnections), [imageConnections]);
+  const preferredVideoConnectionId = useMemo(() => getPreferredConnectionId(videoConnections), [videoConnections]);
   const promptPresets = useMemo(
     () => (promptPresetsList as Array<{ id: string; name: string; isDefault?: boolean | string }>) ?? [],
     [promptPresetsList],
@@ -589,6 +608,18 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   }, [gmParameterDefaults]);
 
   useEffect(() => {
+    if (enableSpriteGeneration && !imageConnectionId && preferredImageConnectionId) {
+      setImageConnectionId(preferredImageConnectionId);
+    }
+  }, [enableSpriteGeneration, imageConnectionId, preferredImageConnectionId]);
+
+  useEffect(() => {
+    if (enableStoryboardAnimations && !videoConnectionId && preferredVideoConnectionId) {
+      setVideoConnectionId(preferredVideoConnectionId);
+    }
+  }, [enableStoryboardAnimations, preferredVideoConnectionId, videoConnectionId]);
+
+  useEffect(() => {
     if (!promptPresetTouched && !promptPresetId && defaultPreset?.id) {
       setPromptPresetId(defaultPreset.id);
     }
@@ -601,6 +632,50 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
 
   const canStart = !!gmConnectionId;
   const normalizedLanguage = normalizeGameLanguage(language);
+  const storyboardIllustrationsEnabled = enableSpriteGeneration && enableStoryboardIllustrations;
+  const storyboardAnimationsEnabled = storyboardIllustrationsEnabled && enableStoryboardAnimations && !!videoConnectionId;
+
+  const toggleVisualGeneration = () => {
+    const nextEnabled = !enableSpriteGeneration;
+    setEnableSpriteGeneration(nextEnabled);
+    if (nextEnabled && !imageConnectionId && preferredImageConnectionId) {
+      setImageConnectionId(preferredImageConnectionId);
+    }
+    if (nextEnabled) {
+      setEnableStoryboardIllustrations(true);
+    }
+    if (!nextEnabled) {
+      setEnableStoryboardIllustrations(false);
+      setEnableStoryboardAnimations(false);
+    }
+  };
+
+  const toggleStoryboardIllustrations = () => {
+    const nextEnabled = !enableStoryboardIllustrations;
+    setEnableSpriteGeneration(true);
+    setEnableStoryboardIllustrations(nextEnabled);
+    if (nextEnabled && !imageConnectionId && preferredImageConnectionId) {
+      setImageConnectionId(preferredImageConnectionId);
+    }
+    if (!nextEnabled) {
+      setEnableStoryboardAnimations(false);
+    }
+  };
+
+  const toggleStoryboardAnimations = () => {
+    const nextEnabled = !enableStoryboardAnimations;
+    setEnableSpriteGeneration(true);
+    setEnableStoryboardIllustrations(true);
+    setEnableStoryboardAnimations(nextEnabled);
+    if (nextEnabled) {
+      if (!imageConnectionId && preferredImageConnectionId) {
+        setImageConnectionId(preferredImageConnectionId);
+      }
+      if (!videoConnectionId && preferredVideoConnectionId) {
+        setVideoConnectionId(preferredVideoConnectionId);
+      }
+    }
+  };
 
   const handleComplete = () => {
     if (isLoading || !canStart) return;
@@ -647,6 +722,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         sceneConnectionId: sceneModelValue && sceneModelValue !== "local" ? sceneModelValue : undefined,
         enableSpriteGeneration: enableSpriteGeneration || undefined,
         imageConnectionId: enableSpriteGeneration && imageConnectionId ? imageConnectionId : undefined,
+        videoConnectionId: enableSpriteGeneration && videoConnectionId ? videoConnectionId : undefined,
+        gameStoryboardAutoIllustrationsEnabled: storyboardIllustrationsEnabled || undefined,
+        gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,
         customHudWidgets:
@@ -1522,7 +1600,8 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
 
                 <div>
                   <button
-                    onClick={() => setEnableSpriteGeneration(!enableSpriteGeneration)}
+                    type="button"
+                    onClick={toggleVisualGeneration}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left transition-all",
                       enableSpriteGeneration
@@ -1535,9 +1614,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                       className={enableSpriteGeneration ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
                     />
                     <div className="flex-1">
-                      <span className="block text-xs font-medium text-[var(--foreground)]">Image Generation</span>
+                      <span className="block text-xs font-medium text-[var(--foreground)]">Visual Generation</span>
                       <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
-                        Auto-generate NPC portraits and location backgrounds during gameplay
+                        Generate NPC portraits, location backgrounds, scene images, and optional storyboards
                       </span>
                     </div>
                     <div
@@ -1580,9 +1659,122 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                         </p>
                       )}
                       <p className="mt-1 text-[0.55rem] text-[var(--muted-foreground)]">
-                        Generates portraits for new NPCs and backgrounds for new locations using the scene analysis
-                        pipeline.
+                        Powers automatic portraits, backgrounds, scene illustrations, and storyboard keyframes.
                       </p>
+                      <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
+                        <div className="flex items-start gap-2">
+                          <PanelsTopLeft size={12} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
+                          <div className="min-w-0">
+                            <p className="text-[0.625rem] font-medium text-[var(--foreground)]">Storyboards</p>
+                            <p className="text-[0.55rem] leading-relaxed text-[var(--muted-foreground)]">
+                              Attach keyframes to GM narration so the floating viewer changes with the current story
+                              section.
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={toggleStoryboardIllustrations}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-all",
+                            enableStoryboardIllustrations
+                              ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                              : "bg-[var(--background)]/70 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                              Automatic Storyboard Illustrations
+                            </span>
+                            <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
+                              Low-cost manga keyframe images after completed GM turns
+                            </span>
+                          </span>
+                          <span
+                            className={cn(
+                              "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                              enableStoryboardIllustrations
+                                ? "bg-[var(--primary)]"
+                                : "bg-[var(--muted-foreground)]/50",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "block h-4 w-4 rounded-full bg-white transition-transform",
+                                enableStoryboardIllustrations && "translate-x-3.5",
+                              )}
+                            />
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleStoryboardAnimations}
+                          className={cn(
+                            "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left transition-all",
+                            enableStoryboardAnimations
+                              ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                              : "bg-[var(--background)]/70 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                          )}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                              Automatic Storyboard Animations
+                            </span>
+                            <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
+                              Adds video clips to every storyboard keyframe
+                            </span>
+                          </span>
+                          <span
+                            className={cn(
+                              "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                              enableStoryboardAnimations ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "block h-4 w-4 rounded-full bg-white transition-transform",
+                                enableStoryboardAnimations && "translate-x-3.5",
+                              )}
+                            />
+                          </span>
+                        </button>
+                        <p className="text-[0.55rem] leading-relaxed text-[var(--muted-foreground)]">
+                          Illustrations use the image connection. Animations also need the video connection below and
+                          cost much more per turn.
+                        </p>
+                        {enableStoryboardAnimations && !videoConnectionId && (
+                          <p className="text-[0.55rem] leading-relaxed text-amber-700 dark:text-amber-400/80">
+                            Choose a Video Generation connection below to save automatic storyboard animations.
+                          </p>
+                        )}
+                      </div>
+                      <div className="mt-3 border-t border-[var(--border)] pt-3">
+                        <label className="mb-1 flex items-center gap-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                          <Film size={11} />
+                          Video Generation Connection
+                        </label>
+                        <select
+                          value={videoConnectionId ?? ""}
+                          onChange={(e) => setVideoConnectionId(e.target.value || null)}
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
+                        >
+                          <option value="">No scene video connection</option>
+                          {videoConnections.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.model ? ` - ${c.model}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {videoConnections.length === 0 && (
+                          <p className="mt-1 text-[0.55rem] text-amber-700 dark:text-amber-400/80">
+                            No video generation connections found. Add one in Settings -&gt; Connections.
+                          </p>
+                        )}
+                        <p className="mt-1 text-[0.55rem] text-[var(--muted-foreground)]">
+                          Used for manual scene videos and storyboard animations.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>

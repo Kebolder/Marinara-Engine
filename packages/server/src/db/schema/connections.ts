@@ -21,6 +21,7 @@ export const apiConnections = sqliteTable("api_connections", {
       "xai",
       "custom",
       "image_generation",
+      "video_generation",
     ],
   }).notNull(),
   baseUrl: text("base_url").notNull().default(""),
@@ -34,6 +35,8 @@ export const apiConnections = sqliteTable("api_connections", {
   useForRandom: text("use_for_random").notNull().default("false"),
   /** Whether to enable Anthropic prompt caching */
   enableCaching: text("enable_caching").notNull().default("false"),
+  /** Anthropic: use 1-hour prompt-cache TTL instead of the default 5-minute TTL. */
+  anthropicExtendedCacheTtl: text("anthropic_extended_cache_ttl").notNull().default("false"),
   /** Anthropic prompt caching breakpoint depth from the newest message */
   cachingAtDepth: integer("caching_at_depth").notNull().default(5),
   /** Whether this connection is the default for all agents (only one allowed) */
@@ -54,6 +57,10 @@ export const apiConnections = sqliteTable("api_connections", {
   imageService: text("image_service"),
   /** For endpoint-based image services (e.g. RunPod Serverless ComfyUI): the endpoint ID. */
   imageEndpointId: text("image_endpoint_id"),
+  /** Explicit video backend selection for video-generation connections. */
+  videoGenerationSource: text("video_generation_source"),
+  /** Video generation: explicitly selected service ID. */
+  videoService: text("video_service"),
   /** Default generation parameters (stored as JSON) for new chats using this connection */
   defaultParameters: text("default_parameters"),
   /** Optional prompt preset override for roleplay/visual-novel chats using this connection */

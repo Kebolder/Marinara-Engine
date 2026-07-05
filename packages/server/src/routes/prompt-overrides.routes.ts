@@ -8,10 +8,15 @@
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import {
+  createPromptOverridesStorage,
+  type PromptOverrideRow,
+  type PromptOverridesStorage,
+} from "../services/storage/prompt-overrides.storage.js";
 import {
   PROMPT_OVERRIDE_REGISTRY,
   getPromptOverrideDef,
+  type PromptOverrideKeyDef,
   renderTemplate,
   validateTemplate,
 } from "../services/prompt-overrides/index.js";
@@ -26,6 +31,35 @@ const previewBodySchema = z.object({
   context: z.record(z.union([z.string(), z.number()])).optional(),
 });
 
+function resolvePromptOverrideRow(
+  overrideByKey: ReadonlyMap<string, PromptOverrideRow>,
+  def: PromptOverrideKeyDef<any>,
+): PromptOverrideRow | null {
+  return (
+    overrideByKey.get(def.key) ?? (def.legacyKeys ?? []).map((key) => overrideByKey.get(key)).find(Boolean) ?? null
+  );
+}
+
+async function getStoredPromptOverride(
+  storage: PromptOverridesStorage,
+  def: PromptOverrideKeyDef<any>,
+): Promise<PromptOverrideRow | null> {
+  const row = await storage.get(def.key);
+  if (row) return { ...row, key: def.key };
+  for (const legacyKey of def.legacyKeys ?? []) {
+    const legacyRow = await storage.get(legacyKey);
+    if (legacyRow) return { ...legacyRow, key: def.key };
+  }
+  return null;
+}
+
+async function removeStoredPromptOverride(storage: PromptOverridesStorage, def: PromptOverrideKeyDef<any>) {
+  await storage.remove(def.key);
+  for (const legacyKey of def.legacyKeys ?? []) {
+    await storage.remove(legacyKey);
+  }
+}
+
 export async function promptOverridesRoutes(app: FastifyInstance) {
   const storage = createPromptOverridesStorage(app.db);
 
@@ -34,7 +68,7 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
     const overrides = await storage.list();
     const overrideByKey = new Map(overrides.map((row) => [row.key, row]));
     return PROMPT_OVERRIDE_REGISTRY.map((def) => {
-      const row = overrideByKey.get(def.key);
+      const row = resolvePromptOverrideRow(overrideByKey, def);
       return {
         key: def.key,
         description: def.description,
@@ -50,7 +84,7 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
   app.get<{ Params: { key: string } }>("/:key", async (req, reply) => {
     const def = getPromptOverrideDef(req.params.key);
     if (!def) return reply.status(404).send({ error: "Unknown prompt key" });
-    const row = await storage.get(def.key);
+    const row = await getStoredPromptOverride(storage, def);
     return {
       key: def.key,
       description: def.description,
@@ -84,14 +118,18 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
         declaredVariables: declared,
       });
     }
-    return storage.upsert({ key: def.key, template: input.template, enabled: input.enabled });
+    const row = await storage.upsert({ key: def.key, template: input.template, enabled: input.enabled });
+    for (const legacyKey of def.legacyKeys ?? []) {
+      await storage.remove(legacyKey);
+    }
+    return row;
   });
 
   /** Reset a key by removing its override row. */
   app.delete<{ Params: { key: string } }>("/:key", async (req, reply) => {
     const def = getPromptOverrideDef(req.params.key);
     if (!def) return reply.status(404).send({ error: "Unknown prompt key" });
-    await storage.remove(def.key);
+    await removeStoredPromptOverride(storage, def);
     return reply.status(204).send();
   });
 

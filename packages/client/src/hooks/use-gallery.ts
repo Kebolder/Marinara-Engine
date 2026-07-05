@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
+import type { GeneratedSceneVideo } from "@marinara-engine/shared";
 
 export interface ChatImage {
   id: string;
@@ -36,6 +37,7 @@ const galleryKeys = {
   all: ["gallery"] as const,
   chat: (chatId: string) => ["gallery", chatId] as const,
   assets: (chatId: string) => ["gallery", "assets", chatId] as const,
+  sceneVideos: (chatId: string) => ["gallery", "scene-videos", chatId] as const,
 };
 
 export function useGalleryImages(chatId: string | undefined) {
@@ -53,6 +55,18 @@ export function useChatAssetBrowser(chatId: string | undefined, enabled = true) 
     queryFn: () => api.get<ChatAssetBrowserItem[]>(`/gallery/assets/${chatId}`),
     enabled: enabled && !!chatId,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function useSceneVideos(chatId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: galleryKeys.sceneVideos(chatId!),
+    queryFn: async () => {
+      const result = await api.get<{ videos: GeneratedSceneVideo[] }>(`/gallery/scene-videos/${chatId}`);
+      return result.videos;
+    },
+    enabled: enabled && !!chatId,
+    staleTime: 30_000,
   });
 }
 

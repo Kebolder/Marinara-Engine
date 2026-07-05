@@ -8,7 +8,7 @@ export const saveLorebookEntryToolManifest = {
     type: "object",
     properties: {
       name: { type: "string", description: "Short entry title, such as a character, location, object, or event name" },
-      content: { type: "string", description: "Concise lorebook entry content to store" },
+      content: { type: "string", description: "Lorebook entry content to store" },
       description: { type: "string", description: "Optional one-line description for routing and editor context" },
       keys: {
         type: "array",

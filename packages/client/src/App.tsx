@@ -117,28 +117,30 @@ export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { er
     const errorMessage = formatRecoveryError(this.state.error);
 
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--background,#050312)] px-4 text-[var(--foreground,#f8fafc)]">
-        <div className="w-full max-w-lg rounded-xl border border-[var(--border,rgba(255,255,255,0.16))] bg-[var(--card,rgba(15,23,42,0.88))] p-5 shadow-2xl">
-          <h1 className="text-lg font-semibold">Marinara hit a recoverable UI error.</h1>
-          <p className="mt-2 text-sm text-[var(--muted-foreground,#cbd5e1)]">
+      <div className="mari-chrome-token-scope flex min-h-screen items-center justify-center bg-[var(--background)] px-4 text-[var(--marinara-chat-chrome-panel-text)]">
+        <div className="w-full max-w-lg rounded-xl border border-[var(--marinara-chat-chrome-accent)] bg-[var(--marinara-chat-chrome-panel-bg)] p-5 shadow-2xl ring-1 ring-[var(--marinara-chat-chrome-focus-ring)]">
+          <h1 className="text-lg font-semibold text-[var(--marinara-chat-chrome-panel-title)]">
+            Marinara hit a recoverable UI error.
+          </h1>
+          <p className="mt-2 text-sm text-[var(--marinara-chat-chrome-panel-muted)]">
             The app shell crashed while rendering. Reload first; reset local UI state only if the same screen keeps
             returning after restart.
           </p>
-          <pre className="mt-3 max-h-32 overflow-auto rounded-lg bg-black/30 p-2 text-xs text-[var(--muted-foreground,#cbd5e1)]">
+          <pre className="mt-3 max-h-32 overflow-auto rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] p-2 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
             {errorMessage}
           </pre>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="rounded-lg bg-[var(--primary,#d4acfb)] px-3 py-2 text-sm font-semibold text-[var(--primary-foreground,#120718)]"
+              className="mari-chrome-control mari-chrome-control--selected px-3 py-2 text-sm"
             >
               Reload
             </button>
             <button
               type="button"
               onClick={this.resetLocalUiState}
-              className="rounded-lg border border-[var(--border,rgba(255,255,255,0.16))] px-3 py-2 text-sm font-semibold"
+              className="mari-chrome-control px-3 py-2 text-sm"
             >
               Reset local UI state
             </button>
@@ -903,6 +905,10 @@ export function App() {
       <AppDialogRenderer />
       <CsrfOriginWarningBanner />
       <div
+        // Interacting with a toast (including its close button) must not count
+        // as an outside click for chat floating panels — otherwise dismissing
+        // a toast closes the settings/gallery drawer (and any modal inside it).
+        data-chat-floating-panel
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
           if (event.target.closest("[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']")) {

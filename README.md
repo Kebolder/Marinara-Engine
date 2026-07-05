@@ -101,7 +101,7 @@
 
 ## Latest Release
 
-Current stable release: **[v2.0.9](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.0.9)**.
+Current stable release: **[v2.1.0](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.1.0)**.
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device.
 
@@ -147,7 +147,7 @@ Three chat modes — **Conversation** (Discord-style DMs), **Roleplay** (immersi
 
 ### Visual & Immersive
 
-Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
+Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, gallery illustrations, short scene videos from generated illustrations, Game Mode manga storyboards with animated keyframes, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
 
 ### AI Agent System
 
@@ -159,7 +159,7 @@ Preset system with drag-and-drop prompt ordering, lorebooks with keyword trigger
 
 ### Connections & Providers
 
-OpenAI, Anthropic, Google Gemini, Google Vertex AI, OpenRouter, NanoGPT, Mistral, Cohere, Pollinations, Stability AI, Together AI, NovelAI, ComfyUI, SD Web UI, Draw Things (Apple Silicon, Metal + Apple Neural Engine), and custom OpenAI-compatible endpoints. API keys are encrypted at rest with AES-256. Per-chat connection overrides.
+OpenAI, Anthropic, Google Gemini, Google Vertex AI, OpenRouter, NanoGPT, Mistral, Cohere, Pollinations, Stability AI, Together AI, NovelAI, ComfyUI, SD Web UI, Draw Things (Apple Silicon, Metal + Apple Neural Engine), Gemini Omni scene video, xAI Imagine video, and custom OpenAI-compatible endpoints. API keys are encrypted at rest with AES-256. Per-chat connection overrides.
 
 ### Export & Data
 
@@ -173,7 +173,10 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
+| [docs/CONVERSATION_CALLS.md](docs/CONVERSATION_CALLS.md) | Conversation audio-call setup, Local Whisper, TTS, and troubleshooting |
 | [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
+| [docs/SCENE_VIDEO_GENERATION.md](docs/SCENE_VIDEO_GENERATION.md) | Scene-video setup, Game Mode storyboards, Gallery animation workflow, and prompt templates |
+| [docs/STORYBOARD_ENGINE_GUIDE.md](docs/STORYBOARD_ENGINE_GUIDE.md) | Step-by-step guide to manual and automatic Game Mode storyboards |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md)             | Extension folder manifests, package format, and examples        |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)   | Common issues and fixes                                         |
 | [docs/FAQ.md](docs/FAQ.md)                           | Frequently asked questions (LAN access, etc.)                   |

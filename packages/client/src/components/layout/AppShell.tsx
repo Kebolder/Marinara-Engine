@@ -6,7 +6,6 @@ import { TopBar } from "./TopBar";
 import { SpotifyMobileWidget } from "../spotify/SpotifyMiniPlayer";
 import { YouTubeMobileWidget } from "../chat/YouTubePlayer";
 import { LocalMusicMobileWidget } from "../chat/LocalMusicPlayer";
-import { ChatNotificationBubbles } from "../chat/ChatNotificationBubbles";
 import { ProfessorMariFloatingAssistantHost } from "../chat/ProfessorMariFloatingAssistantHost";
 import { hasProfessorMariFloatingFollowup } from "../chat/professor-mari-floating-events";
 import {
@@ -72,8 +71,14 @@ const RightPanel = lazy(() => import("./RightPanel").then((module) => ({ default
 const TrackerDataSidebar = lazy(() =>
   import("./TrackerDataSidebar").then((module) => ({ default: module.TrackerDataSidebar })),
 );
+const ChatNotificationBubbles = lazy(() =>
+  import("../chat/ChatNotificationBubbles").then((module) => ({ default: module.ChatNotificationBubbles })),
+);
 const OnboardingTutorial = lazy(() =>
   import("../onboarding/OnboardingTutorial").then((module) => ({ default: module.OnboardingTutorial })),
+);
+const ConversationCallFloatingHost = lazy(() =>
+  import("../chat/ConversationCallFloatingHost").then((module) => ({ default: module.ConversationCallFloatingHost })),
 );
 
 function clampWidth(width: number, min: number, max: number) {
@@ -900,9 +905,14 @@ export function AppShell() {
               {shellOverlayMode ? <ChatArea /> : (detailView ?? <ChatArea />)}
             </Suspense>
           </div>
+          <Suspense fallback={null}>
+            <ConversationCallFloatingHost />
+          </Suspense>
         </div>
         {/* Floating avatar notification bubbles (right edge) */}
-        <ChatNotificationBubbles />
+        <Suspense fallback={null}>
+          <ChatNotificationBubbles />
+        </Suspense>
       </main>
 
       <AnimatePresence initial={false}>

@@ -622,7 +622,7 @@ function buildVoiceLineTextCacheKey(
     job.tone ?? "",
     job.chunk,
   ].join("\n");
-  return `game-voice-line-v1:${rawKey.length}:${hashVoiceKey(rawKey)}`;
+  return `game-voice-line-v2:${rawKey.length}:${hashVoiceKey(rawKey)}`;
 }
 
 function buildVoiceLineSegmentCacheKey(segmentVoiceKey: string, jobIndex: number, textCacheKey: string): string {
@@ -1412,6 +1412,7 @@ export function GameNarration({
       speaker: string | null | undefined,
       sourceMessageId: string | null | undefined,
       sourceRole: Message["role"] | null | undefined,
+      seedKey: string | number,
     ) => {
       const macroContext = {
         userName: personaInfo?.name || "You",
@@ -1419,7 +1420,10 @@ export function GameNarration({
         primaryCharacter: resolveMacroCharacter(speaker),
         characters: macroCharacters,
       };
-      const macroRandomSeed = `${sourceMessageId ?? "game-segment"}:${text}`;
+      // #3164: seed display randomness by source identity, not text — a
+      // content-based seed re-rolls every {{random}}/{{roll}} on each streamed
+      // chunk (visible churn) and on every edit.
+      const macroRandomSeed = `${sourceMessageId ?? "game-segment"}:${seedKey}`;
       const resolveMacrosForText = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
       const regexApplied = applyOutputRegexForSource(text, sourceMessageId, sourceRole, resolveMacrosForText);
       return formatTextQuotes(resolveMacrosForText(regexApplied), quoteFormat);
@@ -1430,11 +1434,23 @@ export function GameNarration({
   const prepareDisplaySegment = useCallback(
     (segment: NarrationSegment): NarrationSegment => {
       const regexSourceRole = segment.type === "system" ? "system" : segment.sourceRole;
-      const content = prepareSegmentText(segment.content, segment.speaker, segment.sourceMessageId, regexSourceRole);
+      const content = prepareSegmentText(
+        segment.content,
+        segment.speaker,
+        segment.sourceMessageId,
+        regexSourceRole,
+        segment.sourceSegmentIndex ?? 0,
+      );
       const readableContent =
         segment.readableContent == null
           ? segment.readableContent
-          : prepareSegmentText(segment.readableContent, segment.speaker, segment.sourceMessageId, regexSourceRole);
+          : prepareSegmentText(
+              segment.readableContent,
+              segment.speaker,
+              segment.sourceMessageId,
+              regexSourceRole,
+              `${segment.sourceSegmentIndex ?? 0}:readable`,
+            );
 
       if (content === segment.content && readableContent === segment.readableContent) return segment;
       return { ...segment, content, readableContent };
@@ -1712,7 +1728,7 @@ export function GameNarration({
           arr.push({
             character: seg.speaker ?? "",
             type: seg.partyType,
-            content: prepareSegmentText(seg.content, seg.speaker ?? null, latestAssistant.id, latestAssistant.role),
+            content: prepareSegmentText(seg.content, seg.speaker ?? null, latestAssistant.id, latestAssistant.role, rawIndex),
             expression: seg.sprite,
             target: seg.whisperTarget,
             voiceSourceMessageId: latestAssistant.id,
@@ -1755,7 +1771,7 @@ export function GameNarration({
           arr.push({
             ...line,
             character: editedCharacter,
-            content: prepareSegmentText(editedContent, editedCharacter, partyChatMessageId, sourceRole),
+            content: prepareSegmentText(editedContent, editedCharacter, partyChatMessageId, sourceRole, partySegmentIndex),
             voiceSourceMessageId: partyChatMessageId,
             voiceSourceSegmentIndex: partySegmentIndex,
             voiceSourceRole: sourceRole,

@@ -116,8 +116,8 @@ export function buildLegacyDefaultAgentConfigUpdate(row: typeof agentConfigs.$in
       update.description = builtIn.description;
     }
 
-    const phase = normalizeAgentPhaseForType(builtIn.id, builtIn.phase);
-    if (row.phase !== phase) update.phase = phase;
+    const normalizedStoredPhase = normalizeAgentPhaseForType(row.type, row.phase);
+    if (row.phase !== normalizedStoredPhase) update.phase = normalizedStoredPhase;
 
     const defaults = getDefaultBuiltInAgentSettings(builtIn.id);
     let settingsChanged = settingsMigration.changed;
