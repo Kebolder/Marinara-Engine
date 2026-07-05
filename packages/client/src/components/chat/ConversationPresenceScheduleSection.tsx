@@ -1,26 +1,18 @@
-import { useMemo, useState } from "react";
-import { CalendarClock, MoreHorizontal, Pencil, Settings2, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { useMemo } from "react";
+import { CalendarClock, Pencil } from "lucide-react";
 import {
   CONVERSATION_SCHEDULE_DAYS,
   type ConversationPresenceStatus,
   type WeekSchedule,
 } from "@marinara-engine/shared";
-import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { cn } from "../../lib/utils";
 
-type OpenSettingsOptions = { initialSection?: "autonomous" | null };
-
 type ConversationPresenceScheduleSectionProps = {
-  chatId: string;
-  chatMeta: Record<string, any>;
   characterId: string;
   schedule?: WeekSchedule;
   schedulesEnabled: boolean;
   hasGeneratedSchedules: boolean;
-  lastContactLabel?: string | null;
   onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
-  onOpenSettings: (event?: React.MouseEvent<HTMLElement>, options?: OpenSettingsOptions) => void;
 };
 
 type UpcomingScheduleBlock = {
@@ -123,55 +115,20 @@ function dayLabel(block: UpcomingScheduleBlock): string {
 }
 
 export function ConversationPresenceScheduleSection({
-  chatId,
-  chatMeta,
   characterId,
   schedule,
   schedulesEnabled,
   hasGeneratedSchedules,
-  lastContactLabel,
   onOpenScheduleEditor,
-  onOpenSettings,
 }: ConversationPresenceScheduleSectionProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const updateMeta = useUpdateChatMetadata();
   const dayCount = getScheduledDayCount(schedule);
-  const upcomingBlocks = useMemo(() => getUpcomingScheduleBlocks(schedule), [schedule]);
+  const upcomingBlocks = useMemo(() => getUpcomingScheduleBlocks(schedule, 1), [schedule]);
   const badge = schedulesEnabled ? (schedule ? "Active" : "Ready") : "Off";
   const summary = getSummaryText(schedulesEnabled, hasGeneratedSchedules, schedule);
 
   const openEditor = (day?: string | null) => {
     if (!onOpenScheduleEditor) return;
     onOpenScheduleEditor(characterId, { initialDay: day ?? null });
-  };
-
-  const toggleSchedules = () => {
-    updateMeta.mutate({ id: chatId, conversationSchedulesEnabled: !schedulesEnabled });
-    setMenuOpen(false);
-  };
-
-  const removeBlock = async (block: UpcomingScheduleBlock) => {
-    if (!schedule) return;
-    const currentSchedules = (chatMeta.characterSchedules as Record<string, WeekSchedule> | undefined) ?? {};
-    const dayBlocks = schedule.days?.[block.day] ?? [];
-    const nextDayBlocks = dayBlocks.filter((_, index) => index !== block.blockIndex);
-    try {
-      await updateMeta.mutateAsync({
-        id: chatId,
-        characterSchedules: {
-          ...currentSchedules,
-          [characterId]: {
-            ...schedule,
-            days: {
-              ...schedule.days,
-              [block.day]: nextDayBlocks,
-            },
-          },
-        },
-      });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to remove schedule block");
-    }
   };
 
   return (
@@ -195,107 +152,39 @@ export function ConversationPresenceScheduleSection({
           <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
             {dayCount > 0 ? `${dayCount} day${dayCount === 1 ? "" : "s"} scheduled` : "No schedule"}
           </div>
-          <p className="mt-0.5 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">{summary}</p>
-          {lastContactLabel && (
-            <p className="mt-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/70">Last contact {lastContactLabel}</p>
+          {summary !== (dayCount > 0 ? `${dayCount} day${dayCount === 1 ? "" : "s"} scheduled` : "No schedule") && (
+            <p className="mt-0.5 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">{summary}</p>
           )}
         </div>
 
-        <div className="relative flex shrink-0 items-center gap-1">
-          {onOpenScheduleEditor && (
-            <button
-              type="button"
-              onClick={() => openEditor()}
-              className="rounded-md bg-[var(--foreground)]/8 px-2 py-1 text-[0.625rem] font-medium text-[var(--foreground)]/78 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--foreground)]/12"
-            >
-              {schedule ? "Edit schedule" : "Create schedule"}
-            </button>
-          )}
+        {onOpenScheduleEditor && (
           <button
             type="button"
-            onClick={() => setMenuOpen((value) => !value)}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            title="Schedule options"
+            onClick={() => openEditor()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--foreground)]/8 px-2 py-1 text-[0.625rem] font-medium text-[var(--foreground)]/78 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--foreground)]/12 hover:text-[var(--foreground)]"
           >
-            <MoreHorizontal size="0.8125rem" />
+            <Pencil size="0.6875rem" /> Edit
           </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-8 z-10 w-48 rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl">
-              {onOpenScheduleEditor && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    openEditor();
-                  }}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.6875rem] hover:bg-[var(--accent)]"
-                >
-                  <Pencil size="0.75rem" /> Edit full schedule
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={toggleSchedules}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.6875rem] hover:bg-[var(--accent)]"
-              >
-                <CalendarClock size="0.75rem" /> {schedulesEnabled ? "Disable autonomous schedules" : "Enable autonomous schedules"}
-              </button>
-              <button
-                type="button"
-                onClick={(event) => {
-                  setMenuOpen(false);
-                  onOpenSettings(event, { initialSection: "autonomous" });
-                }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[0.6875rem] hover:bg-[var(--accent)]"
-              >
-                <Settings2 size="0.75rem" /> Open autonomous settings
-              </button>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {upcomingBlocks.length > 0 && (
-        <div className="mt-2 space-y-1.5">
+        <div className="mt-2">
           {upcomingBlocks.map((block) => (
-            <div
+            <button
               key={`${block.day}-${block.blockIndex}-${block.time}`}
-              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md bg-[var(--foreground)]/[0.035] px-2 py-1.5 transition-colors hover:bg-[var(--accent)]/20"
+              type="button"
+              onClick={() => openEditor(block.day)}
+              className="grid w-full min-w-0 grid-cols-[auto_4.75rem_minmax(0,1fr)] items-center gap-2 rounded-md bg-[var(--foreground)]/[0.035] px-2 py-1.5 text-left transition-colors hover:bg-[var(--accent)]/20"
             >
-              <button
-                type="button"
-                onClick={() => openEditor(block.day)}
-                className="grid min-w-0 grid-cols-[auto_4.75rem_minmax(0,1fr)] items-center gap-2 text-left"
-              >
-                <span className={cn("h-2 w-2 rounded-full", STATUS_COLORS[block.status])} />
-                <span className="text-[0.5625rem] font-medium text-[var(--muted-foreground)]">{dayLabel(block)}</span>
-                <span className="min-w-0 text-[0.625rem] text-[var(--muted-foreground)]/86">
-                  <span className="tabular-nums">{formatScheduleTimeRange(block.time)}</span>
-                  {" · "}
-                  <span className="break-words">{block.activity}</span>
-                </span>
-              </button>
-              <span className="flex items-center gap-0.5">
-                {onOpenScheduleEditor && (
-                  <button
-                    type="button"
-                    onClick={() => openEditor(block.day)}
-                    className="flex h-6 w-6 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                    title="Edit this day"
-                  >
-                    <Pencil size="0.6875rem" />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void removeBlock(block)}
-                  className="flex h-6 w-6 items-center justify-center rounded text-[var(--destructive)] hover:bg-[var(--destructive)]/10"
-                  title="Delete this block"
-                >
-                  <Trash2 size="0.6875rem" />
-                </button>
+              <span className={cn("h-2 w-2 rounded-full", STATUS_COLORS[block.status])} />
+              <span className="text-[0.5625rem] font-medium text-[var(--muted-foreground)]">{dayLabel(block)}</span>
+              <span className="min-w-0 truncate text-[0.625rem] text-[var(--muted-foreground)]/86">
+                <span className="tabular-nums">{formatScheduleTimeRange(block.time)}</span>
+                {" · "}
+                <span>{block.activity}</span>
               </span>
-            </div>
+            </button>
           ))}
         </div>
       )}

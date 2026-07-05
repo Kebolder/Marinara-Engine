@@ -625,8 +625,8 @@ export function ConversationPresenceCard({
                   <div
                     key={character.id}
                     className={cn(
-                      "rounded-2xl bg-[var(--accent)]/10 px-3 py-3 ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]/16",
-                      isEditing && "bg-[var(--accent)]/22",
+                      "rounded-xl bg-[var(--secondary)]/70 px-3 py-3 ring-1 ring-[var(--border)] transition-colors",
+                      isEditing && "bg-[var(--accent)]/18",
                     )}
                   >
                     <div className="min-w-0">
@@ -676,7 +676,8 @@ export function ConversationPresenceCard({
                         </div>
                       </div>
 
-                      <div className="mt-2 flex w-full min-w-0 items-stretch overflow-hidden rounded-md bg-[var(--background)] ring-1 ring-[var(--border)] transition-colors hover:ring-[var(--border)]/80">
+                      <div className="mt-2 text-xs">
+                        <div className="flex w-full min-w-0 items-stretch overflow-hidden rounded-md bg-[var(--background)] ring-1 ring-[var(--border)] transition-colors hover:ring-[var(--border)]/80 focus-within:ring-[var(--primary)]/50">
                           <div className="flex shrink-0 flex-col border-r border-[var(--border)]">
                             <button
                               ref={(node) => {
@@ -738,18 +739,15 @@ export function ConversationPresenceCard({
                               <Trash2 size="0.75rem" />
                             </button>
                           )}
+                        </div>
                       </div>
 
                       <ConversationPresenceScheduleSection
-                        chatId={chatId}
-                        chatMeta={chatMeta}
                         characterId={character.id}
                         schedule={character.schedule}
                         schedulesEnabled={schedulesEnabled}
                         hasGeneratedSchedules={hasGeneratedSchedules}
-                        lastContactLabel={lastContactLabel}
                         onOpenScheduleEditor={onOpenScheduleEditor}
-                        onOpenSettings={onOpenSettings}
                       />
 
                       {canReplyNow && (

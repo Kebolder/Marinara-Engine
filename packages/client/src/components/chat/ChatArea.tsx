@@ -2537,8 +2537,11 @@ export function ChatArea() {
   const scheduleModal = scheduleModalCharacterId ? (
     <CharacterScheduleEditorModal
       open
+      chatId={activeChatId}
       characterId={scheduleModalCharacterId}
       characterName={characterMap.get(scheduleModalCharacterId)?.name ?? "Character"}
+      characterAvatarUrl={characterMap.get(scheduleModalCharacterId)?.avatarUrl ?? null}
+      characterAvatarCrop={characterMap.get(scheduleModalCharacterId)?.avatarCrop ?? null}
       schedule={(chatMeta.characterSchedules as Record<string, WeekSchedule> | undefined)?.[scheduleModalCharacterId]}
       initialDay={scheduleModalInitialDay}
       onClose={handleCloseScheduleEditor}
