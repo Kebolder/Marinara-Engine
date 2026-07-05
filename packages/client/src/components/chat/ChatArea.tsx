@@ -54,7 +54,7 @@ import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../
 import { useGameStateStore } from "../../stores/game-state.store";
 import { useGalleryStore } from "../../stores/gallery.store";
 import { toast } from "sonner";
-import { Check, HelpCircle, List, X } from "lucide-react";
+import { BookOpen, Check, HelpCircle, List, X } from "lucide-react";
 import {
   APP_VERSION,
   BUILT_IN_AGENTS,
@@ -2578,15 +2578,29 @@ export function ChatArea() {
                     </button>
                   </div>
 
-                  {/* Restart tutorial */}
-                  <button
-                    onClick={() => useUIStore.getState().setHasCompletedOnboarding(false)}
-                    className="mari-chrome-control mari-chrome-control--small text-xs"
-                    title="Replay tutorial"
-                  >
-                    <HelpCircle size="0.875rem" />
-                    Replay Tutorial
-                  </button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {/* In-app documentation */}
+                    <button
+                      type="button"
+                      onClick={() => useUIStore.getState().openModal("docs-viewer")}
+                      className="mari-chrome-control mari-chrome-control--small text-xs"
+                      title="Browse the documentation"
+                    >
+                      <BookOpen size="0.875rem" />
+                      Documentation
+                    </button>
+
+                    {/* Restart tutorial */}
+                    <button
+                      type="button"
+                      onClick={() => useUIStore.getState().setHasCompletedOnboarding(false)}
+                      className="mari-chrome-control mari-chrome-control--small text-xs"
+                      title="Replay tutorial"
+                    >
+                      <HelpCircle size="0.875rem" />
+                      Replay Tutorial
+                    </button>
+                  </div>
                 </div>
               </>
             )}

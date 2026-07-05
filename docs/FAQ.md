@@ -263,3 +263,20 @@ For story direction, choose the tool by how persistent you want the guidance to 
 **One important exception:** the `agent_data` marker section, and the `{{agent::TYPE}}` macro, are the _intended_ way to thread an agent's output into a specific spot in the preset. That's wiring, not overlap — several agents (World State, Quest Tracker, Character Tracker, and others) set this up for you by default. The pattern to avoid is hand-writing preset sections that duplicate an agent's _behavior_, not using the marker section that carries the agent's _output_.
 
 </details>
+
+---
+
+<a id="how-do-i-read-the-documentation-inside-the-app"></a>
+
+<details>
+<summary><strong>How do I read the documentation inside the app?</strong></summary>
+<br>
+
+Every Marinara install ships with the full set of guides you are reading right now: installation, configuration, troubleshooting, macros, extensions, Game Mode, and more. You can read them without leaving the app:
+
+- **From the home page footer:** click the **Documentation** button next to **Replay Tutorial**.
+- **From the FAQ:** open the "Where can I find documentation?" entry and click **Open Documentation**.
+
+The in-app viewer lists every guide and renders it directly in Marinara. The same guides also live on disk as regular markdown files in the `docs` folder inside your Marinara install folder, and both the FAQ entry and the viewer show the exact folder path for your install.
+
+</details>
