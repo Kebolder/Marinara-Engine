@@ -44,13 +44,17 @@ interface DocSearchResult extends DocSummary {
 /** Max snippet lines returned per document */
 const MAX_SNIPPETS_PER_DOC = 3;
 
-/** Trim a matched line to a readable snippet centered on the first match */
+/**
+ * Trim a matched line to a readable snippet. The sidebar only shows the first
+ * ~40 characters, so window the slice to keep the matched term near the start.
+ */
 function toSnippet(line: string, matchIndex: number): string {
+  const leading = line.length - line.trimStart().length;
   const trimmed = line.trim();
-  if (trimmed.length <= 160) return trimmed;
-  const offset = Math.max(0, matchIndex - 60);
-  const slice = line.slice(offset, offset + 160).trim();
-  return `${offset > 0 ? "…" : ""}${slice}…`;
+  const index = Math.max(0, matchIndex - leading);
+  const start = index <= 30 ? 0 : index - 30;
+  const slice = trimmed.slice(start, start + 160);
+  return `${start > 0 ? "…" : ""}${slice}${start + 160 < trimmed.length ? "…" : ""}`;
 }
 
 function isSafeSegment(value: string): boolean {
@@ -87,12 +91,16 @@ async function collectDocs(dir: string, relativeDir: string): Promise<DocSummary
     if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) continue;
     const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
     const filePath = join(dir, entry.name);
-    docs.push({
-      path: relativePath,
-      title: await extractTitle(filePath, entry.name.replace(/\.md$/i, "")),
-      dir: relativeDir,
-      updatedAt: (await stat(filePath)).mtime.toISOString(),
-    });
+    try {
+      docs.push({
+        path: relativePath,
+        title: await extractTitle(filePath, entry.name.replace(/\.md$/i, "")),
+        dir: relativeDir,
+        updatedAt: (await stat(filePath)).mtime.toISOString(),
+      });
+    } catch {
+      // File vanished between readdir and stat; skip it rather than failing the whole index.
+    }
   }
 
   return docs;
@@ -140,12 +148,16 @@ export async function docsRoutes(app: FastifyInstance) {
       const results: DocSearchResult[] = [];
 
       for (const doc of await collectDocs(DOCS_DIR, "")) {
-        const content = await readFile(join(DOCS_DIR, ...doc.path.split("/")), "utf8");
+        let content: string;
+        try {
+          const filePath = join(DOCS_DIR, ...doc.path.split("/"));
+          if ((await stat(filePath)).size > MAX_DOC_BYTES) continue;
+          content = await readFile(filePath, "utf8");
+        } catch {
+          continue;
+        }
         const snippets: DocSearchSnippet[] = [];
         let matches = 0;
-
-        const titleMatch = doc.title.toLowerCase().includes(needle);
-        if (titleMatch) matches++;
 
         content.split(/\r?\n/).forEach((line, index) => {
           const matchIndex = line.toLowerCase().indexOf(needle);
@@ -155,6 +167,10 @@ export async function docsRoutes(app: FastifyInstance) {
             snippets.push({ line: index + 1, text: toSnippet(line, matchIndex) });
           }
         });
+
+        // Count a title hit only when no content line matched (the H1 the title
+        // came from is already counted by the line scan).
+        if (matches === 0 && doc.title.toLowerCase().includes(needle)) matches = 1;
 
         if (matches > 0) results.push({ ...doc, matches, snippets });
       }

@@ -153,10 +153,13 @@ export function DocsViewerModal({
   );
 
   const selectDoc = (path: string, scrollTerm: string | null = null) => {
-    writeSavedPlace({ doc: path, scrollTop: 0 });
+    // Re-selecting the open doc must not reset the saved reading place.
+    if (path !== selected) {
+      writeSavedPlace({ doc: path, scrollTop: 0 });
+      setSelectedState(path);
+    }
     restoreScrollRef.current = false;
     setPendingScrollTerm(scrollTerm);
-    setSelectedState(path);
   };
 
   // Restore the saved reading position on reopen, or jump to the first
@@ -203,7 +206,7 @@ export function DocsViewerModal({
 
   return (
     <Modal open={open} onClose={onClose} title="Documentation" width="max-w-4xl">
-      <div className="flex h-[calc(100dvh-7rem)] min-h-0 gap-3 sm:h-[min(46rem,calc(90dvh-6.5rem))]">
+      <div className="flex h-[calc(100dvh-5.5rem-max(0.75rem,env(safe-area-inset-top))-max(0.75rem,env(safe-area-inset-bottom)))] min-h-0 gap-3 sm:h-[min(46rem,calc(90dvh-6.5rem))]">
         {/* Guide list / search */}
         <aside
           className={cn("flex w-full min-w-0 flex-col sm:w-64 sm:shrink-0", selected !== null && "hidden sm:flex")}
@@ -216,7 +219,7 @@ export function DocsViewerModal({
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="Search all guides"
               aria-label="Search documentation"
-              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-cancel-button]:appearance-none"
             />
             {searchQuery ? (
               <button
@@ -243,7 +246,7 @@ export function DocsViewerModal({
                   {searchFetching ? "Searching…" : `No matches for "${trimmedQuery}".`}
                 </p>
               ) : (
-                <div className="space-y-1.5">
+                <div className={cn("space-y-1.5", searchFetching && "opacity-60")}>
                   {searchResults.map((result) => (
                     <button
                       key={result.path}
@@ -340,7 +343,10 @@ export function DocsViewerModal({
               <div className="mb-2 flex shrink-0 items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedState(null)}
+                  onClick={() => {
+                    writeSavedPlace({ doc: null, scrollTop: 0 });
+                    setSelectedState(null);
+                  }}
                   className="flex h-7 w-7 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] sm:hidden"
                   aria-label="Back to guide list"
                 >
