@@ -1110,6 +1110,50 @@ function mergeSceneAssetNpcCandidates(
 ): GameNpc[] {
   const excluded = new Set(excludedNames.map(normalizeSceneAssetName));
   const candidates = new Map<string, GameNpc>();
+  const descriptionPriority = (source: GameNpc["descriptionSource"] | undefined) => {
+    switch (source) {
+      case "user":
+        return 4;
+      case "model":
+        return 3;
+      case "library":
+        return 2;
+      case "narration":
+        return 1;
+      default:
+        return 0;
+    }
+  };
+  const chooseDescription = (existing: GameNpc, incoming: GameNpc) => {
+    const existingDescription = typeof existing.description === "string" ? existing.description.trim() : "";
+    const incomingDescription = typeof incoming.description === "string" ? incoming.description.trim() : "";
+    if (!incomingDescription) {
+      return {
+        description: existingDescription,
+        descriptionSource: existing.descriptionSource || incoming.descriptionSource,
+      };
+    }
+    if (!existingDescription) {
+      return {
+        description: incomingDescription,
+        descriptionSource: incoming.descriptionSource || existing.descriptionSource,
+      };
+    }
+
+    const existingPriority = descriptionPriority(existing.descriptionSource);
+    const incomingPriority = descriptionPriority(incoming.descriptionSource);
+    if (incomingPriority > existingPriority) {
+      return {
+        description: incomingDescription,
+        descriptionSource: incoming.descriptionSource || existing.descriptionSource,
+      };
+    }
+
+    return {
+      description: existingDescription,
+      descriptionSource: existing.descriptionSource || incoming.descriptionSource,
+    };
+  };
 
   const addNpcCandidate = (npc: GameNpc) => {
     const name = typeof npc.name === "string" ? npc.name.trim() : "";
@@ -1120,10 +1164,11 @@ function mergeSceneAssetNpcCandidates(
       candidates.set(normalizedName, { ...npc, name });
       return;
     }
+    const chosenDescription = chooseDescription(existing, npc);
     candidates.set(normalizedName, {
       ...existing,
-      description: existing.description || npc.description,
-      descriptionSource: existing.descriptionSource || npc.descriptionSource,
+      description: chosenDescription.description,
+      descriptionSource: chosenDescription.descriptionSource,
       gender: existing.gender ?? npc.gender ?? null,
       pronouns: existing.pronouns ?? npc.pronouns ?? null,
       location: existing.location || npc.location,
@@ -1161,6 +1206,11 @@ function mergeSceneAssetNpcCandidates(
     candidates.set(normalizedName, {
       ...existing,
       description: existing.description || description,
+      descriptionSource: existing.description
+        ? existing.descriptionSource
+        : description
+          ? (existing.descriptionSource ?? "narration")
+          : existing.descriptionSource,
       location: existing.location || currentLocation || "",
       avatarUrl: existing.avatarUrl || avatarUrl,
     });
@@ -1176,6 +1226,11 @@ function mergeSceneAssetNpcCandidates(
     candidates.set(normalizedName, {
       ...existing,
       description: existing.description || candidate.description,
+      descriptionSource: existing.description
+        ? existing.descriptionSource
+        : candidate.description
+          ? (existing.descriptionSource ?? "narration")
+          : existing.descriptionSource,
     });
   }
 

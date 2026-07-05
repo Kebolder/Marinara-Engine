@@ -3866,10 +3866,12 @@ function resolveNpcPortraitAppearance(
 ): string {
   const parts: string[] = [];
   const metadataDescriptionIsCanonical =
-    metadataNpc?.descriptionSource === "model" || metadataNpc?.descriptionSource === "library";
+    metadataNpc?.descriptionSource === "model" ||
+    metadataNpc?.descriptionSource === "library" ||
+    metadataNpc?.descriptionSource === "user";
 
   if (metadataDescriptionIsCanonical) {
-    addPortraitAppearancePart(parts, metadataNpc?.description);
+    addPortraitAppearancePart(parts, metadataNpc?.description, "Canonical NPC profile");
   }
 
   addPortraitAppearancePart(parts, npc.description);
