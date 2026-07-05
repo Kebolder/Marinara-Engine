@@ -12,18 +12,22 @@ Scene videos are separate from normal image generation. They use a **Video Gener
 2. Create or edit a connection with provider **Video Generation**.
 3. Pick a video service:
    - **Gemini Omni** uses `gemini-omni-flash-preview` by default through Google AI Studio's Gemini API.
+   - **Google AI Studio Veo** uses `veo-3.1-generate-preview` by default through the Gemini API long-running video endpoint. Character/call loop references are sent as both the first and last frame so Veo can interpolate back to the avatar pose.
    - **xAI Imagine** uses `grok-imagine-video-1.5` by default through the xAI Videos API.
+   - **OpenRouter Video** uses `google/veo-3.1` by default through OpenRouter's asynchronous Videos API. You can type any OpenRouter video-capable model ID supported by your account.
 4. Enter the provider API key and save the connection.
 5. Optional: enable **Use as default video connection** so new/manual scene-video requests can fall back to this connection when the chat has no explicit video connection selected.
 
-Video generation connections have their own defaults. Gemini Omni exposes duration and aspect ratio; duration is rendered into the prompt because Gemini Omni does not currently accept `duration_seconds` in `generation_config.video_config`. xAI exposes duration, aspect ratio, and resolution.
+Video generation connections have their own defaults. Gemini Omni exposes duration and aspect ratio; duration is rendered into the prompt because Gemini Omni does not currently accept `duration_seconds` in `generation_config.video_config`. Google Veo, xAI, and OpenRouter expose duration, aspect ratio, and resolution. Veo accepts 4, 6, or 8 seconds, and Marinara uses 8 seconds when an image reference is present because Veo requires that for first/last-frame interpolation.
 
 Default values:
 
 | Service | Duration | Aspect ratio | Resolution |
 | --- | --- | --- | --- |
 | Gemini Omni | 10s | 16:9 | Provider default |
+| Google AI Studio Veo | 8s | 16:9 | 720p |
 | xAI Imagine | 10s | 16:9 | 720p |
+| OpenRouter Video | 10s | 16:9 | 720p |
 
 ## Chat Settings
 
@@ -99,9 +103,9 @@ The relevant keys are:
 
 `game.storyboardIllustrationDirector` and `game.storyboardDirector` receive the game context, stripped GM narration, reader section indices, target keyframe count, duration, and aspect ratio. The illustration director is used when the storyboard only needs still images. The full storyboard director is used when animations are requested and controls how each panel's image and video prompts are written.
 
-Before rendering the template, Marinara compacts the video prompt context. The narration variable is a short visible story beat, not the full assistant message, and the illustration prompt variable is a filtered excerpt that drops common still-image boilerplate. xAI receives a stricter final prompt budget than Gemini because its video API rejects prompts over its maximum length.
+Before rendering the template, Marinara compacts the video prompt context. The narration variable is a short visible story beat, not the full assistant message, and the illustration prompt variable is a filtered excerpt that drops common still-image boilerplate. xAI receives a stricter final prompt budget than Gemini Omni, Google Veo, and OpenRouter because its video API rejects prompts over its maximum length.
 
-The same template key is used for Gemini Omni and xAI scene videos today. Existing saved `game.omniVideo` overrides are still read as a legacy fallback until you save the new `game.video` template.
+The same template key is used for Gemini Omni, Google Veo, xAI, and OpenRouter scene videos today. Existing saved `game.omniVideo` overrides are still read as a legacy fallback until you save the new `game.video` template.
 
 ## Storage And Safety
 
@@ -145,9 +149,9 @@ The Prompt Director has its own request window, then each keyframe image/video r
 
 The process to greate animated storyboards is first the regular GM turn needs to complete. Then the game storyboard director needs to create the image and video prompts. Then image keyframes are created for each section of the game turn. Then each keyframe needs to be animated. It's alot of prompts and api calls. 
 
-### xAI video requests take a while
+### Veo, xAI, or OpenRouter video requests take a while
 
-xAI starts a video job and then polls for completion. The default polling interval is controlled by `XAI_VIDEO_POLL_INTERVAL_MS` and the overall timeout by `VIDEO_GEN_TIMEOUT_MS`.
+Google Veo, xAI, and OpenRouter start video jobs and then poll for completion. Veo's default polling interval is controlled by `GOOGLE_VEO_VIDEO_POLL_INTERVAL_MS`, xAI's by `XAI_VIDEO_POLL_INTERVAL_MS`, and OpenRouter's by `OPENROUTER_VIDEO_POLL_INTERVAL_MS`. The overall timeout is controlled by `VIDEO_GEN_TIMEOUT_MS`.
 
 ### xAI rejects a long prompt
 

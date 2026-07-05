@@ -159,7 +159,7 @@ Preset system with drag-and-drop prompt ordering, lorebooks with keyword trigger
 
 ### Connections & Providers
 
-OpenAI, Anthropic, Google Gemini, Google Vertex AI, OpenRouter, NanoGPT, Mistral, Cohere, Pollinations, Stability AI, Together AI, NovelAI, ComfyUI, SD Web UI, Draw Things (Apple Silicon, Metal + Apple Neural Engine), Gemini Omni scene video, xAI Imagine video, and custom OpenAI-compatible endpoints. API keys are encrypted at rest with AES-256. Per-chat connection overrides.
+OpenAI, Anthropic, Google Gemini, Google Vertex AI, OpenRouter, NanoGPT, Mistral, Cohere, Pollinations, Stability AI, Together AI, NovelAI, ComfyUI, SD Web UI, Draw Things (Apple Silicon, Metal + Apple Neural Engine), Gemini Omni scene video, Google Veo video, xAI Imagine video, OpenRouter video, and custom OpenAI-compatible endpoints. API keys are encrypted at rest with AES-256. Per-chat connection overrides.
 
 ### Export & Data
 

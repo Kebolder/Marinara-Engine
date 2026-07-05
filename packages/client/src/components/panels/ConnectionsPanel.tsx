@@ -1590,7 +1590,7 @@ export function ConnectionsPanel() {
           <div className="animate-float flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-400/20 to-blue-500/20">
             <Link size="1.25rem" className="text-sky-400" />
           </div>
-          <p className="text-xs text-[var(--muted-foreground)]">No connections yet</p>
+          <p className="mari-chrome-text-muted text-xs">No connections yet</p>
         </div>
       )}
 
@@ -1599,7 +1599,7 @@ export function ConnectionsPanel() {
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
             <Search size="1.25rem" />
           </div>
-          <p className="text-xs text-[var(--muted-foreground)]">No connections match your search</p>
+          <p className="mari-chrome-text-muted text-xs">No connections match your search</p>
         </div>
       )}
 

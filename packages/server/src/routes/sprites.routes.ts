@@ -375,17 +375,41 @@ function resolveVideoConnection(connection: VideoGenerationConnection) {
   const explicitVideoSource = connection.videoGenerationSource || connection.videoService || "";
   const source =
     explicitVideoSource ||
-    (videoDefaults.service === "xai"
-      ? "xai"
+    (videoDefaults.service !== "gemini_omni"
+      ? videoDefaults.service
       : inferVideoSource(connection.model || "", connection.baseUrl || ""));
   const serviceHint = connection.videoService || source;
   const isXaiVideo = source === "xai" || serviceHint === "xai";
+  const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
+  const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
   return {
     source,
     serviceHint,
-    baseUrl: connection.baseUrl || (isXaiVideo ? "https://api.x.ai/v1" : "https://generativelanguage.googleapis.com/v1beta"),
-    model: connection.model || (isXaiVideo ? "grok-imagine-video-1.5" : "gemini-omni-flash-preview"),
-    resolution: isXaiVideo ? videoDefaults.xai.resolution : undefined,
+    baseUrl:
+      connection.baseUrl ||
+      (isXaiVideo
+        ? "https://api.x.ai/v1"
+        : isGoogleVeoVideo
+          ? "https://generativelanguage.googleapis.com/v1beta"
+        : isOpenRouterVideo
+          ? "https://openrouter.ai/api/v1"
+          : "https://generativelanguage.googleapis.com/v1beta"),
+    model:
+      connection.model ||
+      (isXaiVideo
+        ? "grok-imagine-video-1.5"
+        : isGoogleVeoVideo
+          ? "veo-3.1-generate-preview"
+          : isOpenRouterVideo
+            ? "google/veo-3.1"
+            : "gemini-omni-flash-preview"),
+    resolution: isXaiVideo
+      ? videoDefaults.xai.resolution
+      : isGoogleVeoVideo
+        ? videoDefaults.googleVeo.resolution
+      : isOpenRouterVideo
+        ? videoDefaults.openrouter.resolution
+        : undefined,
   };
 }
 

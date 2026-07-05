@@ -3659,13 +3659,13 @@ function BackgroundPicker({
       {(!backgrounds || backgrounds.length === 0) && (
         <div className="flex flex-col items-center gap-1.5 py-4 text-center">
           <Image size="1.25rem" className="text-[var(--muted-foreground)]/40" />
-          <p className="text-[0.625rem] text-[var(--muted-foreground)]">No backgrounds available yet</p>
+          <p className="mari-chrome-text-muted text-[0.625rem]">No backgrounds available yet</p>
         </div>
       )}
       {backgrounds && backgrounds.length > 0 && filteredBackgrounds.length === 0 && (
         <div className="flex flex-col items-center gap-1.5 py-4 text-center">
           <Search size="1.25rem" className="text-[var(--muted-foreground)]/40" />
-          <p className="text-[0.625rem] text-[var(--muted-foreground)]">No backgrounds match that search</p>
+          <p className="mari-chrome-text-muted text-[0.625rem]">No backgrounds match that search</p>
         </div>
       )}
     </div>
@@ -4100,7 +4100,7 @@ function ThemesSettings() {
             )}
 
             {!isLoading && syncedThemes.length === 0 && (
-              <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+              <p className="mari-chrome-text-muted py-2 text-center text-[0.625rem]">
                 No synced custom themes yet. Create one or import a .css file above.
               </p>
             )}
@@ -4728,7 +4728,7 @@ function ExtensionsSettings() {
             ))}
 
             {!isLoading && extensionList.length === 0 && (
-              <p className="py-2 text-center text-[0.625rem] text-[var(--muted-foreground)]">
+              <p className="mari-chrome-text-muted py-2 text-center text-[0.625rem]">
                 No extensions installed. Import an extension file or folder above.
               </p>
             )}

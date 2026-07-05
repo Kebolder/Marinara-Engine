@@ -3989,21 +3989,21 @@ export function ChatSettingsDrawer({
                 </PickerDropdown>
               )}
 
-              {/* Add from Group picker */}
+              {/* Add from Folder picker */}
               {((characterGroups ?? []) as CharacterGroup[]).length > 0 &&
                 (!showGroupPicker ? (
                   <button
                     onClick={() => setShowGroupPicker(true)}
                     className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
                   >
-                    <Users size="0.75rem" /> Add from Group
+                    <Users size="0.75rem" /> Add from Folder
                   </button>
                 ) : (
                   <PickerDropdown
                     search=""
                     onSearchChange={() => {}}
                     onClose={() => setShowGroupPicker(false)}
-                    placeholder="Select a group…"
+                    placeholder="Select a folder…"
                   >
                     {((characterGroups ?? []) as CharacterGroup[]).map((group) => {
                       const rawIds = group.characterIds ?? [];

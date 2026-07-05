@@ -1714,6 +1714,7 @@
   border: 1px dashed var(--marinara-editor-border);
   border-radius: 0.75rem;
   background: color-mix(in srgb, var(--marinara-editor-control-bg) 54%, transparent);
+  color: var(--marinara-editor-muted);
 }
 
 .mari-editor-shell [class~="text-[var(--foreground)]"],

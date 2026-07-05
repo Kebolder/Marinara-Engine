@@ -71,8 +71,12 @@ const CALL_CHARACTER_VIDEO_ROOT = join(DATA_DIR, "conversation-call-character-vi
 const AVATARS_ROOT = join(DATA_DIR, "avatars");
 const DEFAULT_GEMINI_OMNI_MODEL = "gemini-omni-flash-preview";
 const DEFAULT_GEMINI_OMNI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_GOOGLE_VEO_MODEL = "veo-3.1-generate-preview";
+const DEFAULT_GOOGLE_VEO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
 const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
+const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
+const DEFAULT_OPENROUTER_VIDEO_BASE_URL = "https://openrouter.ai/api/v1";
 const CALL_CHARACTER_VIDEO_VERSION = 1;
 const GENERATION_LOCKS = new Map<string, Promise<void>>();
 const CUSTOM_GENERATION_LOCKS = new Map<string, Promise<void>>();
@@ -420,17 +424,41 @@ function resolveVideoConnection(connection: VideoGenerationConnection) {
   const explicitVideoSource = connection.videoGenerationSource || connection.videoService || "";
   const source =
     explicitVideoSource ||
-    (videoDefaults.service === "xai"
-      ? "xai"
+    (videoDefaults.service !== "gemini_omni"
+      ? videoDefaults.service
       : inferVideoSource(connection.model || "", connection.baseUrl || ""));
   const serviceHint = connection.videoService || source;
   const isXaiVideo = source === "xai" || serviceHint === "xai";
+  const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
+  const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
   return {
     source,
     serviceHint,
-    baseUrl: connection.baseUrl || (isXaiVideo ? DEFAULT_XAI_VIDEO_BASE_URL : DEFAULT_GEMINI_OMNI_BASE_URL),
-    model: connection.model || (isXaiVideo ? DEFAULT_XAI_VIDEO_MODEL : DEFAULT_GEMINI_OMNI_MODEL),
-    resolution: isXaiVideo ? videoDefaults.xai.resolution : undefined,
+    baseUrl:
+      connection.baseUrl ||
+      (isXaiVideo
+        ? DEFAULT_XAI_VIDEO_BASE_URL
+        : isGoogleVeoVideo
+          ? DEFAULT_GOOGLE_VEO_BASE_URL
+        : isOpenRouterVideo
+          ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
+          : DEFAULT_GEMINI_OMNI_BASE_URL),
+    model:
+      connection.model ||
+      (isXaiVideo
+        ? DEFAULT_XAI_VIDEO_MODEL
+        : isGoogleVeoVideo
+          ? DEFAULT_GOOGLE_VEO_MODEL
+        : isOpenRouterVideo
+          ? DEFAULT_OPENROUTER_VIDEO_MODEL
+          : DEFAULT_GEMINI_OMNI_MODEL),
+    resolution: isXaiVideo
+      ? videoDefaults.xai.resolution
+      : isGoogleVeoVideo
+        ? videoDefaults.googleVeo.resolution
+      : isOpenRouterVideo
+        ? videoDefaults.openrouter.resolution
+        : undefined,
   };
 }
 

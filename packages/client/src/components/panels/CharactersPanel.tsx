@@ -1176,7 +1176,7 @@ export function CharactersPanel() {
           <div className="mari-chrome-accent-soft-tile mari-accent-animated animate-float flex h-12 w-12 items-center justify-center rounded-2xl">
             <User size="1.25rem" />
           </div>
-          <p className="text-xs text-[var(--muted-foreground)]">{search ? "No matches found" : "No characters yet"}</p>
+          <p className="mari-chrome-text-muted text-xs">{search ? "No matches found" : "No characters yet"}</p>
         </div>
       )}
 

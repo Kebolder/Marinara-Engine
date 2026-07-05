@@ -170,7 +170,7 @@ export function FileEditorModal({ node, onClose, initialMode = "edit" }: FileEdi
         {/* Body */}
         <div className="flex-1 overflow-hidden">
           {isLoading ? (
-            <div className="flex h-full items-center justify-center text-sm text-[var(--muted-foreground)]">
+            <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">
               Loading...
             </div>
           ) : mode === "preview" && isMd ? (
