@@ -880,6 +880,7 @@ export function ConversationView({
     chatCharIds,
     totalMessageCount,
     conversationMessageStyle,
+    stripTimestamps,
   ]);
 
   const liveStreamCharacterId = streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0]! : null);

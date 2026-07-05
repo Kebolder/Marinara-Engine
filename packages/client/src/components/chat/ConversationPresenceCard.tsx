@@ -770,17 +770,18 @@ export function ConversationPresenceCard({
                             }}
                           />
 
-                        {isManual && (
-                          <button
-                            type="button"
-                            disabled={updateMeta.isPending}
-                            className="shrink-0 border-l border-[var(--border)] px-2.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)] disabled:opacity-60"
-                            title="Clear manual override"
-                            onClick={() => void restoreSchedule(character.id)}
-                          >
-                            <Trash2 size="0.75rem" />
-                          </button>
-                        )}
+                          {isManual && (
+                            <button
+                              type="button"
+                              disabled={updateMeta.isPending}
+                              className="shrink-0 border-l border-[var(--border)] px-2.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]/20 hover:text-[var(--foreground)] disabled:opacity-60"
+                              title="Clear manual override"
+                              onClick={() => void restoreSchedule(character.id)}
+                            >
+                              <Trash2 size="0.75rem" />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <ConversationPresenceScheduleSection
