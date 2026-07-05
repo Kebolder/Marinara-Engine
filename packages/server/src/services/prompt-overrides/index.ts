@@ -18,6 +18,10 @@ export {
   GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
   GAME_STORYBOARD_DIRECTOR,
   GAME_VIDEO,
+  CONVERSATION_CALL_VIDEO_PROMPTS,
+  CONVERSATION_CALL_VIDEO_PROMPT_BY_KIND,
+  CONVERSATION_CALL_VIDEO_CLIP_INSTRUCTION_BY_KIND,
+  CONVERSATION_CALL_VIDEO_CLIP_LABEL_BY_KIND,
   CONVERSATION_SELFIE,
   getPromptOverrideDef,
   listPromptOverrideKeys,
@@ -36,5 +40,6 @@ export type {
   GameImagePromptDirectorCtx,
   GameStoryboardDirectorCtx,
   GameVideoCtx,
+  ConversationCallVideoClipCtx,
   ConversationSelfieCtx,
 } from "./registry.js";

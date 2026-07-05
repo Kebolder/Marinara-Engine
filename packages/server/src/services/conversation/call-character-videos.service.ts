@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import {
   CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
+  getConversationCallVideoClipDuration,
+  normalizeVideoGenerationUserSettings,
   VIDEO_DEFAULTS_STORAGE_KEY,
   createDefaultVideoGenerationProfile,
   inferVideoSource,
@@ -10,10 +12,18 @@ import {
   type ConversationCallCharacterVideoClip,
   type ConversationCallCharacterVideoClipKind,
   type ConversationCallCharacterVideoManifest,
+  type VideoGenerationUserSettings,
 } from "@marinara-engine/shared";
 import { logger, logDebugOverride } from "../../lib/logger.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { assertInsideDir, isAllowedImageBuffer } from "../../utils/security.js";
+import {
+  CONVERSATION_CALL_VIDEO_CLIP_INSTRUCTION_BY_KIND,
+  CONVERSATION_CALL_VIDEO_CLIP_LABEL_BY_KIND,
+  CONVERSATION_CALL_VIDEO_PROMPT_BY_KIND,
+  loadPrompt,
+} from "../prompt-overrides/index.js";
+import type { PromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
 import { generateVideo, type VideoReferenceImage } from "../video/video-generation.js";
 
 type DiskClip = {
@@ -49,53 +59,6 @@ const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
 const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
 const CALL_CHARACTER_VIDEO_VERSION = 1;
 const GENERATION_LOCKS = new Map<string, Promise<void>>();
-
-const CLIP_PROMPTS: Record<ConversationCallCharacterVideoClipKind, { label: string; durationSeconds: number; text: string }> = {
-  idle: {
-    label: "idle loop",
-    durationSeconds: 5,
-    text:
-      "Create a seamless idle video loop for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. The character faces the phone/camera, " +
-      "breathes subtly, blinks, and makes tiny natural head movements. Start and end in the same neutral relaxed idle pose.",
-  },
-  talking: {
-    label: "talking loop",
-    durationSeconds: 5,
-    text:
-      "Create a seamless talking video loop for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. The character looks at the phone/camera, " +
-      "speaks naturally with subtle mouth and face movement, and returns to a neutral talking pose by the final frame so the clip can loop while audio plays.",
-  },
-  laughing: {
-    label: "laughing reaction",
-    durationSeconds: 4,
-    text:
-      "Create a short laughing reaction for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. Begin from neutral idle, laugh softly, then settle fully back into neutral idle by the final frame.",
-  },
-  angry: {
-    label: "angry reaction",
-    durationSeconds: 4,
-    text:
-      "Create a short angry or irritated reaction for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. Begin from neutral idle, show anger in the face and posture, then settle fully back into neutral idle by the final frame.",
-  },
-  crying: {
-    label: "crying reaction",
-    durationSeconds: 4,
-    text:
-      "Create a short crying or tearful reaction for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. Begin from neutral idle, show a restrained emotional break, then settle fully back into neutral idle by the final frame.",
-  },
-  sighing: {
-    label: "sighing reaction",
-    durationSeconds: 4,
-    text:
-      "Create a short sighing reaction for an AI character in a private video call. " +
-      "Use the supplied avatar as the exact identity and art style reference. Begin from neutral idle, sigh with a small breath and head movement, then settle fully back into neutral idle by the final frame.",
-  },
-};
 
 type SharpFn = (input: Buffer, options?: Record<string, unknown>) => {
   png: () => { toBuffer: () => Promise<Buffer> };
@@ -247,14 +210,41 @@ async function readAvatarReferenceImage(avatarPath: string | null): Promise<Vide
   return { base64: png.toString("base64"), mimeType: "image/png" };
 }
 
-function buildClipPrompt(characterName: string, kind: ConversationCallCharacterVideoClipKind) {
-  const clip = CLIP_PROMPTS[kind];
-  return [
-    clip.text,
-    `Character name: ${characterName}.`,
-    "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
-    "Keep camera framing stable like a video-call participant tile. Preserve the avatar's face, hair, outfit cues, and art style.",
-  ].join("\n");
+function getClipLabel(kind: ConversationCallCharacterVideoClipKind) {
+  return CONVERSATION_CALL_VIDEO_CLIP_LABEL_BY_KIND.get(kind) ?? `${kind} clip`;
+}
+
+function getClipInstruction(kind: ConversationCallCharacterVideoClipKind) {
+  return (
+    CONVERSATION_CALL_VIDEO_CLIP_INSTRUCTION_BY_KIND.get(kind) ??
+    "Begin from neutral idle, animate naturally for the clip type, then settle fully back into neutral idle by the final frame."
+  );
+}
+
+async function buildClipPrompt(input: {
+  promptOverridesStorage: PromptOverridesStorage;
+  characterName: string;
+  kind: ConversationCallCharacterVideoClipKind;
+  durationSeconds: number;
+}) {
+  const def = CONVERSATION_CALL_VIDEO_PROMPT_BY_KIND.get(input.kind);
+  if (!def) {
+    return [
+      `Create a ${input.durationSeconds}-second 16:9 ${getClipLabel(input.kind)} for an AI character in a private video call.`,
+      `Character name: ${input.characterName}.`,
+      getClipInstruction(input.kind),
+      "Use the supplied avatar as the exact identity and art style reference.",
+      "Keep camera framing stable like a video-call participant tile. Preserve the avatar's face, hair, outfit cues, and art style.",
+      "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
+    ].join("\n");
+  }
+  return loadPrompt(input.promptOverridesStorage, def, {
+    characterName: input.characterName,
+    clipLabel: getClipLabel(input.kind),
+    clipInstruction: getClipInstruction(input.kind),
+    durationSeconds: input.durationSeconds,
+    aspectRatio: "16:9",
+  });
 }
 
 function resolveVideoConnection(connection: VideoGenerationConnection) {
@@ -283,6 +273,8 @@ async function runGenerationJob(input: {
   characterName: string;
   avatarPath: string | null;
   connection: VideoGenerationConnection;
+  promptOverridesStorage: PromptOverridesStorage;
+  videoSettings: VideoGenerationUserSettings;
   debugMode?: boolean;
 }) {
   const startedAt = nowIso();
@@ -302,8 +294,13 @@ async function runGenerationJob(input: {
     if (diskClip.status === "ready" && manifest.sourceAvatarPath === input.avatarPath && existsSync(clipPath(input.characterId, kind))) {
       continue;
     }
-    const clip = CLIP_PROMPTS[kind];
-    const prompt = buildClipPrompt(input.characterName, kind);
+    const durationSeconds = getConversationCallVideoClipDuration(input.videoSettings, kind);
+    const prompt = await buildClipPrompt({
+      promptOverridesStorage: input.promptOverridesStorage,
+      characterName: input.characterName,
+      kind,
+      durationSeconds,
+    });
     try {
       if (input.debugMode) {
         logDebugOverride(true, "[debug/conversation-call/videos] %s prompt for %s:\n%s", kind, input.characterId, prompt);
@@ -316,7 +313,7 @@ async function runGenerationJob(input: {
         {
           prompt,
           model: resolved.model,
-          durationSeconds: clip.durationSeconds,
+          durationSeconds,
           aspectRatio: "16:9",
           resolution: resolved.resolution,
           referenceImage,
@@ -336,7 +333,7 @@ async function runGenerationJob(input: {
         },
       };
       await writeDiskManifest(manifest);
-      logger.info("[conversation-call/videos] Generated %s for %s", clip.label, input.characterId);
+      logger.info("[conversation-call/videos] Generated %s for %s", getClipLabel(kind), input.characterId);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Video generation failed";
       manifest = {
@@ -375,9 +372,12 @@ export async function startConversationCallCharacterVideoGeneration(input: {
   characterName: string;
   avatarPath: string | null;
   connection: VideoGenerationConnection;
+  promptOverridesStorage: PromptOverridesStorage;
+  videoSettings?: VideoGenerationUserSettings | null;
   debugMode?: boolean;
 }): Promise<ConversationCallCharacterVideoManifest> {
   assertSafeCharacterId(input.characterId);
+  const videoSettings = normalizeVideoGenerationUserSettings(input.videoSettings);
   if (!GENERATION_LOCKS.has(input.characterId)) {
     const current = await readDiskManifest(input.characterId, input.characterName, input.avatarPath);
     const avatarChanged = current.sourceAvatarPath !== input.avatarPath;
@@ -395,7 +395,7 @@ export async function startConversationCallCharacterVideoGeneration(input: {
       clips,
     };
     await writeDiskManifest(pendingManifest);
-    const job = runGenerationJob(input).finally(() => {
+    const job = runGenerationJob({ ...input, videoSettings }).finally(() => {
       GENERATION_LOCKS.delete(input.characterId);
     });
     GENERATION_LOCKS.set(input.characterId, job);

@@ -7,9 +7,11 @@ import { writeFile } from "fs/promises";
 import { basename, extname, join } from "path";
 import { z } from "zod";
 import {
+  VIDEO_GENERATION_SETTINGS_KEY,
   VIDEO_DEFAULTS_STORAGE_KEY,
   createDefaultVideoGenerationProfile,
   inferVideoSource,
+  normalizeVideoGenerationUserSettings,
   normalizeVideoGenerationProfile,
   type GameSceneVideoAspectRatio,
   type GeneratedSceneVideo,
@@ -22,6 +24,7 @@ import { createPersonaGalleryStorage } from "../services/storage/persona-gallery
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
 import { GAME_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
 import {
   generateVideo,
@@ -298,6 +301,11 @@ function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
 function getStoredVideoDefaults(raw: unknown) {
   const root = parseDefaultParametersRoot(raw);
   return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
+}
+
+function hasStoredVideoDefaults(raw: unknown) {
+  const root = parseDefaultParametersRoot(raw);
+  return Object.prototype.hasOwnProperty.call(root, VIDEO_DEFAULTS_STORAGE_KEY);
 }
 
 async function resolveSceneVideoConnectionId(
@@ -685,9 +693,11 @@ export async function galleryRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: message });
     }
 
-    const videoDefaults = videoConn.defaultParameters
-      ? getStoredVideoDefaults(videoConn.defaultParameters)
-      : createDefaultVideoGenerationProfile();
+    const storedVideoDefaults =
+      videoConn.defaultParameters && hasStoredVideoDefaults(videoConn.defaultParameters)
+        ? getStoredVideoDefaults(videoConn.defaultParameters)
+        : null;
+    const videoDefaults = storedVideoDefaults ?? createDefaultVideoGenerationProfile();
     const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
     const source =
       explicitVideoSource ||
@@ -695,9 +705,15 @@ export async function galleryRoutes(app: FastifyInstance) {
     const serviceHint = videoConn.videoService || source;
     const isXaiVideo = source === "xai" || serviceHint === "xai";
     const activeVideoDefaults = isXaiVideo ? videoDefaults.xai : videoDefaults.geminiOmni;
+    const videoSettings = normalizeVideoGenerationUserSettings(
+      await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
+    );
+    const fallbackDurationSeconds = storedVideoDefaults
+      ? activeVideoDefaults.durationSeconds
+      : videoSettings.sceneVideoDurationSeconds;
     const durationSeconds = Math.min(
       isXaiVideo ? 15 : 60,
-      Math.max(1, Math.trunc(input.durationSeconds ?? activeVideoDefaults.durationSeconds)),
+      Math.max(1, Math.trunc(input.durationSeconds ?? fallbackDurationSeconds)),
     );
     const aspectRatio = input.aspectRatio ?? activeVideoDefaults.aspectRatio;
     const baseUrl = videoConn.baseUrl || (isXaiVideo ? DEFAULT_XAI_VIDEO_BASE_URL : DEFAULT_GEMINI_OMNI_BASE_URL);

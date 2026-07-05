@@ -38,13 +38,21 @@ import React, { useRef, useState, useCallback, useEffect, useMemo } from "react"
 import { toast } from "sonner";
 import {
   APP_VERSION,
+  CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
   DEFAULT_IMAGE_STYLE_PROFILES,
+  VIDEO_CALL_CLIP_DURATION_MAX,
+  VIDEO_CALL_CLIP_DURATION_MIN,
+  VIDEO_GENERATION_SETTINGS_KEY,
+  VIDEO_SCENE_DURATION_MAX,
+  VIDEO_SCENE_DURATION_MIN,
   compileImagePrompt,
   normalizeImageStyleProfileSettings,
+  normalizeVideoGenerationUserSettings,
   createFolderEntry,
   getFolderImportEntries,
   getFolderManifestConfig,
   isJsonRecord,
+  type ConversationCallCharacterVideoClipKind,
   type ImagePromptKind,
   type ImagePromptMode,
   type ImageStyleProfile,
@@ -52,6 +60,7 @@ import {
   type InstalledExtension,
   type QuoteFormat,
   type Theme,
+  type VideoGenerationUserSettings,
 } from "@marinara-engine/shared";
 import {
   findDuplicateTheme,
@@ -100,6 +109,7 @@ import {
   UserCheck,
   WandSparkles,
   Terminal,
+  Film,
 } from "lucide-react";
 import { useClearAllData, useExpungeData, useUpdateChatMetadata, type ExpungeScope } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
@@ -424,8 +434,26 @@ const GAME_IMAGE_PROMPT_TEMPLATE_KEYS = [
   "game.background",
   "game.sceneIllustration",
   "game.narrationSummarizer",
-  "game.video",
 ] as const;
+
+const VIDEO_PROMPT_TEMPLATE_KEYS = [
+  "game.video",
+  "conversation.callVideo.idle",
+  "conversation.callVideo.talking",
+  "conversation.callVideo.laughing",
+  "conversation.callVideo.angry",
+  "conversation.callVideo.crying",
+  "conversation.callVideo.sighing",
+] as const;
+
+const CONVERSATION_CALL_VIDEO_CLIP_LABELS: Record<ConversationCallCharacterVideoClipKind, string> = {
+  idle: "Idle loop",
+  talking: "Talking loop",
+  laughing: "Laughing",
+  angry: "Angry",
+  crying: "Crying",
+  sighing: "Sighing",
+};
 
 type GameAssetCategoryId = (typeof GAME_ASSET_CATEGORIES)[number]["id"];
 const GAME_ASSET_CATEGORY_BY_ID = new Map(GAME_ASSET_CATEGORIES.map((category) => [category.id, category]));
@@ -1630,6 +1658,147 @@ function ImageGenerationSettings() {
           <ImageStyleProfilesEditor value={imageStyleProfiles} onChange={setImageStyleProfiles} />
         </div>
       </div>
+    </SettingsSection>
+  );
+}
+
+type AppSettingsValueResponse = { value: string | null };
+
+const VIDEO_GENERATION_SETTINGS_QUERY_KEY = ["app-settings", VIDEO_GENERATION_SETTINGS_KEY] as const;
+
+function serializeVideoGenerationSettings(settings: VideoGenerationUserSettings): string {
+  return JSON.stringify(normalizeVideoGenerationUserSettings(settings));
+}
+
+function VideoGenerationSettings() {
+  const qc = useQueryClient();
+  const videoSettingsQuery = useQuery<AppSettingsValueResponse>({
+    queryKey: VIDEO_GENERATION_SETTINGS_QUERY_KEY,
+    queryFn: () => api.get(`/app-settings/${VIDEO_GENERATION_SETTINGS_KEY}`),
+    staleTime: 60_000,
+  });
+  const savedSettings = useMemo(
+    () => normalizeVideoGenerationUserSettings(videoSettingsQuery.data?.value ?? null),
+    [videoSettingsQuery.data?.value],
+  );
+  const [draft, setDraft] = useState<VideoGenerationUserSettings>(savedSettings);
+
+  useEffect(() => {
+    setDraft(savedSettings);
+  }, [savedSettings]);
+
+  const saveVideoSettings = useMutation<AppSettingsValueResponse, Error, VideoGenerationUserSettings>({
+    mutationFn: (next) =>
+      api.put<AppSettingsValueResponse>(`/app-settings/${VIDEO_GENERATION_SETTINGS_KEY}`, {
+        value: serializeVideoGenerationSettings(next),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(VIDEO_GENERATION_SETTINGS_QUERY_KEY, data);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to save video generation settings.");
+    },
+  });
+
+  const commitSettings = useCallback(
+    (next: VideoGenerationUserSettings) => {
+      const normalized = normalizeVideoGenerationUserSettings(next);
+      setDraft(normalized);
+      saveVideoSettings.mutate(normalized);
+    },
+    [saveVideoSettings],
+  );
+
+  const handleSceneDurationChange = (duration: number) => {
+    commitSettings({ ...draft, sceneVideoDurationSeconds: duration });
+  };
+
+  const handleCallClipDurationChange = (kind: ConversationCallCharacterVideoClipKind, duration: number) => {
+    commitSettings({
+      ...draft,
+      callClipDurations: {
+        ...draft.callClipDurations,
+        [kind]: duration,
+      },
+    });
+  };
+
+  return (
+    <SettingsSection
+      title="Video Generation"
+      description="Set default clip lengths and edit reusable video prompts for Game, Gallery, and Conversation Calls."
+      icon={<Film size="0.875rem" />}
+    >
+      {videoSettingsQuery.isLoading ? (
+        <div className="flex items-center gap-2 rounded-lg bg-[var(--background)]/55 px-3 py-2 text-xs text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+          <Loader2 size="0.8125rem" className="animate-spin" />
+          Loading video settings…
+        </div>
+      ) : videoSettingsQuery.isError ? (
+        <div className="flex items-center gap-1.5 rounded-lg bg-[var(--destructive)]/10 px-2.5 py-2 text-xs text-[var(--destructive)] ring-1 ring-[var(--destructive)]/20">
+          <AlertTriangle size="0.8125rem" className="shrink-0" />
+          Could not load video settings.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="grid gap-2 rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1 text-xs font-medium text-[var(--foreground)]">
+                Scene video fallback length
+                <HelpTooltip text="Used by Game and Gallery scene videos when the selected Default for Videos connection does not define its own duration defaults." />
+              </div>
+              <div className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                Seconds, clamped from {VIDEO_SCENE_DURATION_MIN} to {VIDEO_SCENE_DURATION_MAX}.
+              </div>
+            </div>
+            <div className="grid grid-cols-[minmax(0,4rem)_auto] items-center gap-1.5 sm:w-28">
+              <DraftNumberInput
+                value={draft.sceneVideoDurationSeconds}
+                min={VIDEO_SCENE_DURATION_MIN}
+                max={VIDEO_SCENE_DURATION_MAX}
+                onCommit={handleSceneDurationChange}
+                className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs"
+                ariaLabel="Scene video fallback length in seconds"
+              />
+              <span className="text-[0.625rem] text-[var(--muted-foreground)]">s</span>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]">
+            <div className="mb-2 flex items-center gap-1 text-xs font-medium text-[var(--foreground)]">
+              Conversation Call Clips
+              <HelpTooltip text="Lengths for generated character video-call presence clips. Idle and talking loops are used continuously, while reaction clips play briefly before returning to idle." />
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.map((kind) => (
+                <label
+                  key={kind}
+                  className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-[var(--secondary)]/60 px-2.5 py-2 ring-1 ring-[var(--border)]/80"
+                >
+                  <span className="truncate text-xs text-[var(--foreground)]">
+                    {CONVERSATION_CALL_VIDEO_CLIP_LABELS[kind]}
+                  </span>
+                  <span className="grid w-20 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+                    <DraftNumberInput
+                      value={draft.callClipDurations[kind]}
+                      min={VIDEO_CALL_CLIP_DURATION_MIN}
+                      max={VIDEO_CALL_CLIP_DURATION_MAX}
+                      onCommit={(duration) => handleCallClipDurationChange(kind, duration)}
+                      className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 py-1 text-xs"
+                      ariaLabel={`${CONVERSATION_CALL_VIDEO_CLIP_LABELS[kind]} length in seconds`}
+                    />
+                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">s</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
+              Call clips are clamped from {VIDEO_CALL_CLIP_DURATION_MIN} to {VIDEO_CALL_CLIP_DURATION_MAX} seconds.
+              {saveVideoSettings.isPending ? " Saving…" : ""}
+            </div>
+          </div>
+        </div>
+      )}
     </SettingsSection>
   );
 }
@@ -5885,10 +6054,18 @@ function AdvancedSettings() {
       </SettingsSection>
 
       <ImageGenerationSettings />
+      <VideoGenerationSettings />
+      <PromptOverridesEditor
+        title="Video Generation Prompt Templates"
+        description="Edit reusable templates for Game/Gallery scene videos and Conversation Call character clips."
+        help="Game scene videos use this before sending a reference-image video request. Conversation Call clips use the selected character avatar as the identity reference and return to idle at the end of each clip."
+        keys={VIDEO_PROMPT_TEMPLATE_KEYS}
+        preferredKey="game.video"
+      />
       <PromptOverridesEditor
         title="Game Prompt Templates"
-        description="Edit the reusable templates used for NPC portraits, scene backgrounds, scene illustrations, narration summarization, and Omni scene videos."
-        help="These templates render before recurring Game image requests, narration-to-illustration summarization, Omni scene video generation, and manual Gallery background generation. One-off prompt review edits still only affect the current request."
+        description="Edit the reusable templates used for NPC portraits, scene backgrounds, scene illustrations, and narration summarization."
+        help="These templates render before recurring Game image requests and narration-to-illustration summarization. One-off prompt review edits still only affect the current request."
         keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
         preferredKey="game.npcPortrait"
       />

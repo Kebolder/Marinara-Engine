@@ -8,9 +8,11 @@ import { basename, extname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import {
   CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
+  VIDEO_GENERATION_SETTINGS_KEY,
   conversationCallIdleSchema,
   conversationCallInterruptionSchema,
   conversationCallModelResponseSchema,
+  normalizeVideoGenerationUserSettings,
   normalizeTextForMatch,
   sendConversationCallMessageSchema,
   startConversationCallSchema,
@@ -1805,11 +1807,16 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "No Default for Videos connection is configured." });
     }
     const body = parseJsonRecord(req.body);
+    const videoSettings = normalizeVideoGenerationUserSettings(
+      await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
+    );
     return startConversationCallCharacterVideoGeneration({
       characterId: character.id,
       characterName: readName(data, "Character"),
       avatarPath: character.avatarPath ?? null,
       connection: videoConnection,
+      promptOverridesStorage: createPromptOverridesStorage(app.db),
+      videoSettings,
       debugMode: body.debugMode === true,
     });
   });

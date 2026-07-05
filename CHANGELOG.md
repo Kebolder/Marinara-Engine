@@ -19,6 +19,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 - Added Conversation-mode audio/video calls with per-chat call toggles, character-initiated incoming calls, a Discord-style desktop/mobile call surface, call-only chat, speaking highlights, mute/camera/screen-share controls, soundboard support, minimized active-call popouts, call history cards, and post-call summary injection.
 - Added Conversation Call character video presence: when enabled, Marinara uses the Default for Videos connection to generate cached avatar-based idle, talking, laughing, angry, crying, and sighing clips, then plays them in-call from TTS cues while returning characters to idle after speech.
+- Added Advanced > Video Generation settings for editing Game/Gallery scene-video defaults, Conversation Call clip lengths, and the reusable video prompt templates for Game scene videos and call presence clips.
 - Added Conversation call voice input through provider-native audio/video when supported, Local Whisper transcription with downloadable Whisper Tiny/Base models, browser speech recognition fallback, and manual system dictation mode.
 - Added xAI as a Text-to-Speech provider option with built-in voice fallbacks and xAI speech request handling.
 - Added Conversation mode reactions that can target an individual character's part of a merged multi-character reply, including per-segment add-reaction buttons, per-segment reaction rows, and prompt-visible `[User reacted with ...]` notes under the exact targeted segment (#3210).
