@@ -17,9 +17,13 @@ import { normalizeTextForMatch } from "./text-matching.js";
  * empty `Name: ` part keeps parsing as a (filtered) speaker line on both sides.
  */
 export function stripLeadingMessageTimestamps(text: string): string {
+  // The leading whitespace class is deliberately same-line-only ([^\S\n], not
+  // \s): with \s* every line start inside a long blank run re-scanned the rest
+  // of the run before failing, going quadratic (~1s per call at 40KB of
+  // newlines). Same-line whitespace fails in O(1) at non-timestamp lines.
   return text
-    .replace(/^(\s*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
-    .replace(/^(\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
+    .replace(/^([^\S\n]*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
+    .replace(/^([^\S\n]*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
     .trim();
 }
 

@@ -35,7 +35,7 @@
 // - [navigate: panel="...", tab="..."]
 // - [fetch: type="character|persona|lorebook|chat|preset", name="..."]
 
-import { normalizeTextForMatch } from "@marinara-engine/shared";
+import { normalizeTextForMatch, stripLeadingMessageTimestamps } from "@marinara-engine/shared";
 
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
 
@@ -394,14 +394,20 @@ const REACT_RE = /\[react:([^\]\r\n]+)\]/gi;
 /** Split a `[react: ...]` body into its emoji token + optional `to "Name"` target. */
 function parseReactBody(body: string): { emoji: string; targetCharacter?: string } | null {
   const trimmed = body.trim();
+  // Tolerate spaces around '=' — a common model malformation of the advertised
+  // emoji="…" syntax.
+  const keyForm = trimmed.match(/^emoji\s*=\s*"/i);
   let emoji: string;
   let rest: string;
-  if (trimmed.toLowerCase().startsWith('emoji="')) {
-    const close = trimmed.indexOf('"', 7);
+  let quotedForm = false;
+  if (keyForm) {
+    quotedForm = true;
+    const close = trimmed.indexOf('"', keyForm[0].length);
     if (close === -1) return null;
-    emoji = trimmed.slice(7, close).trim();
+    emoji = trimmed.slice(keyForm[0].length, close).trim();
     rest = trimmed.slice(close + 1);
   } else if (trimmed.startsWith('"')) {
+    quotedForm = true;
     const close = trimmed.indexOf('"', 1);
     if (close === -1) return null;
     emoji = trimmed.slice(1, close).trim();
@@ -425,10 +431,13 @@ function parseReactBody(body: string): { emoji: string; targetCharacter?: string
       return target ? { emoji, targetCharacter: target } : { emoji };
     }
     // No recognizable target marker after a bare token — keep the old grammar's
-    // behavior where the whole body was the (possibly junk) emoji token.
-    if (!trimmed.startsWith('"') && !trimmed.toLowerCase().startsWith('emoji="')) return { emoji: trimmed };
+    // behavior where the whole body was the (possibly junk) emoji token. Bodies
+    // containing quotes were unreachable under the old grammar (prose asides
+    // like `[react: she said "hi"]`) — reject them rather than minting a junk
+    // text chip.
+    if (!quotedForm) return trimmed.includes('"') ? null : { emoji: trimmed };
   }
-  return { emoji };
+  return emoji.includes('"') ? null : { emoji };
 }
 const DIRECT_MESSAGE_RE = new RegExp(`\\[dm:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const INFLUENCE_RE = /<influence>([\s\S]*?)<\/influence>/gi;
@@ -1176,7 +1185,10 @@ export function parseCharacterCommands(content: string): {
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")
-    .replace(REACT_RE, "")
+    // Only strip react tags that actually parse into a command — bodies
+    // parseReactBody rejects (junk prose with quotes, unterminated quotes)
+    // stay visible, matching the old stricter grammar's behavior.
+    .replace(REACT_RE, (match, reactBody: string) => (parseReactBody(reactBody) ? "" : match))
     .replace(INFLUENCE_RE, "")
     .replace(NOTE_RE, "")
     .replace(INFLUENCE_BRACKET_RE, "")
@@ -1234,6 +1246,12 @@ export function parseCharacterCommandsBySpeaker(
 
   // Segment the response by leading "Name: " line prefixes, mirroring the client's
   // parseNamePrefixFormat so server-side attribution matches the rendered split.
+  // Segment the timestamp-stripped shape — the client strips leaked [HH:MM]
+  // tokens before rendering, so a line like "[12:01] Alice: hey" is Alice's
+  // section on screen and must be Alice's for attribution too. (Attribution
+  // only: commands and cleanContent still come from the raw whole-response
+  // parse above, and the strip never touches [command:] tokens.)
+  const attributionContent = stripLeadingMessageTimestamps(content);
   const segments: Array<{ characterId: string | null; text: string; leading?: boolean }> = [];
   let currentId: string | null = fallbackCharacterId;
   let inLeadingRegion = true;
@@ -1248,7 +1266,7 @@ export function parseCharacterCommandsBySpeaker(
     }
     currentLines = [];
   };
-  for (const line of content.split("\n")) {
+  for (const line of attributionContent.split("\n")) {
     const colonIdx = line.indexOf(": ");
     if (colonIdx > 0) {
       const mappedId = nameToId.get(normalizeTextForMatch(line.slice(0, colonIdx)));

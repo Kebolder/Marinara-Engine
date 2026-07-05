@@ -3134,11 +3134,16 @@ export async function generateRoutes(app: FastifyInstance) {
               // rather than mutating it: finalMessages shares objects with the
               // follow-up/agent message arrays, and a mutated object would get
               // annotated a second time on a follow-up generation pass.
+              const rawContentStr = typeof raw.content === "string" ? raw.content : String(raw.content ?? "");
               finalMessages[i] = {
                 ...finalMessages[i]!,
                 content: annotateContentWithReactions(
                   finalMessages[i]!.content,
-                  stripLeadingMessageTimestamps(typeof raw.content === "string" ? raw.content : String(raw.content ?? "")),
+                  // Oversized content skips segmentation inside annotate anyway —
+                  // don't pay the strip on it either.
+                  rawContentStr.length > REACTION_ANNOTATION_CONTENT_CAP
+                    ? rawContentStr
+                    : stripLeadingMessageTimestamps(rawContentStr),
                   parseExtra(raw.extra).reactions,
                   reactionSpeakersByNorm,
                   reactorDisplayName,
@@ -9903,6 +9908,28 @@ export async function generateRoutes(app: FastifyInstance) {
             type: "assistant_commands_start",
             data: { count: collectedCommands.length, professorMariCommandCount },
           });
+          // React target resolution needs the FULL chat-member list (disabled
+          // members included — the client segments with them). Built lazily once
+          // per request: each getById is a full-table scan in the file-native
+          // store, and a multi-react group reply runs several react commands.
+          let reactChatMembersCache: Array<{ id: string; name: string }> | null = null;
+          const getReactChatMembers = async (): Promise<Array<{ id: string; name: string }>> => {
+            if (reactChatMembersCache) return reactChatMembersCache;
+            const members: Array<{ id: string; name: string }> = charInfo.map((c) => ({ id: c.id, name: c.name }));
+            for (const cid of allCharacterIds) {
+              if (members.some((m) => m.id === cid)) continue;
+              const row = await chars.getById(cid);
+              if (!row) continue;
+              try {
+                const name = JSON.parse(row.data as string)?.name;
+                if (typeof name === "string" && name.trim()) members.push({ id: cid, name });
+              } catch {
+                // Malformed character data — not addressable as a react target.
+              }
+            }
+            reactChatMembersCache = members;
+            return members;
+          };
           try {
             for (const { command, characterId, messageId, swipeIndex } of collectedCommands) {
               try {
@@ -10539,26 +10566,12 @@ export async function generateRoutes(app: FastifyInstance) {
                       | string
                       | undefined;
                     let segmentTarget: { segment: number; speaker: string | null } | null = null;
+                    // The saved reply row, prefetched when the targeted-resolution
+                    // path already loaded it — the write below reuses it instead
+                    // of re-scanning the messages table.
+                    let prefetchedTargetMsg: Awaited<ReturnType<typeof chats.getMessage>> | null = null;
                     if (reactCmd.targetCharacter) {
-                      // Resolve names against ALL chat members (disabled ones
-                      // included) — the client renders and segments with the full
-                      // member set, so a stored segment index derived from a
-                      // narrower set would point at the wrong part.
-                      const chatMembers: Array<{ id: string; name: string }> = charInfo.map((c) => ({
-                        id: c.id,
-                        name: c.name,
-                      }));
-                      for (const cid of allCharacterIds) {
-                        if (chatMembers.some((m) => m.id === cid)) continue;
-                        const row = await chars.getById(cid);
-                        if (!row) continue;
-                        try {
-                          const name = JSON.parse(row.data as string)?.name;
-                          if (typeof name === "string" && name.trim()) chatMembers.push({ id: cid, name });
-                        } catch {
-                          // Malformed character data — not addressable as a react target.
-                        }
-                      }
+                      const chatMembers = await getReactChatMembers();
                       const wanted = normalizeTextForMatch(reactCmd.targetCharacter);
                       const targetChar = chatMembers.find((m) => normalizeTextForMatch(m.name) === wanted);
                       if (!targetChar) {
@@ -10610,10 +10623,12 @@ export async function generateRoutes(app: FastifyInstance) {
                           authorId: unknown,
                           beforePartByNorm?: string | null,
                         ): Promise<{ segment: number; speaker: string | null } | null> => {
-                          const text = stripLeadingMessageTimestamps(
-                            typeof content === "string" ? content : String(content ?? ""),
-                          );
-                          if (!text || text.length > REACTION_ANNOTATION_CONTENT_CAP) return null;
+                          const rawText = typeof content === "string" ? content : String(content ?? "");
+                          // Cap BEFORE the strip so pathological content skips all
+                          // regex work, not just the segmentation.
+                          if (!rawText.trim() || rawText.length > REACTION_ANNOTATION_CONTENT_CAP) return null;
+                          const text = stripLeadingMessageTimestamps(rawText);
+                          if (!text) return null;
                           const names = new Set(baseNames);
                           const author = await authorNameOf(authorId);
                           if (author) names.add(normalizeTextForMatch(author));
@@ -10655,7 +10670,10 @@ export async function generateRoutes(app: FastifyInstance) {
                               (ownMsg as { characterId?: unknown }).characterId,
                               reactorName ? normalizeTextForMatch(reactorName) : null,
                             );
-                            if (part) resolved = { id: messageId, target: part };
+                            if (part) {
+                              resolved = { id: messageId, target: part };
+                              prefetchedTargetMsg = ownMsg;
+                            }
                           }
                         }
                         if (!resolved) {
@@ -10704,7 +10722,10 @@ export async function generateRoutes(app: FastifyInstance) {
                     }
 
                     if (targetId) {
-                      const targetMsg = await chats.getMessage(targetId);
+                      const targetMsg =
+                        prefetchedTargetMsg && targetId === messageId
+                          ? prefetchedTargetMsg
+                          : await chats.getMessage(targetId);
                       if (targetMsg) {
                         const ex = parseExtra(targetMsg.extra);
                         const reactions = addMessageReactor(
@@ -10714,12 +10735,14 @@ export async function generateRoutes(app: FastifyInstance) {
                           imageUrl,
                           segmentTarget,
                         );
+                        // updateMessageExtra mirrors the ACTIVE swipe itself; the
+                        // loop below covers the remaining swipes so swiping the
+                        // target message doesn't drop the character's reaction
+                        // (same message-level semantics as the client PATCH route).
                         await chats.updateMessageExtra(targetId, { reactions });
-                        // Reactions are message-level: mirror them to every swipe row
-                        // (the client's PATCH route does the same) so swiping the
-                        // target message doesn't drop the character's reaction.
                         const targetSwipes = await chats.getSwipes(targetId);
                         for (const swipe of targetSwipes) {
+                          if (swipe.index === targetMsg.activeSwipeIndex) continue;
                           await chats.updateSwipeExtra(targetId, swipe.index, { reactions });
                         }
                         logger.info(

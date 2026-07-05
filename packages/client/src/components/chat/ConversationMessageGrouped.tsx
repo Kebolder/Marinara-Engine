@@ -196,6 +196,10 @@ export function ConversationMessageGrouped({
             ) : null;
 
           if (!grp.speaker) {
+            // Whitespace-only narration: render nothing — an empty
+            // [data-card-css] wrapper would paint a phantom themed box, the
+            // same invariant the speaker branches guard with segHasText.
+            if (!segHasText) return null;
             return (
               <div
                 key={i}

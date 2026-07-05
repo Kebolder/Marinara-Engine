@@ -4,7 +4,7 @@
 // user's reaction on the message. Standard emojis come from the picker; the global
 // custom emojis are shown in a pick-only "Custom" grid. Conversation mode only.
 // ──────────────────────────────────────────────
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { SmilePlus } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { EmojiPicker } from "../ui/EmojiPicker";
@@ -21,7 +21,6 @@ interface ReactionAddButtonProps {
 export function ReactionAddButton({ onPick, className, tabIndex }: ReactionAddButtonProps) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const { data: customEmojis } = useCustomEmojis();
 
   return (
     <>
@@ -42,42 +41,64 @@ export function ReactionAddButton({ onPick, className, tabIndex }: ReactionAddBu
       >
         <SmilePlus size="0.75rem" />
       </button>
-      <EmojiPicker
-        open={open}
-        onClose={() => setOpen(false)}
-        onSelect={(emoji) => {
-          setOpen(false);
-          onPick(emoji, null);
-        }}
-        anchorRef={buttonRef}
-        customTab={{
-          icon: "⭐",
-          label: "Custom emojis",
-          render: () => (
-            <div className="grid grid-cols-6 gap-1">
-              {(customEmojis ?? []).map((emoji) => (
-                <button
-                  key={emoji.id}
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    onPick(`:${emoji.name}:`, emoji.url);
-                  }}
-                  title={`:${emoji.name}:`}
-                  className="flex aspect-square w-full items-center justify-center rounded-md p-1 transition-transform hover:scale-110 hover:bg-foreground/10 active:scale-100"
-                >
-                  <img src={emoji.url} alt={`:${emoji.name}:`} className="max-h-9 max-w-full object-contain" />
-                </button>
-              ))}
-              {(customEmojis ?? []).length === 0 && (
-                <p className="col-span-6 px-1 py-6 text-center text-[0.6875rem] text-foreground/45">
-                  No custom emojis to react with yet.
-                </p>
-              )}
-            </div>
-          ),
-        }}
-      />
+      {/* Mounted only while open: this button renders once per speaker segment
+          across the whole transcript, so a closed instance must cost nothing —
+          no picker subtree and no custom-emoji query subscription. */}
+      {open && (
+        <ReactionPickerPanel
+          anchorRef={buttonRef}
+          onClose={() => setOpen(false)}
+          onPick={(emoji, imageUrl) => {
+            setOpen(false);
+            onPick(emoji, imageUrl);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function ReactionPickerPanel({
+  anchorRef,
+  onClose,
+  onPick,
+}: {
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+  onPick: (emoji: string, imageUrl: string | null) => void;
+}) {
+  const { data: customEmojis } = useCustomEmojis();
+
+  return (
+    <EmojiPicker
+      open
+      onClose={onClose}
+      onSelect={(emoji) => onPick(emoji, null)}
+      anchorRef={anchorRef}
+      customTab={{
+        icon: "⭐",
+        label: "Custom emojis",
+        render: () => (
+          <div className="grid grid-cols-6 gap-1">
+            {(customEmojis ?? []).map((emoji) => (
+              <button
+                key={emoji.id}
+                type="button"
+                onClick={() => onPick(`:${emoji.name}:`, emoji.url)}
+                title={`:${emoji.name}:`}
+                className="flex aspect-square w-full items-center justify-center rounded-md p-1 transition-transform hover:scale-110 hover:bg-foreground/10 active:scale-100"
+              >
+                <img src={emoji.url} alt={`:${emoji.name}:`} className="max-h-9 max-w-full object-contain" />
+              </button>
+            ))}
+            {(customEmojis ?? []).length === 0 && (
+              <p className="col-span-6 px-1 py-6 text-center text-[0.6875rem] text-foreground/45">
+                No custom emojis to react with yet.
+              </p>
+            )}
+          </div>
+        ),
+      }}
+    />
   );
 }
