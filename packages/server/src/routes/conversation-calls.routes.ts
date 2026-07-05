@@ -817,12 +817,13 @@ async function buildCallPrompt(input: {
     : [];
   const commandToggles = parseJsonRecord(metadata.conversationCommandToggles);
   const ttsSettings = await readTTSSettings(input.app);
+  const characterVideoPresenceEnabled = ttsSettings.callCharacterVideoEnabled === true;
   const allowedCommands: string[] = [];
   const crossPostTargetNames: string[] = [];
   const memoryTargetNames = new Set(characters.map((character) => character.name));
   const hapticDeviceNames: string[] = [];
   const customVideoClipConnection =
-    ttsSettings.callCharacterVideoEnabled === true && ttsSettings.callCustomVideoClipsEnabled === true
+    characterVideoPresenceEnabled && ttsSettings.callCustomVideoClipsEnabled === true
       ? await createConnectionsStorage(input.app.db)
           .getDefaultForVideoGeneration()
           .catch(() => null)
@@ -969,6 +970,9 @@ async function buildCallPrompt(input: {
     "</role>",
     "<instructions>",
     "The user's spoken audio may have been transcribed imperfectly. Deduce the likely intended meaning if a phrase looks slightly wrong.",
+    characterVideoPresenceEnabled
+      ? "Character video presence is enabled. Voice turns will be spoken aloud and paired with character video-call clips, so use natural voice cues and visual-call awareness when appropriate."
+      : "",
     nativeMedia.length > 0
       ? "The latest user input includes provider-native audio and/or video attachments. Use those attachments as the primary evidence for what the user said or showed; the written marker is only a label."
       : "",
