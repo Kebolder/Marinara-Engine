@@ -37,7 +37,7 @@ import type {
   ConversationCallTurn,
   MessageAttachment,
 } from "@marinara-engine/shared";
-import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
+import { cn, generateClientId, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
 import type { CharacterMap, PersonaInfo } from "./chat-area.types";
 import {
   useConversationCallMessages,
@@ -599,7 +599,7 @@ export function ConversationCallSurface({
   onEnded,
   embedded = false,
 }: ConversationCallSurfaceProps) {
-  const { data: messages = [] } = useConversationCallMessages(session.id);
+  const { data: persistedMessages = [] } = useConversationCallMessages(session.id);
   const { data: ttsConfig } = useTTSConfig();
   const sendMessage = useSendConversationCallMessage(session.id);
   const sendIdleCheck = useSendConversationCallIdle(session.id);
@@ -628,6 +628,7 @@ export function ConversationCallSurface({
   const [userSpeaking, setUserSpeaking] = useState(false);
   const [recording, setRecording] = useState(false);
   const [browserSpeechSupported, setBrowserSpeechSupported] = useState(false);
+  const [optimisticCallMessages, setOptimisticCallMessages] = useState<ConversationCallMessage[]>([]);
   const mobileCallLayout = useMobileCallLayout();
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [joinedParticipantIds, setJoinedParticipantIds] = useState<Set<string>>(() => new Set(["user"]));
@@ -657,6 +658,13 @@ export function ConversationCallSurface({
   const playedEndSoundForRef = useRef<string | null>(null);
   const previousSessionStatusRef = useRef(session.status);
   const [queuedCallInteractions, setQueuedCallInteractions] = useState(0);
+  const messages = useMemo(() => {
+    if (optimisticCallMessages.length === 0) return persistedMessages;
+    const byId = new Map<string, ConversationCallMessage>();
+    for (const message of persistedMessages) byId.set(message.id, message);
+    for (const message of optimisticCallMessages) byId.set(message.id, message);
+    return [...byId.values()].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+  }, [optimisticCallMessages, persistedMessages]);
   const callAudioEnabled = ttsConfig?.callAudioEnabled === true;
   const audioInputMode = ttsConfig?.callAudioInputMode ?? "local_whisper";
   const systemVoiceInputMode = audioInputMode === "system";
@@ -877,6 +885,7 @@ export function ConversationCallSurface({
 
   useEffect(() => {
     setDepartedParticipantIds(new Set());
+    setOptimisticCallMessages([]);
   }, [session.id]);
 
   useEffect(() => {
@@ -1229,19 +1238,44 @@ export function ConversationCallSurface({
       const text = content.trim();
       if (!text) return;
       markUserActivity();
+      const optimisticMessageId =
+        inputMode === "typed" ? `__optimistic_call_${session.id}_${generateClientId()}` : null;
       if (inputMode === "typed") {
+        const optimisticMessage: ConversationCallMessage = {
+          id: optimisticMessageId!,
+          callId: session.id,
+          chatId,
+          role: "user",
+          characterId: null,
+          participantKind: "user",
+          kind: "text",
+          content: text,
+          extra: { optimistic: true },
+          createdAt: new Date().toISOString(),
+        };
+        setOptimisticCallMessages((current) => [...current, optimisticMessage]);
         setDraft("");
         window.requestAnimationFrame(resizeDraftTextarea);
       }
       await enqueueCallInteraction(
         async () => {
-          const response = await sendMessage.mutateAsync({ content: text, inputMode });
-          await playTurns(response.turns);
+          try {
+            const response = await sendMessage.mutateAsync({ content: text, inputMode });
+            if (optimisticMessageId) {
+              setOptimisticCallMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+            }
+            await playTurns(response.turns);
+          } catch (error) {
+            if (optimisticMessageId) {
+              setOptimisticCallMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+            }
+            throw error;
+          }
         },
         inputMode === "speech" ? "Call speech transcription failed." : "Call message failed.",
       );
     },
-    [enqueueCallInteraction, markUserActivity, playTurns, resizeDraftTextarea, sendMessage],
+    [chatId, enqueueCallInteraction, markUserActivity, playTurns, resizeDraftTextarea, sendMessage, session.id],
   );
 
   const handleDraftChange = useCallback(
@@ -1291,11 +1325,10 @@ export function ConversationCallSurface({
   );
 
   const submitDraft = useCallback(() => {
-    if (queuedCallInteractions > 0 || sendMessage.isPending) return;
     void submitText(draft, "typed").catch((error) =>
       toast.error(error instanceof Error ? error.message : "Call message failed."),
     );
-  }, [draft, queuedCallInteractions, sendMessage.isPending, submitText]);
+  }, [draft, submitText]);
 
   const handleDraftKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1899,15 +1932,11 @@ export function ConversationCallSurface({
         </div>
         <button
           type="submit"
-          disabled={!draft.trim() || queuedCallInteractions > 0 || sendMessage.isPending}
+          disabled={!draft.trim()}
           className="mari-chat-send-btn flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-200 disabled:cursor-not-allowed sm:h-8 sm:w-8"
           title="Send"
         >
-          {queuedCallInteractions > 0 || sendMessage.isPending ? (
-            <Loader2 size="1rem" className="animate-spin" />
-          ) : (
-            <Send size="0.9375rem" />
-          )}
+          <Send size="0.9375rem" />
         </button>
       </div>
     </form>

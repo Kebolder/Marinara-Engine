@@ -528,14 +528,64 @@ function formatCallCommandPromptLines(
 function normalizeTurns(raw: unknown, fallbackSpeaker: string): ConversationCallTurn[] {
   const parsed = conversationCallModelResponseSchema.safeParse(raw);
   if (!parsed.success) return [];
-  return parsed.data.turns
+  return finalizeCallTurns(
+    parsed.data.turns.flatMap((turn) =>
+      repairPrefixedCallTurns(
+        {
+          id: turn.id,
+          speakerName: turn.speakerName || fallbackSpeaker,
+          mode: turn.mode,
+          content: turn.content.trim(),
+          tone: turn.mode === "voice" ? (turn.tone ?? null) : null,
+        },
+        fallbackSpeaker,
+      ),
+    ),
+    fallbackSpeaker,
+  );
+}
+
+function prefixedCallTurnMode(value: string): ConversationCallTurn["mode"] {
+  return value.toLowerCase() === "command" ? "command" : value.toLowerCase() === "text" ? "text" : "voice";
+}
+
+function repairPrefixedCallTurns(turn: ConversationCallTurn, fallbackSpeaker: string): ConversationCallTurn[] {
+  const text = turn.content.trim();
+  if (!text) return [turn];
+  const markerPattern = /(^|\n+)\s*([^\n:()]{1,160})\s*\((speech|voice|text|command)\)\s*:\s*/gi;
+  const matches = Array.from(text.matchAll(markerPattern));
+  if (matches.length === 0) return [turn];
+
+  const repaired: ConversationCallTurn[] = [];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index]!;
+    const next = matches[index + 1];
+    const start = (match.index ?? 0) + match[0].length;
+    const end = next?.index ?? text.length;
+    const content = text.slice(start, end).trim();
+    if (!content) continue;
+    const mode = prefixedCallTurnMode(match[3] ?? turn.mode);
+    const speakerName = (match[2] ?? "").trim() || turn.speakerName || fallbackSpeaker;
+    repaired.push({
+      speakerName,
+      mode,
+      content,
+      tone: mode === "voice" && speakerName === turn.speakerName ? (turn.tone ?? null) : null,
+    });
+  }
+  return repaired.length > 0 ? repaired : [turn];
+}
+
+function finalizeCallTurns(turns: ConversationCallTurn[], fallbackSpeaker: string): ConversationCallTurn[] {
+  return turns
     .map((turn, index) => {
-      const command = turn.mode === "command" ? normalizeBracketCommand(turn.content) : null;
+      const content = turn.content.trim();
+      const command = turn.mode === "command" ? normalizeBracketCommand(content) : null;
       return {
         id: turn.id ?? `turn-${index}`,
         speakerName: turn.speakerName || fallbackSpeaker,
         mode: turn.mode,
-        content: turn.mode === "command" ? (command ?? turn.content.trim()) : turn.content.trim(),
+        content: turn.mode === "command" ? (command ?? content) : content,
         tone: turn.mode === "voice" ? (turn.tone ?? null) : null,
       };
     })
@@ -556,7 +606,10 @@ function parseModelTurns(text: string, fallbackSpeaker: string): ConversationCal
       /* fall back below */
     }
   }
-  return [{ id: "turn-0", speakerName: fallbackSpeaker, mode: "voice", content: trimmed }];
+  return finalizeCallTurns(
+    repairPrefixedCallTurns({ speakerName: fallbackSpeaker, mode: "voice", content: trimmed }, fallbackSpeaker),
+    fallbackSpeaker,
+  );
 }
 
 function isCallPresenceStatus(value: unknown): value is CallPresenceStatus {
@@ -802,6 +855,11 @@ async function buildCallPrompt(input: {
   const outputFormat = [
     "<output_format>",
     'Return ONLY valid JSON with this shape: {"turns":[{"speakerName":"Exact character name","mode":"voice|text|command","content":"message text, voice text with TTS [cues], or command text","tone":"voice-only tone tags"}]}',
+    'Use mode "voice" for characters who can speak, "text" when a character should type, and "command" for hidden actions.',
+    "One response may include several ordered turns from multiple characters. Use that when a natural live-call exchange should happen before the user speaks again.",
+    "If multiple characters respond, order the turns exactly as they should be heard or displayed.",
+    "Do not put speaker prefixes like \"Dottore (speech):\" inside content. Put the speaker in speakerName and only the spoken/typed/command text in content.",
+    "For voice turns, include natural TTS cues inside content or tone when useful, such as [soft], [sighs], [brief pause], or [laughing quietly], etc.",
     "</output_format>",
   ].join("\n");
 
@@ -814,18 +872,14 @@ async function buildCallPrompt(input: {
     nativeMedia.length > 0
       ? "The latest user input includes provider-native audio and/or video attachments. Use those attachments as the primary evidence for what the user said or showed; the written marker is only a label."
       : "",
-    "One response may include several ordered turns from multiple characters. Use that when a natural live-call exchange should happen before the user speaks again.",
-    'Use mode "voice" for characters who can speak, "text" when a character should type, and "command" for hidden actions.',
     "If the latest input is a call-silence check, do not treat it as something the user said. If the user recently said they were going away, brb, busy, sleeping, or intentionally quiet, return no turns and wait patiently. Otherwise, one character may ask if the user is still there or all right.",
     "Use [leave_call] only when the speaking character personally leaves the call. Use [end_call] only when the call should end for everyone. If a character should say something before ending the call, emit that voice or text turn first, then emit a separate command turn with content \"[end_call]\".",
-    "For voice turns, include natural TTS cues inside content or tone when useful, such as [soft], [sighs], [brief pause], or [laughing quietly], etc.",
     voiceCapableCharacters.length > 0
       ? `Characters with configured voices: ${voiceCapableCharacters.map((character) => character.name).join(", ")}.`
       : "No characters currently have configured voices; use text turns unless a command is needed.",
     textOnlyCharacters.length > 0
       ? `Characters without configured voices should use text turns: ${textOnlyCharacters.map((character) => character.name).join(", ")}.`
       : "",
-    "If multiple characters respond, order the turns exactly as they should be heard or displayed.",
     "If the call history says [User interrupted when you were speaking this.], treat that quoted speech as cut off mid-call; do not assume the user heard the rest, and respond to the interruption naturally.",
     "Characters available in this call (only those can speak, type, or run commands): " + characterNames + ".",
     "</instructions>",
