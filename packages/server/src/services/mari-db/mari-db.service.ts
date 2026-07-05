@@ -137,7 +137,31 @@ const FILE_BACKED_TABLE_SET = new Set<string>(FILE_BACKED_TABLES);
 const THEME_TABLE = "custom_themes";
 const THEME_ACTIVE_TRUE = "true";
 const THEME_ACTIVE_FALSE = "false";
-const BOOLEAN_FLAGS = new Set(["active", "activate", "apply", "cascade", "dry-run", "jsonl", "parsed", "raw", "strict"]);
+const BOOLEAN_FLAGS = new Set([
+  "active",
+  "activate",
+  "apply",
+  "cached",
+  "cascade",
+  "changed",
+  "constant",
+  "disable",
+  "dry-run",
+  "enable",
+  "full",
+  "global",
+  "help",
+  "jsonl",
+  "no-constant",
+  "no-global",
+  "parsed",
+  "patch",
+  "raw",
+  "resume",
+  "staged",
+  "strict",
+  "tail",
+]);
 
 function truncateOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): { text: string; truncated: boolean } {
   if (value.length <= limit) return { text: value, truncated: false };

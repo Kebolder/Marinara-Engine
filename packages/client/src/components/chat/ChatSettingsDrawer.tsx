@@ -1352,6 +1352,7 @@ export function ChatSettingsDrawer({
   const gameImageUseAvatarReferences = metadata.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
   const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
+  const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
   const updateIllustratorPromptConnection = useCallback(
@@ -6879,6 +6880,17 @@ export function ChatSettingsDrawer({
                             updateMeta.mutate({
                               id: chat.id,
                               gameImageAutoGenerationEnabled: !gameImageAutoGenerationEnabled,
+                            })
+                          }
+                        />
+                        <AgentSettingsToggle
+                          label="Dynamic LLM Prompt Generation for GM Mode Assets"
+                          description="Ask the prompt model to rewrite Game NPC portrait, location background, and key-moment prompts before sending them to the image provider."
+                          enabled={gameImageDynamicPromptEnabled}
+                          onToggle={() =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameImageDynamicPromptEnabled: !gameImageDynamicPromptEnabled,
                             })
                           }
                         />

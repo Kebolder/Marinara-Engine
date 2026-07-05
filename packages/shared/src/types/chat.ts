@@ -247,6 +247,8 @@ export interface ChatMetadata {
   gameImageIncludeCharacterAppearance?: boolean;
   /** When false, Game Mode keeps manual Illustrator controls but stops automatic visual generations. */
   gameImageAutoGenerationEnabled?: boolean;
+  /** When true, Game Mode asks the chat LLM to rewrite generated asset prompts before image generation. */
+  gameImageDynamicPromptEnabled?: boolean;
   /** Per-chat source overrides for knowledge agents. */
   knowledgeAgentSources?: Partial<Record<"knowledge-retrieval" | "knowledge-router", KnowledgeAgentSourceSettings>>;
   /** Narrative Director mode used when Push Story is armed. */

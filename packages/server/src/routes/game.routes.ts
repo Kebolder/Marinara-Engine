@@ -150,6 +150,9 @@ import {
   buildBackgroundProviderPrompt,
   buildNpcPortraitProviderPrompt,
   buildSceneIllustrationProviderPrompt,
+  type GameDynamicImagePromptGenerator,
+  type GameDynamicImagePromptKind,
+  type GameDynamicImagePromptRequest,
 } from "../services/game/game-asset-generation.js";
 import { saveImageToDisk } from "../services/image/image-generation.js";
 import {
@@ -169,6 +172,7 @@ import {
 } from "../services/storage/prompt-overrides.storage.js";
 import {
   GAME_NARRATION_SUMMARIZER,
+  GAME_IMAGE_PROMPT_DIRECTOR,
   GAME_STORYBOARD_DIRECTOR,
   GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
   GAME_VIDEO,
@@ -763,6 +767,230 @@ async function summarizeIllustrationFromNarration(args: {
   } catch (err) {
     logger.warn(err, "[game/illustration-summarizer] Failed to summarize narration; using existing prompt");
     return args.illustration;
+  }
+}
+
+function gameDynamicImagePromptKindLabel(kind: GameDynamicImagePromptKind): string {
+  switch (kind) {
+    case "portrait":
+      return "NPC portrait";
+    case "background":
+      return "location background";
+    case "illustration":
+      return "key-moment scene illustration";
+  }
+}
+
+function compactDynamicPromptText(value: unknown, maxLength: number): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+$/gm, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function compactDynamicPromptLine(value: unknown, maxLength = 500): string {
+  return compactDynamicPromptText(value, maxLength).replace(/\s+/g, " ");
+}
+
+function dynamicPromptBlock(tag: string, lines: string[]): string {
+  const clean = lines
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 32);
+  return clean.length ? `<${tag}>\n${clean.join("\n")}\n</${tag}>` : "";
+}
+
+function sanitizeDynamicGameImagePromptResponse(raw: string, maxCharacters: number): string | null {
+  const stripped = raw
+    .trim()
+    .replace(/^```(?:json|text)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  let candidate = "";
+  let parsedObject = false;
+
+  try {
+    const parsed = parseJSON(stripped);
+    if (typeof parsed === "string") {
+      candidate = parsed;
+    } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      parsedObject = true;
+      const record = parsed as Record<string, unknown>;
+      candidate =
+        compactDynamicPromptText(record.prompt, maxCharacters) ||
+        compactDynamicPromptText(record.positivePrompt, maxCharacters) ||
+        compactDynamicPromptText(record.imagePrompt, maxCharacters);
+    }
+  } catch {
+    const promptMatch = stripped.match(
+      /["']?(?:prompt|positivePrompt|imagePrompt)["']?\s*[:=]\s*["']([\s\S]+?)["']\s*[,}]/i,
+    );
+    candidate = promptMatch?.[1] ?? stripped;
+  }
+
+  if (parsedObject && !candidate) return null;
+
+  candidate = compactDynamicPromptText(candidate || stripped, maxCharacters)
+    .replace(/^(?:positive\s+prompt|prompt|image\s+prompt)\s*:\s*/i, "")
+    .trim();
+
+  if (candidate.length < 20) return null;
+  return candidate.slice(0, maxCharacters).trim() || null;
+}
+
+async function buildDynamicGameImagePromptMessages(args: {
+  promptOverridesStorage?: PromptOverridesStorage;
+  request: GameDynamicImagePromptRequest;
+  meta: Record<string, unknown>;
+  setupConfig: Record<string, unknown> | null;
+  latestState: { location?: string | null; weather?: string | null; time?: string | null } | null;
+}): Promise<ChatMessage[]> {
+  const gameContextLines = [
+    `Asset kind: ${gameDynamicImagePromptKindLabel(args.request.kind)}`,
+    args.setupConfig?.genre ? `Genre: ${compactDynamicPromptLine(args.setupConfig.genre, 120)}` : "",
+    args.setupConfig?.setting ? `Setting: ${compactDynamicPromptLine(args.setupConfig.setting, 240)}` : "",
+    args.setupConfig?.artStylePrompt
+      ? `Art style: ${compactDynamicPromptLine(args.setupConfig.artStylePrompt, 500)}`
+      : "",
+    typeof args.meta.gameActiveState === "string"
+      ? `Game state: ${compactDynamicPromptLine(args.meta.gameActiveState, 80)}`
+      : "",
+    args.latestState?.location ? `Current location: ${compactDynamicPromptLine(args.latestState.location, 240)}` : "",
+    args.latestState?.weather ? `Weather: ${compactDynamicPromptLine(args.latestState.weather, 160)}` : "",
+    args.latestState?.time ? `Time: ${compactDynamicPromptLine(args.latestState.time, 160)}` : "",
+    typeof args.meta.gameWorldOverview === "string"
+      ? `World overview: ${compactDynamicPromptLine(args.meta.gameWorldOverview, 700)}`
+      : "",
+    typeof args.meta.gameImagePromptInstructions === "string" && args.meta.gameImagePromptInstructions.trim()
+      ? `User image instructions: ${compactDynamicPromptLine(args.meta.gameImagePromptInstructions, 1000)}`
+      : "",
+  ];
+  const gameContextBlock = dynamicPromptBlock("game_context", gameContextLines);
+  const assetContextBlock = dynamicPromptBlock("asset_context", [
+    `Title: ${compactDynamicPromptLine(args.request.title, 180)}`,
+    ...args.request.assetContext.map((line) => compactDynamicPromptLine(line, 1000)),
+  ]);
+  const sourcePrompt = compactDynamicPromptText(
+    args.request.sourcePrompt,
+    Math.max(args.request.maxCharacters * 2, 2000),
+  );
+  const vars = {
+    kindLabel: gameDynamicImagePromptKindLabel(args.request.kind),
+    gameContextBlock,
+    assetContextBlock,
+    sourcePrompt,
+    maxCharacters: args.request.maxCharacters,
+  };
+  const systemPrompt = args.promptOverridesStorage
+    ? await loadPrompt(args.promptOverridesStorage, GAME_IMAGE_PROMPT_DIRECTOR, vars)
+    : GAME_IMAGE_PROMPT_DIRECTOR.defaultBuilder(vars);
+
+  return [
+    { role: "system", content: systemPrompt },
+    {
+      role: "user",
+      content: [
+        gameContextBlock,
+        assetContextBlock,
+        `<draft_prompt>\n${sourcePrompt}\n</draft_prompt>`,
+        [
+          `Rewrite this into one positive prompt for a ${gameDynamicImagePromptKindLabel(args.request.kind)}.`,
+          `Maximum length: ${args.request.maxCharacters} characters.`,
+          'Return only JSON: {"prompt":"..."}.',
+        ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    },
+  ];
+}
+
+async function createDynamicGameImagePromptGenerator(args: {
+  connections: ReturnType<typeof createConnectionsStorage>;
+  promptOverridesStorage?: PromptOverridesStorage;
+  chat: NonNullable<StoredChatRecord>;
+  meta: Record<string, unknown>;
+  setupConfig: Record<string, unknown> | null;
+  latestState: { location?: string | null; weather?: string | null; time?: string | null } | null;
+  debugLog?: (message: string, ...args: any[]) => void;
+  signal?: AbortSignal;
+}): Promise<GameDynamicImagePromptGenerator | undefined> {
+  if (args.meta.gameImageDynamicPromptEnabled !== true) return undefined;
+
+  try {
+    const promptConnectionId =
+      readTrimmedString(args.meta.illustratorPromptConnectionId) ??
+      readTrimmedString(args.meta.gameSceneConnectionId) ??
+      readTrimmedString(args.setupConfig?.sceneConnectionId);
+    const { conn, baseUrl, defaultGenerationParameters } = await resolveConnection(
+      args.connections,
+      promptConnectionId,
+      args.chat.connectionId,
+    );
+    const parameters = resolveStoredGameGenerationParameters(args.meta, defaultGenerationParameters);
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey!,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
+
+    return async (request) => {
+      const messages = await buildDynamicGameImagePromptMessages({
+        promptOverridesStorage: args.promptOverridesStorage,
+        request,
+        meta: args.meta,
+        setupConfig: args.setupConfig,
+        latestState: args.latestState,
+      });
+      args.debugLog?.(
+        "[debug/game/dynamic-image-prompt] request kind=%s model=%s sourceChars=%d maxChars=%d",
+        request.kind,
+        conn.model ?? "",
+        request.sourcePrompt.length,
+        request.maxCharacters,
+      );
+      args.debugLog?.("[debug/game/dynamic-image-prompt] prompt messages:\n%s", JSON.stringify(messages, null, 2));
+
+      const result = await runGameChatComplete(
+        provider,
+        messages,
+        gameGenOptions(
+          conn.model ?? "",
+          {
+            stream: false,
+            maxTokens: request.kind === "illustration" ? 3000 : 1400,
+            responseFormat: { type: "json_object" },
+            signal: args.signal,
+          },
+          parameters,
+          conn.provider,
+        ),
+        `Game dynamic ${request.kind} image prompt`,
+        GAME_DYNAMIC_IMAGE_PROMPT_TIMEOUT_MS,
+      );
+      const extraction = extractLeadingThinkingBlocks(result.content || "", parameters?.customThinkingTags);
+      const raw = extraction.content.trim();
+      args.debugLog?.("[debug/game/dynamic-image-prompt] raw response kind=%s:\n%s", request.kind, raw);
+      const prompt = sanitizeDynamicGameImagePromptResponse(raw, request.maxCharacters);
+      if (prompt) {
+        args.debugLog?.(
+          "[debug/game/dynamic-image-prompt] selected prompt kind=%s chars=%d:\n%s",
+          request.kind,
+          prompt.length,
+          prompt,
+        );
+      }
+      return prompt;
+    };
+  } catch (err) {
+    logger.warn(err, "[game/dynamic-image-prompt] Failed to initialise dynamic prompt generation");
+    return undefined;
   }
 }
 
@@ -2360,9 +2588,10 @@ const GAME_SETUP_MIN_OUTPUT_TOKENS = 16_384;
 const SESSION_CONCLUSION_MIN_OUTPUT_TOKENS = 8192;
 const CAMPAIGN_PROGRESSION_MIN_OUTPUT_TOKENS = SESSION_CONCLUSION_MIN_OUTPUT_TOKENS;
 const GAME_GENERATION_TIMEOUT_MS = 5 * 60 * 1000;
-const GAME_ASSET_GENERATION_TIMEOUT_MS = 220 * 1000;
+const GAME_ASSET_GENERATION_TIMEOUT_MS = 45 * 60 * 1000;
 const GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS = 31 * 60 * 1000;
 const GAME_ILLUSTRATION_SUMMARY_TIMEOUT_MS = 60 * 1000;
+const GAME_DYNAMIC_IMAGE_PROMPT_TIMEOUT_MS = 45 * 1000;
 const GAME_STORYBOARD_DIRECTOR_TIMEOUT_MS = 3 * 60 * 1000;
 const GAME_ASSET_PORTRAIT_CONCURRENCY = 2;
 const GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY = 4;
@@ -4012,7 +4241,10 @@ async function recoverStaleGameStoryboards(
   context: string,
 ) {
   try {
-    const recovered = await storyboards.failInProgressUpdatedBefore(cutoffUpdatedAt, GAME_STORYBOARD_STALE_RENDER_ERROR);
+    const recovered = await storyboards.failInProgressUpdatedBefore(
+      cutoffUpdatedAt,
+      GAME_STORYBOARD_STALE_RENDER_ERROR,
+    );
     if (recovered > 0) {
       logger.warn("[game/storyboard] marked %d stale storyboard render job(s) failed during %s", recovered, context);
     }
@@ -4047,11 +4279,7 @@ function compactStoryboardSourceNarration(value: string): string {
 }
 
 function escapeStoryboardXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function normalizeStoryboardAnchorKind(value: unknown): StoryboardAnchorKind | "" {
@@ -4069,9 +4297,7 @@ function normalizeStoryboardSections(rawSections: unknown, sourceNarration: stri
         .map((raw): StoryboardSourceSection | null => {
           const section = asStoryboardRecord(raw);
           const parsedIndex =
-            typeof section.index === "number"
-              ? section.index
-              : Number.parseInt(String(section.index ?? ""), 10);
+            typeof section.index === "number" ? section.index : Number.parseInt(String(section.index ?? ""), 10);
           if (!Number.isFinite(parsedIndex)) return null;
           const index = Math.trunc(parsedIndex);
           if (index < 0 || index > 1000) return null;
@@ -4128,9 +4354,7 @@ function normalizeStoryboardSectionIndex(value: unknown, sections: StoryboardSou
   if (sorted.includes(index)) return index;
   if (index <= sorted[0]!) return sorted[0]!;
   if (index >= sorted[sorted.length - 1]!) return sorted[sorted.length - 1]!;
-  return sorted.reduce((best, candidate) =>
-    Math.abs(candidate - index) < Math.abs(best - index) ? candidate : best,
-  );
+  return sorted.reduce((best, candidate) => (Math.abs(candidate - index) < Math.abs(best - index) ? candidate : best));
 }
 
 function storyboardSectionsForRange(
@@ -9422,7 +9646,10 @@ export async function gameRoutes(app: FastifyInstance) {
       };
       const renderStoryboardFrame = async (frame: (typeof frameRows)[number]): Promise<StoryboardFrameRenderResult> => {
         if (backgroundSignal.aborted) {
-          await storyboards.updateKeyframe(frame.id, { status: "failed", error: "Storyboard generation was cancelled." });
+          await storyboards.updateKeyframe(frame.id, {
+            status: "failed",
+            error: "Storyboard generation was cancelled.",
+          });
           return { generatedImage: false, generatedVideo: false, imageFailure: true, videoFailure: false };
         }
         await storyboards.updateKeyframe(frame.id, { status: "rendering_image", error: null });
@@ -9573,14 +9800,21 @@ export async function gameRoutes(app: FastifyInstance) {
         ? GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY
         : GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY;
       const frameWorkerCount = Math.min(frameWorkerLimit, frameRows.length);
-      const initialStoryboard = await serializeGameTurnStoryboard({ storyboards, gallery, sceneVideos, row: storyboardRow });
+      const initialStoryboard = await serializeGameTurnStoryboard({
+        storyboards,
+        gallery,
+        sceneVideos,
+        row: storyboardRow,
+      });
       const releaseBackgroundStoryboardLock = releaseStoryboardLock;
       releaseStoryboardLock = null;
 
       void (async () => {
         const backgroundTimeout = setTimeout(() => {
           backgroundController.abort(
-            new Error(`Game storyboard media rendering timed out after ${Math.round(GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS / 1000)} seconds`),
+            new Error(
+              `Game storyboard media rendering timed out after ${Math.round(GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS / 1000)} seconds`,
+            ),
           );
         }, GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS);
         backgroundTimeout.unref?.();
@@ -9922,6 +10156,14 @@ export async function gameRoutes(app: FastifyInstance) {
     const latestImageState = await createGameStateStorage(app.db)
       .getLatest(input.chatId)
       .catch(() => null);
+    const dynamicPromptGenerator = await createDynamicGameImagePromptGenerator({
+      connections,
+      promptOverridesStorage,
+      chat,
+      meta,
+      setupConfig: setupCfg,
+      latestState: latestImageState,
+    });
 
     const items: Array<{
       id: string;
@@ -9960,6 +10202,7 @@ export async function gameRoutes(app: FastifyInstance) {
         styleProfiles,
         styleProfileId,
         promptOverridesStorage,
+        dynamicPromptGenerator,
         size: backgroundSize,
         promptOverride: promptOverride?.prompt,
         negativePromptOverride: promptOverride?.negativePrompt,
@@ -10054,6 +10297,7 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfiles,
           styleProfileId,
           promptOverridesStorage,
+          dynamicPromptGenerator,
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
@@ -10105,48 +10349,65 @@ export async function gameRoutes(app: FastifyInstance) {
         }
       }
 
-      for (const npc of input.npcsNeedingAvatars) {
-        const normalizedNpcName = normalizeJournalMatch(npc.name);
-        const forceNpcAvatar = forceNpcAvatarNames.has(normalizedNpcName);
-        if (!forceNpcAvatar && existingNpcAvatarByName.get(normalizedNpcName)) continue;
-        if (!forceNpcAvatar && findCharAvatarFuzzy(npc.name, charAvatarByName)) continue;
-        const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
-        const presentCharacter = findRecordByName(presentCharacters, npc.name);
-        const appearance = resolveNpcPortraitAppearance(npc, metadataNpc, presentCharacter);
-        const promptOverride = promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name));
+      type PreviewAssetItem = (typeof items)[number];
+      const portraitPreviewItems: Array<PreviewAssetItem | null> = new Array(input.npcsNeedingAvatars.length).fill(
+        null,
+      );
+      let nextNpcIndex = 0;
+      const runPortraitPreviewWorker = async () => {
+        while (true) {
+          const index = nextNpcIndex++;
+          const npc = input.npcsNeedingAvatars?.[index];
+          if (!npc) return;
 
-        const compiledReviewPrompt = await buildNpcPortraitProviderPrompt({
-          chatId: input.chatId,
-          npcName: npc.name,
-          appearance,
-          gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
-          pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
-          artStyle,
-          imgSource,
-          imgModel,
-          imgBaseUrl,
-          imgApiKey,
-          imgService: imgServiceHint,
-          imgEndpointId,
-          imgComfyWorkflow,
-          imgDefaults,
-          styleProfiles,
-          styleProfileId,
-          promptOverridesStorage,
-          size: portraitSize,
-          promptOverride: promptOverride?.prompt,
-          negativePromptOverride: promptOverride?.negativePrompt,
-        });
-        items.push({
-          id: gameImagePromptReviewId("portrait", npc.name),
-          kind: "portrait",
-          title: `Portrait: ${npc.name}`,
-          prompt: compiledReviewPrompt.prompt,
-          negativePrompt: compiledReviewPrompt.negativePrompt,
-          width: portraitSize.width,
-          height: portraitSize.height,
-        });
-      }
+          const normalizedNpcName = normalizeJournalMatch(npc.name);
+          const forceNpcAvatar = forceNpcAvatarNames.has(normalizedNpcName);
+          if (!forceNpcAvatar && existingNpcAvatarByName.get(normalizedNpcName)) continue;
+          if (!forceNpcAvatar && findCharAvatarFuzzy(npc.name, charAvatarByName)) continue;
+          const metadataNpc = findNpcRecordByName(currentNpcs, npc.name);
+          const presentCharacter = findRecordByName(presentCharacters, npc.name);
+          const appearance = resolveNpcPortraitAppearance(npc, metadataNpc, presentCharacter);
+          const promptOverride = promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name));
+
+          const compiledReviewPrompt = await buildNpcPortraitProviderPrompt({
+            chatId: input.chatId,
+            npcName: npc.name,
+            appearance,
+            gender: npc.gender ?? metadataNpc?.gender ?? optionalTrimmedString(presentCharacter?.gender),
+            pronouns: npc.pronouns ?? metadataNpc?.pronouns ?? optionalTrimmedString(presentCharacter?.pronouns),
+            artStyle,
+            imgSource,
+            imgModel,
+            imgBaseUrl,
+            imgApiKey,
+            imgService: imgServiceHint,
+            imgEndpointId,
+            imgComfyWorkflow,
+            imgDefaults,
+            styleProfiles,
+            styleProfileId,
+            promptOverridesStorage,
+            dynamicPromptGenerator,
+            size: portraitSize,
+            promptOverride: promptOverride?.prompt,
+            negativePromptOverride: promptOverride?.negativePrompt,
+          });
+          portraitPreviewItems[index] = {
+            id: gameImagePromptReviewId("portrait", npc.name),
+            kind: "portrait",
+            title: `Portrait: ${npc.name}`,
+            prompt: compiledReviewPrompt.prompt,
+            negativePrompt: compiledReviewPrompt.negativePrompt,
+            width: portraitSize.width,
+            height: portraitSize.height,
+          };
+        }
+      };
+      const portraitPreviewWorkerCount = input.queueImageGenerationRequests
+        ? 1
+        : Math.min(GAME_ASSET_PORTRAIT_CONCURRENCY, input.npcsNeedingAvatars.length);
+      await Promise.all(Array.from({ length: portraitPreviewWorkerCount }, () => runPortraitPreviewWorker()));
+      items.push(...portraitPreviewItems.filter((item): item is PreviewAssetItem => item !== null));
     }
 
     return { items };
@@ -10269,6 +10530,16 @@ export async function gameRoutes(app: FastifyInstance) {
           { prompt: item.prompt.trim(), negativePrompt: item.negativePrompt?.trim() || undefined },
         ]),
       );
+      const dynamicPromptGenerator = await createDynamicGameImagePromptGenerator({
+        connections,
+        promptOverridesStorage,
+        chat,
+        meta,
+        setupConfig: setupCfg,
+        latestState: latestImageState,
+        debugLog: debugLogsEnabled ? debugLog : undefined,
+        signal: assetAbortSignal,
+      });
 
       let generatedBackground: string | null = null;
       let fallbackBackground: string | null = null;
@@ -10305,6 +10576,7 @@ export async function gameRoutes(app: FastifyInstance) {
           styleProfileId,
           debugLog: debugLogsEnabled ? debugLog : undefined,
           promptOverridesStorage,
+          dynamicPromptGenerator,
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
@@ -10416,6 +10688,7 @@ export async function gameRoutes(app: FastifyInstance) {
             styleProfileId,
             debugLog: debugLogsEnabled ? debugLog : undefined,
             promptOverridesStorage,
+            dynamicPromptGenerator,
             size: backgroundSize,
             promptOverride: promptOverride?.prompt,
             negativePromptOverride: promptOverride?.negativePrompt,
@@ -10534,6 +10807,7 @@ export async function gameRoutes(app: FastifyInstance) {
                 styleProfileId,
                 debugLog: debugLogsEnabled ? debugLog : undefined,
                 promptOverridesStorage,
+                dynamicPromptGenerator,
                 size: portraitSize,
                 promptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))?.prompt,
                 negativePromptOverride: promptOverrideById.get(gameImagePromptReviewId("portrait", npc.name))
