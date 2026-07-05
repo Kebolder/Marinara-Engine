@@ -99,13 +99,15 @@ function getScheduledDayCount(schedule?: WeekSchedule): number {
   return CONVERSATION_SCHEDULE_DAYS.filter((day) => (schedule.days[day] ?? []).length > 0).length;
 }
 
-function getSummaryText(schedulesEnabled: boolean, hasGeneratedSchedules: boolean, schedule?: WeekSchedule): string {
+type ScheduleSummary = { text: string; kind: "day-count" | "message" };
+
+function getSummaryText(schedulesEnabled: boolean, hasGeneratedSchedules: boolean, schedule?: WeekSchedule): ScheduleSummary {
   const dayCount = getScheduledDayCount(schedule);
-  if (!schedulesEnabled && !hasGeneratedSchedules) return "Autonomous scheduling is off and no schedule has been generated yet.";
-  if (!schedulesEnabled) return "Autonomous scheduling is off.";
-  if (!hasGeneratedSchedules || !schedule) return "Autonomous scheduling is on, but no schedule has been generated yet.";
-  if (dayCount > 0) return `${dayCount} day${dayCount === 1 ? "" : "s"} scheduled`;
-  return "Schedule exists, but nothing is upcoming yet.";
+  if (!schedulesEnabled && !hasGeneratedSchedules) return { text: "Autonomous scheduling is off and no schedule has been generated yet.", kind: "message" };
+  if (!schedulesEnabled) return { text: "Autonomous scheduling is off.", kind: "message" };
+  if (!hasGeneratedSchedules || !schedule) return { text: "Autonomous scheduling is on, but no schedule has been generated yet.", kind: "message" };
+  if (dayCount > 0) return { text: `${dayCount} day${dayCount === 1 ? "" : "s"} scheduled`, kind: "day-count" };
+  return { text: "Schedule exists, but nothing is upcoming yet.", kind: "message" };
 }
 
 function dayLabel(block: UpcomingScheduleBlock): string {
@@ -122,7 +124,6 @@ export function ConversationPresenceScheduleSection({
   onOpenScheduleEditor,
 }: ConversationPresenceScheduleSectionProps) {
   const [expanded, setExpanded] = useState(false);
-  const dayCount = getScheduledDayCount(schedule);
   const upcomingBlocks = useMemo(() => getUpcomingScheduleBlocks(schedule, 3), [schedule]);
   const nextBlock = upcomingBlocks[0];
   const extraBlocks = upcomingBlocks.slice(1);
@@ -152,8 +153,8 @@ export function ConversationPresenceScheduleSection({
               {badge}
             </span>
           </div>
-          {summary !== (dayCount > 0 ? `${dayCount} day${dayCount === 1 ? "" : "s"} scheduled` : "No schedule") && (
-            <p className="mt-1 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">{summary}</p>
+          {summary.kind !== "day-count" && (
+            <p className="mt-1 text-[0.625rem] leading-4 text-[var(--muted-foreground)]/82">{summary.text}</p>
           )}
         </div>
 

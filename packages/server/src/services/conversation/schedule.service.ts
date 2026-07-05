@@ -69,7 +69,7 @@ const STATUS_KEYWORDS: Record<string, ConversationPresenceStatus> = {
   meal: "idle",
 };
 
-function summarizePreviousSchedule(schedule: WeekSchedule): string[] {
+function summarizeWeekForPrompt(schedule: WeekSchedule): string[] {
   return DAYS.map((day) => {
     const blocks = schedule.days[day] ?? [];
     const summary = blocks.map((block) => `${block.time} ${block.status ?? "online"} ${block.activity}`).join("; ");
@@ -300,7 +300,7 @@ export async function generateScheduleRoutineSummary(
     ...(userSchedulePreferences?.trim() ? [``, `User guidance:`, userSchedulePreferences.trim()] : []),
     ``,
     `Routine:`,
-    ...summarizePreviousSchedule(schedule),
+    ...summarizeWeekForPrompt(schedule),
   ].join("\n");
 
   const result = await provider.chatComplete(
@@ -319,55 +319,11 @@ export async function generateScheduleRoutineSummary(
  * Parse the LLM's schedule response into a structured format.
  */
 function parseScheduleResponse(content: string): Omit<WeekSchedule, "weekStart"> {
-  // Try to extract JSON from response (handle markdown code blocks)
-  let jsonStr = content.trim();
-  const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) jsonStr = jsonMatch[1]!.trim();
-
-  // Try to find raw JSON object
-  const braceStart = jsonStr.indexOf("{");
-  const braceEnd = jsonStr.lastIndexOf("}");
-  if (braceStart !== -1 && braceEnd !== -1) {
-    jsonStr = jsonStr.slice(braceStart, braceEnd + 1);
-  }
-
-  // Repair common LLM JSON issues: trailing commas, comments, ellipsis, unquoted keys
-  jsonStr = jsonStr
-    .replace(/\/\/[^\n]*/g, "") // remove single-line comments
-    .replace(/\/\*[\s\S]*?\*\//g, "") // remove multi-line comments
-    .replace(/,\s*([\]\}])/g, "$1") // remove trailing commas before ] or }
-    .replace(/\.{3,}[^"}\]\n]*/g, "") // remove ...etc / ... continuations (not inside strings)
-    .replace(/\n\s*\n/g, "\n"); // collapse blank lines left by removals
-
-  let data: {
+  const data = parseRepairedJson<{
     talkativeness?: number;
     inactivityThresholdMinutes?: number;
     days?: Record<string, Array<{ time: string; activity: string; status?: string }>>;
-  };
-
-  try {
-    data = JSON.parse(jsonStr);
-  } catch (firstError) {
-    // Second pass: more aggressive repair — remove any lines that aren't valid JSON structure
-    // This catches things like "// ..." or bare text the LLM added inside the JSON
-    const repairedLines = jsonStr.split("\n").filter((line) => {
-      const trimmed = line.trim();
-      // Keep lines that look like JSON structure (braces, brackets, key-value pairs, commas)
-      if (!trimmed) return false;
-      if (/^[{}\[\],]/.test(trimmed)) return true;
-      if (/^"/.test(trimmed)) return true;
-      if (/^\d/.test(trimmed)) return true;
-      if (/^[}\]]/.test(trimmed)) return true;
-      return false;
-    });
-    const repairedStr = repairedLines.join("\n").replace(/,\s*([\]\}])/g, "$1");
-    try {
-      data = JSON.parse(repairedStr);
-    } catch {
-      // If still failing, throw the original error with context
-      throw firstError;
-    }
-  }
+  }>(content);
 
   const VALID_STATUSES = new Set(["online", "idle", "dnd", "offline"] as const);
   type ValidStatus = "online" | "idle" | "dnd" | "offline";
@@ -404,13 +360,37 @@ function extractJsonObject(content: string): string {
     .replace(/\/\/[^\n]*/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/,\s*([\]\}])/g, "$1")
+    .replace(/\.{3,}[^"}\]\n]*/g, "")
     .replace(/\n\s*\n/g, "\n");
 }
 
+function parseRepairedJson<T>(content: string): T {
+  const jsonStr = extractJsonObject(content);
+  try {
+    return JSON.parse(jsonStr) as T;
+  } catch (firstError) {
+    const repairedLines = jsonStr.split("\n").filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (/^[{}\[\],]/.test(trimmed)) return true;
+      if (/^"/.test(trimmed)) return true;
+      if (/^\d/.test(trimmed)) return true;
+      if (/^[}\]]/.test(trimmed)) return true;
+      return false;
+    });
+    const repairedStr = repairedLines.join("\n").replace(/,\s*([\]\}])/g, "$1");
+    try {
+      return JSON.parse(repairedStr) as T;
+    } catch {
+      throw firstError;
+    }
+  }
+}
+
 function parseDayScheduleResponse(content: string): DaySchedule {
-  const data = JSON.parse(extractJsonObject(content)) as {
+  const data = parseRepairedJson<{
     blocks?: Array<{ time?: string; activity?: string; status?: string }>;
-  };
+  }>(content);
   const validStatuses = new Set(["online", "idle", "dnd", "offline"] as const);
   type ValidStatus = "online" | "idle" | "dnd" | "offline";
   return (data.blocks ?? []).map((block) => {

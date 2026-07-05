@@ -108,7 +108,6 @@ import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { HomeAchievements } from "./HomeAchievements";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
-import { CharacterScheduleEditorModal } from "./CharacterScheduleEditorModal";
 import { PendingTypingDots } from "./PendingTypingDots";
 import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
@@ -410,6 +409,20 @@ const GameSurface = lazy(async () => {
   const module = await import("../game/GameSurface");
   return { default: module.GameSurface };
 });
+
+const loadCharacterScheduleEditorModal = async () => {
+  const module = await import("./CharacterScheduleEditorModal");
+  return { default: module.CharacterScheduleEditorModal };
+};
+
+let characterScheduleEditorModalLoadPromise: ReturnType<typeof loadCharacterScheduleEditorModal> | null = null;
+
+function preloadCharacterScheduleEditorModal() {
+  characterScheduleEditorModalLoadPromise ??= loadCharacterScheduleEditorModal();
+  return characterScheduleEditorModalLoadPromise;
+}
+
+const CharacterScheduleEditorModal = lazy(preloadCharacterScheduleEditorModal);
 
 type FloatingPanelAnchor = { right: number; top: number } | null;
 type OpenSettingsOptions = { initialSection?: ChatSettingsInitialSection };
@@ -1021,6 +1034,7 @@ export function ChatArea() {
   const [scheduleModalCharacterId, setScheduleModalCharacterId] = useState<string | null>(null);
   const [scheduleModalInitialDay, setScheduleModalInitialDay] = useState<string | null>(null);
   const handleOpenScheduleEditor = useCallback((characterId: string, options?: { initialDay?: string | null }) => {
+    void preloadCharacterScheduleEditorModal();
     setScheduleModalInitialDay(options?.initialDay ?? null);
     setScheduleModalCharacterId(characterId);
   }, []);
@@ -1605,6 +1619,8 @@ export function ChatArea() {
     setMultiSelectMode(false);
     setSelectedMessageIds(new Set());
     setSelectionAnchorIndex(null);
+    setScheduleModalCharacterId(null);
+    setScheduleModalInitialDay(null);
   }, [activeChatId]);
 
   const handleUnselectAllMessages = useCallback(() => {
@@ -2635,18 +2651,20 @@ export function ChatArea() {
         : undefined;
   const surfaceFallback = <div className="flex flex-1 overflow-hidden" />;
   const scheduleModal = scheduleModalCharacterId ? (
-    <CharacterScheduleEditorModal
-      open
-      chatId={activeChatId}
-      characterId={scheduleModalCharacterId}
-      characterName={characterMap.get(scheduleModalCharacterId)?.name ?? "Character"}
-      characterAvatarUrl={characterMap.get(scheduleModalCharacterId)?.avatarUrl ?? null}
-      characterAvatarCrop={characterMap.get(scheduleModalCharacterId)?.avatarCrop ?? null}
-      schedule={(chatMeta.characterSchedules as Record<string, WeekSchedule> | undefined)?.[scheduleModalCharacterId]}
-      initialDay={scheduleModalInitialDay}
-      onClose={handleCloseScheduleEditor}
-      onSave={handleSaveCharacterSchedule}
-    />
+    <Suspense fallback={null}>
+      <CharacterScheduleEditorModal
+        open
+        chatId={activeChatId}
+        characterId={scheduleModalCharacterId}
+        characterName={characterMap.get(scheduleModalCharacterId)?.name ?? "Character"}
+        characterAvatarUrl={characterMap.get(scheduleModalCharacterId)?.avatarUrl ?? null}
+        characterAvatarCrop={characterMap.get(scheduleModalCharacterId)?.avatarCrop ?? null}
+        schedule={(chatMeta.characterSchedules as Record<string, WeekSchedule> | undefined)?.[scheduleModalCharacterId]}
+        initialDay={scheduleModalInitialDay}
+        onClose={handleCloseScheduleEditor}
+        onSave={handleSaveCharacterSchedule}
+      />
+    </Suspense>
   ) : null;
 
   // ═══════════════════════════════════════════════

@@ -73,6 +73,10 @@ function getEnabledConversationSchedules(meta: Record<string, unknown>): Charact
   return areConversationSchedulesEnabled(meta) && hasSchedules(meta.characterSchedules) ? meta.characterSchedules : {};
 }
 
+function getScheduleGenerationError(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 type AutonomousUserStatus = "active" | "idle" | "dnd";
 
 type AutonomousIntentPayload = {
@@ -396,6 +400,11 @@ export async function conversationRoutes(app: FastifyInstance) {
     };
     if (typeof existing.idleResponseDelayMinutes === "number") merged.idleResponseDelayMinutes = existing.idleResponseDelayMinutes;
     if (typeof existing.dndResponseDelayMinutes === "number") merged.dndResponseDelayMinutes = existing.dndResponseDelayMinutes;
+    return preserveAutonomousScheduleControls(merged, existing);
+  }
+
+  function preserveAutonomousScheduleControls(schedule: WeekSchedule, existing: WeekSchedule): WeekSchedule {
+    const merged: WeekSchedule = { ...schedule };
     if (typeof existing.autonomousDailyCapOverride === "number") {
       merged.autonomousDailyCapOverride = existing.autonomousDailyCapOverride;
     } else if (existing.autonomousDailyCapOverride === null) {
@@ -426,38 +435,43 @@ export async function conversationRoutes(app: FastifyInstance) {
     if ("error" in context) return reply.status(context.errorStatus ?? 400).send({ error: context.error });
     const { charData, provider, model } = context;
 
-    if (mode === "day") {
-      const day = typeof req.body.day === "string" ? req.body.day : "";
-      if (!CONVERSATION_SCHEDULE_DAYS.includes(day)) return reply.status(400).send({ error: "Invalid schedule day" });
-      if (!req.body.schedule) return reply.status(400).send({ error: "schedule is required for day regeneration" });
-      const { blocks } = await generateCharacterDaySchedule(
+    try {
+      if (mode === "day") {
+        const day = typeof req.body.day === "string" ? req.body.day : "";
+        if (!CONVERSATION_SCHEDULE_DAYS.includes(day)) return reply.status(400).send({ error: "Invalid schedule day" });
+        if (!req.body.schedule) return reply.status(400).send({ error: "schedule is required for day regeneration" });
+        const { blocks } = await generateCharacterDaySchedule(
+          provider,
+          model,
+          charData.name,
+          charData.description ?? "",
+          charData.personality ?? "",
+          day,
+          req.body.schedule,
+          guidance,
+          dayGuidance,
+        );
+        return reply.send({ day, blocks });
+      }
+
+      const { schedule } = await generateCharacterSchedule(
         provider,
         model,
         charData.name,
         charData.description ?? "",
         charData.personality ?? "",
-        day,
-        req.body.schedule,
         guidance,
-        dayGuidance,
+        req.body.schedule ? `Current draft schedule:\n${summarizePreviousSchedule(req.body.schedule).join("\n")}` : undefined,
+        {
+          draftMode: parseWeekScheduleDraftMode(req.body.draftMode),
+        },
       );
-      return reply.send({ day, blocks });
+      const fullSchedule = preserveDraftScheduleFields({ ...schedule, weekStart: getMonday().toISOString() }, req.body.schedule);
+      return reply.send({ schedule: fullSchedule });
+    } catch (error) {
+      logger.error(error instanceof Error ? error : undefined, "[schedule] Draft generation failed");
+      return reply.status(502).send({ error: getScheduleGenerationError(error, "Schedule draft generation failed") });
     }
-
-    const { schedule } = await generateCharacterSchedule(
-      provider,
-      model,
-      charData.name,
-      charData.description ?? "",
-      charData.personality ?? "",
-      guidance,
-      req.body.schedule ? `Current draft schedule:\n${summarizePreviousSchedule(req.body.schedule).join("\n")}` : undefined,
-      {
-        draftMode: parseWeekScheduleDraftMode(req.body.draftMode),
-      },
-    );
-    const fullSchedule = preserveDraftScheduleFields({ ...schedule, weekStart: getMonday().toISOString() }, req.body.schedule);
-    return reply.send({ schedule: fullSchedule });
   });
 
   app.post<{
@@ -474,8 +488,13 @@ export async function conversationRoutes(app: FastifyInstance) {
     const context = await resolveScheduleGenerationContext(chatId, characterId);
     if ("error" in context) return reply.status(context.errorStatus ?? 400).send({ error: context.error });
     const { charData, provider, model } = context;
-    const { summary } = await generateScheduleRoutineSummary(provider, model, charData.name, schedule, guidance);
-    return reply.send({ summary, generatedAt: new Date().toISOString() });
+    try {
+      const { summary } = await generateScheduleRoutineSummary(provider, model, charData.name, schedule, guidance);
+      return reply.send({ summary, generatedAt: new Date().toISOString() });
+    } catch (error) {
+      logger.error(error instanceof Error ? error : undefined, "[schedule] Summary generation failed");
+      return reply.status(502).send({ error: getScheduleGenerationError(error, "Schedule summary generation failed") });
+    }
   });
 
   // ─────────────────────────────────────────────
@@ -546,15 +565,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (typeof existing.dndResponseDelayMinutes === "number") {
         merged.dndResponseDelayMinutes = existing.dndResponseDelayMinutes;
       }
-      if (typeof existing.autonomousDailyCapOverride === "number") {
-        merged.autonomousDailyCapOverride = existing.autonomousDailyCapOverride;
-      } else if (existing.autonomousDailyCapOverride === null) {
-        merged.autonomousDailyCapOverride = null;
-      }
-      if (Array.isArray(existing.disabledAutonomousIntents)) {
-        merged.disabledAutonomousIntents = existing.disabledAutonomousIntents;
-      }
-      return merged;
+      return preserveAutonomousScheduleControls(merged, existing);
     };
 
     const newSchedules: CharacterSchedules = { ...existingSchedules };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import {
   CONVERSATION_SCHEDULE_DAYS,
@@ -324,6 +324,11 @@ export function CharacterScheduleEditorModal({
   const [tuningOpen, setTuningOpen] = useState(false);
   const [weekGuideOpen, setWeekGuideOpen] = useState(false);
   const [weekDraftMode, setWeekDraftMode] = useState<WeekDraftMode>(() => (schedule ? "adjust" : "rewrite"));
+  const draftRef = useRef(draft);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     if (!open) return;
@@ -361,7 +366,16 @@ export function CharacterScheduleEditorModal({
   }, [openStatusMenu]);
 
   const markSummaryStale = () => {
-    if (draft.routineSummary.trim()) setSummaryStale(true);
+    if (draftRef.current.routineSummary.trim()) setSummaryStale(true);
+  };
+
+  const applyDraftAndMarkSummaryStale = (updater: (current: DraftSchedule) => DraftSchedule) => {
+    setDraft((current) => {
+      const next = updater(current);
+      draftRef.current = next;
+      return next;
+    });
+    markSummaryStale();
   };
 
   const updateSetting = (field: keyof Omit<DraftSchedule, "days" | "weekStart" | "talkativeness">, value: string) => {
@@ -433,11 +447,10 @@ export function CharacterScheduleEditorModal({
         schedule: currentSchedule,
         guidance: generationGuidance,
       });
-      setDraft((current) => {
-        const nextDraft = { ...current, routineSummary: result.summary, routineSummaryGeneratedAt: result.generatedAt };
-        onSave(characterId, draftToSchedule(nextDraft, schedule));
-        return nextDraft;
-      });
+      const nextDraft = { ...draftRef.current, routineSummary: result.summary, routineSummaryGeneratedAt: result.generatedAt };
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+      onSave(characterId, draftToSchedule(nextDraft, schedule));
       setSummaryStale(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to generate routine summary");
@@ -457,13 +470,12 @@ export function CharacterScheduleEditorModal({
         guidance: generationGuidance,
         draftMode: weekDraftMode,
       });
-      setDraft((current) => ({
+      applyDraftAndMarkSummaryStale((current) => ({
         ...createDraft(result.schedule),
         routineSummary: current.routineSummary,
         routineSummaryGeneratedAt: current.routineSummaryGeneratedAt,
         disabledAutonomousIntents: current.disabledAutonomousIntents,
       }));
-      if (draft.routineSummary.trim()) setSummaryStale(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to regenerate schedule");
     } finally {
@@ -486,8 +498,7 @@ export function CharacterScheduleEditorModal({
         guidance: generationGuidance,
         dayGuidance: specificGuidance,
       });
-      setDraft((current) => ({ ...current, days: { ...current.days, [result.day]: result.blocks } }));
-      if (draft.routineSummary.trim()) setSummaryStale(true);
+      applyDraftAndMarkSummaryStale((current) => ({ ...current, days: { ...current.days, [result.day]: result.blocks } }));
       if (blocksEqual(previousBlocks, result.blocks)) {
         setDayGenerationStatus((current) => ({ ...current, [day]: "No visible changes returned" }));
         toast.message("The model returned the same day. Try stronger guidance.");

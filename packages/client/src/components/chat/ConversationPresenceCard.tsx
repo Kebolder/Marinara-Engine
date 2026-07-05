@@ -331,7 +331,7 @@ export function ConversationPresenceCard({
 
   const characters = useMemo(
     () =>
-      Array.from(new Set(chatCharIds))
+      chatCharIds
         .map((id) => {
           const character = characterMap.get(id);
           if (!character) return null;
