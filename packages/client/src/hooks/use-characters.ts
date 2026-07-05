@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
+import { useUIStore } from "../stores/ui.store";
 import {
   collectAllPaginatedItems,
   flattenPaginatedItems,
@@ -51,7 +52,9 @@ export const characterKeys = {
   detail: (id: string) => [...characterKeys.all, "detail", id] as const,
   versions: (id: string) => [...characterKeys.detail(id), "versions"] as const,
   gallery: (id: string) => [...characterKeys.all, "gallery", id] as const,
+  galleryClips: (id: string) => [...characterKeys.all, "gallery", id, "clips"] as const,
   personaGallery: (id: string) => ["persona-gallery", id] as const,
+  personaGalleryClips: (id: string) => ["persona-gallery", id, "clips"] as const,
   personas: ["personas"] as const,
   personaActive: () => [...characterKeys.personas, "active"] as const,
   personaDetail: (id: string) => [...characterKeys.personas, "detail", id] as const,
@@ -365,6 +368,29 @@ export interface CharacterGalleryImage {
   url: string;
 }
 
+export interface CharacterGalleryClip {
+  id: string;
+  source: "conversation-call" | "conversation-call-custom" | "game-scene" | "scene-video";
+  label: string;
+  prompt: string;
+  status: "ready" | "generating" | "error" | "missing";
+  url: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  durationSeconds: number | null;
+  aspectRatio: string;
+  provider: string;
+  model: string;
+  chatId: string | null;
+  chatName: string | null;
+  clipKind: string | null;
+}
+
+export interface CharacterGalleryClipsResponse {
+  clips: CharacterGalleryClip[];
+  callVideoGenerating: boolean;
+}
+
 export const spriteKeys = {
   list: (characterId: string) => ["sprites", characterId] as const,
   capabilities: () => ["sprites", "capabilities"] as const,
@@ -463,6 +489,33 @@ export function useCharacterGalleryImages(characterId: string | null) {
   });
 }
 
+export function useCharacterGalleryClips(characterId: string | null) {
+  return useQuery({
+    queryKey: characterKeys.galleryClips(characterId ?? ""),
+    queryFn: () => api.get<CharacterGalleryClipsResponse>(`/characters/${characterId}/gallery/clips`),
+    enabled: !!characterId,
+    refetchInterval: (query) =>
+      query.state.data?.callVideoGenerating || query.state.data?.clips.some((clip) => clip.status === "generating")
+        ? 15_000
+        : false,
+    staleTime: 15_000,
+  });
+}
+
+export function useGenerateCharacterCallVideoClips(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post(`/conversation-calls/character-videos/${characterId}/generate`, {
+        debugMode: useUIStore.getState().debugMode,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
 export function useUploadCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -540,6 +593,15 @@ export function usePersonaGalleryImages(personaId: string | null) {
     queryFn: () => api.get<PersonaGalleryImage[]>(`/characters/personas/${personaId}/gallery`),
     enabled: !!personaId,
     staleTime: 5 * 60_000,
+  });
+}
+
+export function usePersonaGalleryClips(personaId: string | null) {
+  return useQuery({
+    queryKey: characterKeys.personaGalleryClips(personaId ?? ""),
+    queryFn: () => api.get<CharacterGalleryClipsResponse>(`/characters/personas/${personaId}/gallery/clips`),
+    enabled: !!personaId,
+    staleTime: 15_000,
   });
 }
 

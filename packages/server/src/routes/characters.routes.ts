@@ -15,11 +15,14 @@ import type { ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
+import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
+import { getConversationCallCharacterVideoManifest } from "../services/conversation/call-character-videos.service.js";
 import { writeFile, mkdir, readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -42,6 +45,14 @@ const CUSTOM_NAME_RE = /^[a-z0-9_]{1,32}$/;
 const CUSTOM_KIND_MAX_DIMENSION = {
   emoji: 256,
   sticker: 512,
+} as const;
+const CALL_VIDEO_CLIP_LABELS = {
+  idle: "Idle",
+  talking: "Talking",
+  laughing: "Laughing",
+  angry: "Angry",
+  crying: "Crying",
+  sighing: "Sighing",
 } as const;
 
 async function ensureCharacterGalleryDir(characterId: string) {
@@ -74,6 +85,37 @@ function validateCustomTagPayload(kind: "emoji" | "sticker" | null, name: string
   if (width !== undefined && !isValidCustomDimension(width, max)) return `width must be an integer from 1 to ${max}`;
   if (height !== undefined && !isValidCustomDimension(height, max)) return `height must be an integer from 1 to ${max}`;
   return null;
+}
+
+function parseCharacterDataRecord(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+function readCharacterDisplayName(raw: unknown, fallback = "Character") {
+  const data = parseCharacterDataRecord(raw);
+  return typeof data.name === "string" && data.name.trim() ? data.name.trim() : fallback;
+}
+
+function parseCharacterIdList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  if (typeof raw !== "string") return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function toSafeExportName(name: string, fallback: string) {
@@ -523,6 +565,94 @@ export async function charactersRoutes(app: FastifyInstance) {
       ...img,
       url: `/api/characters/${req.params.id}/gallery/file/${encodeURIComponent(img.filePath.split("/").pop()!)}`,
     }));
+  });
+
+  app.get<{ Params: { id: string } }>("/:id/gallery/clips", async (req, reply) => {
+    const char = await storage.getById(req.params.id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const characterName = readCharacterDisplayName(char.data, "Character");
+    const callManifest = await getConversationCallCharacterVideoManifest({
+      characterId: req.params.id,
+      characterName,
+      avatarPath: char.avatarPath ?? null,
+    });
+    const callClips = callManifest.clips.map((clip) => ({
+      id: `call:${clip.kind}`,
+      source: "conversation-call" as const,
+      label: CALL_VIDEO_CLIP_LABELS[clip.kind] ?? clip.kind,
+      prompt: "",
+      status: clip.status,
+      url: clip.url,
+      createdAt: clip.updatedAt ?? null,
+      updatedAt: clip.updatedAt,
+      durationSeconds: null,
+      aspectRatio: "16:9",
+      provider: "",
+      model: "",
+      chatId: null,
+      chatName: null,
+      clipKind: clip.kind,
+    }));
+    const customCallClips = callManifest.customClips.map((clip) => ({
+      id: `custom-call:${clip.id}`,
+      source: "conversation-call-custom" as const,
+      label: clip.label,
+      prompt: clip.prompt,
+      status: clip.status,
+      url: clip.url,
+      createdAt: clip.createdAt,
+      updatedAt: clip.updatedAt,
+      durationSeconds: null,
+      aspectRatio: "16:9",
+      provider: "",
+      model: "",
+      chatId: null,
+      chatName: null,
+      clipKind: "custom" as const,
+    }));
+
+    const chatsStorage = createChatsStorage(app.db);
+    const sceneVideos = createGameSceneVideosStorage(app.db);
+    const allChats = await chatsStorage.list();
+    const relatedChats = allChats.filter((chat) => parseCharacterIdList(chat.characterIds).includes(req.params.id));
+    const sceneVideoGroups = await Promise.all(
+      relatedChats.map(async (chat) => ({
+        chat,
+        videos: await sceneVideos.listByChatId(chat.id),
+      })),
+    );
+    const sceneClips = sceneVideoGroups.flatMap(({ chat, videos }) =>
+      videos.map((video) => {
+        const filename = video.filePath.split("/").pop() ?? "";
+        const routePrefix = chat.mode === "game" ? "/api/game" : "/api/gallery";
+        return {
+          id: `scene:${video.id}`,
+          source: chat.mode === "game" ? ("game-scene" as const) : ("scene-video" as const),
+          label: chat.mode === "game" ? "Game scene" : "Scene video",
+          prompt: video.prompt,
+          status: "ready" as const,
+          url: `${routePrefix}/scene-videos/file/${encodeURIComponent(chat.id)}/${encodeURIComponent(filename)}`,
+          createdAt: video.createdAt,
+          updatedAt: video.createdAt,
+          durationSeconds: video.durationSeconds,
+          aspectRatio: video.aspectRatio,
+          provider: video.provider,
+          model: video.model,
+          chatId: chat.id,
+          chatName: chat.name,
+          clipKind: null,
+        };
+      }),
+    );
+
+    const clips = [...customCallClips, ...callClips, ...sceneClips].sort((left, right) => {
+      const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? "") || 0;
+      const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? "") || 0;
+      return rightTime - leftTime;
+    });
+
+    return { clips, callVideoGenerating: callManifest.generating };
   });
 
   app.post<{ Params: { id: string } }>("/:id/gallery/upload", async (req, reply) => {
@@ -988,6 +1118,53 @@ export async function charactersRoutes(app: FastifyInstance) {
       ...img,
       url: `/api/characters/personas/${req.params.id}/gallery/file/${encodeURIComponent(img.filePath.split("/").pop()!)}`,
     }));
+  });
+
+  app.get<{ Params: { id: string } }>("/personas/:id/gallery/clips", async (req, reply) => {
+    const persona = await storage.getPersona(req.params.id);
+    if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+    const chatsStorage = createChatsStorage(app.db);
+    const sceneVideos = createGameSceneVideosStorage(app.db);
+    const allChats = await chatsStorage.list();
+    const relatedChats = allChats.filter((chat) => chat.personaId === req.params.id);
+    const sceneVideoGroups = await Promise.all(
+      relatedChats.map(async (chat) => ({
+        chat,
+        videos: await sceneVideos.listByChatId(chat.id),
+      })),
+    );
+    const clips = sceneVideoGroups
+      .flatMap(({ chat, videos }) =>
+        videos.map((video) => {
+          const filename = video.filePath.split("/").pop() ?? "";
+          const routePrefix = chat.mode === "game" ? "/api/game" : "/api/gallery";
+          return {
+            id: `scene:${video.id}`,
+            source: chat.mode === "game" ? ("game-scene" as const) : ("scene-video" as const),
+            label: chat.mode === "game" ? "Game scene" : "Scene video",
+            prompt: video.prompt,
+            status: "ready" as const,
+            url: `${routePrefix}/scene-videos/file/${encodeURIComponent(chat.id)}/${encodeURIComponent(filename)}`,
+            createdAt: video.createdAt,
+            updatedAt: video.createdAt,
+            durationSeconds: video.durationSeconds,
+            aspectRatio: video.aspectRatio,
+            provider: video.provider,
+            model: video.model,
+            chatId: chat.id,
+            chatName: chat.name,
+            clipKind: null,
+          };
+        }),
+      )
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? "") || 0;
+        const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? "") || 0;
+        return rightTime - leftTime;
+      });
+
+    return { clips, callVideoGenerating: false };
   });
 
   app.post<{ Params: { id: string } }>("/personas/:id/gallery/upload", async (req, reply) => {

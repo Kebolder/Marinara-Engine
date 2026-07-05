@@ -17,9 +17,11 @@ import {
   useUploadPersonaAvatar,
   useCharacterSprites,
   useCharacterGalleryImages,
+  useCharacterGalleryClips,
   useUploadCharacterGalleryImage,
   useDeleteCharacterGalleryImage,
   useTagCharacterGalleryImage,
+  useGenerateCharacterCallVideoClips,
   useUploadSprite,
   useDeleteSprite,
   useExportSprites,
@@ -30,6 +32,7 @@ import {
   useRestoreCharacterVersion,
   useDeleteCharacterVersion,
   spriteKeys,
+  type CharacterGalleryClip,
   type CharacterGalleryImage,
   type SpriteInfo,
 } from "../../hooks/use-characters";
@@ -65,6 +68,7 @@ import {
   Plus,
   Palette,
   FolderOpen,
+  Film,
   Loader2,
   Swords,
   Crop,
@@ -1867,7 +1871,30 @@ function AdvancedTab({
 
 // ── Sprites Tab ──
 
+type CharacterGalleryMediaTab = "images" | "clips";
+
+function characterGalleryClipSourceLabel(source: CharacterGalleryClip["source"]) {
+  switch (source) {
+    case "conversation-call":
+      return "Call presence";
+    case "conversation-call-custom":
+      return "Custom call clip";
+    case "game-scene":
+      return "Game scene";
+    case "scene-video":
+      return "Scene video";
+    default:
+      return "Clip";
+  }
+}
+
+function formatClipDate(value: string | null) {
+  if (!value) return "Not generated";
+  return new Date(value).toLocaleDateString();
+}
+
 function CharacterGalleryTab({ characterId, characterName }: { characterId: string; characterName?: string }) {
+  const [mediaTab, setMediaTab] = useState<CharacterGalleryMediaTab>("images");
   const { data: images, isLoading } = useCharacterGalleryImages(characterId);
   const upload = useUploadCharacterGalleryImage(characterId);
   const remove = useDeleteCharacterGalleryImage(characterId);
@@ -1904,82 +1931,116 @@ function CharacterGalleryTab({ characterId, characterName }: { characterId: stri
     <div className="space-y-6">
       <SectionHeader
         title="Character Gallery"
-        subtitle="Keep reference art, alternate outfits, and other character images attached to this character even if chats get deleted."
+        subtitle="Keep character images and generated clips attached to this character even if chats get deleted."
         helpText={CHARACTER_GALLERY_HELP}
       />
 
-      <ImageUploadDropzone
-        label="Upload Character Images"
-        pending={upload.isPending}
-        pendingLabel="Uploading…"
-        dragLabel="Drop character images to upload"
-        onFilesSelected={handleUpload}
-        icon={<Upload size="1rem" />}
-        className="w-full"
-      />
-
-      {isLoading ? (
-        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="shimmer aspect-square rounded-xl" />
-          ))}
-        </div>
-      ) : images && images.length > 0 ? (
-        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
-          {images.map((image) => (
-            <div
-              key={image.id}
-              className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+      <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-1">
+        {[
+          { id: "images" as const, label: "Images", icon: Camera, count: images?.length ?? 0 },
+          { id: "clips" as const, label: "Clips", icon: Film, count: null },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const active = mediaTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMediaTab(tab.id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                active
+                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]",
+              )}
             >
-              <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
-              <button
-                type="button"
-                className="block aspect-square w-full bg-[var(--secondary)]"
-                onClick={() => setLightbox(image)}
-              >
-                <img
-                  src={image.url}
-                  alt={image.prompt || characterName || "Character image"}
-                  className="h-full w-full object-cover"
-                />
-              </button>
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
-                <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
-                  {new Date(image.createdAt).toLocaleDateString()}
-                </span>
-                <div className="flex gap-1">
-                  <a
-                    href={image.url}
-                    download
-                    className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
-                    title="Download"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Download size="0.75rem" />
-                  </a>
+              <Icon size="0.8rem" />
+              <span>{tab.label}</span>
+              {typeof tab.count === "number" ? <span className="text-[0.65rem] opacity-70">{tab.count}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+
+      {mediaTab === "images" ? (
+        <>
+          <ImageUploadDropzone
+            label="Upload Character Images"
+            pending={upload.isPending}
+            pendingLabel="Uploading…"
+            dragLabel="Drop character images to upload"
+            onFilesSelected={handleUpload}
+            icon={<Upload size="1rem" />}
+            className="w-full"
+          />
+
+          {isLoading ? (
+            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="shimmer aspect-square rounded-xl" />
+              ))}
+            </div>
+          ) : images && images.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+              {images.map((image) => (
+                <div
+                  key={image.id}
+                  className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+                >
+                  <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
                   <button
                     type="button"
-                    onClick={() => void handleDelete(image)}
-                    className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
-                    title="Delete"
+                    className="block aspect-square w-full bg-[var(--secondary)]"
+                    onClick={() => setLightbox(image)}
                   >
-                    <Trash2 size="0.75rem" />
+                    <img
+                      src={image.url}
+                      alt={image.prompt || characterName || "Character image"}
+                      className="h-full w-full object-cover"
+                    />
                   </button>
+                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                    <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
+                      {new Date(image.createdAt).toLocaleDateString()}
+                    </span>
+                    <div className="flex gap-1">
+                      <a
+                        href={image.url}
+                        download
+                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                        title="Download"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Download size="0.75rem" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(image)}
+                        className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
+                        title="Delete"
+                      >
+                        <Trash2 size="0.75rem" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+              <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+              <div>
+                <p className="text-sm font-medium text-[var(--muted-foreground)]">No character images yet</p>
+                <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+                  Upload images here to keep them tied to {characterName || "this character"} instead of a specific
+                  chat.
+                </p>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       ) : (
-        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
-          <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
-          <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No character images yet</p>
-            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-              Upload images here to keep them tied to {characterName || "this character"} instead of a specific chat.
-            </p>
-          </div>
-        </div>
+        <CharacterClipsGallery characterId={characterId} characterName={characterName} />
       )}
 
       {lightbox && (
@@ -2012,6 +2073,135 @@ function CharacterGalleryTab({ characterId, characterName }: { characterId: stri
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CharacterClipsGallery({ characterId, characterName }: { characterId: string; characterName?: string }) {
+  const { data, isLoading } = useCharacterGalleryClips(characterId);
+  const generateCallClips = useGenerateCharacterCallVideoClips(characterId);
+  const clips = data?.clips ?? [];
+  const standardCallClips = clips.filter((clip) => clip.source === "conversation-call");
+  const readyCallClipCount = standardCallClips.filter((clip) => clip.status === "ready").length;
+  const hasGeneratingClip =
+    data?.callVideoGenerating === true || clips.some((clip) => clip.status === "generating") || generateCallClips.isPending;
+
+  const handleGenerateCallClips = useCallback(async () => {
+    try {
+      await generateCallClips.mutateAsync();
+      toast.success("Call clip generation started.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start call clip generation.");
+    }
+  }, [generateCallClips]);
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="shimmer aspect-video rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Video call clips</p>
+          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+            {readyCallClipCount}/{standardCallClips.length || 6} standard clips ready
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleGenerateCallClips()}
+          disabled={hasGeneratingClip}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
+          )}
+        >
+          {hasGeneratingClip ? <Loader2 size="0.85rem" className="animate-spin" /> : <Wand2 size="0.85rem" />}
+          {hasGeneratingClip ? "Generating" : "Pre-generate"}
+        </button>
+      </div>
+
+      {clips.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {clips.map((clip) => (
+            <CharacterClipCard key={clip.id} clip={clip} characterName={characterName} />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+          <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+          <div>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">No character clips yet</p>
+            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+              Pre-generate call clips or generate scene videos with {characterName || "this character"}.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CharacterClipCard({ clip, characterName }: { clip: CharacterGalleryClip; characterName?: string }) {
+  const sourceLabel = characterGalleryClipSourceLabel(clip.source);
+  const dateLabel = formatClipDate(clip.updatedAt ?? clip.createdAt);
+  const isReady = clip.status === "ready" && Boolean(clip.url);
+
+  return (
+    <div className="group overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md">
+      <div className="relative aspect-video bg-[var(--secondary)]">
+        {isReady && clip.url ? (
+          <video src={clip.url} controls preload="metadata" className="h-full w-full bg-black object-contain" />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-[var(--muted-foreground)]">
+            {clip.status === "generating" ? (
+              <Loader2 size="1.25rem" className="animate-spin text-[var(--primary)]" />
+            ) : clip.status === "error" ? (
+              <AlertTriangle size="1.25rem" className="text-[var(--destructive)]" />
+            ) : (
+              <Film size="1.25rem" className="opacity-50" />
+            )}
+            <span>{clip.status === "missing" ? "Not generated" : clip.status}</span>
+          </div>
+        )}
+        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
+          {sourceLabel}
+        </div>
+      </div>
+      <div className="space-y-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-[var(--foreground)]">{clip.label || characterName || "Clip"}</p>
+            <p className="mt-0.5 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+              {clip.chatName ? `${clip.chatName} · ${dateLabel}` : dateLabel}
+            </p>
+          </div>
+          {isReady && clip.url ? (
+            <a
+              href={clip.url}
+              download
+              className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+              title="Download"
+            >
+              <Download size="0.75rem" />
+            </a>
+          ) : null}
+        </div>
+        {clip.prompt ? (
+          <p className="line-clamp-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{clip.prompt}</p>
+        ) : null}
+        {clip.durationSeconds ? (
+          <p className="text-[0.65rem] text-[var(--muted-foreground)]/70">
+            {clip.durationSeconds}s · {clip.aspectRatio}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
