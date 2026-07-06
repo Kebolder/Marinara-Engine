@@ -5474,7 +5474,7 @@ function GameSurfaceComponent({
         messageId: latestAssistantMsg.id,
         swipeIndex: latestAssistantSwipeIndex,
         sections: latestAssistantStoryboardSections,
-        generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
+        generateVideos: gameStoryboardAutoAnimationsEnabled,
         debugMode: useUIStore.getState().debugMode,
       });
       applyGeneratedStoryboardToCache(result.storyboard, { refetchTurnStoryboards: true });
@@ -5494,7 +5494,6 @@ function GameSurfaceComponent({
     activeChatId,
     gameImageGenerationEnabled,
     gameStoryboardAutoAnimationsEnabled,
-    gameVideoGenerationEnabled,
     generateTurnStoryboard,
     isStreaming,
     latestAssistantMsg?.id,
@@ -5535,7 +5534,7 @@ function GameSurfaceComponent({
         messageId: latestAssistantMsg.id,
         swipeIndex: latestAssistantSwipeIndex,
         sections: latestAssistantStoryboardSections,
-        generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
+        generateVideos: gameStoryboardAutoAnimationsEnabled,
         debugMode: useUIStore.getState().debugMode,
       })
       .then((result) => {
@@ -5549,7 +5548,6 @@ function GameSurfaceComponent({
     gameImageGenerationEnabled,
     gameStoryboardAutoAnimationsEnabled,
     gameStoryboardAutoGenerationEnabled,
-    gameVideoGenerationEnabled,
     generateTurnStoryboard,
     isStreaming,
     latestAssistantMsg?.content,
@@ -9730,7 +9728,7 @@ function GameSurfaceComponent({
               !latestAssistantMsg?.id
             }
             className="marinara-chat-popover__item flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-            title="Create manga keyframes and animation prompts from the current GM narration"
+            title="Create storyboard keyframes from the current GM narration"
           >
             {storyboardGenerating || latestTurnStoryboardRendering ? (
               <Loader2 size={14} className="animate-spin" />

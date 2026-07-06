@@ -755,6 +755,8 @@ function buildBoardSummary(state: UnoState, seatId: string): string {
     const drawn = hand.find((c) => c.id === state.drawnCardId);
     if (drawn) lines.push(`You just drew ${cardLabel(drawn)} — it's the only card you may play right now (or pass to keep it).`);
   }
+  const plays = recentPlayLines(state, 5);
+  if (plays.length) lines.push("What just happened:", ...plays);
   return lines.join("\n");
 }
 
@@ -818,6 +820,24 @@ function buildSpectatorSummary(state: UnoState): string {
   return lines.join("\n");
 }
 
+/** Seat-aware variant of the spectator summary: adds the seat's OWN hand and
+ * most recent action (it's their information to know); other hands stay hidden. */
+function buildParticipantSummary(state: UnoState, seatId: string): string {
+  const base = buildSpectatorSummary(state);
+  if (!state.seatOrder.includes(seatId)) return base;
+  const lines: string[] = [base, `You are ${nameOf(state, seatId)} in this game.`];
+  if (state.status !== "finished") {
+    const hand = state.hands[seatId] ?? [];
+    lines.push(`Your hand (only you can see it): ${hand.length ? hand.map(cardLabel).join(", ") : "(empty)"}.`);
+    if (currentSeatId(state) === seatId) lines.push("It is YOUR turn to act.");
+  }
+  const lastOwn = [...state.log]
+    .reverse()
+    .find((e) => e.seatId === seatId && e.type !== "deal" && typeof e.message === "string" && e.message.trim().length > 0);
+  if (lastOwn) lines.push(`Your most recent action: ${lastOwn.message}`);
+  return lines.join("\n");
+}
+
 // ── the engine object ──────────────────────────────────────────────────────────
 
 export const unoEngine: TurnGameEngine<UnoState, UnoMove, UnoConfig, UnoPublicView> = {
@@ -826,6 +846,7 @@ export const unoEngine: TurnGameEngine<UnoState, UnoMove, UnoConfig, UnoPublicVi
   label: "UNO",
   minPlayers: UNO_MIN_PLAYERS,
   maxPlayers: UNO_MAX_PLAYERS,
+  hiddenInformation: true,
 
   defaultConfig() {
     return { ...DEFAULT_UNO_CONFIG };
@@ -1014,6 +1035,10 @@ export const unoEngine: TurnGameEngine<UnoState, UnoMove, UnoConfig, UnoPublicVi
 
   spectatorSummary(state): string {
     return buildSpectatorSummary(state);
+  },
+
+  participantSummary(state, seatId): string {
+    return buildParticipantSummary(state, seatId);
   },
 
   publicView(state, viewerSeatId): UnoPublicView {

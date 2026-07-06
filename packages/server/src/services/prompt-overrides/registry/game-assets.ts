@@ -5,6 +5,13 @@
 // narration summarization for illustrations).
 // ──────────────────────────────────────────────
 import type { PromptOverrideKeyDef } from "../types.js";
+import {
+  GAME_VIDEO_PROMPT_TEMPLATE,
+  GAME_VIDEO_PROMPT_TEMPLATE_VARIABLES,
+  GAME_STORYBOARD_PROMPT_TEMPLATE_VARIABLES,
+  GAME_STORYBOARD_STILL_PROMPT_TEMPLATE,
+} from "@marinara-engine/shared";
+import { renderTemplate } from "../template.js";
 
 // ── NPC portrait ──
 //
@@ -314,7 +321,7 @@ export const GAME_IMAGE_PROMPT_DIRECTOR: PromptOverrideKeyDef<GameImagePromptDir
 
 // ── Turn storyboard directors (GM narration -> illustration or animation storyboard) ──
 
-export interface GameStoryboardDirectorCtx extends Record<string, string | number | undefined> {
+export interface GameStoryboardIllustratorCtx extends Record<string, string | number | undefined> {
   gameContextBlock: string;
   sourceSectionsBlock: string;
   sourceNarration: string;
@@ -323,10 +330,11 @@ export interface GameStoryboardDirectorCtx extends Record<string, string | numbe
   aspectRatio: string;
 }
 
-export const GAME_STORYBOARD_ILLUSTRATION_DIRECTOR: PromptOverrideKeyDef<GameStoryboardDirectorCtx> = {
+export const GAME_STORYBOARD_ILLUSTRATION_DIRECTOR: PromptOverrideKeyDef<GameStoryboardIllustratorCtx> = {
   key: "game.storyboardIllustrationDirector",
+  label: "Game Mode Storyboard Illustrator",
   description:
-    "Game Mode Prompt Director instructions that split one GM turn narration into image-only storyboard keyframes.",
+    "Game Mode storyboard illustrator instructions that split one GM turn narration into keyframe image prompts.",
   variables: [
     {
       name: "gameContextBlock",
@@ -354,77 +362,7 @@ export const GAME_STORYBOARD_ILLUSTRATION_DIRECTOR: PromptOverrideKeyDef<GameSto
     { name: "aspectRatio", description: "Output aspect ratio.", example: "16:9" },
   ],
   defaultBuilder: (ctx) =>
-    [
-      "You are Marinara's Game Mode Illustration Storyboard Director.",
-      "Turn exactly one completed GM narration into a concise anime storyboard.",
-      "Create keyframes unless the narration is too short; never create fewer than 2.",
-      `Every keyframe is a still ${ctx.aspectRatio} illustration prompt.`,
-      "Use only the GM narration as the story source. Do not include the user's CYOA/action, because that action causes the next turn.",
-      "Use the supplied turn_sections indices to anchor every keyframe to the story text. Prefer contiguous section ranges that cover the whole turn in order.",
-      "For each keyframe, set sectionStartIndex and sectionEndIndex to the first and last covered section indices. Set anchorQuote to a short exact phrase from those sections, and anchorKind to the dominant section kind.",
-      "Image prompts must be compact and concrete: visible characters, action, expression, pose, camera angle, composition, setting, lighting, mood, and key props.",
-      "Generate only for a visually important moment: dramatic action, key emotion, major reveal, transformation, important location, or newly described character.",
-      "Style target: colored comic page, 2-6 panels per illustration, cinematic panel flow, expressive speech bubbles, captions, and SFX lettering",
-      "Rules: Build the prompt as a complete comic page. Include panel count, panel composition, camera framing, mood, lighting, and action flow.",
-      "The prompt must include a short readable text plan: dialogue bubbles for spoken lines, captions for narration/reaction beats, and SFX lettering for action. Draw text from the scene and keep it brief.",
-      "Use the negativePrompt: watermark, logo, signature, UI chrome, unreadable text, broken lettering, malformed speech bubbles, blurry, low quality.",
-      "Return strict JSON only with this shape:",
-      '{ "title": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "imagePrompt": string, "characters": string[] } ] }',
-    ].join("\n"),
-  exampleContext: {
-    gameContextBlock:
-      "<game_context>\nMode: exploration\nLocation: moonlit graveyard\nWeather: cold rain\nArt style: manga ink and watercolor\n</game_context>",
-    sourceSectionsBlock:
-      '<turn_sections>\n<section index="0" kind="narration">Korr drops to one knee in the rain.</section>\n<section index="1" kind="dialogue" speaker="Lyra">Stay down.</section>\n</turn_sections>',
-    sourceNarration: "Korr drops to one knee in the rain while Lyra steadies herself over the fallen blade.",
-    keyframeCount: 4,
-    durationSeconds: 6,
-    aspectRatio: "16:9",
-  },
-};
-
-export const GAME_STORYBOARD_DIRECTOR: PromptOverrideKeyDef<GameStoryboardDirectorCtx> = {
-  key: "game.storyboardDirector",
-  description:
-    "Game Mode Prompt Director instructions that split one GM turn narration into manga keyframes and video prompts.",
-  variables: [
-    {
-      name: "gameContextBlock",
-      description: "Pre-formatted context block with mode, location, weather, world, style, and image instructions.",
-      example:
-        "<game_context>\nMode: exploration\nLocation: moonlit graveyard\nWeather: cold rain\nArt style: manga ink and watercolor\n</game_context>",
-    },
-    {
-      name: "sourceNarration",
-      description: "The stripped GM narration for one completed Game Mode turn.",
-      example: "Korr drops to one knee in the rain while Lyra steadies herself over the fallen blade.",
-    },
-    {
-      name: "sourceSectionsBlock",
-      description: "Pre-formatted <turn_sections> block with stable narration section indices from the reader UI.",
-      example:
-        '<turn_sections>\n<section index="0" kind="narration">Korr drops to one knee.</section>\n<section index="1" kind="dialogue" speaker="Lyra">Stay down.</section>\n</turn_sections>',
-    },
-    { name: "keyframeCount", description: "Target number of storyboard frames.", example: "4" },
-    { name: "durationSeconds", description: "Default video duration per keyframe.", example: "6" },
-    { name: "aspectRatio", description: "Default output aspect ratio.", example: "16:9" },
-  ],
-  defaultBuilder: (ctx) =>
-    [
-      "You are Marinara's Game Mode Prompt Director.",
-      "Turn exactly one completed GM narration into an anime-style storyboard made from manga illustration keyframes.",
-      `Create ${ctx.keyframeCount} ordered keyframes unless the narration is too short; never create fewer than 2 or more than 6.`,
-      `Each keyframe should describe one manga illustration panel and one animation prompt that could be generated from that panel as a ${ctx.durationSeconds}-second ${ctx.aspectRatio} clip.`,
-      "Use only the GM narration as the story source. Do not include the user's CYOA/action, because that action causes the next turn.",
-      "Use the supplied turn_sections indices to anchor every keyframe to the story text. Prefer contiguous section ranges that cover the whole turn in order.",
-      "For each keyframe, set sectionStartIndex and sectionEndIndex to the first and last covered section indices. Set anchorQuote to a short exact phrase from those sections, and anchorKind to the dominant section kind.",
-      "Preserve continuity across frames: character identity, outfits, props, wounds, lighting, location, and emotional escalation.",
-      "Manga panel prompts should be still-image prompts: composition, character staging, expression, camera angle, lighting, linework, screentone/inking, and background detail.",
-      "Video prompts should animate only the current panel: camera drift, hair/cloth/atmosphere motion, eye movement, gesture, impact, or focus shift. Avoid cuts inside a single clip.",
-      "Do not add captions, dialogue lettering, UI, subtitles, logos, watermarks, speech bubbles, or manga SFX text.",
-      "Return strict JSON only with this shape:",
-      '{ "title": string, "summary": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "mangaPanelPrompt": string, "imagePrompt": string, "videoPrompt": string, "characters": string[], "continuityNotes": string, "cameraMotion": string, "transitionHint": string, "durationSeconds": number, "aspectRatio": "16:9" | "9:16" } ] }',
-    ].join("\n"),
+    renderTemplate(GAME_STORYBOARD_STILL_PROMPT_TEMPLATE, ctx, GAME_STORYBOARD_PROMPT_TEMPLATE_VARIABLES),
   exampleContext: {
     gameContextBlock:
       "<game_context>\nMode: exploration\nLocation: moonlit graveyard\nWeather: cold rain\nArt style: manga ink and watercolor\n</game_context>",
@@ -490,26 +428,7 @@ export const GAME_VIDEO: PromptOverrideKeyDef<GameVideoCtx> = {
       example: "Use the provided scene illustration as the first frame/reference image.",
     },
   ],
-  defaultBuilder: (ctx) => {
-    const charactersLine = labelVideoPromptLine("Characters", ctx.charactersLine);
-    const settingLine = labelVideoPromptLine("Setting", ctx.settingLine);
-    const artStyleLine = labelVideoPromptLine("Art style", ctx.artStyleLine);
-    return [
-      `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} animated game scene from the provided first-frame illustration.`,
-      ctx.sourceIllustrationLine,
-      ctx.sceneTitle ? `Scene: ${ctx.sceneTitle}.` : "",
-      ctx.narrationSummary ? `Story beat: ${ctx.narrationSummary}` : "",
-      charactersLine,
-      settingLine,
-      artStyleLine,
-      ctx.illustrationPrompt ? `Reference prompt excerpt: ${ctx.illustrationPrompt}` : "",
-      "Use the reference image as the visual anchor. Keep recognizable characters, setting, and mood while adding motion that feels natural for this moment.",
-      "You may choose the most cinematic camera drift, focus shift, gestures, atmospheric movement, and ending pose that fit the scene.",
-      "Avoid subtitles, captions, UI, logos, watermarks, unrelated new characters, distorted anatomy, and abrupt cuts.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-  },
+  defaultBuilder: (ctx) => renderTemplate(GAME_VIDEO_PROMPT_TEMPLATE, ctx, GAME_VIDEO_PROMPT_TEMPLATE_VARIABLES),
   exampleContext: {
     sceneTitle: "Moonlit duel aftermath",
     narrationSummary: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
@@ -522,10 +441,3 @@ export const GAME_VIDEO: PromptOverrideKeyDef<GameVideoCtx> = {
     sourceIllustrationLine: "Use the provided scene illustration as the first frame/reference image.",
   },
 };
-
-function labelVideoPromptLine(label: string, value: string | number | undefined): string {
-  const clean = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
-  if (!clean) return "";
-  if (/^[A-Z][A-Za-z ]{1,30}:\s/.test(clean)) return clean;
-  return `${label}: ${clean.replace(/[.]?$/, ".")}`;
-}

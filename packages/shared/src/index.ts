@@ -63,6 +63,8 @@ export * from "./constants/video-generation-settings.js";
 export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
+export * from "./constants/game-storyboard-prompts.js";
+export * from "./constants/game-video-prompts.js";
 export * from "./constants/conversation-prompt.js";
 export * from "./constants/game-prompt.js";
 export * from "./constants/achievements.js";

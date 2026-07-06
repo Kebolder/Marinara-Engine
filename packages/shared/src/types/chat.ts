@@ -470,10 +470,20 @@ export interface ChatMetadata {
   gameLastIllustrationTag?: string;
   /** Connection used for Game Mode scene-video generation. */
   gameVideoConnectionId?: string | null;
+  /** Selected Game Mode scene/storyboard video prompt template. */
+  gameVideoPromptTemplateId?: string | null;
+  /** Chat-local Game Mode scene/storyboard video prompt templates. */
+  gameVideoPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe illustrations. */
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe videos. */
   gameStoryboardAutoGenerationEnabled?: boolean;
+  /** Selected Game Mode storyboard prompt template for image-only auto storyboards. */
+  gameStoryboardIllustrationPromptTemplateId?: string | null;
+  /** Selected Game Mode storyboard prompt template for animation-ready auto storyboards. */
+  gameStoryboardAnimationPromptTemplateId?: string | null;
+  /** Chat-local storyboard prompt templates, merged with built-in storyboard prompt modes. */
+  gameStoryboardPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** Last generated scene-video record ID for this game. */
   gameLastSceneVideoId?: string | null;
   /** Connection used for roleplay/gallery scene-video generation. */

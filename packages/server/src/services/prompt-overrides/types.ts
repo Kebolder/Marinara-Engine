@@ -12,6 +12,8 @@ export interface PromptVariable {
 
 export interface PromptOverrideKeyDef<TCtx extends Record<string, string | number | undefined>> {
   key: string;
+  /** Human-readable UI label. Falls back to a key-derived label when omitted. */
+  label?: string;
   /** Older persisted keys that should still be read when the canonical key has no override. */
   legacyKeys?: readonly string[];
   description: string;

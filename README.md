@@ -147,7 +147,7 @@ Three chat modes — **Conversation** (Discord-style DMs), **Roleplay** (immersi
 
 ### Visual & Immersive
 
-Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, gallery illustrations, short scene videos from generated illustrations, Game Mode manga storyboards with animated keyframes, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
+Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, gallery illustrations, short scene videos from generated illustrations, Game Mode storyboards with selectable keyframe and video prompt styles, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
 
 ### AI Agent System
 

@@ -436,6 +436,7 @@ const GAME_IMAGE_PROMPT_TEMPLATE_KEYS = [
   "game.background",
   "game.sceneIllustration",
   "game.narrationSummarizer",
+  "game.storyboardIllustrationDirector",
 ] as const;
 
 const VIDEO_PROMPT_TEMPLATE_KEYS = [
@@ -6120,8 +6121,8 @@ function AdvancedSettings() {
       />
       <PromptOverridesEditor
         title="Game Prompt Templates"
-        description="Edit the reusable templates used for NPC portraits, scene backgrounds, scene illustrations, and narration summarization."
-        help="These templates render before recurring Game image requests and narration-to-illustration summarization. One-off prompt review edits still only affect the current request."
+        description="Edit the reusable templates used for NPC portraits, scene backgrounds, scene illustrations, storyboard keyframes, and narration summarization."
+        help="These templates render before recurring Game image requests, storyboard keyframe planning, and narration-to-illustration summarization. One-off prompt review edits still only affect the current request."
         keys={GAME_IMAGE_PROMPT_TEMPLATE_KEYS}
         preferredKey="game.npcPortrait"
       />

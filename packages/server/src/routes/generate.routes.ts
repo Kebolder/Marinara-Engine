@@ -281,7 +281,7 @@ import { sendSseEvent, startSseKeepalive, startSseReply, trySendSseEvent } from 
 import { runTurnGameBotTurns } from "../services/turn-games/turn-game-bot-runner.service.js";
 import {
   getActiveTurnGame,
-  getTurnGameContextText,
+  getTurnGameContextBuilder,
   startTurnGame,
 } from "../services/turn-games/turn-game-runner.service.js";
 import { normalizeContextInjections } from "./generate/agent-normalizers.js";
@@ -6719,15 +6719,13 @@ export async function generateRoutes(app: FastifyInstance) {
           return;
         }
 
-        // Turn-game board awareness: when a UNO (etc.) game is active, tell the
-        // responding bots the current board so their free-chat replies know a
-        // game is in progress (the move-narration path is already board-aware).
-        if (chatMode === "conversation") {
-          const turnGameContext = await getTurnGameContextText(app.db, input.chatId);
-          if (turnGameContext) {
-            finalMessages = injectAtDepth(finalMessages, [{ content: turnGameContext, role: "system", depth: 0 }]);
-          }
-        }
+        // Turn-game board awareness is injected per responding character inside
+        // generateForCharacter (seat-aware: a seated character sees their own
+        // hand / color / last move; everyone else gets the spectator view).
+        // The game itself is loaded ONCE here — the builder closes over the
+        // loaded state so each character only pays for its own summary text.
+        const turnGameContextForSeat =
+          chatMode === "conversation" ? await getTurnGameContextBuilder(app.db, input.chatId) : null;
 
         // Manual mode with forCharacterId: only generate for the specified character
         // Sequential: all characters respond. Smart: generate the first queued character only.
@@ -6748,6 +6746,7 @@ export async function generateRoutes(app: FastifyInstance) {
           targetCharId: string | null,
           messagesForGen: GenerationPromptMessage[],
           markGenerationCommitted = false,
+          speaksOnlyTargetCharacter = true,
         ): Promise<{
           savedMsg: Awaited<ReturnType<typeof chats.createMessage>>;
           response: string;
@@ -6758,10 +6757,31 @@ export async function generateRoutes(app: FastifyInstance) {
         } | null> => {
           const targetCharacterProfile =
             deferCharacterMacros && targetCharId ? characterMacroProfilesById.get(targetCharId) : undefined;
+          // Turn-game board awareness: when a table game is active in this chat,
+          // give THIS responder the current board — from their own seat when they
+          // are playing (own hand / color / last move), spectator view otherwise.
+          // Injected per character so one player's private hand can never leak
+          // into another responder's prompt; impersonation gets the human seat,
+          // and a merged generation that may voice several characters at once
+          // stays on the hand-free spectator view.
+          let gameAwareMessagesForGen = messagesForGen;
+          if (turnGameContextForSeat) {
+            const viewerSeatId = input.impersonate
+              ? chat.personaId || "human"
+              : speaksOnlyTargetCharacter
+                ? targetCharId
+                : null;
+            const turnGameContext = turnGameContextForSeat(viewerSeatId);
+            if (turnGameContext) {
+              gameAwareMessagesForGen = injectAtDepth(gameAwareMessagesForGen, [
+                { content: turnGameContext, role: "system", depth: 0 },
+              ]);
+            }
+          }
           const scopedMessagesForGen =
             isGroupChat && groupChatMode === "individual" && chatMode !== "conversation" && targetCharId
-              ? scopeIndividualGroupMessagesForTarget(messagesForGen, targetCharId, charInfo)
-              : messagesForGen;
+              ? scopeIndividualGroupMessagesForTarget(gameAwareMessagesForGen, targetCharId, charInfo)
+              : gameAwareMessagesForGen;
           const targetScopedMessagesForGen =
             !promptTargetCharacterId && targetCharId
               ? scopedMessagesForGen.map((message) => ({ ...message }))
@@ -7985,7 +8005,11 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
 
-          const genResult = await generateForCharacter(targetCharId, sentMessages, true);
+          // A merged group generation may voice several characters unless a regen
+          // target or a single explicit @mention pins it to exactly one speaker.
+          const mergedSpeaksOnlyTarget =
+            !isGroupChat || Boolean(regenGroupChatIndividual) || mentionedConversationCharacters.length === 1;
+          const genResult = await generateForCharacter(targetCharId, sentMessages, true, mergedSpeaksOnlyTarget);
           if (genResult) {
             firstSavedMsg ??= genResult.savedMsg;
             lastSavedMsg = genResult.savedMsg;

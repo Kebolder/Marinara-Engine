@@ -177,6 +177,13 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+  GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_VIDEO_PROMPT_TEMPLATE_ID,
   getChatModeCapabilities,
   LIMITS,
   MIN_AGENT_MAX_TOKENS,
@@ -194,6 +201,7 @@ import {
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
+  normalizeAgentPromptTemplateOptions,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
   resolveAgentPromptTemplate,
@@ -304,6 +312,155 @@ function getRoleplayAgentSettingsOrder(agentId: string): number {
 
 function getAgentSettingsMenuId(chatId: string, agentId: string): string {
   return `chat-settings-agent-menu-${chatId}-${agentId}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+const GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS = new Set(
+  GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.map((template) => template.id),
+);
+
+function normalizeGameStoryboardPromptTemplateId(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return normalized || fallback;
+}
+
+function getUniqueGameStoryboardPromptTemplateId(
+  id: string,
+  usedIds: Set<string>,
+  fallback = "custom-storyboard-prompt",
+): string {
+  const base = normalizeGameStoryboardPromptTemplateId(id, fallback);
+  let candidate = base;
+  let attempt = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${attempt}`;
+    attempt++;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function normalizeGameStoryboardPromptTemplates(value: unknown): AgentPromptTemplateOption[] {
+  const usedIds = new Set(GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS);
+  return normalizeAgentPromptTemplateOptions(value)
+    .map((template) => ({
+      ...template,
+      id: getUniqueGameStoryboardPromptTemplateId(template.id, usedIds),
+    }))
+    .slice(0, 20);
+}
+
+function getGameStoryboardPromptTemplateOptions(
+  customTemplates: AgentPromptTemplateOption[],
+): AgentPromptTemplateOption[] {
+  return [...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES, ...customTemplates];
+}
+
+function resolveSelectedGameStoryboardPromptTemplateId(
+  value: unknown,
+  fallback: string,
+  options: AgentPromptTemplateOption[],
+): string {
+  const selected = typeof value === "string" ? value.trim() : "";
+  if (selected && options.some((option) => option.id === selected)) return selected;
+  return fallback;
+}
+
+function createGameStoryboardCustomPromptTemplate(
+  existingTemplates: AgentPromptTemplateOption[],
+  sourceTemplate?: AgentPromptTemplateOption,
+): AgentPromptTemplateOption {
+  const usedIds = new Set([
+    ...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS,
+    ...existingTemplates.map((template) => template.id),
+  ]);
+  const sourceName = sourceTemplate?.name?.trim() || "Storyboard Prompt";
+  return {
+    id: getUniqueGameStoryboardPromptTemplateId(
+      `custom-${sourceName}-${Date.now().toString(36)}`,
+      usedIds,
+      "custom-storyboard-prompt",
+    ),
+    name: `Custom ${sourceName}`,
+    description: sourceTemplate?.description ?? "",
+    promptTemplate: sourceTemplate?.promptTemplate ?? GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES[0]!.promptTemplate,
+  };
+}
+
+const GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATE_IDS = new Set(
+  GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES.map((template) => template.id),
+);
+
+function normalizeGameVideoPromptTemplateId(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+  return normalized || fallback;
+}
+
+function getUniqueGameVideoPromptTemplateId(
+  id: string,
+  usedIds: Set<string>,
+  fallback = "custom-game-video-prompt",
+): string {
+  const base = normalizeGameVideoPromptTemplateId(id, fallback);
+  let candidate = base;
+  let attempt = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${attempt}`;
+    attempt++;
+  }
+  usedIds.add(candidate);
+  return candidate;
+}
+
+function normalizeGameVideoPromptTemplates(value: unknown): AgentPromptTemplateOption[] {
+  const usedIds = new Set(GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATE_IDS);
+  return normalizeAgentPromptTemplateOptions(value)
+    .map((template) => ({
+      ...template,
+      id: getUniqueGameVideoPromptTemplateId(template.id, usedIds),
+    }))
+    .slice(0, 20);
+}
+
+function getGameVideoPromptTemplateOptions(customTemplates: AgentPromptTemplateOption[]): AgentPromptTemplateOption[] {
+  return [...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES, ...customTemplates];
+}
+
+function resolveSelectedGameVideoPromptTemplateId(
+  value: unknown,
+  options: AgentPromptTemplateOption[],
+): string {
+  const selected = typeof value === "string" ? value.trim() : "";
+  if (selected && options.some((option) => option.id === selected)) return selected;
+  return GAME_VIDEO_PROMPT_TEMPLATE_ID;
+}
+
+function createGameVideoCustomPromptTemplate(
+  existingTemplates: AgentPromptTemplateOption[],
+  sourceTemplate?: AgentPromptTemplateOption,
+): AgentPromptTemplateOption {
+  const usedIds = new Set([
+    ...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATE_IDS,
+    ...existingTemplates.map((template) => template.id),
+  ]);
+  const sourceName = sourceTemplate?.name?.trim() || "Game Video Prompt";
+  return {
+    id: getUniqueGameVideoPromptTemplateId(
+      `custom-${sourceName}-${Date.now().toString(36)}`,
+      usedIds,
+      "custom-game-video-prompt",
+    ),
+    name: `Custom ${sourceName}`,
+    description: sourceTemplate?.description ?? "",
+    promptTemplate: sourceTemplate?.promptTemplate ?? GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0]!.promptTemplate,
+  };
 }
 
 function renderRoleplayAgentMenuIcon(agentId: string, variant: "card" | "chip" = "card"): React.ReactNode {
@@ -1362,6 +1519,177 @@ export function ChatSettingsDrawer({
   const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
+  const gameStoryboardPromptTemplates = useMemo(
+    () => normalizeGameStoryboardPromptTemplates(metadata.gameStoryboardPromptTemplates),
+    [metadata.gameStoryboardPromptTemplates],
+  );
+  const gameStoryboardPromptOptions = useMemo(
+    () => getGameStoryboardPromptTemplateOptions(gameStoryboardPromptTemplates),
+    [gameStoryboardPromptTemplates],
+  );
+  const selectedGameStoryboardIllustrationPromptTemplateId = useMemo(
+    () =>
+      resolveSelectedGameStoryboardPromptTemplateId(
+        metadata.gameStoryboardIllustrationPromptTemplateId,
+        GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+        gameStoryboardPromptOptions,
+      ),
+    [gameStoryboardPromptOptions, metadata.gameStoryboardIllustrationPromptTemplateId],
+  );
+  const selectedGameStoryboardAnimationPromptTemplateId = useMemo(
+    () =>
+      resolveSelectedGameStoryboardPromptTemplateId(
+        metadata.gameStoryboardAnimationPromptTemplateId,
+        GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+        gameStoryboardPromptOptions,
+      ),
+    [gameStoryboardPromptOptions, metadata.gameStoryboardAnimationPromptTemplateId],
+  );
+  const updateGameStoryboardPromptSelection = useCallback(
+    (
+      field: "gameStoryboardIllustrationPromptTemplateId" | "gameStoryboardAnimationPromptTemplateId",
+      promptTemplateId: string,
+    ) => {
+      const fallback =
+        field === "gameStoryboardIllustrationPromptTemplateId"
+          ? GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID
+          : GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID;
+      updateMeta.mutate({ id: chat.id, [field]: promptTemplateId === fallback ? null : promptTemplateId });
+    },
+    [chat.id, updateMeta],
+  );
+  const updateGameStoryboardPromptTemplates = useCallback(
+    (templates: AgentPromptTemplateOption[]) => {
+      const normalized = normalizeGameStoryboardPromptTemplates(templates);
+      const availableIds = new Set([
+        ...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS,
+        ...normalized.map((template) => template.id),
+      ]);
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardPromptTemplates: normalized,
+        ...(availableIds.has(selectedGameStoryboardIllustrationPromptTemplateId)
+          ? {}
+          : { gameStoryboardIllustrationPromptTemplateId: null }),
+        ...(availableIds.has(selectedGameStoryboardAnimationPromptTemplateId)
+          ? {}
+          : { gameStoryboardAnimationPromptTemplateId: null }),
+      });
+    },
+    [
+      chat.id,
+      selectedGameStoryboardAnimationPromptTemplateId,
+      selectedGameStoryboardIllustrationPromptTemplateId,
+      updateMeta,
+    ],
+  );
+  const addGameStoryboardPromptTemplate = useCallback(
+    (sourceTemplateId: string) => {
+      const source =
+        gameStoryboardPromptOptions.find((option) => option.id === sourceTemplateId) ??
+        GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES[0];
+      updateGameStoryboardPromptTemplates([
+        ...gameStoryboardPromptTemplates,
+        createGameStoryboardCustomPromptTemplate(gameStoryboardPromptTemplates, source),
+      ]);
+    },
+    [gameStoryboardPromptOptions, gameStoryboardPromptTemplates, updateGameStoryboardPromptTemplates],
+  );
+  const patchGameStoryboardPromptTemplate = useCallback(
+    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+      updateGameStoryboardPromptTemplates(
+        gameStoryboardPromptTemplates.map((template) =>
+          template.id === templateId ? { ...template, ...patch } : template,
+        ),
+      );
+    },
+    [gameStoryboardPromptTemplates, updateGameStoryboardPromptTemplates],
+  );
+  const removeGameStoryboardPromptTemplate = useCallback(
+    async (templateId: string) => {
+      const template = gameStoryboardPromptTemplates.find((entry) => entry.id === templateId);
+      const ok = await showConfirmDialog({
+        title: "Remove Storyboard Prompt",
+        message: `Remove "${template?.name ?? "this prompt"}" from this chat?`,
+        confirmLabel: "Remove",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      updateGameStoryboardPromptTemplates(gameStoryboardPromptTemplates.filter((entry) => entry.id !== templateId));
+    },
+    [gameStoryboardPromptTemplates, updateGameStoryboardPromptTemplates],
+  );
+  const gameVideoPromptTemplates = useMemo(
+    () => normalizeGameVideoPromptTemplates(metadata.gameVideoPromptTemplates),
+    [metadata.gameVideoPromptTemplates],
+  );
+  const gameVideoPromptOptions = useMemo(
+    () => getGameVideoPromptTemplateOptions(gameVideoPromptTemplates),
+    [gameVideoPromptTemplates],
+  );
+  const selectedGameVideoPromptTemplateId = useMemo(
+    () => resolveSelectedGameVideoPromptTemplateId(metadata.gameVideoPromptTemplateId, gameVideoPromptOptions),
+    [gameVideoPromptOptions, metadata.gameVideoPromptTemplateId],
+  );
+  const updateGameVideoPromptSelection = useCallback(
+    (promptTemplateId: string) => {
+      updateMeta.mutate({
+        id: chat.id,
+        gameVideoPromptTemplateId: promptTemplateId === GAME_VIDEO_PROMPT_TEMPLATE_ID ? null : promptTemplateId,
+      });
+    },
+    [chat.id, updateMeta],
+  );
+  const updateGameVideoPromptTemplates = useCallback(
+    (templates: AgentPromptTemplateOption[]) => {
+      const normalized = normalizeGameVideoPromptTemplates(templates);
+      const availableIds = new Set([
+        ...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATE_IDS,
+        ...normalized.map((template) => template.id),
+      ]);
+      updateMeta.mutate({
+        id: chat.id,
+        gameVideoPromptTemplates: normalized,
+        ...(availableIds.has(selectedGameVideoPromptTemplateId) ? {} : { gameVideoPromptTemplateId: null }),
+      });
+    },
+    [chat.id, selectedGameVideoPromptTemplateId, updateMeta],
+  );
+  const addGameVideoPromptTemplate = useCallback(
+    (sourceTemplateId: string) => {
+      const source =
+        gameVideoPromptOptions.find((option) => option.id === sourceTemplateId) ?? GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0];
+      updateGameVideoPromptTemplates([
+        ...gameVideoPromptTemplates,
+        createGameVideoCustomPromptTemplate(gameVideoPromptTemplates, source),
+      ]);
+    },
+    [gameVideoPromptOptions, gameVideoPromptTemplates, updateGameVideoPromptTemplates],
+  );
+  const patchGameVideoPromptTemplate = useCallback(
+    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+      updateGameVideoPromptTemplates(
+        gameVideoPromptTemplates.map((template) =>
+          template.id === templateId ? { ...template, ...patch } : template,
+        ),
+      );
+    },
+    [gameVideoPromptTemplates, updateGameVideoPromptTemplates],
+  );
+  const removeGameVideoPromptTemplate = useCallback(
+    async (templateId: string) => {
+      const template = gameVideoPromptTemplates.find((entry) => entry.id === templateId);
+      const ok = await showConfirmDialog({
+        title: "Remove Game Video Prompt",
+        message: `Remove "${template?.name ?? "this prompt"}" from this chat?`,
+        confirmLabel: "Remove",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      updateGameVideoPromptTemplates(gameVideoPromptTemplates.filter((entry) => entry.id !== templateId));
+    },
+    [gameVideoPromptTemplates, updateGameVideoPromptTemplates],
+  );
   const updateIllustratorPromptConnection = useCallback(
     (connectionId: string) => {
       updateMeta.mutate({
@@ -7104,9 +7432,24 @@ export function ChatSettingsDrawer({
                         No video generation connections found. Add one in Settings -&gt; Connections.
                       </p>
                     )}
+                    <GamePromptTemplateSelect
+                      label="Game Video Prompt"
+                      description="Used for Game scene videos and storyboard keyframe clips."
+                      options={gameVideoPromptOptions}
+                      selectedId={selectedGameVideoPromptTemplateId}
+                      fallbackId={GAME_VIDEO_PROMPT_TEMPLATE_ID}
+                      onChange={updateGameVideoPromptSelection}
+                    />
+                    <GameVideoPromptLibrary
+                      customTemplates={gameVideoPromptTemplates}
+                      onAddTemplate={addGameVideoPromptTemplate}
+                      onPatchTemplate={patchGameVideoPromptTemplate}
+                      onRemoveTemplate={removeGameVideoPromptTemplate}
+                    />
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                       Scene videos use the latest generated scene illustration as the first frame and the editable
-                      scene-video prompt template. Storyboard animations use this video connection when enabled below.
+                      game video prompt. Storyboard animations first use the Storyboards prompt to plan/render keyframe
+                      images, then use this Game Video Prompt to animate each saved keyframe.
                     </p>
                   </AgentSettingsCard>
                 )}
@@ -7119,7 +7462,7 @@ export function ChatSettingsDrawer({
                   >
                     <AgentSettingsToggle
                       label="Automatic Storyboard Illustrations"
-                      description="Automatically create manga keyframe illustrations after completed GM turns. Requires an Illustrator image connection."
+                      description="Automatically create still keyframe illustrations after completed GM turns. Requires an Illustrator image connection."
                       enabled={gameStoryboardAutoIllustrationsEnabled}
                       onToggle={() => {
                         const nextEnabled = !gameStoryboardAutoIllustrationsEnabled;
@@ -7143,8 +7486,47 @@ export function ChatSettingsDrawer({
                         });
                       }}
                     />
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <GamePromptTemplateSelect
+                        label="Illustration Prompt"
+                        description="Used when storyboards create still keyframes without videos."
+                        options={gameStoryboardPromptOptions}
+                        selectedId={selectedGameStoryboardIllustrationPromptTemplateId}
+                        fallbackId={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID}
+                        onChange={(promptTemplateId) =>
+                          updateGameStoryboardPromptSelection(
+                            "gameStoryboardIllustrationPromptTemplateId",
+                            promptTemplateId,
+                          )
+                        }
+                      />
+                      <GamePromptTemplateSelect
+                        label="Animation Prompt"
+                        description="Used when automatic storyboard animations are enabled."
+                        options={gameStoryboardPromptOptions}
+                        selectedId={selectedGameStoryboardAnimationPromptTemplateId}
+                        fallbackId={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID}
+                        onChange={(promptTemplateId) =>
+                          updateGameStoryboardPromptSelection(
+                            "gameStoryboardAnimationPromptTemplateId",
+                            promptTemplateId,
+                          )
+                        }
+                      />
+                    </div>
+                    <GameStoryboardPromptLibrary
+                      customTemplates={gameStoryboardPromptTemplates}
+                      onAddTemplate={addGameStoryboardPromptTemplate}
+                      onPatchTemplate={patchGameStoryboardPromptTemplate}
+                      onRemoveTemplate={removeGameStoryboardPromptTemplate}
+                    />
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Illustrations are the low-cost default path. Animations add video generation for every keyframe.
+                      These prompt presets are specific to Game Mode storyboards; the roleplay Illustrator presets stay
+                      separate.
+                    </p>
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Still keyframes avoid comic text so normal storyboards do not reveal later panels. Comic page
+                      keyframes are meant for the animation path.
                     </p>
                   </AgentSettingsCard>
                 )}
@@ -8695,7 +9077,310 @@ function AgentSettingsSegmentedControl<T extends string>({
   );
 }
 
-// ── Sprite display slider ──
+// Game prompt controls
+function GamePromptTemplateSelect({
+  label,
+  description,
+  options,
+  selectedId,
+  fallbackId,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  options: AgentPromptTemplateOption[];
+  selectedId: string;
+  fallbackId: string;
+  onChange: (promptTemplateId: string) => void;
+}) {
+  const activeOption = options.find((option) => option.id === selectedId) ?? options[0];
+
+  return (
+    <div className="rounded-lg bg-[var(--background)]/75 px-2.5 py-2 ring-1 ring-[var(--border)]">
+      <label className="flex flex-col gap-1.5">
+        <span className="text-[0.625rem] font-semibold text-[var(--foreground)]">{label}</span>
+        <select
+          value={activeOption?.id ?? fallbackId}
+          onChange={(event) => onChange(event.target.value)}
+          className="w-full rounded-md bg-[var(--secondary)] px-2 py-1.5 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+        >
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="mt-1.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+        {activeOption?.description || description}
+      </p>
+    </div>
+  );
+}
+
+function GameStoryboardPromptLibrary({
+  customTemplates,
+  onAddTemplate,
+  onPatchTemplate,
+  onRemoveTemplate,
+}: {
+  customTemplates: AgentPromptTemplateOption[];
+  onAddTemplate: (sourceTemplateId: string) => void;
+  onPatchTemplate: (
+    templateId: string,
+    patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+  ) => void;
+  onRemoveTemplate: (templateId: string) => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg bg-[var(--background)]/45 ring-1 ring-[var(--border)]">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-[var(--accent)]/55"
+        aria-expanded={open}
+      >
+        <FileText size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+        <span className="min-w-0 flex-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+          Edit Storyboard Presets
+        </span>
+        <span className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+          {customTemplates.length} custom
+        </span>
+        <ChevronDown
+          size="0.6875rem"
+          className={cn("shrink-0 text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
+        />
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
+          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+            Built-in Game Mode presets are read-only. Add a copy here to edit its name, description, and prompt body for
+            this chat.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <Plus size="0.6875rem" />
+              Add Still Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Comic Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Colored Manga Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add B&W Manga Copy
+            </button>
+          </div>
+          {customTemplates.length === 0 ? (
+            <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              Add a copy, edit it here, then choose it from either storyboard prompt selector above.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {customTemplates.map((template, index) => (
+                <div
+                  key={template.id}
+                  className="space-y-2 rounded-lg bg-[var(--secondary)]/65 p-2 ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--background)] text-[0.625rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                      {index + 1}
+                    </span>
+                    <input
+                      defaultValue={template.name}
+                      onBlur={(event) => {
+                        const next = event.target.value.trim() || "Custom Storyboard Prompt";
+                        if (next !== template.name) onPatchTemplate(template.id, { name: next });
+                      }}
+                      className="min-w-0 flex-1 rounded-md bg-[var(--background)] px-2 py-1.5 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                      placeholder="Prompt name"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void onRemoveTemplate(template.id)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                      title="Remove prompt"
+                      aria-label="Remove prompt"
+                    >
+                      <Trash2 size="0.75rem" />
+                    </button>
+                  </div>
+                  <input
+                    defaultValue={template.description ?? ""}
+                    onBlur={(event) => {
+                      const next = event.target.value.trim();
+                      if (next !== (template.description ?? "")) {
+                        onPatchTemplate(template.id, { description: next });
+                      }
+                    }}
+                    className="w-full rounded-md bg-[var(--background)] px-2 py-1.5 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    placeholder="Short description"
+                  />
+                  <textarea
+                    defaultValue={template.promptTemplate}
+                    onBlur={(event) => {
+                      const next = event.target.value.trim();
+                      if (next && next !== template.promptTemplate) {
+                        onPatchTemplate(template.id, { promptTemplate: next });
+                      }
+                    }}
+                    rows={7}
+                    className="min-h-[9rem] w-full resize-y rounded-md bg-[var(--background)] px-2.5 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    placeholder="Write the storyboard prompt template..."
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GameVideoPromptLibrary({
+  customTemplates,
+  onAddTemplate,
+  onPatchTemplate,
+  onRemoveTemplate,
+}: {
+  customTemplates: AgentPromptTemplateOption[];
+  onAddTemplate: (sourceTemplateId: string) => void;
+  onPatchTemplate: (
+    templateId: string,
+    patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+  ) => void;
+  onRemoveTemplate: (templateId: string) => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg bg-[var(--background)]/45 ring-1 ring-[var(--border)]">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-[var(--accent)]/55"
+        aria-expanded={open}
+      >
+        <FileText size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+        <span className="min-w-0 flex-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">
+          Edit Video Presets
+        </span>
+        <span className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+          {customTemplates.length} custom
+        </span>
+        <ChevronDown
+          size="0.6875rem"
+          className={cn("shrink-0 text-[var(--muted-foreground)] transition-transform", open && "rotate-180")}
+        />
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
+          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+            Built-in Game Video presets are read-only. Add a copy to edit the motion prompt for this chat's scene
+            videos and storyboard clips.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <Plus size="0.6875rem" />
+              Add Video Copy
+            </button>
+          </div>
+          {customTemplates.length === 0 ? (
+            <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+              Add a copy, edit it here, then choose it from the Game Video Prompt selector above.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {customTemplates.map((template, index) => (
+                <div
+                  key={template.id}
+                  className="space-y-2 rounded-lg bg-[var(--secondary)]/65 p-2 ring-1 ring-[var(--border)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[var(--background)] text-[0.625rem] font-semibold text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                      {index + 1}
+                    </span>
+                    <input
+                      defaultValue={template.name}
+                      onBlur={(event) => {
+                        const next = event.target.value.trim() || "Custom Game Video Prompt";
+                        if (next !== template.name) onPatchTemplate(template.id, { name: next });
+                      }}
+                      className="min-w-0 flex-1 rounded-md bg-[var(--background)] px-2 py-1.5 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                      placeholder="Prompt name"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void onRemoveTemplate(template.id)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                      title="Remove prompt"
+                      aria-label="Remove prompt"
+                    >
+                      <Trash2 size="0.75rem" />
+                    </button>
+                  </div>
+                  <input
+                    defaultValue={template.description ?? ""}
+                    onBlur={(event) => {
+                      const next = event.target.value.trim();
+                      if (next !== (template.description ?? "")) {
+                        onPatchTemplate(template.id, { description: next });
+                      }
+                    }}
+                    className="w-full rounded-md bg-[var(--background)] px-2 py-1.5 text-[0.6875rem] text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    placeholder="Short description"
+                  />
+                  <textarea
+                    defaultValue={template.promptTemplate}
+                    onBlur={(event) => {
+                      const next = event.target.value.trim();
+                      if (next && next !== template.promptTemplate) {
+                        onPatchTemplate(template.id, { promptTemplate: next });
+                      }
+                    }}
+                    rows={7}
+                    className="min-h-[9rem] w-full resize-y rounded-md bg-[var(--background)] px-2.5 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    placeholder="Write the game video prompt template..."
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Sprite display slider
 function SpriteRangeSlider({
   label,
   value,

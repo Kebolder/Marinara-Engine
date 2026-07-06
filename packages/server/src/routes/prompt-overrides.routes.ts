@@ -71,6 +71,7 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
       const row = resolvePromptOverrideRow(overrideByKey, def);
       return {
         key: def.key,
+        label: def.label ?? null,
         description: def.description,
         variables: def.variables,
         hasOverride: !!row,
@@ -87,6 +88,7 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
     const row = await getStoredPromptOverride(storage, def);
     return {
       key: def.key,
+      label: def.label ?? null,
       description: def.description,
       variables: def.variables,
       override: row ?? null,
@@ -99,6 +101,7 @@ export async function promptOverridesRoutes(app: FastifyInstance) {
     if (!def) return reply.status(404).send({ error: "Unknown prompt key" });
     return {
       key: def.key,
+      label: def.label ?? null,
       template: def.defaultBuilder(def.exampleContext),
       exampleContext: def.exampleContext,
     };

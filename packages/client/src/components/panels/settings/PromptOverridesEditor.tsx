@@ -36,6 +36,10 @@ function humanizePromptKey(key: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function promptOverrideLabel(entry: Pick<PromptOverrideSummary, "key" | "label"> | null | undefined) {
+  return entry?.label?.trim() || (entry?.key ? humanizePromptKey(entry.key) : "Prompt override");
+}
+
 function promptOverrideStatus(entry: PromptOverrideSummary | undefined) {
   if (!entry?.hasOverride)
     return { label: "Default", className: "bg-[var(--secondary)] text-[var(--muted-foreground)]" };
@@ -265,7 +269,7 @@ function PromptOverridesEditorBody({ keys, preferredKey }: { keys?: readonly str
 
     const confirmed = await showConfirmDialog({
       title: "Reset prompt override?",
-      message: `${humanizePromptKey(selectedKey)} will use its built-in default again. Your custom template for this key will be removed.`,
+      message: `${promptOverrideLabel(selectedEntry)} will use its built-in default again. Your custom template for this key will be removed.`,
       confirmLabel: "Reset to Default",
       cancelLabel: "Cancel",
       tone: "destructive",
@@ -313,7 +317,7 @@ function PromptOverridesEditorBody({ keys, preferredKey }: { keys?: readonly str
           {!loadingEntries && filteredEntries.length === 0 && <option value="">No registered prompts</option>}
           {filteredEntries.map((entry) => (
             <option key={entry.key} value={entry.key}>
-              {humanizePromptKey(entry.key)}
+              {promptOverrideLabel(entry)}
             </option>
           ))}
         </select>

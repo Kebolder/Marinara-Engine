@@ -18,6 +18,7 @@ import {
 } from "../../packages/shared/src/index.js";
 import { renderAgentPromptTemplate } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
+import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
@@ -52,9 +53,10 @@ import { fitMessagesForModelAccess } from "../../packages/server/src/services/ge
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
 import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
+import type { PromptOverridesStorage } from "../../packages/server/src/services/storage/prompt-overrides.storage.js";
 import {
-  GAME_STORYBOARD_DIRECTOR,
   GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
+  listPromptOverrideKeys,
 } from "../../packages/server/src/services/prompt-overrides/index.js";
 import { buildElevenLabsTextInput } from "../../packages/server/src/routes/tts.routes.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
@@ -558,7 +560,7 @@ const cases: RegressionCase[] = [
     },
   },
   {
-    name: "game storyboard directors split illustration and animation prompt contracts",
+    name: "game storyboard illustrator remains the active storyboard prompt contract",
     run() {
       const ctx = {
         gameContextBlock: "<game_context>\nMode: exploration\n</game_context>",
@@ -570,16 +572,67 @@ const cases: RegressionCase[] = [
       };
 
       const illustrationPrompt = GAME_STORYBOARD_ILLUSTRATION_DIRECTOR.defaultBuilder(ctx);
-      const animationPrompt = GAME_STORYBOARD_DIRECTOR.defaultBuilder(ctx);
+      const promptKeys = listPromptOverrideKeys();
 
-      assert.match(illustrationPrompt, /image-only anime storyboard/);
+      assert.match(illustrationPrompt, /Storyboard Illustrator/);
       assert.match(illustrationPrompt, /"imagePrompt"/);
       assert.doesNotMatch(illustrationPrompt, /"videoPrompt"/);
       assert.doesNotMatch(illustrationPrompt, /"cameraMotion"/);
       assert.doesNotMatch(illustrationPrompt, /"transitionHint"/);
-      assert.match(animationPrompt, /"videoPrompt"/);
-      assert.match(animationPrompt, /"cameraMotion"/);
-      assert.match(animationPrompt, /"transitionHint"/);
+      assert.equal(promptKeys.includes("game.storyboardIllustrationDirector"), true);
+      assert.equal(promptKeys.includes("game.storyboardDirector"), false);
+    },
+  },
+  {
+    name: "game video prompt selection wins over global prompt override",
+    async run() {
+      const promptOverridesStorage = {
+        async get(key: string) {
+          if (key !== "game.video") return null;
+          return {
+            key,
+            template: "GLOBAL VIDEO OVERRIDE ${sceneTitle}",
+            enabled: true,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+        },
+        async list() {
+          return [];
+        },
+        async upsert(input) {
+          return { key: input.key, template: input.template, enabled: input.enabled, updatedAt: "2026-01-01T00:00:00.000Z" };
+        },
+        async remove() {},
+      } satisfies PromptOverridesStorage;
+
+      const prompt = await loadGameVideoPrompt({
+        promptOverridesStorage,
+        meta: {
+          gameVideoPromptTemplateId: "custom-video-motion",
+          gameVideoPromptTemplates: [
+            {
+              id: "custom-video-motion",
+              name: "Custom Video Motion",
+              description: "Regression template",
+              promptTemplate: "CHAT VIDEO ${sceneTitle} ${sourceIllustrationLine}",
+            },
+          ],
+        },
+        ctx: {
+          sceneTitle: "Arrival",
+          narrationSummary: "The party reaches the gate.",
+          illustrationPrompt: "A wide gate at sunset.",
+          charactersLine: "Mira, Sol",
+          settingLine: "sunset city gate",
+          artStyleLine: "painterly fantasy",
+          durationSeconds: 6,
+          aspectRatio: "16:9",
+          sourceIllustrationLine: "Use image-123 as the first frame/reference image.",
+        },
+      });
+
+      assert.equal(prompt, "CHAT VIDEO Arrival Use image-123 as the first frame/reference image.");
+      assert.doesNotMatch(prompt, /GLOBAL VIDEO OVERRIDE/);
     },
   },
   {

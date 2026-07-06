@@ -346,29 +346,67 @@ export async function getActiveTurnGame(db: DB, chatId: string): Promise<LoadedG
 }
 
 /**
- * A short context block telling conversation bots about the table's game so their
- * free-chat replies are game-aware. Covers both an in-progress game AND one that
- * just finished (until it's dismissed), so post-game banter stays connected to
- * what actually happened. Returns null when no game row exists for the chat.
+ * Load the chat's game once and return a per-seat context builder for it, so a
+ * multi-character generation pays the game load (message-anchor scan + state
+ * parse) once per request instead of once per responding character. Returns
+ * null when no game row exists. The builder tells conversation bots about the
+ * table's game so their free-chat replies are game-aware — covering both an
+ * in-progress game AND one that just finished (until it's dismissed). When
+ * `seatId` is one of the game's seats, the block is built from that seat's own
+ * perspective (their hand / color / last move); any other viewer gets the
+ * hand-free spectator text.
  */
-export async function getTurnGameContextText(db: DB, chatId: string): Promise<string | null> {
+export async function getTurnGameContextBuilder(
+  db: DB,
+  chatId: string,
+): Promise<((seatId?: string | null) => string | null) | null> {
   const loaded = await loadGame(db, chatId);
   if (!loaded) return null;
-  try {
-    const summary = loaded.engine.spectatorSummary(loaded.state);
-    if (!summary) return null;
-    const finished = loaded.engine.isTerminal(loaded.state).done;
-    const guidance = finished
-      ? `The game is over. Stay fully in character; you may talk about how it went — react to the result, ` +
-        `tease the winner, lament a bad beat, call for a rematch — drawing on the moves above. ` +
-        `Don't restate these stats verbatim.`
-      : `You are at this table. Stay fully in character; you may reference the game naturally when it's relevant, ` +
-        `but never restate these stats verbatim and never reveal anyone's specific cards.`;
-    return `${summary}\n${guidance}`;
-  } catch (err) {
-    logger.warn(err, "Failed to build turn-game context text for chat %s", chatId);
-    return null;
-  }
+  return (seatId?: string | null): string | null => {
+    try {
+      // Both engines keep seatNames keyed by seatId (the bot runner relies on the
+      // same shape), so this is the cheap game-agnostic "is this viewer seated" test.
+      const seated = Boolean(seatId && loaded.state?.seatNames?.[seatId]);
+      const summary = seated
+        ? loaded.engine.participantSummary(loaded.state, seatId!)
+        : loaded.engine.spectatorSummary(loaded.state);
+      if (!summary) return null;
+      const finished = loaded.engine.isTerminal(loaded.state).done;
+      const guidance = finished
+        ? `The game is over. Stay fully in character; you may talk about how it went — react to the result, ` +
+          `tease the winner, lament a bad beat, call for a rematch — drawing on the moves above. ` +
+          `Don't restate these stats verbatim.`
+        : seated
+          ? loaded.engine.hiddenInformation
+            ? `You are seated in this game — it is YOUR game: you know exactly what you played and how your hand feels. ` +
+              `You may bring up your own moves, react to opponents' plays, gloat, sulk, or bluff like a real player. ` +
+              `Your hand is PRIVATE — keeping it hidden is part of playing, and everyone can see how many cards you hold ` +
+              `but not what they are. Whether you deflect, tease, bluff, lie, or carelessly let something slip when asked ` +
+              `about your hand is up to your personality — a sharp player gives nothing away. Never recite these stats ` +
+              `verbatim, and never reveal other players' hidden information.`
+            : `You are seated in this game — it is YOUR game, and the board is open for everyone to see, so you may ` +
+              `discuss the position and your own moves as freely as suits your character. Your PLANS, though, are ` +
+              `the one thing your opponent cannot see — whether you share them honestly, deflect, or bluff and ` +
+              `misdirect about your intentions when asked is up to your personality; a sharp player keeps them ` +
+              `close. Never recite these stats verbatim.`
+          : `You are at this table. Stay fully in character; you may reference the game naturally when it's relevant, ` +
+            `but never restate these stats verbatim and never reveal anyone's specific cards.`;
+      return `${summary}\n${guidance}`;
+    } catch (err) {
+      logger.warn(err, "Failed to build turn-game context text for chat %s", chatId);
+      return null;
+    }
+  };
+}
+
+/**
+ * One-shot convenience wrapper over getTurnGameContextBuilder for single-seat
+ * callers (and tests). Prefer the builder when injecting for several
+ * characters in one request.
+ */
+export async function getTurnGameContextText(db: DB, chatId: string, seatId?: string | null): Promise<string | null> {
+  const build = await getTurnGameContextBuilder(db, chatId);
+  return build ? build(seatId) : null;
 }
 
 /** End and remove the game for a chat. */
