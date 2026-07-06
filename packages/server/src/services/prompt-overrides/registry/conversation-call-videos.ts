@@ -40,25 +40,25 @@ const CLIP_PROMPT_SEEDS: ClipPromptSeed[] = [
     kind: "laughing",
     label: "laughing reaction",
     instruction:
-      "The character laughs naturally for a moment with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
+      "The character laughs naturally for a moment with smooth restrained motion: gentle head and shoulder movement, visible breathing, expression changes, and slight hair or clothing motion if present. Keep the motion video-call-like and fluid, then return to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "angry",
     label: "angry reaction",
     instruction:
-      "The character shows anger or irritation briefly with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
+      "The character shows anger or irritation briefly with smooth restrained motion: a tense posture shift, small head or shoulder movement, sharper breathing, expression changes, and slight hair or clothing motion if present. Keep the motion video-call-like and fluid, then return to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "crying",
     label: "crying reaction",
     instruction:
-      "The character shows a restrained tearful reaction briefly with subtle movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
+      "The character shows a restrained tearful reaction briefly with smooth natural motion: softened posture, subtle breathing, small head or shoulder movement, expression changes, and slight hair or clothing motion if present. Keep the motion video-call-like and fluid, then return to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "sighing",
     label: "sighing reaction",
     instruction:
-      "The character makes a small sigh-like expression with minimal head movement, then returns to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
+      "The character sighs naturally with smooth restrained motion: a small exhale, gentle breathing, slight head or shoulder movement, a brief expression shift, and subtle hair or clothing motion if present. Keep the motion video-call-like and fluid, then return to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
 ];
 
