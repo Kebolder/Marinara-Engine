@@ -968,16 +968,17 @@ async function seedanceReferenceImageUrls(request: VideoGenerationRequest): Prom
     request.publicReferenceUpload,
     request.signal,
   );
-  if (!request.lastFrameImage || videoReferenceImagesMatch(request.referenceImage, request.lastFrameImage)) {
+  if (!request.lastFrameImage) {
     return [firstFrame];
   }
+  if (videoReferenceImagesMatch(request.referenceImage, request.lastFrameImage)) return [firstFrame, firstFrame];
   const lastFrame = await seedanceReferenceImageUrl(
     request.lastFrameImage,
     "last frame",
     request.publicReferenceUpload,
     request.signal,
   );
-  return firstFrame === lastFrame ? [firstFrame] : [firstFrame, lastFrame];
+  return [firstFrame, lastFrame];
 }
 
 async function seedanceReferenceImageUrl(

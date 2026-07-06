@@ -361,6 +361,8 @@ const CALL_COMMAND_ALIASES = new Map<string, string>([
   ["custom_clip", "custom_clip"],
   ["custom_video", "custom_clip"],
   ["video_clip", "custom_clip"],
+  ["generate", "custom_clip"],
+  ["generate_clip", "custom_clip"],
   ["react", "react"],
   ["reaction", "react"],
 ]);
@@ -672,6 +674,7 @@ function formatCallCommandPromptLines(
     case "custom_clip":
       return [
         '- [custom_clip: label="short title", prompt="visual action or look"] - generate one custom video-call clip for the speaking character and save it to their call-video clip gallery. Use only when the user explicitly asks to see a special visual action, outfit, reveal, or look that standard idle/talking/laughing/angry/crying/sighing clips cannot show.',
+        "   The prompt value is the exact visual action for the video prompt; keep it short, concrete, and focused on what the character does before returning to their starting pose.",
         "   Use this sparsely: do not create custom clips for ordinary moods, normal dialogue, or every response. Emit at most one [custom_clip] for a direct user request, and do not repeat it unless the user asks for another distinct clip.",
       ];
     case "end_call":
@@ -1685,6 +1688,8 @@ async function applyCallSelfieCommand(input: {
 function readCustomClipPrompt(commandText: string) {
   return (
     getCommandStringParam(commandText, "prompt") ||
+    getCommandStringParam(commandText, "clip") ||
+    getCommandStringParam(commandText, "action") ||
     getCommandStringParam(commandText, "description") ||
     getCommandStringParam(commandText, "context")
   )
