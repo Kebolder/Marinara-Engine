@@ -126,6 +126,8 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    target: "es2020",
+    cssTarget: "safari14",
     sourcemap: ENABLE_SOURCE_MAPS,
     rollupOptions: {
       output: {

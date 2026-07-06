@@ -8981,8 +8981,12 @@ function GameSurfaceComponent({
 
   // Resolve background image URL — supports exact tag match, partial/fuzzy match, and "black" override
   const resolvedBackground = useMemo(() => {
+    if (chatBackground) {
+      return chatBackground;
+    }
+
     if (!sceneAnalysisEnabled) {
-      return chatBackground ?? undefined;
+      return undefined;
     }
 
     if (currentBackground && scopedAssetMap) {

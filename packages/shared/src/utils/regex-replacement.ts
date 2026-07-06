@@ -239,10 +239,11 @@ export function applyRegexReplacement(
 ): string {
   const preparedReplacement = prepareLiteralMacroPlaceholders(replacement, resolveReplacement);
   return text.replace(regex, (...args: unknown[]) => {
-    const hasGroups = typeof args.at(-1) === "object" && args.at(-1) !== null;
-    const groups = hasGroups ? (args.at(-1) as Record<string, string>) : undefined;
-    const input = args.at(hasGroups ? -2 : -1) as string;
-    const offset = args.at(hasGroups ? -3 : -2) as number;
+    const lastArg = args[args.length - 1];
+    const hasGroups = typeof lastArg === "object" && lastArg !== null;
+    const groups = hasGroups ? (lastArg as Record<string, string>) : undefined;
+    const input = args[args.length - (hasGroups ? 2 : 1)] as string;
+    const offset = args[args.length - (hasGroups ? 3 : 2)] as number;
     const match = args[0] as string;
     const captures = args.slice(1, hasGroups ? -3 : -2).map((capture) => (capture == null ? "" : String(capture)));
     const expanded = expandRegexReplacement(preparedReplacement.template, {

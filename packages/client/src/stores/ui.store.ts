@@ -44,6 +44,14 @@ export const LOREBOOK_PANEL_SORT_OPTIONS = ["name-asc", "name-desc", "newest", "
 export type LorebookPanelSort = (typeof LOREBOOK_PANEL_SORT_OPTIONS)[number];
 export const RESOURCE_PANEL_SORT_OPTIONS = BASIC_PANEL_SORT_OPTIONS;
 export type ResourcePanelSort = BasicPanelSort;
+export const CONNECTION_PANEL_SORT_OPTIONS = [...BASIC_PANEL_SORT_OPTIONS, "custom"] as const;
+export type ConnectionPanelSort = (typeof CONNECTION_PANEL_SORT_OPTIONS)[number];
+
+function normalizeConnectionPanelSort(value: unknown): ConnectionPanelSort {
+  return CONNECTION_PANEL_SORT_OPTIONS.includes(value as ConnectionPanelSort)
+    ? (value as ConnectionPanelSort)
+    : "name-asc";
+}
 type FontSize = 12 | 14 | 16 | 17 | 19 | 22;
 export type VisualTheme = "default" | "sillytavern";
 export type ConversationMessageStyle = "classic" | "bubble";
@@ -481,7 +489,7 @@ interface UIState {
   /** Sort order for the compact Presets panel */
   presetPanelSort: ResourcePanelSort;
   /** Sort order for the compact Connections panel */
-  connectionPanelSort: ResourcePanelSort;
+  connectionPanelSort: ConnectionPanelSort;
   /** Sort order for the compact Agents panel */
   agentPanelSort: ResourcePanelSort;
   /** True when any open detail editor has unsaved changes */
@@ -761,7 +769,7 @@ interface UIState {
   setLorebookPanelTagsExpanded: (expanded: boolean) => void;
   setBotBrowserPanelSort: (sort: ResourcePanelSort) => void;
   setPresetPanelSort: (sort: ResourcePanelSort) => void;
-  setConnectionPanelSort: (sort: ResourcePanelSort) => void;
+  setConnectionPanelSort: (sort: ConnectionPanelSort) => void;
   setAgentPanelSort: (sort: ResourcePanelSort) => void;
   openCharacterDetail: (id: string, options?: { preserveCharacterLibrary?: boolean }) => void;
   closeCharacterDetail: () => void;
@@ -1161,7 +1169,7 @@ export const useUIStore = create<UIState>()(
       lorebookPanelTagsExpanded: false,
       botBrowserPanelSort: "name-asc" as ResourcePanelSort,
       presetPanelSort: "name-asc" as ResourcePanelSort,
-      connectionPanelSort: "name-asc" as ResourcePanelSort,
+      connectionPanelSort: "name-asc" as ConnectionPanelSort,
       agentPanelSort: "name-asc" as ResourcePanelSort,
       editorDirty: false,
       detailReturnRightPanel: null,
@@ -1404,7 +1412,7 @@ export const useUIStore = create<UIState>()(
       setLorebookPanelTagsExpanded: (expanded) => set({ lorebookPanelTagsExpanded: expanded }),
       setBotBrowserPanelSort: (sort) => set({ botBrowserPanelSort: normalizeBasicPanelSort(sort) }),
       setPresetPanelSort: (sort) => set({ presetPanelSort: normalizeBasicPanelSort(sort) }),
-      setConnectionPanelSort: (sort) => set({ connectionPanelSort: normalizeBasicPanelSort(sort) }),
+      setConnectionPanelSort: (sort) => set({ connectionPanelSort: normalizeConnectionPanelSort(sort) }),
       setAgentPanelSort: (sort) => set({ agentPanelSort: normalizeBasicPanelSort(sort) }),
       openCharacterDetail: (id, options) =>
         set((s) => {
@@ -2433,7 +2441,7 @@ export const useUIStore = create<UIState>()(
         persisted.lorebookPanelTagsExpanded = persisted.lorebookPanelTagsExpanded === true;
         persisted.botBrowserPanelSort = normalizeBasicPanelSort(persisted.botBrowserPanelSort);
         persisted.presetPanelSort = normalizeBasicPanelSort(persisted.presetPanelSort);
-        persisted.connectionPanelSort = normalizeBasicPanelSort(persisted.connectionPanelSort);
+        persisted.connectionPanelSort = normalizeConnectionPanelSort(persisted.connectionPanelSort);
         persisted.agentPanelSort = normalizeBasicPanelSort(persisted.agentPanelSort);
         normalizePersistedMainSurface(persisted);
         if (Array.isArray(persisted.recentUserActivities)) {

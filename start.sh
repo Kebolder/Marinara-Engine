@@ -258,6 +258,11 @@ else
   PROTOCOL=http
 fi
 
+BROWSER_HOST="$HOST"
+case "$BROWSER_HOST" in
+  ""|"0.0.0.0"|"::") BROWSER_HOST="127.0.0.1" ;;
+esac
+
 AUTO_OPEN_BROWSER_VALUE="${AUTO_OPEN_BROWSER:-true}"
 AUTO_OPEN_BROWSER_NORMALIZED=$(printf '%s' "$AUTO_OPEN_BROWSER_VALUE" | tr '[:upper:]' '[:lower:]')
 case "$AUTO_OPEN_BROWSER_NORMALIZED" in
@@ -271,14 +276,17 @@ fi
 
 echo ""
 echo "  ══════════════════════════════════════════"
-echo "    Starting Marinara Engine on ${PROTOCOL}://127.0.0.1:$PORT"
+echo "    Starting Marinara Engine on ${PROTOCOL}://${HOST}:$PORT"
+if [ "$BROWSER_HOST" != "$HOST" ]; then
+echo "    Local browser URL: ${PROTOCOL}://${BROWSER_HOST}:$PORT"
+fi
 echo "    Press Ctrl+C to stop"
 echo "  ══════════════════════════════════════════"
 echo ""
 
 # Open browser after a short delay
 if [ "$AUTO_OPEN_BROWSER_ENABLED" = "1" ]; then
-  (sleep 3 && open "${PROTOCOL}://127.0.0.1:$PORT" 2>/dev/null || xdg-open "${PROTOCOL}://127.0.0.1:$PORT" 2>/dev/null) &
+  (sleep 3 && open "${PROTOCOL}://${BROWSER_HOST}:$PORT" 2>/dev/null || xdg-open "${PROTOCOL}://${BROWSER_HOST}:$PORT" 2>/dev/null) &
 else
   echo "  [OK] Auto-open disabled (AUTO_OPEN_BROWSER=${AUTO_OPEN_BROWSER_VALUE})"
 fi

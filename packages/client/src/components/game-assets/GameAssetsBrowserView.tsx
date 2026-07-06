@@ -575,6 +575,7 @@ export function GameAssetsBrowserView({
       }
     } catch (err) {
       toast.error(`Action failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
     }
     setModal(null);
     setModalValue("");
@@ -1018,6 +1019,7 @@ export function GameAssetsBrowserView({
       {/* Modals */}
       {modal && (
         <div
+          data-chat-floating-panel
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -1133,6 +1135,10 @@ export function GameAssetsBrowserView({
                     modal.node.type === "folder" &&
                     countItems(modal.node) > 0 &&
                     !deleteRecursive) ||
+                  ((modal.type === "create-folder" ||
+                    modal.type === "new-text-file" ||
+                    modal.type === "new-markdown-file") &&
+                    !modalValue.trim()) ||
                   ((modal.type === "move" || modal.type === "bulk-move" || modal.type === "bulk-copy") && !modalValue)
                 }
                 className={cn(

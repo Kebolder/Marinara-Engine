@@ -7934,7 +7934,10 @@ export async function generateRoutes(app: FastifyInstance) {
         } else {
           // Single/merged: one generation
           sendProgress("generating");
-          let targetCharId = characterIds[0] ?? null;
+          let targetCharId =
+            typeof input.forCharacterId === "string" && characterIds.includes(input.forCharacterId)
+              ? input.forCharacterId
+              : (characterIds[0] ?? null);
           const sentMessages = [...finalMessages];
 
           if (generationGuideInstruction) {

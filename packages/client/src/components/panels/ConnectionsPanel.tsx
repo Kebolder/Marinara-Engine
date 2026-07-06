@@ -18,13 +18,13 @@ import {
   useUpdateConnectionFolder,
   useDeleteConnectionFolder,
   useReorderConnectionFolders,
-  useMoveConnection,
+  useReorderConnections,
 } from "../../hooks/use-connection-folders";
 import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/use-folder-rename-gesture";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent } from "../../hooks/use-agents";
 import { useChatStore } from "../../stores/chat.store";
-import { useUIStore, type ResourcePanelSort } from "../../stores/ui.store";
+import { useUIStore, type ConnectionPanelSort } from "../../stores/ui.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import {
   BUILT_IN_AGENTS,
@@ -572,6 +572,7 @@ type ConnectionRowData = {
   maxParallelJobs?: number;
   claudeFastMode?: boolean | string;
   folderId?: string | null;
+  sortOrder?: number;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -594,6 +595,30 @@ function connectionMatchesSearch(conn: ConnectionRowData, query: string) {
     .join(" ")
     .toLowerCase();
   return haystack.includes(query);
+}
+
+function sortConnections(
+  connections: readonly ConnectionRowData[],
+  sort: ConnectionPanelSort,
+): ConnectionRowData[] {
+  if (sort === "custom") {
+    return [...connections].sort((a, b) => {
+      const aOrder =
+        typeof a.sortOrder === "number" && Number.isFinite(a.sortOrder) ? a.sortOrder : Number.MAX_SAFE_INTEGER;
+      const bOrder =
+        typeof b.sortOrder === "number" && Number.isFinite(b.sortOrder) ? b.sortOrder : Number.MAX_SAFE_INTEGER;
+      const orderDiff = aOrder - bOrder;
+      if (orderDiff !== 0) return orderDiff;
+      return (a.name ?? "").localeCompare(b.name ?? "");
+    });
+  }
+
+  return sortBasicPanelItems(
+    connections,
+    sort,
+    (connection) => connection.name,
+    (connection) => connection.createdAt || connection.updatedAt,
+  );
 }
 
 function formatDefaultConnectionOption(connection: ConnectionRowData, fallbackModelLabel: string): string {
@@ -823,6 +848,7 @@ function ConnectionRow({
   isDragging,
   onDragStart,
   onDragEnd,
+  onDropOnRow,
   onTouchStart,
   suppressClickRef,
   onImagePick,
@@ -835,6 +861,7 @@ function ConnectionRow({
   isDragging: boolean;
   onDragStart: (event: React.DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
+  onDropOnRow: (event: React.DragEvent<HTMLDivElement>) => void;
   onTouchStart?: (event: TouchEvent<HTMLButtonElement>) => void;
   suppressClickRef?: { current: boolean };
   onImagePick: () => void;
@@ -858,6 +885,7 @@ function ConnectionRow({
 
   return (
     <div
+      data-connection-id={conn.id}
       data-touch-drag-card="connection"
       onClick={() => {
         if (suppressClickRef?.current) return;
@@ -866,6 +894,11 @@ function ConnectionRow({
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={onDropOnRow}
       className={cn(
         "group relative flex touch-pan-y cursor-pointer items-center gap-3 rounded-xl p-2.5 transition-all hover:bg-[var(--sidebar-accent)]",
         isSelected && `ring-1 ${colors.ring} bg-[var(--sidebar-accent)]/50`,
@@ -1163,7 +1196,7 @@ export function ConnectionsPanel() {
   const updateFolderMut = useUpdateConnectionFolder();
   const deleteFolderMut = useDeleteConnectionFolder();
   const reorderFoldersMut = useReorderConnectionFolders();
-  const moveConnectionMut = useMoveConnection();
+  const reorderConnectionsMut = useReorderConnections();
 
   const [draggedConnectionId, setDraggedConnectionId] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1179,15 +1212,10 @@ export function ConnectionsPanel() {
     const query = search.trim().toLowerCase();
     return connectionsList.filter((connection) => connectionMatchesSearch(connection, query));
   }, [connectionsList, search]);
-  const sortedConnections = useMemo(
-    () =>
-      sortBasicPanelItems(
-        filteredConnections,
-        sort,
-        (connection) => connection.name,
-        (connection) => connection.createdAt || connection.updatedAt,
-      ),
-    [filteredConnections, sort],
+  const sortedConnections = useMemo(() => sortConnections(filteredConnections, sort), [filteredConnections, sort]);
+  const sortedConnectionsForReorder = useMemo(
+    () => sortConnections(connectionsList, sort),
+    [connectionsList, sort],
   );
   const searchActive = search.trim().length > 0;
 
@@ -1272,20 +1300,71 @@ export function ConnectionsPanel() {
     setSelectedConnectionIds(new Set());
   }, []);
 
-  const handleDropConnectionsToFolder = useCallback(
-    (connectionIds: string[], folderId: string | null) => {
-      const ids = Array.from(new Set(connectionIds.filter(Boolean)));
-      for (const connectionId of ids) {
-        moveConnectionMut.mutate({ connectionId, folderId });
-      }
+  const getConnectionsInFolder = useCallback(
+    (folderId: string | null) =>
+      sortedConnectionsForReorder.filter((connection) => {
+        if (folderId) return connection.folderId === folderId;
+        return !(connection.folderId && sortedFolders.some((folder) => folder.id === connection.folderId));
+      }),
+    [sortedConnectionsForReorder, sortedFolders],
+  );
+
+  const reorderConnectionsInFolder = useCallback(
+    (connectionIds: string[], folderId: string | null, targetConnectionId?: string) => {
+      const draggedIds = Array.from(new Set(connectionIds.filter(Boolean)));
+      if (draggedIds.length === 0) return;
+      if (targetConnectionId && draggedIds.includes(targetConnectionId)) return;
+
+      const bucketIds = getConnectionsInFolder(folderId).map((connection) => connection.id);
+      const withoutDragged = bucketIds.filter((id) => !draggedIds.includes(id));
+      const insertIndex = targetConnectionId ? withoutDragged.indexOf(targetConnectionId) : withoutDragged.length;
+      const safeInsertIndex = insertIndex >= 0 ? insertIndex : withoutDragged.length;
+      const orderedConnectionIds = [
+        ...withoutDragged.slice(0, safeInsertIndex),
+        ...draggedIds,
+        ...withoutDragged.slice(safeInsertIndex),
+      ];
+
+      if (orderedConnectionIds.length === 0) return;
+      if (sort !== "custom") setSort("custom");
+      reorderConnectionsMut.mutate({ orderedConnectionIds, folderId });
       setDraggedConnectionId(null);
     },
-    [moveConnectionMut],
+    [getConnectionsInFolder, reorderConnectionsMut, setSort, sort],
+  );
+
+  const handleDropConnectionsToFolder = useCallback(
+    (connectionIds: string[], folderId: string | null) => {
+      reorderConnectionsInFolder(connectionIds, folderId);
+    },
+    [reorderConnectionsInFolder],
+  );
+
+  const handleDropConnectionsOnRow = useCallback(
+    (connectionIds: string[], targetConnectionId: string) => {
+      const targetConnection = connectionsList.find((connection) => connection.id === targetConnectionId);
+      if (!targetConnection) return;
+      const folderId =
+        targetConnection.folderId && sortedFolders.some((folder) => folder.id === targetConnection.folderId)
+          ? targetConnection.folderId
+          : null;
+      reorderConnectionsInFolder(connectionIds, folderId, targetConnectionId);
+    },
+    [connectionsList, reorderConnectionsInFolder, sortedFolders],
   );
 
   const finishConnectionTouchDrag = useCallback(
     (connectionId: string, x: number, y: number) => {
       const target = document.elementFromPoint(x, y);
+      const connectionElement = target?.closest("[data-connection-id]") as HTMLElement | null;
+      const targetConnectionId = connectionElement?.dataset.connectionId ?? null;
+      if (targetConnectionId && targetConnectionId !== connectionId) {
+        handleDropConnectionsOnRow(getDraggedConnectionIds(connectionId), targetConnectionId);
+        window.setTimeout(() => {
+          suppressConnectionClickRef.current = false;
+        }, 0);
+        return;
+      }
       const folderElement = target?.closest("[data-connection-folder-id]") as HTMLElement | null;
       const rootElement = target?.closest("[data-connection-folder-root]") as HTMLElement | null;
       const folderId = folderElement?.dataset.connectionFolderId ?? null;
@@ -1298,7 +1377,7 @@ export function ConnectionsPanel() {
         suppressConnectionClickRef.current = false;
       }, 0);
     },
-    [getDraggedConnectionIds, handleDropConnectionsToFolder],
+    [getDraggedConnectionIds, handleDropConnectionsOnRow, handleDropConnectionsToFolder],
   );
 
   const cancelConnectionTouchDrag = useCallback((_connectionId: string, wasActive: boolean) => {
@@ -1457,6 +1536,19 @@ export function ConnectionsPanel() {
           event.dataTransfer.setData("text/plain", conn.id);
         }}
         onDragEnd={() => setDraggedConnectionId(null)}
+        onDropOnRow={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const payload = event.dataTransfer.getData("application/x-marinara-connection-ids");
+          const fallbackId =
+            event.dataTransfer.getData("application/x-marinara-connection-id") ||
+            event.dataTransfer.getData("text/plain") ||
+            draggedConnectionId;
+          handleDropConnectionsOnRow(
+            payload ? (JSON.parse(payload) as string[]) : fallbackId ? [fallbackId] : [],
+            conn.id,
+          );
+        }}
         onTouchStart={(event) => {
           startConnectionTouchDrag(event, conn.id, {
             allowInteractiveTarget: true,
@@ -1532,11 +1624,12 @@ export function ConnectionsPanel() {
         <div className="relative">
           <select
             value={sort}
-            onChange={(event) => setSort(event.target.value as ResourcePanelSort)}
+            onChange={(event) => setSort(event.target.value as ConnectionPanelSort)}
             className="mari-chrome-field mari-chrome-sort-field mari-accent-animated h-10 appearance-none py-0 pl-2.5 pr-7 text-[0.6875rem] md:h-9"
             title="Sort order"
             aria-label="Sort connections"
           >
+            <option value="custom">Custom</option>
             <option value="name-asc">A-Z</option>
             <option value="name-desc">Z-A</option>
             <option value="newest">Newest</option>

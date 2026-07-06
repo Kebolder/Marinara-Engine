@@ -1028,7 +1028,7 @@ export function GameCharacterSheet({
                 {Object.entries(previewGameCard.extra).map(([key, value]) => (
                   <div key={key} className="flex items-start justify-between gap-3">
                     <span className="shrink-0 capitalize text-[var(--muted-foreground)]">
-                      {key.replaceAll("_", " ")}
+                      {key.replace(/_/g, " ")}
                     </span>
                     <span className="text-right text-[var(--foreground)]/80">{value}</span>
                   </div>

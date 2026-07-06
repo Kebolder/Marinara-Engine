@@ -340,6 +340,11 @@ else
   PROTOCOL=http
 fi
 
+BROWSER_HOST="$HOST"
+case "$BROWSER_HOST" in
+  ""|"0.0.0.0"|"::") BROWSER_HOST="127.0.0.1" ;;
+esac
+
 AUTO_OPEN_BROWSER_VALUE="${AUTO_OPEN_BROWSER:-true}"
 case "${AUTO_OPEN_BROWSER_VALUE,,}" in
   0|false|no|off) AUTO_OPEN_BROWSER_ENABLED=0 ;;
@@ -355,7 +360,10 @@ fi
 # ── Start ──
 echo ""
 echo "  ══════════════════════════════════════════"
-echo "    Starting Marinara Engine on ${PROTOCOL}://127.0.0.1:${PORT}"
+echo "    Starting Marinara Engine on ${PROTOCOL}://${HOST}:${PORT}"
+if [ "$BROWSER_HOST" != "$HOST" ]; then
+echo "    Local browser URL: ${PROTOCOL}://${BROWSER_HOST}:${PORT}"
+fi
 if [ -n "$LOCAL_IP" ]; then
 echo "    LAN access: ${PROTOCOL}://${LOCAL_IP}:${PORT}"
 fi
@@ -367,7 +375,7 @@ echo ""
 
 # Open in Termux browser if available (no-op if not)
 if [ "$AUTO_OPEN_BROWSER_ENABLED" = "1" ] && command -v termux-open-url &> /dev/null; then
-    (sleep 3 && termux-open-url "${PROTOCOL}://127.0.0.1:${PORT}") &
+    (sleep 3 && termux-open-url "${PROTOCOL}://${BROWSER_HOST}:${PORT}") &
 elif [ "$AUTO_OPEN_BROWSER_ENABLED" != "1" ]; then
     echo "  [OK] Auto-open disabled (AUTO_OPEN_BROWSER=${AUTO_OPEN_BROWSER_VALUE})"
 fi

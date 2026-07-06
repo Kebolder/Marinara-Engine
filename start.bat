@@ -293,6 +293,10 @@ if not defined SIDECAR_RUNTIME_INSTALL_ENABLED set SIDECAR_RUNTIME_INSTALL_ENABL
 
 set PROTOCOL=http
 if defined SSL_CERT if defined SSL_KEY set PROTOCOL=https
+set "BROWSER_HOST=%HOST%"
+if "%BROWSER_HOST%"=="" set "BROWSER_HOST=127.0.0.1"
+if "%BROWSER_HOST%"=="0.0.0.0" set "BROWSER_HOST=127.0.0.1"
+if "%BROWSER_HOST%"=="::" set "BROWSER_HOST=127.0.0.1"
 
 set "AUTO_OPEN_BROWSER_ENABLED=1"
 if defined AUTO_OPEN_BROWSER (
@@ -310,14 +314,15 @@ if errorlevel 1 (
 
 echo.
 echo  ==========================================
-echo    Starting Marinara Engine on %PROTOCOL%://127.0.0.1:%PORT%
+echo    Starting Marinara Engine on %PROTOCOL%://%HOST%:%PORT%
+if not "%BROWSER_HOST%"=="%HOST%" echo    Local browser URL: %PROTOCOL%://%BROWSER_HOST%:%PORT%
 echo    Press Ctrl+C to stop
 echo  ==========================================
 echo.
 
 :: Open browser after a short delay (use explorer.exe as fallback)
 if defined AUTO_OPEN_BROWSER_ENABLED (
-    start "" cmd /c "timeout /t 4 /nobreak >nul && start %PROTOCOL%://127.0.0.1:%PORT% || explorer %PROTOCOL%://127.0.0.1:%PORT%"
+    start "" cmd /c "timeout /t 4 /nobreak >nul && start %PROTOCOL%://%BROWSER_HOST%:%PORT% || explorer %PROTOCOL%://%BROWSER_HOST%:%PORT%"
 ) else (
     echo  [OK] Auto-open disabled ^(AUTO_OPEN_BROWSER=%AUTO_OPEN_BROWSER%^)
 )

@@ -566,7 +566,7 @@ function stripOuterQuotes(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length < 2) return null;
   const openingKind = quoteKind(trimmed[0]);
-  if (!openingKind || quoteKind(trimmed.at(-1)) !== openingKind) return null;
+  if (!openingKind || quoteKind(trimmed[trimmed.length - 1]) !== openingKind) return null;
   return trimmed
     .slice(1, -1)
     .replace(/\\(["'\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f\\])/g, "$1")
@@ -1023,7 +1023,7 @@ function pickWeightedRandomChoice(choices: string[], options: ResolveMacroOption
     if (roll < 0) return choice.text;
   }
 
-  return weightedChoices.at(-1)?.text ?? "";
+  return weightedChoices[weightedChoices.length - 1]?.text ?? "";
 }
 
 type MacroDateTimeParts = {
