@@ -9511,7 +9511,7 @@ export async function gameRoutes(app: FastifyInstance) {
     keyframeCount: z.number().int().min(2).max(6).optional().default(4),
     durationSeconds: z.number().int().min(1).max(15).optional(),
     aspectRatio: z.enum(["16:9", "9:16"]).optional().default("16:9"),
-    generateVideos: z.boolean().optional().default(true),
+    generateVideos: z.boolean().optional().default(false),
     debugMode: z.boolean().optional().default(false),
   });
 
