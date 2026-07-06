@@ -568,10 +568,10 @@ async function buildClipPrompt(input: {
       "Preserve the reference image's crop, especially the top/head framing. If any framing must be lost, crop lower body or lower clothing instead of hair, head, mask, or face.",
       "Preserve the reference image's background, lighting, colors, face shape, hair, clothing, mask or eyewear, accessories, and art style.",
       `Action: ${getClipInstruction(input.kind)}`,
-      "Motion quality: animate as one continuous smooth movement with gradual easing; no choppy frame jumps, jitter, flicker, stop-motion effect, or stuttering.",
+      "Motion quality: use the full clip duration as one continuous smooth movement with gradual easing. Keep subtle breathing, expression, hair, or clothing motion alive throughout; do not finish the action early and hold a frozen still frame. No choppy frame jumps, jitter, flicker, stop-motion effect, or stuttering.",
       "Lighting and background: keep them from the reference image; do not invent a new ambience or setting.",
       "Camera: locked-off still camera, no zoom, pan, tilt, dolly, crop change, reframing, handheld shake, or scene cut.",
-      "Looping: begin and finish on the same pose, scale, framing, lighting, outfit, and background for a seamless loop.",
+      "Looping: begin and finish on the same pose, scale, framing, lighting, outfit, and background for a seamless loop; only the final frame needs to exactly match the first frame.",
       "Focus: single character only, no captions, subtitles, UI, logos, extra people, new clothing, or new facial features.",
     ]
       .filter(Boolean)

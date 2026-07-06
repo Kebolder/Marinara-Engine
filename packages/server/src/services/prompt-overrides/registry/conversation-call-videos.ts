@@ -40,7 +40,7 @@ const CLIP_PROMPT_SEEDS: ClipPromptSeed[] = [
     kind: "laughing",
     label: "laughing reaction",
     instruction:
-      "The character laughs naturally for one continuous acted beat with smooth restrained motion: gentle head and shoulder movement, visible breathing, expression changes, and slight hair or clothing motion if present. Avoid rapid shaking, twitchy bobbing, or repeated jerky head snaps. Keep the motion video-call-like and fluid, then return to the original pose. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
+      "The character laughs naturally across the full clip as one continuous acted beat with smooth restrained motion: gentle head and shoulder movement, visible breathing, expression changes, and slight hair or clothing motion if present. Ease into the laugh and ease back toward the starting pose only near the final frames. Avoid rapid shaking, twitchy bobbing, repeated jerky head snaps, or freezing after the laugh. Preserve masks, visors, eye coverings, and accessories exactly as shown.",
   },
   {
     kind: "angry",
@@ -69,10 +69,10 @@ function buildDefaultPrompt(ctx: ConversationCallVideoClipCtx) {
     "Preserve the reference image's crop, especially the top/head framing. If any framing must be lost, crop lower body or lower clothing instead of hair, head, mask, or face.",
     "Preserve the reference image's background, lighting, colors, face shape, hair, clothing, mask or eyewear, accessories, and art style.",
     `Action: ${ctx.clipInstruction}`,
-    "Motion quality: animate as one continuous smooth movement with gradual easing; no choppy frame jumps, jitter, flicker, stop-motion effect, or stuttering.",
+    "Motion quality: use the full clip duration as one continuous smooth movement with gradual easing. Keep subtle breathing, expression, hair, or clothing motion alive throughout; do not finish the action early and hold a frozen still frame. No choppy frame jumps, jitter, flicker, stop-motion effect, or stuttering.",
     "Lighting and background: keep them from the reference image; do not invent a new ambience or setting.",
     "Camera: locked-off still camera, no zoom, pan, tilt, dolly, crop change, reframing, handheld shake, or scene cut.",
-    "Looping: begin and finish on the same pose, scale, framing, lighting, outfit, and background for a seamless loop.",
+    "Looping: begin and finish on the same pose, scale, framing, lighting, outfit, and background for a seamless loop; only the final frame needs to exactly match the first frame.",
     "Focus: single character only, no captions, subtitles, UI, logos, extra people, new clothing, or new facial features.",
   ]
     .filter(Boolean)
@@ -86,6 +86,7 @@ function buildDefaultCustomClipPrompt(ctx: ConversationCallCustomVideoClipCtx) {
     "Preserve the reference image's crop, especially the top/head framing. If any framing must be lost, crop lower body or lower clothing instead of hair, head, mask, or face.",
     "Preserve the reference image's base background, lighting, colors, face shape, hair, clothing, mask or eyewear, accessories, and art style unless the custom request explicitly changes one visual detail.",
     `Action: ${ctx.customPrompt}.`,
+    "Motion quality: use the full clip duration as one continuous smooth movement with gradual easing. Keep subtle breathing, expression, hair, or clothing motion alive throughout; do not finish the action early and hold a frozen still frame. No choppy frame jumps, jitter, flicker, stop-motion effect, or stuttering.",
     "Lighting and background: keep them from the reference image unless the custom request explicitly changes them.",
     "Camera: locked-off still camera, no zoom, pan, tilt, dolly, crop change, reframing, handheld shake, or scene cut.",
     "Looping: start from a reference-matching frame and return to a reference-matching frame by the final frame so the clip loops cleanly.",
