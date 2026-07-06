@@ -16,6 +16,11 @@ export const CHARACTER_SAVE_CUSTOM_ID = "characters:save";
 export const CHARACTER_EDIT_MODAL_CUSTOM_ID = "characters:edit-modal";
 export const CHARACTER_CLOSE_CUSTOM_ID = "characters:close";
 export const CHARACTER_BACK_CUSTOM_ID = "characters:back";
+export const CHARACTER_CREATE_CUSTOM_ID = "characters:create";
+export const CHARACTER_CREATE_MODAL_CUSTOM_ID = "characters:create-modal";
+export const CHARACTER_DELETE_CUSTOM_ID = "characters:delete";
+export const CHARACTER_DELETE_CONFIRM_CUSTOM_ID = "characters:delete-confirm";
+export const CHARACTER_DELETE_CANCEL_CUSTOM_ID = "characters:delete-cancel";
 const SELECT_LIMIT = 25;
 
 function truncate(value: string, limit: number) {
@@ -40,6 +45,7 @@ export function buildCharacterListComponents(characters: DiscordBridgeCharacterO
   );
 
   const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(CHARACTER_CREATE_CUSTOM_ID).setLabel("Create").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(CHARACTER_CLOSE_CUSTOM_ID).setLabel("Close").setStyle(ButtonStyle.Danger),
   );
 
@@ -62,6 +68,33 @@ export function buildCharacterEditModalCustomId(characterId: string, page: Chara
   return `${CHARACTER_EDIT_MODAL_CUSTOM_ID}:${encodeURIComponent(characterId)}:${page}`;
 }
 
+export function buildCharacterDeleteCustomId(characterId: string, page: CharacterCardPage) {
+  return `${CHARACTER_DELETE_CUSTOM_ID}:${encodeURIComponent(characterId)}:${page}`;
+}
+
+export function buildCharacterDeleteConfirmCustomId(characterId: string) {
+  return `${CHARACTER_DELETE_CONFIRM_CUSTOM_ID}:${encodeURIComponent(characterId)}`;
+}
+
+export function buildCharacterDeleteCancelCustomId(characterId: string, page: CharacterCardPage) {
+  return `${CHARACTER_DELETE_CANCEL_CUSTOM_ID}:${encodeURIComponent(characterId)}:${page}`;
+}
+
+export function buildCharacterDeleteConfirmComponents(characterId: string, page: CharacterCardPage) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildCharacterDeleteConfirmCustomId(characterId))
+        .setLabel("Confirm Delete")
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(buildCharacterDeleteCancelCustomId(characterId, page))
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
 export function buildCharacterDetailComponents(
   characterId: string,
   selectedPage: CharacterCardPage = "metadata",
@@ -81,6 +114,12 @@ export function buildCharacterDetailComponents(
         .addOptions(pageOptions),
     ),
     buildCharacterDetailButtonRow(characterId, selectedPage, hasDraft),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildCharacterDeleteCustomId(characterId, selectedPage))
+        .setLabel("Delete")
+        .setStyle(ButtonStyle.Danger),
+    ),
   ];
 }
 

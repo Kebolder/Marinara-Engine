@@ -119,6 +119,7 @@ import {
   ToggleSetting,
 } from "./settings/SettingControls";
 import { TrackerCardColorSettings } from "./settings/TrackerCardColorSettings";
+import { DiscordBotSettings } from "./settings/DiscordBotSettings";
 import { PromptOverridesEditor } from "./settings/PromptOverridesEditor";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
@@ -156,6 +157,7 @@ const TABS = [
   { id: "themes", label: "Themes" },
   { id: "extensions", label: "Extensions" },
   { id: "import", label: "Import" },
+  { id: "discordBot", label: "Discord Bot" },
   { id: "advanced", label: "Advanced" },
 ] as const;
 
@@ -208,6 +210,7 @@ const SETTINGS_COMPONENTS: Record<(typeof TABS)[number]["id"], React.FC> = {
   themes: React.memo(ThemesSettings),
   extensions: React.memo(ExtensionsSettings),
   import: React.memo(ImportSettings),
+  discordBot: React.memo(DiscordBotSettings),
   advanced: React.memo(AdvancedSettings),
 };
 

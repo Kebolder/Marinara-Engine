@@ -181,7 +181,7 @@ function isDisabledFlag(value: string | undefined | null) {
   return ["0", "false", "no", "off"].includes((value ?? "").trim().toLowerCase());
 }
 
-function isEnabledFlag(value: string | undefined | null) {
+export function isEnabledFlag(value: string | undefined | null) {
   return ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
 }
 

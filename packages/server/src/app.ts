@@ -38,6 +38,7 @@ import {
 } from "./config/runtime-config.js";
 import { corsDelegate } from "./config/cors-config.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
+import { discordBotProcessService } from "./services/discord-bridge/bot-process.service.js";
 import { startServerAutonomousScheduler } from "./services/conversation/server-autonomous-scheduler.service.js";
 import { serverExtensionRuntime } from "./services/extensions/server-extension-runtime.js";
 
@@ -77,7 +78,11 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
   app.decorate("db", db);
   app.addHook("onClose", async () => {
     try {
-      const stopResults = await Promise.allSettled([serverExtensionRuntime.stop(), sidecarProcessService.stop()]);
+      const stopResults = await Promise.allSettled([
+        serverExtensionRuntime.stop(),
+        sidecarProcessService.stop(),
+        discordBotProcessService.stop(),
+      ]);
       for (const result of stopResults) {
         if (result.status === "rejected") {
           app.log.error(result.reason, "Failed to stop a server runtime service during shutdown");
@@ -161,6 +166,11 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
         app.log.warn({ err: error }, "sidecar bootstrap failed");
       });
   }
+
+  // ── Discord bridge bot auto-start (background) ──
+  void discordBotProcessService.syncAutoStart(db).catch((error) => {
+    app.log.warn({ err: error }, "Discord bridge bot auto-start check failed");
+  });
 
   // ── Serve client build in production ──
   const __dirname = dirname(fileURLToPath(import.meta.url));

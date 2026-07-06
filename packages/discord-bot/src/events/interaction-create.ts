@@ -13,18 +13,29 @@ import type { DiscordBridgeConfig } from "../config/env.js";
 import {
   CHARACTER_BACK_CUSTOM_ID,
   CHARACTER_CLOSE_CUSTOM_ID,
+  CHARACTER_CREATE_CUSTOM_ID,
+  CHARACTER_CREATE_MODAL_CUSTOM_ID,
+  CHARACTER_DELETE_CANCEL_CUSTOM_ID,
+  CHARACTER_DELETE_CONFIRM_CUSTOM_ID,
+  CHARACTER_DELETE_CUSTOM_ID,
   CHARACTER_EDIT_CUSTOM_ID,
   CHARACTER_EDIT_MODAL_CUSTOM_ID,
   CHARACTER_PAGE_SELECT_CUSTOM_ID,
   CHARACTER_SAVE_CUSTOM_ID,
   CHARACTER_SELECT_CUSTOM_ID,
   buildCharacterEditModalCustomId,
+  buildCharacterDeleteConfirmComponents,
   buildCharacterDetailComponents,
   buildCharacterListComponents,
 } from "../components/character-list.components.js";
 import {
   PERSONA_BACK_CUSTOM_ID,
   PERSONA_CLOSE_CUSTOM_ID,
+  PERSONA_CREATE_CUSTOM_ID,
+  PERSONA_CREATE_MODAL_CUSTOM_ID,
+  PERSONA_DELETE_CANCEL_CUSTOM_ID,
+  PERSONA_DELETE_CONFIRM_CUSTOM_ID,
+  PERSONA_DELETE_CUSTOM_ID,
   PERSONA_EDIT_CUSTOM_ID,
   PERSONA_EDIT_MODAL_CUSTOM_ID,
   PERSONA_LEAVE_ROSTER_CUSTOM_ID,
@@ -33,6 +44,7 @@ import {
   PERSONA_SELECT_CUSTOM_ID,
   PERSONA_USE_CUSTOM_ID,
   buildPersonaEditModalCustomId,
+  buildPersonaDeleteConfirmComponents,
   buildPersonaDetailComponents,
   buildPersonaListComponents,
 } from "../components/persona-list.components.js";
@@ -63,6 +75,10 @@ import {
 } from "../components/controls.components.js";
 import {
   createBridgeRoleplayChat,
+  createCharacter,
+  createPersona,
+  deleteCharacter,
+  deletePersona,
   deleteThreadBinding,
   getBridgeConnections,
   getBridgeChatContext,
@@ -121,10 +137,16 @@ const PERSONA_PAGE_SELECT_PREFIX = `${PERSONA_PAGE_SELECT_CUSTOM_ID}:`;
 const CHARACTER_EDIT_PREFIX = `${CHARACTER_EDIT_CUSTOM_ID}:`;
 const CHARACTER_SAVE_PREFIX = `${CHARACTER_SAVE_CUSTOM_ID}:`;
 const CHARACTER_EDIT_MODAL_PREFIX = `${CHARACTER_EDIT_MODAL_CUSTOM_ID}:`;
+const CHARACTER_DELETE_PREFIX = `${CHARACTER_DELETE_CUSTOM_ID}:`;
+const CHARACTER_DELETE_CONFIRM_PREFIX = `${CHARACTER_DELETE_CONFIRM_CUSTOM_ID}:`;
+const CHARACTER_DELETE_CANCEL_PREFIX = `${CHARACTER_DELETE_CANCEL_CUSTOM_ID}:`;
 const PERSONA_EDIT_PREFIX = `${PERSONA_EDIT_CUSTOM_ID}:`;
 const PERSONA_SAVE_PREFIX = `${PERSONA_SAVE_CUSTOM_ID}:`;
 const PERSONA_USE_PREFIX = `${PERSONA_USE_CUSTOM_ID}:`;
 const PERSONA_EDIT_MODAL_PREFIX = `${PERSONA_EDIT_MODAL_CUSTOM_ID}:`;
+const PERSONA_DELETE_PREFIX = `${PERSONA_DELETE_CUSTOM_ID}:`;
+const PERSONA_DELETE_CONFIRM_PREFIX = `${PERSONA_DELETE_CONFIRM_CUSTOM_ID}:`;
+const PERSONA_DELETE_CANCEL_PREFIX = `${PERSONA_DELETE_CANCEL_CUSTOM_ID}:`;
 const MODAL_VALUE_LIMIT = 4000;
 const ROLEPLAY_LOAD_SEND_DELAY_MS = 500;
 const DISCORD_UNKNOWN_MESSAGE_CODE = 10008;
@@ -610,6 +632,90 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
         return;
       }
 
+      if (interaction.isButton() && interaction.customId === CHARACTER_CREATE_CUSTOM_ID) {
+        const modal = new ModalBuilder().setCustomId(CHARACTER_CREATE_MODAL_CUSTOM_ID).setTitle("Create character");
+        modal.addComponents(
+          buildTextInputRow({ customId: "name", label: "Name", style: TextInputStyle.Short, value: "" }),
+          buildTextInputRow({
+            customId: "description",
+            label: "Description",
+            style: TextInputStyle.Paragraph,
+            value: "",
+          }),
+          buildTextInputRow({
+            customId: "first_mes",
+            label: "First Message",
+            style: TextInputStyle.Paragraph,
+            value: "",
+          }),
+        );
+        await interaction.showModal(modal);
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_DELETE_CONFIRM_PREFIX)) {
+        const characterId = parsePersonaIdAction(interaction.customId, CHARACTER_DELETE_CONFIRM_PREFIX);
+        if (!characterId) {
+          await interaction.reply({ content: "Character delete target not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await deleteCharacter(config.serverUrl, characterId);
+        characterDrafts.forEach((_, key) => {
+          if (key.includes(`:${characterId}:`)) characterDrafts.delete(key);
+        });
+        const setup = await getBridgeSetupOptions(config.serverUrl);
+        await interaction.update({
+          embeds: [buildCharacterListEmbed(setup.characters)],
+          components: buildCharacterListComponents(setup.characters),
+          content: "Character deleted.",
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_DELETE_CANCEL_PREFIX)) {
+        const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_DELETE_CANCEL_PREFIX);
+        if (!parsed) {
+          await interaction.reply({ content: "Character not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const fullCharacter = await getCharacterById(config.serverUrl, parsed.characterId);
+        const draft = getDraft(interaction.user.id, parsed.characterId, parsed.page);
+        const displayData = applyCharacterFieldUpdates(fullCharacter.data, draft);
+        await interaction.update({
+          embeds: [
+            buildCharacterCardEmbed({
+              characterId: fullCharacter.id,
+              data: displayData,
+              page: parsed.page,
+              comment: fullCharacter.comment,
+            }),
+          ],
+          components: buildCharacterDetailComponents(fullCharacter.id, parsed.page, hasDraftValues(draft)),
+          content: null,
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_DELETE_PREFIX)) {
+        const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_DELETE_PREFIX);
+        if (!parsed) {
+          await interaction.reply({ content: "Character delete target not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await interaction.update({
+          content: "Delete this character? This cannot be undone.",
+          embeds: [],
+          components: buildCharacterDeleteConfirmComponents(parsed.characterId, parsed.page),
+          attachments: [],
+        });
+        return;
+      }
+
       if (interaction.isButton() && interaction.customId.startsWith(CHARACTER_EDIT_PREFIX)) {
         const parsed = parseCharacterPageAction(interaction.customId, CHARACTER_EDIT_PREFIX);
         if (!parsed) {
@@ -642,6 +748,85 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
         }
 
         await interaction.showModal(modal);
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId === PERSONA_CREATE_CUSTOM_ID) {
+        const modal = new ModalBuilder().setCustomId(PERSONA_CREATE_MODAL_CUSTOM_ID).setTitle("Create persona");
+        modal.addComponents(
+          buildTextInputRow({ customId: "name", label: "Name", style: TextInputStyle.Short, value: "" }),
+          buildTextInputRow({
+            customId: "description",
+            label: "Description",
+            style: TextInputStyle.Paragraph,
+            value: "",
+          }),
+        );
+        await interaction.showModal(modal);
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(PERSONA_DELETE_CONFIRM_PREFIX)) {
+        const personaId = parsePersonaIdAction(interaction.customId, PERSONA_DELETE_CONFIRM_PREFIX);
+        if (!personaId) {
+          await interaction.reply({ content: "Persona delete target not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await deletePersona(config.serverUrl, personaId);
+        personaDrafts.forEach((_, key) => {
+          if (key.includes(`:${personaId}:`)) personaDrafts.delete(key);
+        });
+        const setup = await getBridgeSetupOptions(config.serverUrl);
+        await interaction.update({
+          embeds: [buildPersonaListEmbed(setup.personas)],
+          components: buildPersonaListComponents(setup.personas),
+          content: "Persona deleted.",
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(PERSONA_DELETE_CANCEL_PREFIX)) {
+        const parsed = parsePersonaPageAction(interaction.customId, PERSONA_DELETE_CANCEL_PREFIX);
+        if (!parsed) {
+          await interaction.reply({ content: "Persona not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const [fullPersona, selectedPersonaId] = await Promise.all([
+          getPersonaById(config.serverUrl, parsed.personaId),
+          getSelectedPersonaId(config, interaction.guildId, interaction.user.id),
+        ]);
+        const draft = getPersonaDraft(interaction.user.id, parsed.personaId, parsed.page);
+        const displayPersona = applyPersonaFieldUpdates(fullPersona, draft);
+        await interaction.update({
+          embeds: [buildPersonaCardEmbed({ persona: displayPersona, page: parsed.page })],
+          components: buildPersonaDetailComponents(
+            fullPersona.id,
+            parsed.page,
+            hasDraftValues(draft),
+            selectedPersonaId === fullPersona.id,
+          ),
+          content: null,
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isButton() && interaction.customId.startsWith(PERSONA_DELETE_PREFIX)) {
+        const parsed = parsePersonaPageAction(interaction.customId, PERSONA_DELETE_PREFIX);
+        if (!parsed) {
+          await interaction.reply({ content: "Persona delete target not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await interaction.update({
+          content: "Delete this persona? This cannot be undone.",
+          embeds: [],
+          components: buildPersonaDeleteConfirmComponents(parsed.personaId, parsed.page),
+          attachments: [],
+        });
         return;
       }
 
@@ -949,6 +1134,74 @@ export function registerInteractionCreateEvent(client: Client, config: DiscordBr
             selectedPersonaId === fullPersona.id,
           ),
           content: null,
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isModalSubmit() && interaction.customId === CHARACTER_CREATE_MODAL_CUSTOM_ID) {
+        const name = interaction.fields.getTextInputValue("name").trim();
+        if (!name) {
+          await interaction.reply({ content: "Name is required.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const created = await createCharacter(config.serverUrl, {
+          name,
+          description: interaction.fields.getTextInputValue("description"),
+          first_mes: interaction.fields.getTextInputValue("first_mes"),
+        });
+
+        if (!interaction.message) {
+          await interaction.reply({ content: "Character list message not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await interaction.deferUpdate();
+        await interaction.message.edit({
+          embeds: [
+            buildCharacterCardEmbed({
+              characterId: created.id,
+              data: created.data,
+              page: "metadata",
+              comment: created.comment,
+            }),
+          ],
+          components: buildCharacterDetailComponents(created.id, "metadata", false),
+          content: "Character created.",
+          attachments: [],
+        });
+        return;
+      }
+
+      if (interaction.isModalSubmit() && interaction.customId === PERSONA_CREATE_MODAL_CUSTOM_ID) {
+        const name = interaction.fields.getTextInputValue("name").trim();
+        if (!name) {
+          await interaction.reply({ content: "Name is required.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        const created = await createPersona(config.serverUrl, {
+          name,
+          description: interaction.fields.getTextInputValue("description"),
+        });
+
+        if (!interaction.message) {
+          await interaction.reply({ content: "Persona list message not found.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+
+        await interaction.deferUpdate();
+        const selectedPersonaId = await getSelectedPersonaId(config, interaction.guildId, interaction.user.id);
+        await interaction.message.edit({
+          embeds: [buildPersonaCardEmbed({ persona: created, page: "description" })],
+          components: buildPersonaDetailComponents(
+            created.id,
+            "description",
+            false,
+            selectedPersonaId === created.id,
+          ),
+          content: "Persona created.",
           attachments: [],
         });
         return;

@@ -10,6 +10,7 @@ import { logCsrfTrustSummary } from "./middleware/csrf-protection.js";
 import { startEnvWatcher } from "./config/env-watcher.js";
 import { migrateTaskbarShortcuts } from "./services/setup/taskbar-shortcut-migration.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
+import { discordBotProcessService } from "./services/discord-bridge/bot-process.service.js";
 
 function isAddressInUseError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error && "code" in err && err.code === "EADDRINUSE";
@@ -46,6 +47,7 @@ async function main() {
 
   const reapSidecar = () => {
     sidecarProcessService.killCurrentChildForProcessExit();
+    discordBotProcessService.killForProcessExit();
   };
 
   process.once("exit", reapSidecar);

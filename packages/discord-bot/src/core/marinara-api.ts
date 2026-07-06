@@ -156,6 +156,29 @@ export function getPersonaById(serverUrl: string, personaId: string) {
   return getJson<MarinaraPersonaRow>(serverUrl, `/api/characters/personas/${encodeURIComponent(personaId)}`);
 }
 
+export async function createCharacter(
+  serverUrl: string,
+  input: { name: string; description?: string; first_mes?: string },
+) {
+  const row = await postJson<MarinaraCharacterRow>(serverUrl, "/api/discord-bridge/characters", input);
+  return {
+    ...row,
+    data: typeof row.data === "string" ? (JSON.parse(row.data) as CharacterData) : row.data,
+  };
+}
+
+export function deleteCharacter(serverUrl: string, characterId: string) {
+  return deleteJson<{ ok: boolean }>(serverUrl, `/api/discord-bridge/characters/${encodeURIComponent(characterId)}`);
+}
+
+export function createPersona(serverUrl: string, input: { name: string; description?: string }) {
+  return postJson<MarinaraPersonaRow>(serverUrl, "/api/discord-bridge/personas", input);
+}
+
+export function deletePersona(serverUrl: string, personaId: string) {
+  return deleteJson<{ ok: boolean }>(serverUrl, `/api/discord-bridge/personas/${encodeURIComponent(personaId)}`);
+}
+
 export function updatePersonaFields(
   serverUrl: string,
   personaId: string,

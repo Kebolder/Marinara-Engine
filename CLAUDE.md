@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+**This is a personal fork, not the upstream project.** Ignore any upstream contributor workflow below that assumes multi-agent coordination, issue tracking, or a `staging`/`main` branch split against a shared remote. Work stays on the current local branch — do not stage changes for another branch, do not push to branches other than the one in use, unless explicitly asked.
+
 This file is a thin maintainer note for contributors using Claude. Canonical workflow, validation, and release guidance lives in `CONTRIBUTING.md`.
 
 ## Preferred Workflow
@@ -12,12 +14,8 @@ This file is a thin maintainer note for contributors using Claude. Canonical wor
 ## Repo-Specific Cautions
 
 - Keep edits non-destructive. Do not revert unrelated work in the tree.
-- Make Marinara Engine changes against `staging` first; do not target `main` directly unless the user or maintainer explicitly asks for a mainline change. See `CONTRIBUTING.md § Branches`.
+- Stay on the current branch. Do not create, stage for, or push to other branches (no `staging`/`main` split, no upstream PR workflow) unless explicitly asked.
 - Prefer focused patches that keep code, docs, and release metadata aligned in the same change.
-- Agent-specific coordination rule: before starting issue work, check for an existing issue-linked branch, open PR, draft PR, or project board item so multiple agents do not duplicate effort. See `CONTRIBUTING.md` for the general contributor workflow.
-- Agent-specific coordination rule: when implementation effort starts for an issue, open a draft PR immediately so the project Kanban board shows the work in progress.
-- Agent-specific coordination rule: when starting work on an issue, tag or identify the GitHub user or agent owning that issue/PR on the single issue so ownership is visible before implementation proceeds.
-- When preparing a PR, make the why explicit in the description so reviewers can see the user problem or rationale, not just the file changes.
 - Check `README.md`, `android/README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/CONFIGURATION.md`, `docs/TROUBLESHOOTING.md`, and `docs/FAQ.md` together when install, update, or release behavior changes.
 
 ## AI-Generated Pull Request

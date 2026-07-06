@@ -19,10 +19,6 @@ function loadDotEnv() {
   }
 }
 
-function isEnabledFlag(value) {
-  return ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
-}
-
 function spawnNode(label, script, extraEnv = {}) {
   const child = spawn(process.execPath, [script], {
     cwd: repoRoot,
@@ -38,26 +34,14 @@ function spawnNode(label, script, extraEnv = {}) {
 
 loadDotEnv();
 
-const port = process.env.PORT?.trim() || "7860";
-const serverUrl = process.env.DISCORD_BRIDGE_SERVER_URL?.trim() || `http://127.0.0.1:${port}`;
 const children = new Set();
 let shuttingDown = false;
 
+// The Discord bridge bot is spawned/managed by the server itself
+// (see packages/server/src/services/discord-bridge/bot-process.service.ts),
+// not by this launcher, so there's exactly one owner of that child process.
 const server = spawnNode("server", "packages/server/dist/index.js");
 children.add(server);
-
-if (isEnabledFlag(process.env.DISCORD_BRIDGE_ENABLED)) {
-  const bot = spawnNode("discord-bot", "packages/discord-bot/dist/index.js", {
-    DISCORD_BRIDGE_SERVER_URL: serverUrl,
-  });
-  children.add(bot);
-  bot.once("exit", (code, signal) => {
-    children.delete(bot);
-    if (!shuttingDown && code !== 0) {
-      process.stderr.write(`[discord-bot] exited with code ${code ?? "null"} signal ${signal ?? "null"}\n`);
-    }
-  });
-}
 
 function shutdown(signal) {
   if (shuttingDown) return;

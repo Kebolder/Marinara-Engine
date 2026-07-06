@@ -203,6 +203,18 @@ export interface DiscordBridgeIngestDiscordMessageResponse {
   mapping: DiscordBridgeMessageMapping;
 }
 
+export type DiscordBotProcessState = "stopped" | "starting" | "running" | "error";
+
+export interface DiscordBridgeStatus {
+  configured: boolean;
+  autoStart: boolean;
+  processState: DiscordBotProcessState;
+  processError: string | null;
+  connected: boolean;
+  botTag: string | null;
+  guildId: string | null;
+}
+
 export interface DiscordBridgeControlsState {
   chatId: string;
   chatName: string;

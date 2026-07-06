@@ -37,7 +37,8 @@
     "backgroundremover:reinstall": "node ./scripts/install-backgroundremover.mjs --reinstall",
     "guard:installer-artifacts": "node ./scripts/check-tracked-installers.mjs",
     "release:notes": "node ./scripts/render-release-notes.mjs",
-    "clean": "pnpm -r --if-present run clean && node ./scripts/clean-workspace.mjs"
+    "clean:dist": "pnpm -r --if-present run clean",
+    "clean": "pnpm clean:dist && node ./scripts/clean-workspace.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

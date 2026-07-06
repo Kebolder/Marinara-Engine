@@ -20,8 +20,11 @@ interface TypingState {
   threadIds: Set<string>;
 }
 
-function chatEventsUrl(serverUrl: string) {
-  return `${serverUrl.replace(/\/+$/, "")}/api/chat-events`;
+function chatEventsUrl(serverUrl: string, botTag: string | null, guildId: string | null) {
+  const params = new URLSearchParams({ source: "discord-bridge" });
+  if (botTag) params.set("botTag", botTag);
+  if (guildId) params.set("guildId", guildId);
+  return `${serverUrl.replace(/\/+$/, "")}/api/chat-events?${params}`;
 }
 
 function isChatRealtimeEvent(value: unknown): value is ChatRealtimeEvent {
@@ -79,7 +82,7 @@ function isTypingThread(channel: unknown): channel is TypingThread {
   );
 }
 
-export function startChatEventSync(input: { client: Client; serverUrl: string }) {
+export function startChatEventSync(input: { client: Client; serverUrl: string; guildId: string | null }) {
   let stopped = false;
   let controller: AbortController | null = null;
   let syncing = false;
@@ -156,8 +159,9 @@ export function startChatEventSync(input: { client: Client; serverUrl: string })
 
     while (!stopped) {
       controller = new AbortController();
+      const url = chatEventsUrl(input.serverUrl, input.client.user?.tag ?? null, input.guildId);
       try {
-        const response = await fetch(chatEventsUrl(input.serverUrl), {
+        const response = await fetch(url, {
           headers: { accept: "text/event-stream" },
           signal: controller.signal,
         });
@@ -166,10 +170,10 @@ export function startChatEventSync(input: { client: Client; serverUrl: string })
         }
 
         if (waitingLogged) {
-          logger.info("Marinara chat event stream recovered at %s", chatEventsUrl(input.serverUrl));
+          logger.info("Marinara chat event stream recovered at %s", url);
         }
         waitingLogged = false;
-        logger.info("Connected to Marinara chat event stream at %s", chatEventsUrl(input.serverUrl));
+        logger.info("Connected to Marinara chat event stream at %s", url);
         reconnectDelay = MIN_RECONNECT_DELAY_MS;
 
         const reader = response.body.getReader();
@@ -207,7 +211,7 @@ export function startChatEventSync(input: { client: Client; serverUrl: string })
         if (!stopped) {
           if (isConnectionRefused(err)) {
             if (!waitingLogged) {
-              logger.warn("Waiting for Marinara chat events at %s: %s", chatEventsUrl(input.serverUrl), errorMessage(err));
+              logger.warn("Waiting for Marinara chat events at %s: %s", url, errorMessage(err));
               waitingLogged = true;
             }
           } else {

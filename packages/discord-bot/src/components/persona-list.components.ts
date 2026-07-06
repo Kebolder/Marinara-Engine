@@ -17,6 +17,11 @@ export const PERSONA_LEAVE_ROSTER_CUSTOM_ID = "personas:leave-roster";
 export const PERSONA_EDIT_MODAL_CUSTOM_ID = "personas:edit-modal";
 export const PERSONA_CLOSE_CUSTOM_ID = "personas:close";
 export const PERSONA_BACK_CUSTOM_ID = "personas:back";
+export const PERSONA_CREATE_CUSTOM_ID = "personas:create";
+export const PERSONA_CREATE_MODAL_CUSTOM_ID = "personas:create-modal";
+export const PERSONA_DELETE_CUSTOM_ID = "personas:delete";
+export const PERSONA_DELETE_CONFIRM_CUSTOM_ID = "personas:delete-confirm";
+export const PERSONA_DELETE_CANCEL_CUSTOM_ID = "personas:delete-cancel";
 const SELECT_LIMIT = 25;
 
 function truncate(value: string, limit: number) {
@@ -52,6 +57,33 @@ export function buildPersonaEditModalCustomId(personaId: string, page: PersonaCa
   return `${PERSONA_EDIT_MODAL_CUSTOM_ID}:${encodeURIComponent(personaId)}:${page}`;
 }
 
+export function buildPersonaDeleteCustomId(personaId: string, page: PersonaCardPage) {
+  return `${PERSONA_DELETE_CUSTOM_ID}:${encodeURIComponent(personaId)}:${page}`;
+}
+
+export function buildPersonaDeleteConfirmCustomId(personaId: string) {
+  return `${PERSONA_DELETE_CONFIRM_CUSTOM_ID}:${encodeURIComponent(personaId)}`;
+}
+
+export function buildPersonaDeleteCancelCustomId(personaId: string, page: PersonaCardPage) {
+  return `${PERSONA_DELETE_CANCEL_CUSTOM_ID}:${encodeURIComponent(personaId)}:${page}`;
+}
+
+export function buildPersonaDeleteConfirmComponents(personaId: string, page: PersonaCardPage) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildPersonaDeleteConfirmCustomId(personaId))
+        .setLabel("Confirm Delete")
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(buildPersonaDeleteCancelCustomId(personaId, page))
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Secondary),
+    ),
+  ];
+}
+
 export function buildPersonaListComponents(personas: DiscordBridgePersonaOption[]) {
   const selectable = personas.slice(0, SELECT_LIMIT);
   const options: APISelectMenuOption[] = selectable.map((persona, index) => ({
@@ -73,6 +105,7 @@ export function buildPersonaListComponents(personas: DiscordBridgePersonaOption[
       .setCustomId(PERSONA_LEAVE_ROSTER_CUSTOM_ID)
       .setLabel("Leave roster")
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(PERSONA_CREATE_CUSTOM_ID).setLabel("Create").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(PERSONA_CLOSE_CUSTOM_ID).setLabel("Close").setStyle(ButtonStyle.Danger),
   );
 
@@ -99,6 +132,12 @@ export function buildPersonaDetailComponents(
         .addOptions(pageOptions),
     ),
     buildPersonaDetailButtonRow(personaId, selectedPage, hasDraft, isSelectedPersona),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildPersonaDeleteCustomId(personaId, selectedPage))
+        .setLabel("Delete")
+        .setStyle(ButtonStyle.Danger),
+    ),
   ];
 }
 

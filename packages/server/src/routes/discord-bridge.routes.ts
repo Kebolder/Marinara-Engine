@@ -15,7 +15,7 @@ import type {
   DiscordBridgeUserPersona,
   MessageRole,
 } from "@marinara-engine/shared";
-import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
+import { PROFESSOR_MARI_ID, characterDataSchema, type DiscordBridgeStatus } from "@marinara-engine/shared";
 import {
   getDiscordBridgeChatContext,
   getDiscordBridgeSetupOptions,
@@ -35,7 +35,9 @@ import type {
   UpsertUserPersonaInput,
 } from "../services/storage/discord-bridge.storage.js";
 import { logger } from "../lib/logger.js";
-import { createChatRealtimeEvent, publishChatEvent } from "../services/chat-events.service.js";
+import { createChatRealtimeEvent, getDiscordBridgeConnectionStatus, publishChatEvent } from "../services/chat-events.service.js";
+import { isEnabledFlag } from "../config/runtime-config.js";
+import { DISCORD_BRIDGE_AUTO_START_KEY, discordBotProcessService } from "../services/discord-bridge/bot-process.service.js";
 
 const DISCORD_BRIDGE_ROLEPLAY_SETTINGS_KEY = "discordBridge.roleplaySettings";
 
@@ -93,6 +95,49 @@ export async function discordBridgeRoutes(app: FastifyInstance) {
   app.get("/health", async () => {
     await bridgeStorage.listThreadBindings();
     return { ok: true, service: "discord-bridge" };
+  });
+
+  async function resolveAutoStart(): Promise<boolean> {
+    const raw = await appSettingsStorage.get(DISCORD_BRIDGE_AUTO_START_KEY);
+    return raw === null ? isEnabledFlag(process.env.DISCORD_BRIDGE_ENABLED) : raw === "true";
+  }
+
+  app.get("/status", async (): Promise<DiscordBridgeStatus> => {
+    const connection = getDiscordBridgeConnectionStatus();
+    return {
+      configured: discordBotProcessService.isConfigured(),
+      autoStart: await resolveAutoStart(),
+      processState: discordBotProcessService.getState(),
+      processError: discordBotProcessService.getLastError(),
+      connected: connection.connected,
+      botTag: connection.botTag,
+      guildId: connection.guildId,
+    };
+  });
+
+  app.get("/auto-start", async () => {
+    return { enabled: await resolveAutoStart() };
+  });
+
+  app.patch<{ Body: { enabled?: unknown } }>("/auto-start", async (req, reply) => {
+    if (typeof req.body?.enabled !== "boolean") {
+      return reply.status(400).send({ error: "enabled must be a boolean" });
+    }
+
+    await appSettingsStorage.set(DISCORD_BRIDGE_AUTO_START_KEY, String(req.body.enabled));
+    if (req.body.enabled) discordBotProcessService.start();
+    return { enabled: req.body.enabled };
+  });
+
+  app.post("/bot/start", async (_req, reply) => {
+    const result = discordBotProcessService.start();
+    if (!result.ok) return reply.status(400).send({ error: result.error });
+    return { ok: true, state: discordBotProcessService.getState() };
+  });
+
+  app.post("/bot/stop", async () => {
+    await discordBotProcessService.stop();
+    return { ok: true, state: discordBotProcessService.getState() };
   });
 
   app.get("/setup-options", async () => {
@@ -698,6 +743,48 @@ export async function discordBridgeRoutes(app: FastifyInstance) {
     return { items };
   });
 
+  app.post<{
+    Body: { name?: unknown; description?: unknown; first_mes?: unknown };
+  }>("/characters", async (req, reply) => {
+    const parsed = parseCreateCharacterBody(req.body);
+    if ("error" in parsed) return reply.status(400).send({ error: parsed.error });
+
+    const data = characterDataSchema.parse(parsed.input);
+    const created = await charactersStorage.create(data);
+    if (!created) return reply.status(500).send({ error: "Failed to create character" });
+    return created;
+  });
+
+  app.delete<{ Params: { characterId: string } }>("/characters/:characterId", async (req, reply) => {
+    if (req.params.characterId === PROFESSOR_MARI_ID) {
+      return reply.status(400).send({ error: "Professor Mari cannot be deleted." });
+    }
+    const character = await charactersStorage.getById(req.params.characterId);
+    if (!character) return reply.status(404).send({ error: "Character not found" });
+
+    await charactersStorage.remove(req.params.characterId);
+    return { ok: true };
+  });
+
+  app.post<{
+    Body: { name?: unknown; description?: unknown };
+  }>("/personas", async (req, reply) => {
+    const parsed = parseCreatePersonaBody(req.body);
+    if ("error" in parsed) return reply.status(400).send({ error: parsed.error });
+
+    const created = await charactersStorage.createPersona(parsed.input.name, parsed.input.description);
+    if (!created) return reply.status(500).send({ error: "Failed to create persona" });
+    return created;
+  });
+
+  app.delete<{ Params: { personaId: string } }>("/personas/:personaId", async (req, reply) => {
+    const persona = await charactersStorage.getPersona(req.params.personaId);
+    if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+    await charactersStorage.removePersona(req.params.personaId);
+    return { ok: true };
+  });
+
   app.patch<{
     Params: { characterId: string };
     Body: { updates?: Array<{ field?: string; value?: unknown }> };
@@ -978,6 +1065,37 @@ function parseCreateRoleplayChatBody(body: {
       name,
       personaId: isNonEmptyString(body.personaId) ? body.personaId : null,
       characterIds,
+    },
+  };
+}
+
+function parseCreateCharacterBody(
+  body: { name?: unknown; description?: unknown; first_mes?: unknown },
+): { input: { name: string; description: string; first_mes: string } } | { error: string } {
+  if (!isNonEmptyString(body.name)) {
+    return { error: "name is required" };
+  }
+
+  return {
+    input: {
+      name: body.name.trim(),
+      description: typeof body.description === "string" ? body.description : "",
+      first_mes: typeof body.first_mes === "string" ? body.first_mes : "",
+    },
+  };
+}
+
+function parseCreatePersonaBody(
+  body: { name?: unknown; description?: unknown },
+): { input: { name: string; description: string } } | { error: string } {
+  if (!isNonEmptyString(body.name)) {
+    return { error: "name is required" };
+  }
+
+  return {
+    input: {
+      name: body.name.trim(),
+      description: typeof body.description === "string" ? body.description : "",
     },
   };
 }
