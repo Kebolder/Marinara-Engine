@@ -34,6 +34,7 @@ type DiskClip = {
   status?: ConversationCallCharacterVideoClip["status"];
   error?: string | null;
   updatedAt?: string | null;
+  origin?: "generated" | "uploaded";
   sourceAvatarPath?: string | null;
   sourceAvatarDigest?: string | null;
   trimStartSeconds?: number | null;
@@ -48,6 +49,7 @@ type DiskCustomClip = {
   error?: string | null;
   createdAt: string;
   updatedAt?: string | null;
+  origin?: "generated" | "uploaded";
   sourceAvatarPath?: string | null;
   sourceAvatarDigest?: string | null;
   trimStartSeconds?: number | null;
@@ -105,7 +107,7 @@ type GenerationLock = {
 const GENERATION_LOCKS = new Map<string, GenerationLock>();
 const CUSTOM_GENERATION_LOCKS = new Map<string, Promise<void>>();
 const MANIFEST_LOCKS = new Map<string, Promise<void>>();
-const CUSTOM_CLIP_LIMIT = 24;
+const CUSTOM_CLIP_LIMIT = 128;
 const MAX_CALL_VIDEO_TRIM_SECONDS = 3_600;
 
 export class ConversationCallVideoGenerationInProgressError extends Error {
@@ -133,6 +135,13 @@ export class ConversationCallVideoClipAvatarMismatchError extends Error {
   constructor(message = "This call video clip was generated for a previous avatar. Regenerate it before trimming.") {
     super(message);
     this.name = "ConversationCallVideoClipAvatarMismatchError";
+  }
+}
+
+export class ConversationCallVideoClipUploadError extends Error {
+  constructor(message = "Uploaded call video clips must be MP4 files.") {
+    super(message);
+    this.name = "ConversationCallVideoClipUploadError";
   }
 }
 
@@ -322,6 +331,10 @@ function readTrimSecond(value: unknown): number | null {
   return Math.round(clamped * 1000) / 1000;
 }
 
+function isMp4Buffer(buffer: Buffer): boolean {
+  return buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp";
+}
+
 function normalizeClipTrim(input: {
   trimStartSeconds?: unknown;
   trimEndSeconds?: unknown;
@@ -390,6 +403,7 @@ function toPublicManifest(
       url: status === "ready" ? clipUrl(manifest.characterId, kind, clipUrlVersion(disk, clipAvatar)) : null,
       error: status === "error" ? (disk.error ?? "Video generation failed") : null,
       updatedAt: disk.updatedAt ?? null,
+      origin: status === "missing" ? undefined : disk.origin === "uploaded" ? "uploaded" : disk.updatedAt ? "generated" : undefined,
       trimStartSeconds: readTrimSecond(disk.trimStartSeconds),
       trimEndSeconds: readTrimSecond(disk.trimEndSeconds),
     };
@@ -416,6 +430,7 @@ function toPublicManifest(
         error: status === "error" ? (disk.error ?? "Video generation failed") : null,
         createdAt: disk.createdAt,
         updatedAt: disk.updatedAt ?? null,
+        origin: disk.origin === "uploaded" ? "uploaded" : "generated",
         trimStartSeconds: readTrimSecond(disk.trimStartSeconds),
         trimEndSeconds: readTrimSecond(disk.trimEndSeconds),
       };
@@ -669,6 +684,7 @@ async function runGenerationJob(input: {
             status: "generating",
             error: null,
             updatedAt: queuedAt,
+            origin: "generated",
             sourceAvatarPath: input.avatarPath,
             sourceAvatarDigest: reference.identity.digest,
             trimStartSeconds: null,
@@ -729,6 +745,7 @@ async function runGenerationJob(input: {
               status: "ready",
               error: null,
               updatedAt,
+              origin: "generated",
               sourceAvatarPath: input.avatarPath,
               sourceAvatarDigest: reference.identity.digest,
               trimStartSeconds: null,
@@ -757,6 +774,7 @@ async function runGenerationJob(input: {
               status: "error",
               error: message,
               updatedAt,
+              origin: "generated",
               sourceAvatarPath: input.avatarPath,
               sourceAvatarDigest: reference.identity.digest,
               trimStartSeconds: null,
@@ -857,6 +875,7 @@ async function runCustomClipGenerationJob(input: {
               status: "ready",
               error: null,
               updatedAt,
+              origin: "generated",
               sourceAvatarPath: input.avatarPath,
               sourceAvatarDigest: reference.identity.digest,
               trimStartSeconds: null,
@@ -892,6 +911,7 @@ async function runCustomClipGenerationJob(input: {
             status: "error",
             error: message,
             updatedAt,
+            origin: "generated",
             sourceAvatarPath: input.avatarPath,
             sourceAvatarDigest: avatar.digest,
           },
@@ -942,6 +962,7 @@ export async function startConversationCallCharacterVideoGeneration(input: {
             status: "generating",
             error: null,
             updatedAt: timestamp,
+            origin: "generated",
             sourceAvatarPath: input.avatarPath,
             sourceAvatarDigest: avatar.digest,
           };
@@ -1006,6 +1027,7 @@ export async function startConversationCallCustomVideoClipGeneration(input: {
             error: null,
             createdAt: timestamp,
             updatedAt: timestamp,
+            origin: "generated",
             sourceAvatarPath: input.avatarPath,
             sourceAvatarDigest: avatar.digest,
             trimStartSeconds: null,
@@ -1022,6 +1044,109 @@ export async function startConversationCallCustomVideoClipGeneration(input: {
   void job.catch((error) => {
     logger.warn(error, "[conversation-call/videos] Custom call video generation job failed for %s", input.characterId);
   });
+  return getConversationCallCharacterVideoManifest(input);
+}
+
+export async function uploadConversationCallCharacterVideoClip(input: {
+  characterId: string;
+  characterName: string;
+  avatarPath: string | null;
+  buffer: Buffer;
+  label?: string | null;
+  kind?: ConversationCallCharacterVideoClipKind | null;
+}): Promise<ConversationCallCharacterVideoManifest> {
+  assertSafeCharacterId(input.characterId);
+  if (!input.buffer.length || !isMp4Buffer(input.buffer)) {
+    throw new ConversationCallVideoClipUploadError("Uploaded call video clips must be valid MP4 files.");
+  }
+
+  const avatar = await readAvatarIdentity(input.avatarPath);
+  const updatedAt = nowIso();
+  await mkdir(characterDir(input.characterId), { recursive: true });
+
+  if (input.kind) {
+    if (!CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS.includes(input.kind)) {
+      throw new ConversationCallVideoClipUploadError("Invalid call video clip kind.");
+    }
+    if (GENERATION_LOCKS.has(input.characterId)) {
+      throw new ConversationCallVideoGenerationInProgressError("Call video clips are still generating for this character");
+    }
+
+    const file = clipPath(input.characterId, input.kind);
+    const tmp = assertInsideDir(CALL_CHARACTER_VIDEO_ROOT, `${file}.${process.pid}.${Date.now()}.tmp`);
+    await writeFile(tmp, input.buffer);
+    await rename(tmp, file);
+    await updateDiskManifest({
+      characterId: input.characterId,
+      characterName: input.characterName,
+      avatarPath: input.avatarPath,
+      update: (current) => ({
+        ...current,
+        characterName: input.characterName,
+        sourceAvatarPath: input.avatarPath,
+        sourceAvatarDigest: avatar.digest,
+        updatedAt,
+        clips: {
+          ...current.clips,
+          [input.kind!]: {
+            status: "ready",
+            error: null,
+            updatedAt,
+            origin: "uploaded",
+            sourceAvatarPath: input.avatarPath,
+            sourceAvatarDigest: avatar.digest,
+            trimStartSeconds: null,
+            trimEndSeconds: null,
+          },
+        },
+      }),
+    });
+    logger.info(
+      "[conversation-call/videos] Uploaded %s call video clip for %s",
+      getClipLabel(input.kind),
+      input.characterId,
+    );
+    return getConversationCallCharacterVideoManifest(input);
+  }
+
+  const clipId = `upload-${newId()}`;
+  const label = sanitizeCustomClipText(input.label ?? "", "Uploaded clip", 80);
+  const prompt = "Uploaded by user.";
+  const file = customClipPath(input.characterId, clipId);
+  const tmp = assertInsideDir(CALL_CHARACTER_VIDEO_ROOT, `${file}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(tmp, input.buffer);
+  await rename(tmp, file);
+  await updateDiskManifest({
+    characterId: input.characterId,
+    characterName: input.characterName,
+    avatarPath: input.avatarPath,
+    update: async (current) =>
+      pruneCustomClips({
+        ...current,
+        characterName: input.characterName,
+        sourceAvatarPath: input.avatarPath,
+        sourceAvatarDigest: avatar.digest,
+        updatedAt,
+        customClips: {
+          ...current.customClips,
+          [clipId]: {
+            id: clipId,
+            label,
+            prompt,
+            status: "ready",
+            error: null,
+            createdAt: updatedAt,
+            updatedAt,
+            origin: "uploaded",
+            sourceAvatarPath: input.avatarPath,
+            sourceAvatarDigest: avatar.digest,
+            trimStartSeconds: null,
+            trimEndSeconds: null,
+          },
+        },
+      }),
+  });
+  logger.info("[conversation-call/videos] Uploaded custom call video clip %s for %s", clipId, input.characterId);
   return getConversationCallCharacterVideoManifest(input);
 }
 

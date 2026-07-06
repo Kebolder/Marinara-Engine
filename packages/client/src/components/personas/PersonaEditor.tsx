@@ -3,7 +3,7 @@
 // Replaces the chat area when editing a persona.
 // Sections: Metadata, Card, Lorebook, Sprites, Colors, Stats
 // ──────────────────────────────────────────────
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   useCreateCharacter,
@@ -19,6 +19,7 @@ import {
   usePersonaGalleryImages,
   usePersonaGalleryClips,
   useUploadPersonaGalleryImage,
+  useUploadPersonaGalleryClip,
   useDeletePersonaGalleryImage,
   useDeletePersonaGalleryClip,
   useTagPersonaGalleryImage,
@@ -458,9 +459,28 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
 
 function PersonaClipsGallery({ personaId, personaName }: { personaId: string; personaName?: string }) {
   const { data, isLoading } = usePersonaGalleryClips(personaId);
+  const uploadClip = useUploadPersonaGalleryClip(personaId);
   const deleteClip = useDeletePersonaGalleryClip(personaId);
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
+  const clipUploadInputRef = useRef<HTMLInputElement | null>(null);
   const clips = data?.clips ?? [];
+  const customCallClipCount = clips.filter((clip) => clip.source === "conversation-call-custom").length;
+
+  const handleUploadClipFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+
+      try {
+        await uploadClip.mutateAsync({ file });
+        toast.success("Clip uploaded.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not upload clip.");
+      }
+    },
+    [uploadClip],
+  );
 
   const handleDeleteClip = useCallback(
     async (clip: CharacterGalleryClip) => {
@@ -499,27 +519,54 @@ function PersonaClipsGallery({ personaId, personaName }: { personaId: string; pe
     );
   }
 
-  return clips.length > 0 ? (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {clips.map((clip) => (
-        <PersonaClipCard
-          key={clip.id}
-          clip={clip}
-          personaName={personaName}
-          deleting={deletingClipId === clip.id}
-          onDelete={handleDeleteClip}
-        />
-      ))}
-    </div>
-  ) : (
-    <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
-      <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
-      <div>
-        <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona clips yet</p>
-        <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-          Generated game or scene videos from chats using {personaName || "this persona"} will appear here.
-        </p>
+  return (
+    <div className="space-y-4">
+      <input
+        ref={clipUploadInputRef}
+        type="file"
+        accept="video/mp4,.mp4"
+        className="hidden"
+        onChange={handleUploadClipFile}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Persona clips</p>
+          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{customCallClipCount} uploaded call clips</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => clipUploadInputRef.current?.click()}
+          disabled={uploadClip.isPending}
+          className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {uploadClip.isPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Upload size="0.85rem" />}
+          Upload clip
+        </button>
       </div>
+
+      {clips.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {clips.map((clip) => (
+            <PersonaClipCard
+              key={clip.id}
+              clip={clip}
+              personaName={personaName}
+              deleting={deletingClipId === clip.id}
+              onDelete={handleDeleteClip}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+          <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+          <div>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona clips yet</p>
+            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+              Upload clips or generate game and scene videos from chats using {personaName || "this persona"}.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -535,10 +582,11 @@ function PersonaClipCard({
   deleting: boolean;
   onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
 }) {
-  const sourceLabel = personaGalleryClipSourceLabel(clip.source);
+  const sourceLabel = clip.origin === "uploaded" ? "Uploaded" : personaGalleryClipSourceLabel(clip.source);
   const dateLabel = formatPersonaClipDate(clip.updatedAt ?? clip.createdAt);
   const isReady = clip.status === "ready" && Boolean(clip.url);
   const canDelete = canDeletePersonaGalleryClip(clip);
+  const isCallVideoClip = clip.source === "conversation-call" || clip.source === "conversation-call-custom";
   const clipDetails = [clip.durationSeconds ? `${clip.durationSeconds}s` : null, clip.aspectRatio]
     .filter(Boolean)
     .join(" · ");
@@ -547,7 +595,13 @@ function PersonaClipCard({
     <div className="group overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md">
       <div className="relative aspect-video bg-[var(--secondary)]">
         {isReady && clip.url ? (
-          <video src={clip.url} controls preload="metadata" className="h-full w-full bg-black object-contain" />
+          <video
+            src={clip.url}
+            controls
+            muted={isCallVideoClip}
+            preload="metadata"
+            className="h-full w-full bg-black object-contain"
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-xs text-[var(--muted-foreground)]">
             {clip.status === "generating" ? (

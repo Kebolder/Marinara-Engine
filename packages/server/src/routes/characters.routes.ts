@@ -27,12 +27,14 @@ import {
   ConversationCallVideoClipAvatarMismatchError,
   ConversationCallVideoClipNotFoundError,
   ConversationCallVideoClipTrimError,
+  ConversationCallVideoClipUploadError,
   ConversationCallVideoGenerationInProgressError,
   deleteConversationCallCharacterVideoClip,
   deleteConversationCallCustomVideoClip,
   getConversationCallCharacterVideoManifest,
   updateConversationCallCharacterVideoClipTrim,
   updateConversationCallCustomVideoClipTrim,
+  uploadConversationCallCharacterVideoClip,
 } from "../services/conversation/call-character-videos.service.js";
 import { removeSavedVideoFromDisk } from "../services/video/video-generation.js";
 import { writeFile, mkdir, readFile, readdir } from "fs/promises";
@@ -66,6 +68,8 @@ const CALL_VIDEO_CLIP_LABELS = {
   crying: "Crying",
   sighing: "Sighing",
 } as const;
+const CALL_VIDEO_CLIP_UPLOAD_MAX_BYTES = 250 * 1024 * 1024;
+const ALLOWED_CALL_VIDEO_CLIP_UPLOAD_EXTS = new Set([".mp4"]);
 
 async function ensureCharacterGalleryDir(characterId: string) {
   const dir = join(CHARACTER_GALLERY_ROOT, characterId);
@@ -142,6 +146,20 @@ function parseRouteRecord(value: unknown): Record<string, unknown> {
 
 function isRouteTrimSecondValue(value: unknown): value is number | null | undefined {
   return value === undefined || value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function readMultipartStringField(fields: unknown, key: string): string {
+  if (!fields || typeof fields !== "object") return "";
+  const value = (fields as Record<string, unknown>)[key];
+  const field = Array.isArray(value) ? value[0] : value;
+  if (!field || typeof field !== "object") return "";
+  const raw = (field as { value?: unknown }).value;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function labelFromUploadedClipFilename(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() ?? "";
+  return base.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function toSafeExportName(name: string, fallback: string) {
@@ -622,6 +640,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       url: clip.url,
       createdAt: clip.updatedAt ?? null,
       updatedAt: clip.updatedAt,
+      origin: clip.origin ?? null,
       durationSeconds: null,
       trimStartSeconds: clip.trimStartSeconds ?? null,
       trimEndSeconds: clip.trimEndSeconds ?? null,
@@ -641,6 +660,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       url: clip.url,
       createdAt: clip.createdAt,
       updatedAt: clip.updatedAt,
+      origin: clip.origin ?? null,
       durationSeconds: null,
       trimStartSeconds: clip.trimStartSeconds ?? null,
       trimEndSeconds: clip.trimEndSeconds ?? null,
@@ -697,6 +717,55 @@ export async function charactersRoutes(app: FastifyInstance) {
     return { clips, callVideoGenerating: callManifest.generating };
   });
 
+  app.post<{ Params: { id: string } }>("/:id/gallery/clips/upload", async (req, reply) => {
+    const { id } = req.params;
+    const char = await storage.getById(id);
+    if (!char) return reply.status(404).send({ error: "Character not found" });
+
+    const data = await req.file();
+    if (!data) {
+      return reply.status(400).send({ error: "No file uploaded" });
+    }
+
+    const ext = extname(data.filename).toLowerCase();
+    if (!ALLOWED_CALL_VIDEO_CLIP_UPLOAD_EXTS.has(ext)) {
+      return reply.status(400).send({ error: "Video call clips must be MP4 files." });
+    }
+
+    const buffer = await data.toBuffer();
+    if (buffer.length > CALL_VIDEO_CLIP_UPLOAD_MAX_BYTES) {
+      return reply.status(413).send({ error: "Video call clip uploads must be 250 MB or smaller." });
+    }
+
+    const fields = data.fields as Record<string, unknown>;
+    const requestedKind = readMultipartStringField(fields, "kind");
+    const kind = requestedKind ? parseConversationCallClipKind(requestedKind) : null;
+    if (requestedKind && !kind) {
+      return reply.status(400).send({ error: "Invalid call clip kind" });
+    }
+
+    const characterName = readCharacterDisplayName(char.data, "Character");
+    const label = readMultipartStringField(fields, "label") || labelFromUploadedClipFilename(data.filename);
+    try {
+      return await uploadConversationCallCharacterVideoClip({
+        characterId: id,
+        characterName,
+        avatarPath: char.avatarPath ?? null,
+        buffer,
+        label,
+        kind,
+      });
+    } catch (error) {
+      if (error instanceof ConversationCallVideoClipUploadError) {
+        return reply.status(400).send({ error: error.message });
+      }
+      if (error instanceof ConversationCallVideoGenerationInProgressError) {
+        return reply.status(409).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
   app.patch<{ Params: { id: string; clipId: string } }>("/:id/gallery/clips/:clipId/trim", async (req, reply) => {
     const { id, clipId } = req.params;
     const char = await storage.getById(id);
@@ -713,7 +782,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       if (clipId.startsWith("call:")) {
         const kind = parseConversationCallClipKind(clipId.slice("call:".length));
         if (!kind) return reply.status(400).send({ error: "Invalid call clip kind" });
-        return updateConversationCallCharacterVideoClipTrim({
+        return await updateConversationCallCharacterVideoClipTrim({
           characterId: id,
           characterName,
           avatarPath: char.avatarPath ?? null,
@@ -728,7 +797,7 @@ export async function charactersRoutes(app: FastifyInstance) {
         if (!/^[A-Za-z0-9_-]{6,80}$/.test(customClipId)) {
           return reply.status(400).send({ error: "Invalid custom clip id" });
         }
-        return updateConversationCallCustomVideoClipTrim({
+        return await updateConversationCallCustomVideoClipTrim({
           characterId: id,
           characterName,
           avatarPath: char.avatarPath ?? null,
@@ -1297,6 +1366,33 @@ export async function charactersRoutes(app: FastifyInstance) {
     const persona = await storage.getPersona(req.params.id);
     if (!persona) return reply.status(404).send({ error: "Persona not found" });
 
+    const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
+    const callManifest = await getConversationCallCharacterVideoManifest({
+      characterId: req.params.id,
+      characterName: personaName,
+      avatarPath: persona.avatarPath ?? null,
+    });
+    const customCallClips = callManifest.customClips.map((clip) => ({
+      id: `custom-call:${clip.id}`,
+      source: "conversation-call-custom" as const,
+      label: clip.label,
+      prompt: clip.prompt,
+      status: clip.status,
+      url: clip.url,
+      createdAt: clip.createdAt,
+      updatedAt: clip.updatedAt,
+      origin: clip.origin ?? null,
+      durationSeconds: null,
+      trimStartSeconds: clip.trimStartSeconds ?? null,
+      trimEndSeconds: clip.trimEndSeconds ?? null,
+      aspectRatio: "16:9",
+      provider: "",
+      model: "",
+      chatId: null,
+      chatName: null,
+      clipKind: "custom" as const,
+    }));
+
     const chatsStorage = createChatsStorage(app.db);
     const sceneVideos = createGameSceneVideosStorage(app.db);
     const allChats = await chatsStorage.list();
@@ -1307,43 +1403,120 @@ export async function charactersRoutes(app: FastifyInstance) {
         videos: await sceneVideos.listByChatId(chat.id),
       })),
     );
-    const clips = sceneVideoGroups
-      .flatMap(({ chat, videos }) =>
-        videos.map((video) => {
-          const filename = video.filePath.split("/").pop() ?? "";
-          const routePrefix = chat.mode === "game" ? "/api/game" : "/api/gallery";
-          return {
-            id: `scene:${video.id}`,
-            source: chat.mode === "game" ? ("game-scene" as const) : ("scene-video" as const),
-            label: chat.mode === "game" ? "Game scene" : "Scene video",
-            prompt: video.prompt,
-            status: "ready" as const,
-            url: `${routePrefix}/scene-videos/file/${encodeURIComponent(chat.id)}/${encodeURIComponent(filename)}`,
-            createdAt: video.createdAt,
-            updatedAt: video.createdAt,
-            durationSeconds: video.durationSeconds,
-            aspectRatio: video.aspectRatio,
-            provider: video.provider,
-            model: video.model,
-            chatId: chat.id,
-            chatName: chat.name,
-            clipKind: null,
-          };
-        }),
-      )
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? "") || 0;
-        const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? "") || 0;
-        return rightTime - leftTime;
-      });
+    const sceneClips = sceneVideoGroups.flatMap(({ chat, videos }) =>
+      videos.map((video) => {
+        const filename = video.filePath.split("/").pop() ?? "";
+        const routePrefix = chat.mode === "game" ? "/api/game" : "/api/gallery";
+        return {
+          id: `scene:${video.id}`,
+          source: chat.mode === "game" ? ("game-scene" as const) : ("scene-video" as const),
+          label: chat.mode === "game" ? "Game scene" : "Scene video",
+          prompt: video.prompt,
+          status: "ready" as const,
+          url: `${routePrefix}/scene-videos/file/${encodeURIComponent(chat.id)}/${encodeURIComponent(filename)}`,
+          createdAt: video.createdAt,
+          updatedAt: video.createdAt,
+          origin: null,
+          durationSeconds: video.durationSeconds,
+          trimStartSeconds: null,
+          trimEndSeconds: null,
+          aspectRatio: video.aspectRatio,
+          provider: video.provider,
+          model: video.model,
+          chatId: chat.id,
+          chatName: chat.name,
+          clipKind: null,
+        };
+      }),
+    );
 
-    return { clips, callVideoGenerating: false };
+    const clips = [...customCallClips, ...sceneClips].sort((left, right) => {
+      const leftTime = Date.parse(left.updatedAt ?? left.createdAt ?? "") || 0;
+      const rightTime = Date.parse(right.updatedAt ?? right.createdAt ?? "") || 0;
+      return rightTime - leftTime;
+    });
+
+    return { clips, callVideoGenerating: callManifest.generating };
   });
+
+  app.patch<{ Params: { id: string; clipId: string } }>(
+    "/personas/:id/gallery/clips/:clipId/trim",
+    async (req, reply) => {
+      const { id, clipId } = req.params;
+      const persona = await storage.getPersona(id);
+      if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+      const body = parseRouteRecord(req.body);
+      const { trimStartSeconds, trimEndSeconds } = body;
+      if (!isRouteTrimSecondValue(trimStartSeconds) || !isRouteTrimSecondValue(trimEndSeconds)) {
+        return reply.status(400).send({ error: "Clip trim values must be numbers, null, or omitted" });
+      }
+
+      if (!clipId.startsWith("custom-call:")) {
+        return reply.status(400).send({ error: "Unsupported clip type" });
+      }
+
+      const customClipId = clipId.slice("custom-call:".length);
+      if (!/^[A-Za-z0-9_-]{6,80}$/.test(customClipId)) {
+        return reply.status(400).send({ error: "Invalid custom clip id" });
+      }
+
+      const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
+      try {
+        return await updateConversationCallCustomVideoClipTrim({
+          characterId: id,
+          characterName: personaName,
+          avatarPath: persona.avatarPath ?? null,
+          clipId: customClipId,
+          trimStartSeconds,
+          trimEndSeconds,
+        });
+      } catch (error) {
+        if (error instanceof ConversationCallVideoClipNotFoundError) {
+          return reply.status(404).send({ error: error.message });
+        }
+        if (error instanceof ConversationCallVideoClipTrimError) {
+          return reply.status(400).send({ error: error.message });
+        }
+        if (error instanceof ConversationCallVideoClipAvatarMismatchError) {
+          return reply.status(409).send({ error: error.message });
+        }
+        if (error instanceof ConversationCallVideoGenerationInProgressError) {
+          return reply.status(409).send({ error: error.message });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.delete<{ Params: { id: string; clipId: string } }>("/personas/:id/gallery/clips/:clipId", async (req, reply) => {
     const { id, clipId } = req.params;
     const persona = await storage.getPersona(id);
     if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+    if (clipId.startsWith("custom-call:")) {
+      const customClipId = clipId.slice("custom-call:".length);
+      if (!/^[A-Za-z0-9_-]{6,80}$/.test(customClipId)) {
+        return reply.status(400).send({ error: "Invalid custom clip id" });
+      }
+      const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
+      let deleted = false;
+      try {
+        deleted = await deleteConversationCallCustomVideoClip({
+          characterId: id,
+          characterName: personaName,
+          avatarPath: persona.avatarPath ?? null,
+          clipId: customClipId,
+        });
+      } catch (error) {
+        if (error instanceof ConversationCallVideoGenerationInProgressError) {
+          return reply.status(409).send({ error: error.message });
+        }
+        throw error;
+      }
+      if (!deleted) return reply.status(404).send({ error: "Clip not found" });
+      return { success: true };
+    }
 
     if (!clipId.startsWith("scene:")) {
       return reply.status(400).send({ error: "Unsupported clip type" });
@@ -1365,6 +1538,45 @@ export async function charactersRoutes(app: FastifyInstance) {
     await removeSavedVideoFromDisk(video.filePath);
     await sceneVideos.remove(video.id);
     return { success: true };
+  });
+
+  app.post<{ Params: { id: string } }>("/personas/:id/gallery/clips/upload", async (req, reply) => {
+    const { id } = req.params;
+    const persona = await storage.getPersona(id);
+    if (!persona) return reply.status(404).send({ error: "Persona not found" });
+
+    const data = await req.file();
+    if (!data) {
+      return reply.status(400).send({ error: "No file uploaded" });
+    }
+
+    const ext = extname(data.filename).toLowerCase();
+    if (!ALLOWED_CALL_VIDEO_CLIP_UPLOAD_EXTS.has(ext)) {
+      return reply.status(400).send({ error: "Video call clips must be MP4 files." });
+    }
+
+    const buffer = await data.toBuffer();
+    if (buffer.length > CALL_VIDEO_CLIP_UPLOAD_MAX_BYTES) {
+      return reply.status(413).send({ error: "Video call clip uploads must be 250 MB or smaller." });
+    }
+
+    const fields = data.fields as Record<string, unknown>;
+    const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
+    const label = readMultipartStringField(fields, "label") || labelFromUploadedClipFilename(data.filename);
+    try {
+      return await uploadConversationCallCharacterVideoClip({
+        characterId: id,
+        characterName: personaName,
+        avatarPath: persona.avatarPath ?? null,
+        buffer,
+        label,
+      });
+    } catch (error) {
+      if (error instanceof ConversationCallVideoClipUploadError) {
+        return reply.status(400).send({ error: error.message });
+      }
+      throw error;
+    }
   });
 
   app.post<{ Params: { id: string } }>("/personas/:id/gallery/upload", async (req, reply) => {

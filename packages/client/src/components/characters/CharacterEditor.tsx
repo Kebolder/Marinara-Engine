@@ -30,6 +30,7 @@ import {
   useDeleteCharacterGalleryImage,
   useDeleteCharacterGalleryClip,
   useUpdateCharacterGalleryClipTrim,
+  useUploadCharacterGalleryClip,
   useTagCharacterGalleryImage,
   useGenerateCharacterCallVideoClips,
   useUploadSprite,
@@ -1912,7 +1913,7 @@ function canDeleteCharacterGalleryClip(clip: CharacterGalleryClip) {
 
 function characterGalleryClipDeleteMessage(clip: CharacterGalleryClip) {
   if (clip.source === "conversation-call") {
-    return "Delete this generated call clip? The standard slot will stay available for regeneration.";
+    return "Delete this call clip? The standard slot will stay available for regeneration or upload.";
   }
   return "Delete this clip everywhere it appears in Marinara? This cannot be undone.";
 }
@@ -2172,11 +2173,16 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
   const generateCallClips = useGenerateCharacterCallVideoClips(characterId);
   const deleteClip = useDeleteCharacterGalleryClip(characterId);
   const updateClipTrim = useUpdateCharacterGalleryClipTrim(characterId);
+  const uploadClip = useUploadCharacterGalleryClip(characterId);
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
   const [generatingClipId, setGeneratingClipId] = useState<string | null>(null);
+  const [uploadingClipId, setUploadingClipId] = useState<string | null>(null);
   const [trimClip, setTrimClip] = useState<CharacterGalleryClip | null>(null);
+  const clipUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingClipUploadRef = useRef<{ kind: string | null; label: string | null; clipId: string } | null>(null);
   const clips = data?.clips ?? [];
   const standardCallClips = clips.filter((clip) => clip.source === "conversation-call");
+  const customCallClipCount = clips.filter((clip) => clip.source === "conversation-call-custom").length;
   const readyCallClipCount = standardCallClips.filter((clip) => clip.status === "ready").length;
   const generationLockActive =
     data?.callVideoGenerating === true ||
@@ -2197,6 +2203,42 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
       setGeneratingClipId(null);
     }
   }, [generateCallClips]);
+
+  const handleUploadClipFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      const pending = pendingClipUploadRef.current;
+      event.target.value = "";
+      if (!file || !pending) return;
+
+      setUploadingClipId(pending.clipId);
+      try {
+        await uploadClip.mutateAsync({
+          file,
+          label: pending.label,
+          kind: pending.kind,
+        });
+        toast.success(pending.kind ? `${pending.label || "Call clip"} uploaded.` : "Clip uploaded.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not upload clip.");
+      } finally {
+        pendingClipUploadRef.current = null;
+        setUploadingClipId(null);
+      }
+    },
+    [uploadClip],
+  );
+
+  const handleUploadCallClip = useCallback((clip?: CharacterGalleryClip) => {
+    const kind = clip?.source === "conversation-call" ? clip.clipKind : null;
+    if (clip && !kind) return;
+    pendingClipUploadRef.current = {
+      kind,
+      label: kind ? clip?.label ?? null : null,
+      clipId: clip?.id ?? "custom-call:upload",
+    };
+    clipUploadInputRef.current?.click();
+  }, []);
 
   const handleDeleteClip = useCallback(
     async (clip: CharacterGalleryClip) => {
@@ -2253,24 +2295,46 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
 
   return (
     <div className="space-y-4">
+      <input
+        ref={clipUploadInputRef}
+        type="file"
+        accept="video/mp4,.mp4"
+        className="hidden"
+        onChange={handleUploadClipFile}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-[var(--foreground)]">Video call clips</p>
           <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-            {readyCallClipCount}/{standardCallClips.length || 6} standard clips ready
+            {readyCallClipCount}/{standardCallClips.length || 6} standard ready · {customCallClipCount} custom
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void handleGenerateCallClips()}
-          disabled={generationLockActive}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
-          )}
-        >
-          {batchGenerationPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Wand2 size="0.85rem" />}
-          {batchGenerationPending ? "Generating" : "Pre-generate"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleUploadCallClip()}
+            disabled={uploadClip.isPending}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {uploadClip.isPending && uploadingClipId === "custom-call:upload" ? (
+              <Loader2 size="0.85rem" className="animate-spin" />
+            ) : (
+              <Upload size="0.85rem" />
+            )}
+            Upload extra
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleGenerateCallClips()}
+            disabled={generationLockActive}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60",
+            )}
+          >
+            {batchGenerationPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Wand2 size="0.85rem" />}
+            {batchGenerationPending ? "Generating" : "Pre-generate"}
+          </button>
+        </div>
       </div>
 
       {clips.length > 0 ? (
@@ -2282,8 +2346,10 @@ function CharacterClipsGallery({ characterId, characterName }: { characterId: st
               characterName={characterName}
               deleting={deletingClipId === clip.id}
               generating={generatingClipId === clip.id}
+              uploading={uploadingClipId === clip.id}
               generationDisabled={generationLockActive}
               onGenerate={handleGenerateCallClips}
+              onUpload={handleUploadCallClip}
               onDelete={handleDeleteClip}
               onEditTrim={setTrimClip}
             />
@@ -2511,8 +2577,10 @@ function CharacterClipCard({
   characterName,
   deleting,
   generating,
+  uploading,
   generationDisabled,
   onGenerate,
+  onUpload,
   onDelete,
   onEditTrim,
 }: {
@@ -2520,12 +2588,14 @@ function CharacterClipCard({
   characterName?: string;
   deleting: boolean;
   generating: boolean;
+  uploading: boolean;
   generationDisabled: boolean;
   onGenerate: (clip: CharacterGalleryClip) => void | Promise<void>;
+  onUpload: (clip: CharacterGalleryClip) => void;
   onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
   onEditTrim: (clip: CharacterGalleryClip) => void;
 }) {
-  const sourceLabel = characterGalleryClipSourceLabel(clip.source);
+  const sourceLabel = clip.origin === "uploaded" ? "Uploaded" : characterGalleryClipSourceLabel(clip.source);
   const dateLabel = formatClipDate(clip.updatedAt ?? clip.createdAt);
   const isReady = clip.status === "ready" && Boolean(clip.url);
   const canDelete = canDeleteCharacterGalleryClip(clip);
@@ -2535,6 +2605,7 @@ function CharacterClipCard({
     clip.source === "conversation-call" &&
     Boolean(clip.clipKind) &&
     (clip.status === "missing" || clip.status === "error");
+  const canUploadSlot = clip.source === "conversation-call" && Boolean(clip.clipKind);
   const clipDetails = [clip.durationSeconds ? `${clip.durationSeconds}s` : null, clip.aspectRatio]
     .filter(Boolean)
     .join(" · ");
@@ -2567,6 +2638,18 @@ function CharacterClipCard({
                 <span>Generate</span>
               </button>
             ) : null}
+            {canUploadSlot ? (
+              <button
+                type="button"
+                onClick={() => onUpload(clip)}
+                disabled={uploading || generationDisabled}
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-1 text-[0.7rem] font-semibold text-[var(--foreground)] opacity-0 shadow-sm transition-all hover:border-[var(--primary)]/50 hover:text-[var(--primary)] focus-visible:opacity-100 disabled:cursor-not-allowed disabled:text-[var(--muted-foreground)] group-hover:opacity-100 max-md:opacity-100"
+                title={`Upload ${clip.label || "call clip"}`}
+              >
+                {uploading ? <Loader2 size="0.75rem" className="animate-spin" /> : <Upload size="0.75rem" />}
+                <span>Upload</span>
+              </button>
+            ) : null}
           </div>
         )}
         <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
@@ -2596,6 +2679,18 @@ function CharacterClipCard({
                 aria-label={`Trim ${clip.label || "clip"}`}
               >
                 <Scissors size="0.75rem" />
+              </button>
+            ) : null}
+            {canUploadSlot ? (
+              <button
+                type="button"
+                onClick={() => onUpload(clip)}
+                disabled={uploading || generationDisabled}
+                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+                title="Upload replacement"
+                aria-label={`Upload replacement for ${clip.label || "clip"}`}
+              >
+                {uploading ? <Loader2 size="0.75rem" className="animate-spin" /> : <Upload size="0.75rem" />}
               </button>
             ) : null}
             {isReady && clip.url ? (

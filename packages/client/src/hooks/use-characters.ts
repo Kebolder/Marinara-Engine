@@ -380,6 +380,7 @@ export interface CharacterGalleryClip {
   url: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  origin?: "generated" | "uploaded" | null;
   durationSeconds: number | null;
   trimStartSeconds?: number | null;
   trimEndSeconds?: number | null;
@@ -395,6 +396,12 @@ export interface CharacterGalleryClipsResponse {
   clips: CharacterGalleryClip[];
   callVideoGenerating: boolean;
 }
+
+export type CharacterGalleryClipUploadInput = {
+  file: File;
+  label?: string | null;
+  kind?: string | null;
+};
 
 export const spriteKeys = {
   list: (characterId: string) => ["sprites", characterId] as const,
@@ -556,6 +563,23 @@ export function useUpdateCharacterGalleryClipTrim(characterId: string) {
   });
 }
 
+export function useUploadCharacterGalleryClip(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, label, kind }: CharacterGalleryClipUploadInput) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (label?.trim()) formData.append("label", label.trim());
+      if (kind?.trim()) formData.append("kind", kind.trim());
+      return api.upload<CharacterGalleryClipsResponse>(`/characters/${characterId}/gallery/clips/upload`, formData);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
 export function useUploadCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -650,6 +674,43 @@ export function useDeletePersonaGalleryClip(personaId: string) {
   return useMutation({
     mutationFn: (clipId: string) =>
       api.delete(`/characters/personas/${personaId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+    },
+  });
+}
+
+export function useUpdatePersonaGalleryClipTrim(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      clipId,
+      trimStartSeconds,
+      trimEndSeconds,
+    }: {
+      clipId: string;
+      trimStartSeconds: number | null;
+      trimEndSeconds: number | null;
+    }) =>
+      api.patch(`/characters/personas/${personaId}/gallery/clips/${encodeURIComponent(clipId)}/trim`, {
+        trimStartSeconds,
+        trimEndSeconds,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+    },
+  });
+}
+
+export function useUploadPersonaGalleryClip(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, label }: CharacterGalleryClipUploadInput) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (label?.trim()) formData.append("label", label.trim());
+      return api.upload<CharacterGalleryClipsResponse>(`/characters/personas/${personaId}/gallery/clips/upload`, formData);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
     },
