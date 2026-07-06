@@ -28,7 +28,11 @@ const fallbackLogger: BridgeLogger = {
   },
 };
 
-const baseLogger: BridgeLogger = await import("../../../server/dist/lib/logger.js")
+// ponytail: non-literal specifier so tsc doesn't hard-require server/dist at
+// compile time — the import is best-effort (see .catch below), and the parallel
+// build races server's dist output. Runtime resolves it or falls back.
+const serverLoggerPath = "../../../server/dist/lib/logger.js";
+const baseLogger: BridgeLogger = await import(serverLoggerPath)
   .then((module: { logger: BridgeLogger }) => module.logger)
   .catch(() => fallbackLogger);
 
