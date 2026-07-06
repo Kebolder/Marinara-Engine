@@ -36,6 +36,10 @@ function humanizePromptKey(key: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function promptOverrideLabel(entry: Pick<PromptOverrideSummary, "key" | "label"> | null | undefined) {
+  return entry?.label?.trim() || (entry?.key ? humanizePromptKey(entry.key) : "Prompt override");
+}
+
 function promptOverrideStatus(entry: PromptOverrideSummary | undefined) {
   if (!entry?.hasOverride)
     return { label: "Default", className: "bg-[var(--secondary)] text-[var(--muted-foreground)]" };
@@ -68,10 +72,13 @@ function buildEditableDefaultTemplate(
     const example = value === undefined || value === null ? "" : String(value);
     return { example, token: "$" + "{" + variable.name + "}" };
   });
-  const exampleCounts = candidates.reduce<Record<string, number>>((counts, item) => {
-    if (item.example.length > 1) counts[item.example] = (counts[item.example] ?? 0) + 1;
-    return counts;
-  }, Object.create(null) as Record<string, number>);
+  const exampleCounts = candidates.reduce<Record<string, number>>(
+    (counts, item) => {
+      if (item.example.length > 1) counts[item.example] = (counts[item.example] ?? 0) + 1;
+      return counts;
+    },
+    Object.create(null) as Record<string, number>,
+  );
   const replacements = candidates
     .filter((item) => item.example.length > 1 && exampleCounts[item.example] === 1)
     .sort((a, b) => b.example.length - a.example.length);
@@ -103,7 +110,7 @@ function renderTemplatePreview(
 export function PromptOverridesEditor({
   title = "Prompt Overrides",
   description = "Edit the templates used by image and sprite prompt builders.",
-  help = "Global templates for registered prompt builders. Chat-specific selfie prompts still override the global conversation selfie template.",
+  help = "Global templates for registered prompt builders, including the conversation selfie prompt writer.",
   keys,
   preferredKey = PREFERRED_PROMPT_KEY,
   defaultOpen = false,
@@ -262,7 +269,7 @@ function PromptOverridesEditorBody({ keys, preferredKey }: { keys?: readonly str
 
     const confirmed = await showConfirmDialog({
       title: "Reset prompt override?",
-      message: `${humanizePromptKey(selectedKey)} will use its built-in default again. Your custom template for this key will be removed.`,
+      message: `${promptOverrideLabel(selectedEntry)} will use its built-in default again. Your custom template for this key will be removed.`,
       confirmLabel: "Reset to Default",
       cancelLabel: "Cancel",
       tone: "destructive",
@@ -310,7 +317,7 @@ function PromptOverridesEditorBody({ keys, preferredKey }: { keys?: readonly str
           {!loadingEntries && filteredEntries.length === 0 && <option value="">No registered prompts</option>}
           {filteredEntries.map((entry) => (
             <option key={entry.key} value={entry.key}>
-              {humanizePromptKey(entry.key)}
+              {promptOverrideLabel(entry)}
             </option>
           ))}
         </select>

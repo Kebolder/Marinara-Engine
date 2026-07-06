@@ -187,6 +187,8 @@
   --primary-foreground: #0a0a0a;
   --secondary: #1a1a2e;
   --secondary-foreground: #e8d4ff;
+  --marinara-conversation-gradient-from: #0a0a0e;
+  --marinara-conversation-gradient-to: #1c2133;
   --muted: #1a1a2e;
   --muted-foreground: #d4adfc;
   --accent: #2a1a3e;
@@ -211,6 +213,19 @@
   --marinara-shell-edge-border: color-mix(in srgb, var(--foreground) 14%, var(--background) 86%);
   --marinara-music-player-shell-bg: var(--marinara-topbar-surface);
   --marinara-music-player-shell-border: var(--marinara-topbar-border);
+  --marinara-music-player-text: #f7f3ef;
+  --marinara-music-player-muted: #b3b3b3;
+  --marinara-music-player-icon: #b3b3b3;
+  --marinara-music-player-icon-hover: #f7f3ef;
+  --marinara-music-player-button-bg: color-mix(in srgb, #f7f3ef 5%, transparent);
+  --marinara-music-player-button-bg-hover: color-mix(in srgb, #f7f3ef 10%, transparent);
+  --marinara-music-player-button-border: color-mix(in srgb, #f7f3ef 15%, transparent);
+  --marinara-music-player-button-border-hover: color-mix(in srgb, #f7f3ef 30%, transparent);
+  --marinara-music-player-tile-bg: color-mix(in srgb, #f7f3ef 5%, transparent);
+  --marinara-music-player-tile-ring: color-mix(in srgb, #f7f3ef 10%, transparent);
+  --marinara-music-player-action-bg: #f7f3ef;
+  --marinara-music-player-action-text: #191414;
+  --marinara-music-player-progress-bg: color-mix(in srgb, #f7f3ef 15%, transparent);
   --mari-logo-cyan: #4de5dd;
   --mari-logo-cyan-deep: #3ab8b1;
   --mari-logo-orange: #eb8951;
@@ -433,6 +448,8 @@
   --primary-foreground: #0a0a0a;
   --secondary: #f0eaf7;
   --secondary-foreground: #3a2960;
+  --marinara-conversation-gradient-from: #f2eff7;
+  --marinara-conversation-gradient-to: #eae6f0;
   --muted: #f0eaf7;
   --muted-foreground: #7a64a0;
   --accent: #ede4f7;
@@ -449,6 +466,21 @@
   --sidebar-accent-foreground: #d4acfb;
   --glow-primary: color-mix(in srgb, var(--primary) 12%, transparent);
   --glow-accent: rgba(212, 173, 252, 0.08);
+  --marinara-music-player-shell-bg: color-mix(in srgb, var(--card) 94%, var(--secondary) 6%);
+  --marinara-music-player-shell-border: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --marinara-music-player-text: color-mix(in srgb, var(--foreground) 96%, var(--primary) 4%);
+  --marinara-music-player-muted: color-mix(in srgb, var(--foreground) 62%, transparent);
+  --marinara-music-player-icon: color-mix(in srgb, var(--foreground) 70%, transparent);
+  --marinara-music-player-icon-hover: var(--foreground);
+  --marinara-music-player-button-bg: color-mix(in srgb, var(--secondary) 82%, var(--card) 18%);
+  --marinara-music-player-button-bg-hover: color-mix(in srgb, var(--primary) 14%, var(--secondary) 86%);
+  --marinara-music-player-button-border: color-mix(in srgb, var(--foreground) 16%, transparent);
+  --marinara-music-player-button-border-hover: color-mix(in srgb, var(--foreground) 28%, transparent);
+  --marinara-music-player-tile-bg: color-mix(in srgb, var(--secondary) 78%, var(--card) 22%);
+  --marinara-music-player-tile-ring: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --marinara-music-player-action-bg: color-mix(in srgb, var(--foreground) 88%, var(--primary) 12%);
+  --marinara-music-player-action-text: var(--background);
+  --marinara-music-player-progress-bg: color-mix(in srgb, var(--foreground) 16%, transparent);
   --tracker-card-neutral-surface-top: color-mix(in srgb, var(--card) 84%, var(--accent) 16%);
   --tracker-card-neutral-surface-bottom: color-mix(in srgb, var(--secondary) 86%, var(--primary) 14%);
   --tracker-card-neutral-material: color-mix(in srgb, var(--secondary) 88%, var(--primary) 12%);
@@ -1029,6 +1061,36 @@
 .mari-chat-settings-drawer select optgroup {
   background-color: var(--marinara-chat-chrome-panel-bg);
   color: var(--marinara-chat-chrome-panel-text);
+}
+
+.mari-preset-native-select {
+  color-scheme: dark;
+  background-color: var(--marinara-preset-select-bg, var(--marinara-chat-chrome-panel-bg));
+  color: var(--marinara-preset-select-text, var(--marinara-chat-chrome-panel-text));
+}
+
+[data-theme="light"] .mari-preset-native-select {
+  color-scheme: light;
+}
+
+.mari-preset-native-select option,
+.mari-preset-native-select optgroup {
+  background-color: var(--marinara-preset-select-option-bg, var(--marinara-chat-chrome-panel-bg)) !important;
+  color: var(--marinara-preset-select-option-text, var(--marinara-chat-chrome-panel-text)) !important;
+}
+
+.mari-preset-native-select option:checked {
+  background-color: var(--marinara-preset-select-option-selected-bg, var(--marinara-chat-chrome-accent)) !important;
+  color: var(--marinara-preset-select-option-selected-text, var(--marinara-chat-chrome-button-text-active)) !important;
+}
+
+.mari-editor-legacy-bridge .mari-preset-native-select {
+  --marinara-preset-select-bg: var(--marinara-editor-control-bg);
+  --marinara-preset-select-text: var(--marinara-editor-text);
+  --marinara-preset-select-option-bg: var(--marinara-editor-control-bg);
+  --marinara-preset-select-option-text: var(--marinara-editor-text);
+  --marinara-preset-select-option-selected-bg: var(--marinara-editor-accent);
+  --marinara-preset-select-option-selected-text: var(--marinara-editor-text);
 }
 
 .mari-chat-settings-popover select:disabled,
@@ -1652,6 +1714,7 @@
   border: 1px dashed var(--marinara-editor-border);
   border-radius: 0.75rem;
   background: color-mix(in srgb, var(--marinara-editor-control-bg) 54%, transparent);
+  color: var(--marinara-editor-muted);
 }
 
 .mari-editor-shell [class~="text-[var(--foreground)]"],
@@ -2051,7 +2114,7 @@ input[type="range"].mari-spotify-volume-slider {
   --range-thumb-color: #1db954;
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #191414;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: #1db954;
 }
@@ -2088,7 +2151,7 @@ input[type="range"].mari-youtube-volume-slider {
   --range-thumb-color: #ff0000;
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #0f0f0f;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: #ff0000;
 }
@@ -2125,7 +2188,7 @@ input[type="range"].mari-local-music-volume-slider {
   --range-thumb-color: var(--primary);
   --range-thumb-size: 0.6875rem;
   --range-track-height: 0.25rem;
-  --range-thumb-shadow: 0 0 0 0.125rem #0f0f0f;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-music-player-shell-bg);
 
   accent-color: var(--primary);
 }
@@ -5323,6 +5386,28 @@ strong {
 .home-professor-mari-chat[data-paused="true"] *::before,
 .home-professor-mari-chat[data-paused="true"] *::after {
   animation-play-state: paused !important;
+}
+
+.mari-conversation-call-mini {
+  bottom: max(env(safe-area-inset-bottom), 0.75rem);
+  left: max(env(safe-area-inset-left), 0.75rem);
+  transition: bottom 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-professor-mari-floating="true"] .mari-conversation-call-mini {
+  bottom: calc(max(env(safe-area-inset-bottom), 0.75rem) + min(32rem, calc(100vh - 5rem)) + 0.75rem);
+}
+
+@supports (height: 100dvh) {
+  :root[data-professor-mari-floating="true"] .mari-conversation-call-mini {
+    bottom: calc(max(env(safe-area-inset-bottom), 0.75rem) + min(32rem, calc(100dvh - 5rem)) + 0.75rem);
+  }
+}
+
+@media (max-width: 639px) {
+  :root[data-professor-mari-floating="true"] .mari-conversation-call-mini {
+    bottom: calc(max(env(safe-area-inset-bottom), 0.75rem) + 4rem);
+  }
 }
 
 .mari-professor-pixel-scene::before {

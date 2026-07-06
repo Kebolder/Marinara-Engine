@@ -4,7 +4,8 @@
 import { create } from "zustand";
 import type { AvatarCropValue } from "../lib/utils";
 import { subscribeWithSelector } from "zustand/middleware";
-import type { Chat, ChatMode, ConversationPresenceStatus, Message } from "@marinara-engine/shared";
+import type { Chat, ChatMode, ConversationCallSession, ConversationPresenceStatus, Message } from "@marinara-engine/shared";
+import type { CharacterMap, PersonaInfo } from "../components/chat/chat-area.types";
 import { useAgentStore } from "./agent.store";
 import { useGameStateStore } from "./game-state.store";
 
@@ -13,6 +14,7 @@ const DRAFTS_KEY = "marinara-input-drafts";
 const NOTIFICATION_AUTODISMISS_MS = 8000;
 
 type NotificationAvatarCrop = AvatarCropValue | null;
+type ChatNotificationKind = "message" | "call";
 
 type DelayedCharacterStatus = ConversationPresenceStatus;
 
@@ -22,6 +24,14 @@ export type DelayedCharacterInfo = {
   characterIds?: string[];
   characterNames?: string[];
   characterStatuses?: Record<string, DelayedCharacterStatus>;
+};
+
+export type ActiveConversationCallSnapshot = {
+  session: ConversationCallSession;
+  chatName?: string;
+  characterMap: CharacterMap;
+  chatCharIds: string[];
+  personaInfo?: PersonaInfo;
 };
 
 /** Read drafts from localStorage so typed input survives reloads, tab closes, and app restarts. */
@@ -156,6 +166,9 @@ interface ChatState {
       characterName: string;
       avatarUrl: string | null;
       avatarCrop?: NotificationAvatarCrop;
+      kind?: ChatNotificationKind;
+      callId?: string | null;
+      reason?: string | null;
       count: number;
     }
   >;
@@ -163,6 +176,10 @@ interface ChatState {
   dismissedNotifications: Set<string>;
   /** Pending /goto request — ChatArea fulfils by paginating + scrolling to the target message. Token forces re-fire on identical N. */
   gotoRequest: { chatId: string; messageNumber: number; token: number } | null;
+  /** Mounted Conversation call snapshot. Runtime-only so the call can minimize while navigating. */
+  activeConversationCall: ActiveConversationCallSnapshot | null;
+  /** When true, show the active Conversation call as the full call surface instead of the micro panel. */
+  conversationCallExpanded: boolean;
 
   // Actions
   setActiveChat: (chat: Chat | null) => void;
@@ -219,11 +236,23 @@ interface ChatState {
     avatarUrl: string | null,
     avatarCrop?: NotificationAvatarCrop,
   ) => void;
+  addCallNotification: (
+    chatId: string,
+    callId: string,
+    characterName: string,
+    avatarUrl: string | null,
+    avatarCrop?: NotificationAvatarCrop,
+    reason?: string | null,
+    options?: { showWhenActive?: boolean },
+  ) => void;
   autoDismissNotification: (chatId: string) => void;
   dismissNotification: (chatId: string) => void;
   dismissNotifications: (chatIds: string[]) => void;
   requestGotoMessage: (chatId: string, messageNumber: number) => void;
   clearGotoRequest: () => void;
+  setActiveConversationCall: (snapshot: ActiveConversationCallSnapshot | null) => void;
+  updateActiveConversationCallSession: (session: ConversationCallSession) => void;
+  setConversationCallExpanded: (expanded: boolean) => void;
   reset: () => void;
 }
 
@@ -266,6 +295,8 @@ export const useChatStore = create<ChatState>()(
     chatNotifications: new Map(),
     dismissedNotifications: new Set(),
     gotoRequest: null,
+    activeConversationCall: null,
+    conversationCallExpanded: false,
 
     setActiveChat: (chat) => set({ activeChat: chat }),
     setActiveChatId: (id) => {
@@ -289,7 +320,13 @@ export const useChatStore = create<ChatState>()(
           return { unreadCounts: m, chatNotifications: n, dismissedNotifications: d };
         });
       }
-      set({ activeChatId: id, swipeIndex: new Map(), ...(!id && { activeChat: null }) });
+      const activeCall = get().activeConversationCall;
+      set({
+        activeChatId: id,
+        swipeIndex: new Map(),
+        ...(!id && { activeChat: null }),
+        ...(activeCall ? { conversationCallExpanded: id === activeCall.session.chatId } : {}),
+      });
       // Only reset agent + game state when actually switching chats — re-selecting the
       // same chat should not blow away loaded tracker data.
       if (id !== prev) {
@@ -626,6 +663,7 @@ export const useChatStore = create<ChatState>()(
               characterName: item.characterName,
               avatarUrl: item.avatarUrl,
               avatarCrop: item.avatarCrop ?? null,
+              kind: "message",
               count: item.count,
             });
           }
@@ -672,9 +710,30 @@ export const useChatStore = create<ChatState>()(
           characterName,
           avatarUrl,
           avatarCrop: avatarCrop ?? existing?.avatarCrop ?? null,
+          kind: "message",
           count: (existing?.count ?? 0) + 1,
         });
         scheduleNotificationAutoDismiss(chatId, get);
+        return { chatNotifications: m };
+      }),
+    addCallNotification: (chatId, callId, characterName, avatarUrl, avatarCrop, reason, options) =>
+      set((state) => {
+        if (state.activeChatId === chatId && !options?.showWhenActive) {
+          clearNotificationTimer(chatId);
+          return state;
+        }
+        clearNotificationTimer(chatId);
+        const m = new Map(state.chatNotifications);
+        m.set(chatId, {
+          chatId,
+          characterName,
+          avatarUrl,
+          avatarCrop: avatarCrop ?? null,
+          kind: "call",
+          callId,
+          reason: reason ?? null,
+          count: 1,
+        });
         return { chatNotifications: m };
       }),
     autoDismissNotification: (chatId) =>
@@ -716,6 +775,25 @@ export const useChatStore = create<ChatState>()(
         },
       })),
     clearGotoRequest: () => set({ gotoRequest: null }),
+
+    setActiveConversationCall: (snapshot) =>
+      set((state) => {
+        if (!snapshot) return { activeConversationCall: null, conversationCallExpanded: false };
+        const isNewCall = state.activeConversationCall?.session.id !== snapshot.session.id;
+        return {
+          activeConversationCall: snapshot,
+          ...(isNewCall ? { conversationCallExpanded: state.activeChatId === snapshot.session.chatId } : {}),
+        };
+      }),
+
+    updateActiveConversationCallSession: (session) =>
+      set((state) => {
+        if (!state.activeConversationCall || state.activeConversationCall.session.id !== session.id) return state;
+        if (state.activeConversationCall.session === session) return state;
+        return { activeConversationCall: { ...state.activeConversationCall, session } };
+      }),
+
+    setConversationCallExpanded: (expanded) => set({ conversationCallExpanded: expanded }),
 
     setSwipeIndex: (messageId: string, index: number) =>
       set((state) => {
@@ -759,6 +837,8 @@ export const useChatStore = create<ChatState>()(
         chatNotifications: new Map(),
         dismissedNotifications: new Set(),
         gotoRequest: null,
+        activeConversationCall: null,
+        conversationCallExpanded: false,
       });
       try {
         localStorage.removeItem(STORAGE_KEY);

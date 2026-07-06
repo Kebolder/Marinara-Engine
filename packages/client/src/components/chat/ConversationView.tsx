@@ -13,7 +13,17 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Loader2, ChevronUp, Settings2, Image as ImageIcon, ArrowRightLeft } from "lucide-react";
+import {
+  Loader2,
+  ChevronUp,
+  Settings2,
+  Image as ImageIcon,
+  ArrowRightLeft,
+  Phone,
+  PhoneIncoming,
+  PhoneOff,
+} from "lucide-react";
+import { toast } from "sonner";
 import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { UnoBoard } from "./UnoBoard";
@@ -24,23 +34,36 @@ import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
-import { groupConsecutiveSegments, parseNamePrefixFormat, parseSpeakerTags } from "./ConversationMessageShared";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
+import { PendingTypingDots } from "./PendingTypingDots";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
+import { ConversationCallSurface } from "./ConversationCallSurface";
 import { useChatStore } from "../../stores/chat.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
+import { playConversationCallRingingSoundOnce } from "../../lib/conversation-call-sounds";
 import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
+import {
+  useAcceptConversationCall,
+  useConversationCallStatus,
+  useDeclineConversationCall,
+  useStartConversationCall,
+} from "../../hooks/use-conversation-calls";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
-import { normalizeTextForMatch, type Message } from "@marinara-engine/shared";
+import {
+  normalizeTextForMatch,
+  parseGroupedSpeakerSegments,
+  stripLeadingMessageTimestamps,
+  type Message,
+} from "@marinara-engine/shared";
 
 const ConversationAutonomousEffects = lazy(async () => {
   const module = await import("./ConversationAutonomousEffects");
@@ -69,8 +92,10 @@ interface ConversationViewProps {
   onSetActiveSwipe: (messageId: string, index: number) => void;
   onToggleHiddenFromAI: (messageId: string, current: boolean) => void;
   onPeekPrompt: () => void;
+  onIllustrate?: () => void | Promise<void>;
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
@@ -132,10 +157,7 @@ function hasNamePrefixFormat(content: string, knownNames: Set<string>): boolean 
 }
 
 function getGroupedSegmentCount(content: string, knownNames: Set<string>): number {
-  const speakerSegments = parseSpeakerTags(content, knownNames);
-  if (speakerSegments) return groupConsecutiveSegments(speakerSegments).length;
-  const nameSegments = parseNamePrefixFormat(content, knownNames);
-  return nameSegments ? groupConsecutiveSegments(nameSegments).length : 0;
+  return parseGroupedSpeakerSegments(content, knownNames)?.length ?? 0;
 }
 
 function isHiddenFromUser(message: Message) {
@@ -275,8 +297,10 @@ export function ConversationView({
   onSetActiveSwipe,
   onToggleHiddenFromAI,
   onPeekPrompt,
+  onIllustrate,
   lastAssistantMessageId,
   onOpenSettings,
+  onOpenScheduleEditor,
   onOpenGallery,
   onBranch,
   multiSelectMode,
@@ -307,14 +331,19 @@ export function ConversationView({
   const delayedCharacterInfo = useChatStore((s) => s.delayedCharacterInfo);
   const conversationMessageStyle = useUIStore((s) => s.conversationMessageStyle);
   const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
+  const isGroupConversation = chatCharIds.length > 1;
   const liveTypingName = useMemo(() => {
+    if (isGroupConversation) return "Multiple people";
     if (typingCharacterName) return typingCharacterName;
     if (streamingCharacterId) return characterMap.get(streamingCharacterId)?.name ?? "Character";
     if (chatCharIds.length === 1) return characterMap.get(chatCharIds[0]!)?.name ?? "Character";
     if (characterNames.length > 0) return characterNames.join(", ");
     return "Character";
-  }, [characterMap, characterNames, chatCharIds, streamingCharacterId, typingCharacterName]);
-  const liveTypingVerb = liveTypingName.includes(",") || liveTypingName.includes(" & ") ? "are" : "is";
+  }, [characterMap, characterNames, chatCharIds, isGroupConversation, streamingCharacterId, typingCharacterName]);
+  const liveTypingVerb =
+    isGroupConversation || liveTypingName.includes(",") || liveTypingName.includes(" & ") ? "are" : "is";
+  const liveTypingLabel = `${liveTypingName} ${liveTypingVerb} typing`;
+  const liveTypingText = `${liveTypingName} ${liveTypingVerb} typing...`;
   const delayedDisplayName = useMemo(() => {
     if (!delayedCharacterInfo) return "";
     const ids = delayedCharacterInfo.characterIds ?? [];
@@ -342,7 +371,9 @@ export function ConversationView({
   const delayedDisplayVerb = delayedDisplayName.includes(",") || delayedDisplayName.includes(" & ") ? "are" : "is";
   // Single typer → tag the typing row so exclusive-mode card CSS can target it via
   // `[data-card-css="<id>"] .mari-typing-*`. Multiple/unknown typers stay untagged.
-  const typingCardCssId = streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0] : undefined);
+  const typingCardCssId = isGroupConversation
+    ? undefined
+    : (streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0] : undefined));
 
   // Track whether the current generation has produced any content. When the stream
   // buffer clears (stream finished) but isStreaming hasn't cleared yet, this ref lets
@@ -371,21 +402,94 @@ export function ConversationView({
   const showTypingIndicator =
     hasLiveStream && !delayedCharacterInfo && !streamBuffer && !thinkingBuffer && conversationMessageStyle !== "bubble";
 
-  // Per-scheme conversation gradient from settings.
-  // When a scheme's values are still the defaults (user hasn't customized), use
-  // a CSS variable so custom themes can override the conversation background.
+  // Per-scheme conversation gradient from settings. When a scheme's values are
+  // still the defaults, use CSS variables so visual themes can override the
+  // default stops without collapsing Marinara's two-color background.
   const convoGradient = useUIStore((s) => s.convoGradient);
   const theme = useUIStore((s) => s.theme);
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
-    const isDefaultDark = convoGradient.dark.from === "#0a0a0e" && convoGradient.dark.to === "#1c2133";
-    const isDefaultLight = convoGradient.light.from === "#f2eff7" && convoGradient.light.to === "#eae6f0";
-    if ((theme === "dark" && isDefaultDark) || (theme === "light" && isDefaultLight)) {
-      return { background: "var(--secondary)" };
+    const defaults =
+      theme === "dark" ? { from: "#0a0a0e", to: "#1c2133" } : { from: "#f2eff7", to: "#eae6f0" };
+    if (g.from === defaults.from && g.to === defaults.to) {
+      return {
+        background: `linear-gradient(135deg, var(--marinara-conversation-gradient-from, ${g.from}), var(--marinara-conversation-gradient-to, ${g.to}))`,
+      };
     }
     return { background: `linear-gradient(135deg, ${g.from}, ${g.to})` };
   }, [convoGradient, theme]);
   const hasAutonomousMessaging = !!chatMeta.autonomousMessages || !!chatMeta.characterExchanges;
+  const callsEnabled = chatMeta.conversationCallsEnabled === true;
+  const { data: callStatus } = useConversationCallStatus(chatId, true);
+  const activeCall = callStatus?.activeCall ?? null;
+  const ringingCall = callStatus?.ringingCall ?? null;
+  const playedRingingCallSoundForRef = useRef<string | null>(null);
+  const startCall = useStartConversationCall(chatId);
+  const acceptCall = useAcceptConversationCall(chatId);
+  const declineCall = useDeclineConversationCall(chatId);
+  const setActiveConversationCall = useChatStore((state) => state.setActiveConversationCall);
+  const conversationCallExpanded = useChatStore((state) => state.conversationCallExpanded);
+  const setConversationCallExpanded = useChatStore((state) => state.setConversationCallExpanded);
+  const callExpandedInThisChat = Boolean(activeCall && conversationCallExpanded);
+  useEffect(() => {
+    if (!ringingCall || activeCall) {
+      if (!ringingCall) playedRingingCallSoundForRef.current = null;
+      return;
+    }
+    if (playedRingingCallSoundForRef.current === ringingCall.id) return;
+    playedRingingCallSoundForRef.current = ringingCall.id;
+    playConversationCallRingingSoundOnce(ringingCall.id);
+  }, [activeCall, ringingCall]);
+
+  const handleStartCall = useCallback(async () => {
+    try {
+      const session = await startCall.mutateAsync();
+      setActiveConversationCall({ session, chatName, characterMap, chatCharIds, personaInfo });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the call.");
+    }
+  }, [characterMap, chatCharIds, chatName, personaInfo, setActiveConversationCall, startCall]);
+  const handleAcceptCall = useCallback(async () => {
+    if (!ringingCall) return;
+    try {
+      const session = await acceptCall.mutateAsync(ringingCall.id);
+      setActiveConversationCall({ session, chatName, characterMap, chatCharIds, personaInfo });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not answer the call.");
+    }
+  }, [acceptCall, characterMap, chatCharIds, chatName, personaInfo, ringingCall, setActiveConversationCall]);
+  const handleDeclineCall = useCallback(async () => {
+    if (!ringingCall) return;
+    try {
+      await declineCall.mutateAsync(ringingCall.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not decline the call.");
+    }
+  }, [declineCall, ringingCall]);
+  useEffect(() => {
+    if (activeCall) {
+      setActiveConversationCall({
+        session: activeCall,
+        chatName,
+        characterMap,
+        chatCharIds,
+        personaInfo,
+      });
+      return;
+    }
+    if (callStatus && useChatStore.getState().activeConversationCall?.session.chatId === chatId) {
+      setActiveConversationCall(null);
+    }
+  }, [
+    activeCall,
+    callStatus,
+    characterMap,
+    chatCharIds,
+    chatId,
+    chatName,
+    personaInfo,
+    setActiveConversationCall,
+  ]);
   const renderToolbarActions = (compact = false) => (
     <>
       <ChatBranchSelector
@@ -407,6 +511,90 @@ export function ConversationView({
       <ChatToolbarButton icon={<Settings2 size="0.875rem" />} title="Chat Settings" onClick={onOpenSettings} />
     </>
   );
+  const renderCallButton = () =>
+    callsEnabled ? (
+      <ChatToolbarButton
+        icon={
+          startCall.isPending ? (
+            <Loader2 size="0.875rem" className="animate-spin" />
+          ) : activeCall ? (
+            <PhoneIncoming size="0.875rem" />
+          ) : (
+            <Phone size="0.875rem" />
+          )
+        }
+        title={activeCall ? "Open call" : "Start call"}
+        onClick={
+          activeCall
+            ? () => {
+                setConversationCallExpanded(true);
+              }
+            : () => void handleStartCall()
+        }
+      />
+    ) : null;
+  const renderHeader = () => (
+    <div
+      className={[
+        "sticky top-0 z-30 flex items-center justify-between px-4 py-2",
+        callExpandedInThisChat
+          ? "mari-chrome-token-scope bg-[var(--background)] text-[var(--marinara-chat-chrome-panel-text)]"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <ConversationPresenceCard
+        chatId={chatId}
+        chatMeta={chatMeta}
+        chatCharIds={chatCharIds}
+        characterMap={characterMap}
+        messages={messages}
+        onOpenSettings={onOpenSettings}
+        onOpenScheduleEditor={onOpenScheduleEditor}
+      />
+
+      <div className="ml-2 flex min-w-0 flex-1 items-center justify-end gap-2">
+        {renderCallButton()}
+        <ChatToolbarMenu
+          className="flex-1"
+          desktopChildren={renderToolbarActions()}
+          mobileChildren={renderToolbarActions(true)}
+        />
+      </div>
+    </div>
+  );
+  const renderIncomingCallBanner = () =>
+    ringingCall && !activeCall ? (
+      <div className="px-3 pb-2">
+        <div className="flex w-full items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--popover)] p-3 shadow-xl">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+            <PhoneIncoming size="1rem" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-[var(--foreground)]">Incoming call</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleDeclineCall()}
+            disabled={declineCall.isPending || acceptCall.isPending}
+            className="mari-chrome-control h-9 w-9 p-0 text-[var(--destructive)] disabled:opacity-50"
+            title="Decline call"
+          >
+            <PhoneOff size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleAcceptCall()}
+            disabled={declineCall.isPending || acceptCall.isPending}
+            className="mari-chrome-control h-9 w-9 p-0 text-emerald-400 disabled:opacity-50"
+            title="Answer call"
+          >
+            {acceptCall.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Phone size="0.875rem" />}
+          </button>
+        </div>
+      </div>
+    ) : null;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -420,7 +608,28 @@ export function ConversationView({
   const lastScrollTopRef = useRef(0);
   const composerScrollTopRef = useRef(0);
   const userScrolledAtRef = useRef(0);
+  const openedAtBottomChatIdRef = useRef<string | null>(null);
   const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
+
+  const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+      return;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
+
+  const scheduleScrollToMessagesBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      scrollToMessagesBottom(behavior);
+      requestAnimationFrame(() => {
+        scrollToMessagesBottom(behavior);
+        requestAnimationFrame(() => scrollToMessagesBottom(behavior));
+      });
+    },
+    [scrollToMessagesBottom],
+  );
 
   useEffect(() => {
     if (shouldKeepMobileComposerOpen) setMobileHistoryComposerCollapsed(false);
@@ -484,7 +693,7 @@ export function ConversationView({
     if (isLoadingMoreRef.current) return;
     // Always scroll when the user just sent a message (optimistic msg)
     if (isOptimistic || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToMessagesBottom("smooth");
     }
   }, [
     newestMsgId,
@@ -494,6 +703,7 @@ export function ConversationView({
     delayedCharacterInfo,
     typingCharacterName,
     isOptimistic,
+    scrollToMessagesBottom,
   ]);
 
   // Preserve scroll on load-more
@@ -514,7 +724,7 @@ export function ConversationView({
 
   const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTranscriptWindowStart(null);
   }, [chatId]);
 
@@ -541,15 +751,32 @@ export function ConversationView({
     setTranscriptWindowStart(null);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!chatId || isFetchingNextPage || isLoadingMoreRef.current) return;
+    if (openedAtBottomChatIdRef.current === chatId) return;
+    if (isLoading && (messages?.length ?? 0) === 0) return;
+    if (transcriptWindow.hiddenAfterCount > 0) return;
+
+    openedAtBottomChatIdRef.current = chatId;
+    userScrolledAwayRef.current = false;
+    isNearBottomRef.current = true;
+    scheduleScrollToMessagesBottom("auto");
+  }, [
+    chatId,
+    isFetchingNextPage,
+    isLoading,
+    messages?.length,
+    scheduleScrollToMessagesBottom,
+    transcriptWindow.hiddenAfterCount,
+  ]);
+
   // ── Build message list with day separators ──
   // Assistant multi-line reveal is presentation-only: a real message can carry
   // display parts, but actions/edit/delete/regenerate still target one message.
   // Strip leaked timestamps like [16:08] or [18.03.2026] from assistant content.
-  const stripTimestamps = (text: string) =>
-    text
-      .replace(/^(\s*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
-      .replace(/^(\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
-      .trim();
+  // Shared with the server (reaction segment-index resolution segments the same
+  // stripped shape) — don't reintroduce a local variant.
+  const stripTimestamps = stripLeadingMessageTimestamps;
 
   const renderedItems = useMemo(() => {
     const visibleMessages = transcriptWindow.messages;
@@ -618,7 +845,9 @@ export function ConversationView({
       const groupSegmentCount =
         msg.role === "assistant" && groupingContent ? getGroupedSegmentCount(groupingContent, knownNames) : 0;
       const hasGroupFormat =
-        groupingContent.includes("<speaker=") || groupSegmentCount > 0 || hasNamePrefixFormat(groupingContent, knownNames);
+        groupingContent.includes("<speaker=") ||
+        groupSegmentCount > 0 ||
+        hasNamePrefixFormat(groupingContent, knownNames);
       let contentParts: string[] | undefined;
       if (conversationMessageStyle === "classic" && msg.role === "assistant" && msg.content && !hasGroupFormat) {
         const cleaned = stripTimestamps(msg.content);
@@ -662,6 +891,7 @@ export function ConversationView({
     chatCharIds,
     totalMessageCount,
     conversationMessageStyle,
+    stripTimestamps,
   ]);
 
   const liveStreamCharacterId = streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0]! : null);
@@ -970,9 +1200,31 @@ export function ConversationView({
   // Auto-scroll when staggered parts are revealed
   useEffect(() => {
     if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToMessagesBottom("smooth");
     }
-  }, [visiblePartCounts, visibleSegmentCounts]);
+  }, [scrollToMessagesBottom, visiblePartCounts, visibleSegmentCounts]);
+
+  if (callExpandedInThisChat && activeCall) {
+    return (
+      <div
+        className="mari-chat-area mari-card-css mari-chrome-token-scope relative flex flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--marinara-chat-chrome-panel-text)]"
+        data-chat-mode="conversation"
+      >
+        {renderHeader()}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <ConversationCallSurface
+            chatId={chatId}
+            session={activeCall}
+            characterMap={characterMap}
+            chatCharIds={chatCharIds}
+            personaInfo={personaInfo}
+            onEnded={() => setActiveConversationCall(null)}
+            embedded
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -983,22 +1235,7 @@ export function ConversationView({
       {/* ── Messages scroll area ── */}
       <div ref={scrollRef} className="mari-messages-scroll flex-1 overflow-y-auto overflow-x-hidden">
         {/* Floating header — character info + action buttons */}
-        <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-2">
-          <ConversationPresenceCard
-            chatId={chatId}
-            chatMeta={chatMeta}
-            chatCharIds={chatCharIds}
-            characterMap={characterMap}
-            messages={messages}
-            onOpenSettings={onOpenSettings}
-          />
-
-          <ChatToolbarMenu
-            className="flex-1"
-            desktopChildren={renderToolbarActions()}
-            mobileChildren={renderToolbarActions(true)}
-          />
-        </div>
+        {renderHeader()}
 
         {/* Load More */}
         {hasNextPage && (
@@ -1050,7 +1287,9 @@ export function ConversationView({
             return (
               <div key={item.key} className="relative my-4 flex items-center px-4">
                 <div className="flex-1 border-t border-[var(--border)]/40" />
-                <span className="mx-4 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{item.label}</span>
+                <span className="mx-4 text-[0.6875rem] font-semibold text-[var(--marinara-chat-chrome-panel-muted)]">
+                  {item.label}
+                </span>
                 <div className="flex-1 border-t border-[var(--border)]/40" />
               </div>
             );
@@ -1214,23 +1453,13 @@ export function ConversationView({
             data-typing-name={liveTypingName}
             data-card-css={typingCardCssId}
           >
-            <span className="mari-typing-dots flex gap-0.5">
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "0ms" }}
-              />
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "150ms" }}
-              />
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "300ms" }}
-              />
-            </span>
-            <span className="mari-typing-text italic">
-              {liveTypingName} {liveTypingVerb} typing...
-            </span>
+            <PendingTypingDots
+              className="mari-typing-dots gap-0.5"
+              dotClassName="bg-[var(--text-secondary)]"
+              label={liveTypingLabel}
+              small
+            />
+            <span className="mari-typing-text italic">{liveTypingText}</span>
           </div>
         )}
 
@@ -1269,6 +1498,7 @@ export function ConversationView({
       {/* ── Turn-game boards (UNO, chess) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
       <ChessBoard chatId={chatId} />
+      {renderIncomingCallBanner()}
       {/* Setup modals mounted once here (stable position) so they never double-render.
           Keyed by chatId so their internal selection state resets on a chat switch
           (matches ConversationInput below) — otherwise stale selected ids would
@@ -1306,6 +1536,7 @@ export function ConversationView({
             };
           })}
         onPeekPrompt={onPeekPrompt}
+        onIllustrate={onIllustrate}
       />
     </div>
   );

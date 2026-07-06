@@ -52,7 +52,16 @@ export interface CatalogItem {
 }
 
 interface RouterResponse {
-  entryIds: string[];
+  entryIds?: unknown;
+  entry_ids?: unknown;
+  selectedEntryIds?: unknown;
+  selected_entry_ids?: unknown;
+  relevantEntryIds?: unknown;
+  relevant_entry_ids?: unknown;
+  ids?: unknown;
+  entries?: unknown;
+  selectedEntries?: unknown;
+  selected_entries?: unknown;
 }
 
 export interface KnowledgeRouterCandidateOptions extends LorebookEmbeddingOptions {
@@ -133,24 +142,53 @@ export function parseRouterResponse(text: string): string[] {
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   const candidate = fenced ? fenced[1]! : trimmed;
 
-  // Find the first { and last } to be robust to leading/trailing prose.
-  const firstBrace = candidate.indexOf("{");
-  const lastBrace = candidate.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) return [];
-  const jsonSlice = candidate.slice(firstBrace, lastBrace + 1);
+  // Find the first JSON object/array and its matching final delimiter to be
+  // robust to leading/trailing prose.
+  const firstObject = candidate.indexOf("{");
+  const firstArray = candidate.indexOf("[");
+  const startsWithArray = firstArray !== -1 && (firstObject === -1 || firstArray < firstObject);
+  const firstJson = startsWithArray ? firstArray : firstObject;
+  const lastJson = startsWithArray ? candidate.lastIndexOf("]") : candidate.lastIndexOf("}");
+  if (firstJson === -1 || lastJson === -1 || lastJson < firstJson) return [];
+  const jsonSlice = candidate.slice(firstJson, lastJson + 1);
 
   try {
-    const parsed = JSON.parse(jsonSlice) as RouterResponse;
-    if (!parsed || !Array.isArray(parsed.entryIds)) return [];
-    // Trim each id — the model occasionally returns `" entry-1 "` or includes
-    // a trailing newline. Whitespace would survive the type check below but
-    // fail the exact Map.get lookup at the executor layer.
-    return parsed.entryIds
-      .map((id) => (typeof id === "string" ? id.trim() : ""))
-      .filter((id): id is string => id.length > 0);
+    const parsed = JSON.parse(jsonSlice) as RouterResponse | unknown[] | null;
+    if (!parsed || typeof parsed !== "object") return [];
+    const candidateIds = Array.isArray(parsed)
+      ? normalizeRouterIdList(parsed)
+      : [
+          parsed.entryIds,
+          parsed.entry_ids,
+          parsed.selectedEntryIds,
+          parsed.selected_entry_ids,
+          parsed.relevantEntryIds,
+          parsed.relevant_entry_ids,
+          parsed.ids,
+          parsed.selectedEntries,
+          parsed.selected_entries,
+          parsed.entries,
+        ].flatMap(normalizeRouterIdList);
+    return candidateIds
+      .map((id) => id.trim())
+      .filter((id, index, ids): id is string => id.length > 0 && ids.indexOf(id) === index);
   } catch {
     return [];
   }
+}
+
+function normalizeRouterIdList(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") return [item];
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.id === "string") return [record.id];
+    if (typeof record.entryId === "string") return [record.entryId];
+    if (typeof record.entry_id === "string") return [record.entry_id];
+    return [];
+  });
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
@@ -274,7 +312,16 @@ export async function executeKnowledgeRouter(
       agentId: config.id,
       agentType: config.type,
       type: "context_injection",
-      data: { text: "" },
+      data: {
+        text: "",
+        candidateCount: 0,
+        totalEntryCount: 0,
+        selectedEntryIds: [],
+        selectedEntries: [],
+        returnedEntryIds: [],
+        unknownEntryIds: [],
+        catalogTruncated: false,
+      },
       tokensUsed: 0,
       durationMs: Date.now() - startTime,
       success: true,
@@ -293,7 +340,8 @@ export async function executeKnowledgeRouter(
   // truncation is order-preserving (matches `listEntriesByLorebooks` order).
   const candidates =
     routerEntries.length > MAX_ROUTER_CANDIDATES ? routerEntries.slice(0, MAX_ROUTER_CANDIDATES) : routerEntries;
-  if (routerEntries.length > MAX_ROUTER_CANDIDATES) {
+  const catalogTruncated = routerEntries.length > MAX_ROUTER_CANDIDATES;
+  if (catalogTruncated) {
     logger.warn(
       "[knowledge-router] catalog truncated to %d/%d entries (MAX_ROUTER_CANDIDATES)",
       candidates.length,
@@ -337,13 +385,24 @@ export async function executeKnowledgeRouter(
   const selectedEntries = dedupedIds
     .map((id) => entriesById.get(id))
     .filter((entry): entry is LorebookEntry => entry !== undefined);
+  const unknownEntryIds = dedupedIds.filter((id) => !entriesById.has(id));
+  const routerData = {
+    candidateCount: candidates.length,
+    totalEntryCount: entries.length,
+    routedEntryCount: routerEntries.length,
+    selectedEntryIds: selectedEntries.map((entry) => entry.id),
+    selectedEntries: selectedEntries.map((entry) => ({ id: entry.id, name: entry.name })),
+    returnedEntryIds: selectedIds,
+    unknownEntryIds,
+    catalogTruncated,
+  };
 
   if (selectedEntries.length === 0) {
     logger.debug("[knowledge-router] no entries selected from %d candidates", candidates.length);
     return {
       ...result,
       type: "context_injection",
-      data: { text: "" },
+      data: { text: "", ...routerData },
     };
   }
 
@@ -361,6 +420,6 @@ export async function executeKnowledgeRouter(
   return {
     ...result,
     type: "context_injection",
-    data: { text: injectionText },
+    data: { text: injectionText, ...routerData },
   };
 }

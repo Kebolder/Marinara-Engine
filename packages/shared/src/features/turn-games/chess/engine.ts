@@ -293,9 +293,30 @@ function buildSpectatorSummary(state: ChessState): string {
     `A game of chess is in progress at the table: ${white} (white) vs ${black} (black), move ${moveNumberFromFen(state.fen)}.`,
     materialLine(state),
   ];
+  const recent = recentMovesLine(state, 8);
+  if (recent) lines.push(`Recent moves: ${recent}`);
   if (state.lastMove) lines.push(`Last move: ${nameOf(state, state.lastMove.seatId)} played ${state.lastMove.san}.`);
   const toMove = seatForColor(state, sideToMove(state));
   lines.push(`${nameOf(state, toMove)} is thinking about their move${state.check ? " — and is in check" : ""}.`);
+  return lines.join("\n");
+}
+
+/** Seat-aware variant of the spectator summary: names the seat's own color,
+ * opponent, and last move so a seated character can talk about their game.
+ * Chess is open information, so nothing extra needs redacting. */
+function buildParticipantSummary(state: ChessState, seatId: string): string {
+  const base = buildSpectatorSummary(state);
+  const color = colorOfSeat(state, seatId);
+  if (!color) return base;
+  const oppSeatId = seatId === state.whiteSeatId ? state.blackSeatId : state.whiteSeatId;
+  const lines: string[] = [
+    base,
+    `You are ${nameOf(state, seatId)}, playing ${color} against ${nameOf(state, oppSeatId)}.`,
+  ];
+  if (state.status !== "finished" && seatForColor(state, sideToMove(state)) === seatId) {
+    lines.push(`It is YOUR move${state.check ? " — and you are in check" : ""}.`);
+  }
+  if (state.lastMove?.seatId === seatId) lines.push(`Your last move was ${state.lastMove.san}.`);
   return lines.join("\n");
 }
 
@@ -337,6 +358,7 @@ export const chessEngine: TurnGameEngine<ChessState, ChessMove, ChessConfig, Che
   label: "Chess",
   minPlayers: CHESS_MIN_PLAYERS,
   maxPlayers: CHESS_MAX_PLAYERS,
+  hiddenInformation: false,
 
   defaultConfig() {
     return { ...DEFAULT_CHESS_CONFIG };
@@ -497,6 +519,10 @@ export const chessEngine: TurnGameEngine<ChessState, ChessMove, ChessConfig, Che
 
   spectatorSummary(state): string {
     return buildSpectatorSummary(state);
+  },
+
+  participantSummary(state, seatId): string {
+    return buildParticipantSummary(state, seatId);
   },
 
   publicView(state, viewerSeatId): ChessPublicView {

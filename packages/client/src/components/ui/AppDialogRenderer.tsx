@@ -45,7 +45,16 @@ export function AppDialogRenderer() {
       : "bg-[var(--primary)] text-white hover:bg-[var(--primary)]/85";
 
   return (
-    <Modal open onClose={dismissActiveDialog} title={getDialogTitle(dialog.kind, dialog.title)} width="max-w-sm">
+    // chatFloatingPanel: app dialogs are topmost confirmations — clicking them
+    // must never register as an outside click that closes a chat drawer (and
+    // unmounts the very modal whose dirty-draft guard opened the dialog).
+    <Modal
+      open
+      onClose={dismissActiveDialog}
+      title={getDialogTitle(dialog.kind, dialog.title)}
+      width="max-w-sm"
+      chatFloatingPanel
+    >
       <div className="space-y-4">
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--foreground)]">{dialog.message}</p>
 

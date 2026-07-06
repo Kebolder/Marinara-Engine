@@ -5,11 +5,9 @@ import { useState, useRef, useCallback, useEffect, useMemo, type FormEvent } fro
 import {
   Send,
   Smile,
-  Sticker,
   StopCircle,
   X,
   Paperclip,
-  ImagePlay,
   Keyboard,
   AtSign,
   Users,
@@ -43,19 +41,21 @@ import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { translateDraftText } from "../../lib/draft-translation";
 import { prepareImageAttachment } from "../../lib/chat-attachment-images";
 import { CARD_ASSET_INSERT_EVENT, type CardAssetInsertDetail } from "../../lib/card-asset-links";
+import { requestChatScrollToBottom } from "../../lib/chat-scroll-events";
 import { QuickConnectionSwitcher } from "./QuickConnectionSwitcher";
 import { QuickPersonaSwitcher } from "./QuickPersonaSwitcher";
 import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
-import { EmojiPicker } from "../ui/EmojiPicker";
-import { CustomEmojiTab } from "./CustomEmojiTab";
-import { StickerPicker } from "./StickerPicker";
 import { showChoiceDialog } from "../../lib/app-dialogs";
 import { useConversationCustomEmojis, type ConversationCustomEmoji } from "../../hooks/use-conversation-custom-emojis";
-import { GifPicker } from "../ui/GifPicker";
 import { SpeechToTextButton } from "../ui/SpeechToTextButton";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import { getChatInputShellClass } from "./chat-input-styles";
+import {
+  ConversationMediaPickerPanel,
+  type ConversationMediaPickerTab,
+  type ConversationMediaPickerTabId,
+} from "./ConversationMediaPickerPanel";
 import {
   buildGuidedGenerationInstructionMessage,
   formatTextQuotes,
@@ -87,6 +87,8 @@ const PDF_ATTACHMENT_MIME_TYPE = "application/pdf";
 
 const CONVERSATION_HIDDEN_SLASH_COMMANDS = new Set(["impersonate", "impersonate_prompt"]);
 const QUOTE_INPUT_TRIGGER_RE = /["'\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f]/;
+
+type MobilePickerTab = ConversationMediaPickerTabId;
 
 type ConversationSlashCompletion = {
   key: string;
@@ -296,6 +298,7 @@ interface ConversationInputProps {
     conversationActivity?: string;
   }>;
   onPeekPrompt?: () => void;
+  onIllustrate?: () => void | Promise<void>;
 }
 
 export function ConversationInput({
@@ -305,6 +308,7 @@ export function ConversationInput({
   groupResponseOrder,
   chatCharacters,
   onPeekPrompt,
+  onIllustrate,
 }: ConversationInputProps) {
   const [hasInput, setHasInput] = useState(false);
   const [completions, setCompletions] = useState<ConversationSlashCompletion[]>([]);
@@ -313,11 +317,8 @@ export function ConversationInput({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [pendingAttachmentReadsByChat, setPendingAttachmentReadsByChat] = useState<Record<string, number>>({});
   const [isTranslatingDraft, setIsTranslatingDraft] = useState(false);
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [gifOpen, setGifOpen] = useState(false);
-  const [stickerOpen, setStickerOpen] = useState(false);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
-  const [mobilePickerTab, setMobilePickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
+  const [mobilePickerTab, setMobilePickerTab] = useState<MobilePickerTab>("emoji");
   const isMobileComposerViewport = useIsMobileComposerViewport();
   const [isDragging, setIsDragging] = useState(false);
   // @mention autocomplete
@@ -335,9 +336,6 @@ export function ConversationInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const emojiButtonRef = useRef<HTMLButtonElement>(null);
-  const gifButtonRef = useRef<HTMLButtonElement>(null);
-  const stickerButtonRef = useRef<HTMLButtonElement>(null);
   const charPickerBtnRef = useRef<HTMLButtonElement>(null);
   const charPickerMenuRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
@@ -383,9 +381,6 @@ export function ConversationInput({
     !isReadingAttachments &&
     !isStreaming &&
     !mobilePickerOpen &&
-    !emojiOpen &&
-    !gifOpen &&
-    !stickerOpen &&
     !charPickerOpen;
   const chatMetadata = useMemo(() => parseChatMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const inactiveCharacterIds = useMemo(
@@ -870,12 +865,16 @@ export function ConversationInput({
         chatId: activeChatId,
         mode: "conversation",
         generate,
-        createMessage: (data) => createMessage.mutate(data),
+        createMessage: async (data) => {
+          await createMessage.mutateAsync(data);
+          requestChatScrollToBottom({ chatId: activeChatId, behavior: "auto" });
+        },
         invalidate: () => qc.invalidateQueries({ queryKey: chatKeys.all }),
         characterNames: activeCharacterNames,
         characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
         lastMessageRole,
+        illustrate: onIllustrate,
       };
       const submittedDraft = textareaRef.current?.value ?? "";
       const submittedHeight = textareaRef.current?.style.height ?? "auto";
@@ -1027,6 +1026,7 @@ export function ConversationInput({
     replaceAttachments,
     updateAttachments,
     onPeekPrompt,
+    onIllustrate,
   ]);
 
   const runQuickSlashCommand = useCallback(
@@ -1048,12 +1048,16 @@ export function ConversationInput({
           if (succeeded !== undefined) generationStatus.succeeded = succeeded;
           return succeeded;
         },
-        createMessage: (data) => createMessage.mutate(data),
+        createMessage: async (data) => {
+          await createMessage.mutateAsync(data);
+          requestChatScrollToBottom({ chatId: submittingChatId, behavior: "auto" });
+        },
         invalidate: () => qc.invalidateQueries({ queryKey: chatKeys.all }),
         characterNames: activeCharacterNames,
         characters: activeChatCharacters?.map((character) => ({ id: character.id, name: character.name })),
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
         lastMessageRole,
+        illustrate: onIllustrate,
       };
 
       const previousDraft = textareaRef.current?.value ?? "";
@@ -1117,6 +1121,7 @@ export function ConversationInput({
       createMessage,
       generate,
       latestAssistantMessage,
+      onIllustrate,
       qc,
       setInputDraft,
       syncInputState,
@@ -1425,93 +1430,96 @@ export function ConversationInput({
     ],
   );
 
-  const handleInput = useCallback((event: FormEvent<HTMLTextAreaElement>) => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const formatted = shouldFormatQuoteInput(event, el.value) ? applyTextareaQuoteFormat(el, quoteFormat) : el.value;
-    // Debounced resize to reduce layout reflows during fast typing
-    if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
-    resizeTimerRef.current = setTimeout(() => {
+  const handleInput = useCallback(
+    (event: FormEvent<HTMLTextAreaElement>) => {
+      const el = textareaRef.current;
       if (!el) return;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-    }, 150);
-    syncInputState(formatted);
+      const formatted = shouldFormatQuoteInput(event, el.value) ? applyTextareaQuoteFormat(el, quoteFormat) : el.value;
+      // Debounced resize to reduce layout reflows during fast typing
+      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = setTimeout(() => {
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+      }, 150);
+      syncInputState(formatted);
 
-    if (activeChatId) {
-      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
-      const chatId = activeChatId;
-      const draft = formatted;
-      draftTimerRef.current = setTimeout(() => {
-        if (draft.trim()) {
-          setInputDraft(chatId, draft);
+      if (activeChatId) {
+        if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+        const chatId = activeChatId;
+        const draft = formatted;
+        draftTimerRef.current = setTimeout(() => {
+          if (draft.trim()) {
+            setInputDraft(chatId, draft);
+          } else {
+            clearInputDraft(chatId);
+          }
+        }, 300);
+      }
+
+      // Slash completions
+      if (formatted.startsWith("/")) {
+        const results = buildConversationSlashCompletions(formatted, activeChatCharacters);
+        setCompletions(results);
+        setSelectedCompletion(0);
+      } else {
+        setCompletions((current) => (current.length > 0 ? [] : current));
+      }
+
+      // @mention detection — look backwards from cursor for an @ trigger
+      const cursor = el.selectionStart;
+      const textBefore = formatted.slice(0, cursor);
+      // Find the last @ that isn't preceded by a word character
+      const atMatch = textBefore.match(/(^|[^\p{L}\p{N}_])@([^\n@]*)$/u);
+      if (atMatch && activeCharacterNames.length > 0) {
+        const queryText = atMatch[2] ?? "";
+        const query = normalizeTextForMatch(queryText);
+        const startPos = (atMatch.index ?? textBefore.length - atMatch[0].length) + (atMatch[1]?.length ?? 0);
+        const matches = activeCharacterNames.filter((name) => startsWithTextForMatch(name, query));
+        if (matches.length > 0) {
+          setMentionQuery(query);
+          setMentionCompletions(matches);
+          setSelectedMention(0);
+          setMentionStartPos(startPos);
         } else {
-          clearInputDraft(chatId);
+          setMentionQuery((current) => (current === null ? current : null));
+          setMentionCompletions((current) => (current.length > 0 ? [] : current));
         }
-      }, 300);
-    }
-
-    // Slash completions
-    if (formatted.startsWith("/")) {
-      const results = buildConversationSlashCompletions(formatted, activeChatCharacters);
-      setCompletions(results);
-      setSelectedCompletion(0);
-    } else {
-      setCompletions((current) => (current.length > 0 ? [] : current));
-    }
-
-    // @mention detection — look backwards from cursor for an @ trigger
-    const cursor = el.selectionStart;
-    const textBefore = formatted.slice(0, cursor);
-    // Find the last @ that isn't preceded by a word character
-    const atMatch = textBefore.match(/(^|[^\p{L}\p{N}_])@([^\n@]*)$/u);
-    if (atMatch && activeCharacterNames.length > 0) {
-      const queryText = atMatch[2] ?? "";
-      const query = normalizeTextForMatch(queryText);
-      const startPos = (atMatch.index ?? textBefore.length - atMatch[0].length) + (atMatch[1]?.length ?? 0);
-      const matches = activeCharacterNames.filter((name) => startsWithTextForMatch(name, query));
-      if (matches.length > 0) {
-        setMentionQuery(query);
-        setMentionCompletions(matches);
-        setSelectedMention(0);
-        setMentionStartPos(startPos);
       } else {
         setMentionQuery((current) => (current === null ? current : null));
         setMentionCompletions((current) => (current.length > 0 ? [] : current));
       }
-    } else {
-      setMentionQuery((current) => (current === null ? current : null));
-      setMentionCompletions((current) => (current.length > 0 ? [] : current));
-    }
 
-    // :emoji: detection — a `:partial` at a word boundary, just before the cursor
-    const emojiMatch = textBefore.match(/(?:^|\s):([a-z0-9_]+)$/);
-    if (emojiMatch && customEmojiList && customEmojiList.length > 0) {
-      const eq = emojiMatch[1]!.toLowerCase();
-      const matches = customEmojiList
-        .filter((em) => em.name.includes(eq))
-        .sort((a, b) => Number(b.name.startsWith(eq)) - Number(a.name.startsWith(eq)))
-        .slice(0, 10);
-      if (matches.length > 0) {
-        setEmojiCompletions(matches);
-        setSelectedEmojiCompletion(0);
-        setEmojiStartPos(cursor - eq.length - 1);
+      // :emoji: detection — a `:partial` at a word boundary, just before the cursor
+      const emojiMatch = textBefore.match(/(?:^|\s):([a-z0-9_]+)$/);
+      if (emojiMatch && customEmojiList && customEmojiList.length > 0) {
+        const eq = emojiMatch[1]!.toLowerCase();
+        const matches = customEmojiList
+          .filter((em) => em.name.includes(eq))
+          .sort((a, b) => Number(b.name.startsWith(eq)) - Number(a.name.startsWith(eq)))
+          .slice(0, 10);
+        if (matches.length > 0) {
+          setEmojiCompletions(matches);
+          setSelectedEmojiCompletion(0);
+          setEmojiStartPos(cursor - eq.length - 1);
+        } else {
+          setEmojiCompletions((current) => (current.length > 0 ? [] : current));
+        }
       } else {
         setEmojiCompletions((current) => (current.length > 0 ? [] : current));
       }
-    } else {
-      setEmojiCompletions((current) => (current.length > 0 ? [] : current));
-    }
-  }, [
-    activeChatId,
-    activeCharacterNames,
-    activeChatCharacters,
-    customEmojiList,
-    clearInputDraft,
-    quoteFormat,
-    setInputDraft,
-    syncInputState,
-  ]);
+    },
+    [
+      activeChatId,
+      activeCharacterNames,
+      activeChatCharacters,
+      customEmojiList,
+      clearInputDraft,
+      quoteFormat,
+      setInputDraft,
+      syncInputState,
+    ],
+  );
 
   useEffect(() => {
     if (hasInput && feedback) setFeedback(null);
@@ -1699,6 +1707,24 @@ export function ConversationInput({
 
   const showCharPicker = groupResponseOrder === "manual" && !!activeChatCharacters && activeChatCharacters.length > 1;
   const showDraftTranslateButton = chatMetadata.showInputTranslateButton === true;
+  const showMobileToolsTab =
+    showCharPicker ||
+    showDraftTranslateButton ||
+    speechToTextEnabled ||
+    (showQuickRepliesMenu && quickReplyActions.length > 0);
+  const mobilePickerTabs = useMemo<ConversationMediaPickerTab[]>(() => {
+    const tabs: ConversationMediaPickerTab[] = [
+      { id: "emoji", label: "Emoji" },
+      { id: "gifs", label: "GIFs" },
+      { id: "stickers", label: "Stickers" },
+    ];
+    if (showMobileToolsTab) tabs.push({ id: "tools", label: "Tools" });
+    return tabs;
+  }, [showMobileToolsTab]);
+
+  useEffect(() => {
+    if (!showMobileToolsTab && mobilePickerTab === "tools") setMobilePickerTab("emoji");
+  }, [mobilePickerTab, showMobileToolsTab]);
 
   const handleTranslateDraft = useCallback(async () => {
     if (!activeChatId || isTranslatingDraft) return;
@@ -1781,6 +1807,134 @@ export function ConversationInput({
           : "bg-green-500";
   const statusLabel = (status?: string) =>
     status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : null;
+
+  const mediaPickerToolsContent =
+    mobilePickerTab === "tools" ? (
+      <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
+        {showCharPicker && activeChatCharacters && (
+          <div className="space-y-1.5">
+            <div className="px-1 text-[0.6875rem] font-semibold uppercase text-foreground/45">Trigger Response</div>
+            <div className="grid gap-1">
+              {activeChatCharacters.map((char) => (
+                <button
+                  key={char.id}
+                  type="button"
+                  onClick={() => {
+                    setMobilePickerOpen(false);
+                    handleCharacterResponse(char.id);
+                  }}
+                  className={cn(
+                    "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-foreground/10",
+                    (char.conversationStatus === "dnd" || char.conversationStatus === "offline") && "opacity-60",
+                  )}
+                >
+                  <div className="relative shrink-0">
+                    {char.avatarUrl ? (
+                      <span className="relative block h-7 w-7 overflow-hidden rounded-full">
+                        <img
+                          src={char.avatarUrl}
+                          alt={char.name}
+                          className="h-full w-full object-cover"
+                          style={getAvatarCropStyle(char.avatarCrop)}
+                        />
+                      </span>
+                    ) : (
+                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-foreground/10 text-[0.6875rem] font-semibold text-foreground/45">
+                        {(char.name || "?")[0].toUpperCase()}
+                      </div>
+                    )}
+                    <span
+                      className={cn(
+                        "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[var(--card)]",
+                        statusDotClass(char.conversationStatus),
+                      )}
+                    />
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{char.name}</span>
+                    {(char.conversationActivity || statusLabel(char.conversationStatus)) && (
+                      <span className="block truncate text-xs text-foreground/45">
+                        {char.conversationActivity || statusLabel(char.conversationStatus)}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-2">
+          {showDraftTranslateButton && (
+            <button
+              type="button"
+              onClick={() => {
+                setMobilePickerOpen(false);
+                void handleTranslateDraft();
+              }}
+              disabled={!activeChatId || !hasInput || isTranslatingDraft}
+              className={cn(
+                "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
+                activeChatId && hasInput && !isTranslatingDraft
+                  ? "text-foreground/80 hover:bg-foreground/10"
+                  : "cursor-not-allowed text-foreground/25",
+              )}
+            >
+              {isTranslatingDraft ? (
+                <Loader2 size="1rem" className="shrink-0 animate-spin" />
+              ) : (
+                <Languages size="1rem" className="shrink-0" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">Translate draft</span>
+            </button>
+          )}
+
+          {speechToTextEnabled && (
+            <div className="flex min-h-11 items-center justify-between gap-2 rounded-lg px-3 py-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/80">Voice input</span>
+              <SpeechToTextButton
+                disabled={!activeChatId}
+                onTranscript={(transcript) => {
+                  setMobilePickerOpen(false);
+                  handleSpeechTranscript(transcript);
+                }}
+                className="h-10 w-10 rounded-lg"
+                iconSize={16}
+              />
+            </div>
+          )}
+
+          {showQuickRepliesMenu &&
+            quickReplyActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                onClick={() => {
+                  if (action.disabled) return;
+                  setMobilePickerOpen(false);
+                  void action.onSelect();
+                }}
+                disabled={action.disabled}
+                title={action.disabled ? (action.disabledReason ?? action.description) : action.description}
+                className={cn(
+                  "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
+                  action.disabled
+                    ? "cursor-not-allowed text-foreground/25"
+                    : "text-foreground/80 hover:bg-foreground/10",
+                )}
+              >
+                <span className="shrink-0">{action.icon}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{action.label}</span>
+                  <span className="block truncate text-xs text-foreground/45">
+                    {action.disabledReason ?? action.description}
+                  </span>
+                </span>
+              </button>
+            ))}
+        </div>
+      </div>
+    ) : null;
 
   if (shouldShowMobileCollapsedComposer) {
     return (
@@ -1890,48 +2044,19 @@ export function ConversationInput({
         </div>
       )}
 
-      {/* Mobile multipurpose picker sheet — Emoji / GIFs / Stickers (desktop uses the popovers) */}
+      {/* Multipurpose picker sheet — Emoji / GIFs / Stickers / Tools */}
       {mobilePickerOpen && (
-        <div className="absolute bottom-full left-0 right-0 z-20 mb-1 flex h-[22rem] max-h-[60vh] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl sm:hidden">
-          <div className="flex shrink-0 items-center gap-1 border-b border-foreground/10 px-2 py-1.5">
-            {(["emoji", "gifs", "stickers"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setMobilePickerTab(tab)}
-                className={cn(
-                  "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  mobilePickerTab === tab
-                    ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
-                    : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
-                )}
-              >
-                {tab === "gifs" ? "GIFs" : tab === "stickers" ? "Stickers" : "Emoji"}
-              </button>
-            ))}
-          </div>
-          <div className="min-h-0 flex-1">
-            {mobilePickerTab === "emoji" && (
-              <EmojiPicker
-                embedded
-                open
-                onClose={() => setMobilePickerOpen(false)}
-                onSelect={handleEmojiSelect}
-                customTab={{
-                  icon: "⭐",
-                  label: "Custom emojis",
-                  render: (query) => <CustomEmojiTab onInsert={handleEmojiSelect} query={query} />,
-                }}
-              />
-            )}
-            {mobilePickerTab === "gifs" && (
-              <GifPicker embedded open onClose={() => setMobilePickerOpen(false)} onSelect={handleGifSelect} />
-            )}
-            {mobilePickerTab === "stickers" && (
-              <StickerPicker embedded open onClose={() => setMobilePickerOpen(false)} onSelect={handleStickerSelect} />
-            )}
-          </div>
-        </div>
+        <ConversationMediaPickerPanel
+          tabs={mobilePickerTabs}
+          activeTab={mobilePickerTab}
+          onActiveTabChange={setMobilePickerTab}
+          onClose={() => setMobilePickerOpen(false)}
+          onEmojiSelect={handleEmojiSelect}
+          onGifSelect={handleGifSelect}
+          onStickerSelect={handleStickerSelect}
+          className="absolute bottom-full left-0 right-0 z-20 mb-3 sm:hidden"
+          toolsContent={mediaPickerToolsContent}
+        />
       )}
 
       {/* Feedback toast */}
@@ -2040,12 +2165,10 @@ export function ConversationInput({
 
         {/* Right actions */}
         <div className="ml-0 flex shrink-0 flex-nowrap items-center justify-end gap-0 sm:ml-auto sm:gap-0.5">
-          {/* Mobile: one multipurpose button → Emoji/GIFs/Stickers sheet (desktop uses the separate buttons) */}
+          {/* Mobile: one multipurpose button → Emoji/GIFs/Stickers/Tools sheet */}
           <button
             type="button"
             onClick={() => {
-              setEmojiOpen(false);
-              setGifOpen(false);
               const next = !mobilePickerOpen;
               setMobilePickerOpen(next);
               if (next) textareaRef.current?.blur();
@@ -2057,96 +2180,55 @@ export function ConversationInput({
                 ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
                 : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
-            title={mobilePickerOpen ? "Show keyboard" : "Emoji, GIFs & stickers"}
-            aria-label={mobilePickerOpen ? "Show keyboard" : "Emoji, GIFs and stickers"}
+            title={
+              mobilePickerOpen
+                ? "Show keyboard"
+                : showMobileToolsTab
+                  ? "Emoji, GIFs, stickers & tools"
+                  : "Emoji, GIFs & stickers"
+            }
+            aria-label={
+              mobilePickerOpen
+                ? "Show keyboard"
+                : showMobileToolsTab
+                  ? "Emoji, GIFs, stickers, and tools"
+                  : "Emoji, GIFs and stickers"
+            }
           >
             {mobilePickerOpen ? <Keyboard size="1.25rem" /> : <Smile size="1.25rem" />}
           </button>
 
           <div className="relative hidden sm:block">
             <button
-              ref={gifButtonRef}
+              type="button"
               onClick={() => {
-                setGifOpen((v) => !v);
-                setEmojiOpen(false);
-                setStickerOpen(false);
-              }}
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-xl transition-colors sm:h-8 sm:w-8 sm:rounded-full",
-                gifOpen
-                  ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
-                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-              )}
-              title="GIF"
-            >
-              <ImagePlay size="1.25rem" />
-            </button>
-            <GifPicker
-              open={gifOpen}
-              onClose={() => setGifOpen(false)}
-              onSelect={handleGifSelect}
-              anchorRef={gifButtonRef}
-              containerRef={inputBarRef}
-            />
-          </div>
-
-          <div className="relative hidden sm:block">
-            <button
-              ref={emojiButtonRef}
-              onClick={() => {
-                setEmojiOpen((v) => !v);
-                setGifOpen(false);
-                setStickerOpen(false);
+                setMobilePickerOpen((value) => !value);
               }}
               className={cn(
                 "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                emojiOpen
+                mobilePickerOpen
                   ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
                   : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
               )}
-              title="Emoji"
+              title={showMobileToolsTab ? "Emoji, GIFs, stickers & tools" : "Emoji, GIFs & stickers"}
+              aria-label={showMobileToolsTab ? "Emoji, GIFs, stickers, and tools" : "Emoji, GIFs and stickers"}
+              aria-expanded={mobilePickerOpen}
             >
               <Smile size="1.25rem" />
             </button>
-            <EmojiPicker
-              open={emojiOpen}
-              onClose={() => setEmojiOpen(false)}
-              onSelect={handleEmojiSelect}
-              anchorRef={emojiButtonRef}
-              containerRef={inputBarRef}
-              customTab={{
-                icon: "⭐",
-                label: "Custom emojis",
-                render: (query) => <CustomEmojiTab onInsert={handleEmojiSelect} query={query} />,
-              }}
-            />
-          </div>
-
-          <div className="relative hidden sm:block">
-            <button
-              ref={stickerButtonRef}
-              onClick={() => {
-                setStickerOpen((v) => !v);
-                setEmojiOpen(false);
-                setGifOpen(false);
-              }}
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                stickerOpen
-                  ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
-                  : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-              )}
-              title="Stickers"
-            >
-              <Sticker size="1.25rem" />
-            </button>
-            <StickerPicker
-              open={stickerOpen}
-              onClose={() => setStickerOpen(false)}
-              onSelect={handleStickerSelect}
-              anchorRef={stickerButtonRef}
-              containerRef={inputBarRef}
-            />
+            {mobilePickerOpen && (
+              <ConversationMediaPickerPanel
+                tabs={mobilePickerTabs}
+                activeTab={mobilePickerTab}
+                onActiveTabChange={setMobilePickerTab}
+                onClose={() => setMobilePickerOpen(false)}
+                onEmojiSelect={handleEmojiSelect}
+                onGifSelect={handleGifSelect}
+                onStickerSelect={handleStickerSelect}
+                className="absolute bottom-full right-0 z-30 mb-4 w-[min(24rem,calc(100vw-1.5rem))]"
+                toolsContent={mediaPickerToolsContent}
+              />
+            )}
           </div>
 
           {showCharPicker && (

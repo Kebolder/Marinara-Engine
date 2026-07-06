@@ -71,3 +71,12 @@ export function useMoveConnection() {
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionKeys.list() }),
   });
 }
+
+export function useReorderConnections() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { orderedConnectionIds: string[]; folderId: string | null }) =>
+      api.post("/connection-folders/reorder-connections", data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: connectionKeys.list() }),
+  });
+}

@@ -62,9 +62,11 @@ type ConversationSurfaceProps = {
   onAbandonScene?: () => void;
   onOpenSettings: ComponentProps<typeof ConversationView>["onOpenSettings"];
   onOpenGallery: ComponentProps<typeof ConversationView>["onOpenGallery"];
+  onOpenScheduleEditor?: ComponentProps<typeof ConversationView>["onOpenScheduleEditor"];
   onCloseSettings: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
+  onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onResetSpritePlacements: () => void;
@@ -126,9 +128,11 @@ export function ChatConversationSurface({
   onAbandonScene,
   onOpenSettings,
   onOpenGallery,
+  onOpenScheduleEditor,
   onCloseSettings,
   onCloseGallery,
   onIllustrate,
+  onGenerateSelfie,
   onWizardFinish,
   onClosePeekPrompt,
   onResetSpritePlacements,
@@ -171,9 +175,11 @@ export function ChatConversationSurface({
           onSetActiveSwipe={onSetActiveSwipe}
           onToggleHiddenFromAI={onToggleHiddenFromAI}
           onPeekPrompt={onPeekPrompt}
+          onIllustrate={onIllustrate}
           lastAssistantMessageId={lastAssistantMessageId}
           onOpenSettings={onOpenSettings}
           onOpenGallery={onOpenGallery}
+          onOpenScheduleEditor={onOpenScheduleEditor}
           onBranch={onBranch}
           multiSelectMode={multiSelectMode}
           selectedMessageIds={selectedMessageIds}
@@ -209,7 +215,15 @@ export function ChatConversationSurface({
         }}
         onCloseSettings={onCloseSettings}
         onCloseGallery={onCloseGallery}
+        onOpenScheduleEditor={onOpenScheduleEditor}
         onIllustrate={onIllustrate}
+        onGenerateSelfie={onGenerateSelfie}
+        selfieCharacters={chatCharIds
+          .map((id) => {
+            const character = characterMap.get(id);
+            return character ? { id, name: character.name } : null;
+          })
+          .filter((character): character is { id: string; name: string } => Boolean(character))}
         onWizardFinish={onWizardFinish}
         onClosePeekPrompt={onClosePeekPrompt}
         onDeleteConfirm={onDeleteConfirm}

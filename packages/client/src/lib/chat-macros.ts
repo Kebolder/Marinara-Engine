@@ -36,14 +36,14 @@ export function getChatCharacterIds(chat: { characterIds?: unknown } | null | un
 
   const raw = chat.characterIds;
   if (Array.isArray(raw)) {
-    return raw.filter((value): value is string => typeof value === "string" && value.length > 0);
+    return Array.from(new Set(raw.filter((value): value is string => typeof value === "string" && value.length > 0)));
   }
 
   if (typeof raw === "string") {
     try {
       const parsed = JSON.parse(raw) as unknown;
       return Array.isArray(parsed)
-        ? parsed.filter((value): value is string => typeof value === "string" && value.length > 0)
+        ? Array.from(new Set(parsed.filter((value): value is string => typeof value === "string" && value.length > 0)))
         : [];
     } catch {
       return [];
@@ -197,13 +197,41 @@ export function resolveMessageMacros(
   return createMessageMacroResolver(context, options)(template);
 }
 
+/**
+ * Variable-op macros make resolution order-dependent (writes mutate the shared
+ * context; reads observe them), so templates containing them are never cached.
+ */
+const VARIABLE_OP_MACRO_RE = /\{\{\s*(?:setvar|addvar|incvar|decvar|getvar)\b/i;
+/** Only short templates (regex replacements, trims, patterns) are worth caching. */
+const RESOLVER_CACHE_MAX_TEMPLATE_LENGTH = 2048;
+
 export function createMessageMacroResolver(
   context: Parameters<typeof buildMessageMacroContext>[0],
   options?: { randomSeed?: string },
 ) {
   const macroContext = buildMessageMacroContext(context);
-  return (template: string) =>
-    resolveMacros(template, macroContext, { trimResult: false, randomSeed: options?.randomSeed });
+  // #3164: one resolver instance serves every regex-script replacement / trim /
+  // pattern string of a single display computation, and scripts frequently share
+  // the same replacement — with a fixed (context, seed), identical templates
+  // resolve identically, so repeats are served from a per-instance cache. The
+  // cache is disabled from the first variable-write onward: conditionals and the
+  // {{name}} catch-all can read variables without matching the var-op pattern,
+  // and a write in between would make a cached repeat stale.
+  const cache = new Map<string, string>();
+  let variablesTouched = false;
+  return (template: string) => {
+    const touchesVariables = VARIABLE_OP_MACRO_RE.test(template);
+    if (touchesVariables) variablesTouched = true;
+    const cacheable =
+      !touchesVariables && !variablesTouched && template.length <= RESOLVER_CACHE_MAX_TEMPLATE_LENGTH;
+    if (cacheable) {
+      const cached = cache.get(template);
+      if (cached !== undefined) return cached;
+    }
+    const resolved = resolveMacros(template, macroContext, { trimResult: false, randomSeed: options?.randomSeed });
+    if (cacheable) cache.set(template, resolved);
+    return resolved;
+  };
 }
 
 export function isPromptPreviewMacro(input: string): boolean {

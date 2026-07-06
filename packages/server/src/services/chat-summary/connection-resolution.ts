@@ -107,6 +107,10 @@ export async function resolveChatSummaryConnection(args: {
       warnings.push(`Connection ${conn.id} is an image-generation connection`);
       continue;
     }
+    if (conn.provider === "video_generation") {
+      warnings.push(`Connection ${conn.id} is a video-generation connection`);
+      continue;
+    }
 
     const baseUrl = args.resolveBaseUrl(conn);
     if (!baseUrl) {

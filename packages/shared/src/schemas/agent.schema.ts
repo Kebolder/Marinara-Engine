@@ -57,5 +57,30 @@ export const createAgentConfigSchema = z.object({
 
 export const updateAgentConfigSchema = createAgentConfigSchema.partial();
 
+/** AI-assisted rewrite of a fragment of stored agent data (Agent Suite). */
+export const agentSuiteRewriteSchema = z.object({
+  connectionId: z.string().min(1),
+  instruction: z.string().min(1).max(4000),
+  selectedText: z.string().min(1).max(50000),
+  /** Full document the excerpt was selected from — context only, never rewritten. */
+  documentText: z.string().max(100000).optional(),
+  agentName: z.string().max(200).optional(),
+  dataLabel: z.string().max(200).optional(),
+  /** User-selected grounding context (character cards, lorebook entries) — never rewritten. */
+  contextSections: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(200),
+        content: z.string().min(1).max(20000),
+      }),
+    )
+    .max(20)
+    .refine((sections) => sections.reduce((total, section) => total + section.content.length, 0) <= 100000, {
+      message: "Combined context is too large (max 100,000 characters)",
+    })
+    .optional(),
+});
+
 export type CreateAgentConfigInput = z.infer<typeof createAgentConfigSchema>;
 export type UpdateAgentConfigInput = z.infer<typeof updateAgentConfigSchema>;
+export type AgentSuiteRewriteInput = z.infer<typeof agentSuiteRewriteSchema>;

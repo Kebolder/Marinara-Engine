@@ -460,8 +460,8 @@ export function PresetEditor() {
 
   if (!data) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <p className="text-sm text-[var(--muted-foreground)]">Preset not found</p>
+      <div className="mari-editor-shell flex flex-1 items-center justify-center">
+        <p className="mari-editor-empty px-4 py-3 text-sm">Preset not found</p>
       </div>
     );
   }

@@ -78,10 +78,12 @@ export async function adminRoutes(app: FastifyInstance) {
       await runDelete("agent_runs", () => db.delete(schema.agentRuns).run());
       await runDelete("agent_memory", () => db.delete(schema.agentMemory).run());
       await runDelete("game_state_snapshots", () => db.delete(schema.gameStateSnapshots).run());
+      await runDelete("game_scene_videos", () => db.delete(schema.gameSceneVideos).run());
       await runDelete("chat_images", () => db.delete(schema.chatImages).run());
       await runDelete("chat_folders", () => db.delete(schema.chatFolders).run());
       await runDelete("chats", () => db.delete(schema.chats).run());
       filesDeleted.gallery = clearDirectory(join(DATA_DIR, "gallery"));
+      filesDeleted.gameSceneVideos = clearDirectory(join(DATA_DIR, "game-scene-videos"));
     }
 
     if (requestedScopes.includes("characters")) {
@@ -126,8 +128,10 @@ export async function adminRoutes(app: FastifyInstance) {
 
     if (requestedScopes.includes("media")) {
       await runDelete("assets", () => db.delete(schema.assets).run());
+      await runDelete("game_scene_videos", () => db.delete(schema.gameSceneVideos).run());
       await runDelete("chat_images", () => db.delete(schema.chatImages).run());
       filesDeleted.backgrounds = clearDirectory(join(DATA_DIR, "backgrounds"));
+      filesDeleted.gameSceneVideos = clearDirectory(join(DATA_DIR, "game-scene-videos"));
       filesDeleted.avatars = clearDirectory(join(DATA_DIR, "avatars"));
       filesDeleted.sprites = clearDirectory(join(DATA_DIR, "sprites"));
       filesDeleted.gallery = clearDirectory(join(DATA_DIR, "gallery"));

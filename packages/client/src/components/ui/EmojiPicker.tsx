@@ -1132,7 +1132,15 @@ interface EmojiPickerProps {
   embedded?: boolean;
 }
 
-export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, customTab, embedded }: EmojiPickerProps) {
+export function EmojiPicker({
+  open,
+  onClose,
+  onSelect,
+  anchorRef,
+  containerRef,
+  customTab,
+  embedded,
+}: EmojiPickerProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<number | "custom">(0);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1167,9 +1175,8 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
   // Position state for portal
   const [pos, setPos] = useState<{
     top?: number;
-    bottom?: number;
-    right?: number;
     left?: number;
+    right?: number;
     maxHeight?: number;
   }>({});
 
@@ -1180,22 +1187,37 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
     const pickerWidth = 336; // 21rem
     const pickerHeight = 352; // 22rem
     const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
     const vw = viewport?.width ?? window.innerWidth;
     const vh = viewport?.height ?? window.innerHeight;
+    const visibleLeft = viewportLeft;
+    const visibleTop = viewportTop;
+    const visibleRight = viewportLeft + vw;
+    const visibleBottom = viewportTop + vh;
+    const panelWidth = Math.min(pickerWidth, Math.max(0, vw - 2 * pad));
+    const btnRight = btnRect.right + viewportLeft;
+    const btnBottom = btnRect.bottom + viewportTop;
+    const btnTop = btnRect.top + viewportTop;
 
     // Composer mode (anchored to an input bar): pin the bottom edge above the bar's
     // top and grow upward. The bar sits at the bottom of the screen, so this fits.
     if (containerRef?.current) {
       const barRect = containerRef.current.getBoundingClientRect();
-      const bottom = vh - barRect.top + pad;
-      const maxHeight = Math.min(pickerHeight, Math.max(0, barRect.top - 2 * pad));
+      const barTop = barRect.top + viewportTop;
+      const maxHeight = Math.min(pickerHeight, Math.max(0, barTop - visibleTop - 2 * pad));
+      const top = Math.max(visibleTop + pad, barTop - maxHeight - pad);
       if (vw < 480) {
         // Center horizontally on mobile
-        const left = Math.max(pad, (vw - Math.min(pickerWidth, vw - 2 * pad)) / 2);
-        setPos({ bottom, left, maxHeight });
+        const left = visibleLeft + Math.max(pad, (vw - panelWidth) / 2);
+        setPos({ top, left, maxHeight });
       } else {
-        const right = Math.max(pad, vw - btnRect.right);
-        setPos({ bottom, right, maxHeight });
+        const alignedLeft = btnRight - panelWidth;
+        if (alignedLeft < visibleLeft + pad) {
+          setPos({ top, left: visibleLeft + pad, maxHeight });
+        } else {
+          setPos({ top, right: Math.max(pad, visibleRight - btnRight), maxHeight });
+        }
       }
       return;
     }
@@ -1203,14 +1225,14 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
     // Anchored mode (e.g. a message's reaction button, which can sit anywhere on
     // screen): open BELOW the anchor; flip above only when there isn't room below;
     // and clamp to the viewport so the panel never crosses an edge.
-    const maxHeight = Math.min(pickerHeight, vh - 2 * pad);
-    const spaceBelow = vh - btnRect.bottom;
-    const openBelow = spaceBelow >= maxHeight + pad || spaceBelow >= btnRect.top;
-    let top = openBelow ? btnRect.bottom + pad : btnRect.top - pad - maxHeight;
-    top = Math.max(pad, Math.min(top, vh - maxHeight - pad));
+    const maxHeight = Math.min(pickerHeight, Math.max(0, vh - 2 * pad));
+    const spaceBelow = visibleBottom - btnBottom;
+    const openBelow = spaceBelow >= maxHeight + pad || spaceBelow >= btnTop - visibleTop;
+    let top = openBelow ? btnBottom + pad : btnTop - pad - maxHeight;
+    top = Math.max(visibleTop + pad, Math.min(top, visibleBottom - maxHeight - pad));
     // Align the panel's right edge to the button, then clamp into view.
-    let left = btnRect.right - pickerWidth;
-    left = Math.max(pad, Math.min(left, vw - pickerWidth - pad));
+    let left = btnRight - panelWidth;
+    left = Math.max(visibleLeft + pad, Math.min(left, visibleRight - panelWidth - pad));
     setPos({ top, left, maxHeight });
   }, [anchorRef, containerRef]);
 
@@ -1348,9 +1370,8 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
       className="fixed z-[9999] flex h-[22rem] w-[21rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl"
       style={{
         ...(pos.top != null ? { top: pos.top } : {}),
-        ...(pos.bottom != null ? { bottom: pos.bottom } : {}),
-        ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.left != null ? { left: pos.left } : {}),
+        ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.maxHeight != null ? { maxHeight: pos.maxHeight } : {}),
       }}
     >

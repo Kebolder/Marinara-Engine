@@ -52,9 +52,11 @@ const UPDATE_CHANNELS: Record<UpdateChannel, UpdateChannelInfo> = {
   },
 };
 const DEFAULT_PNPM_VERSION = "10.33.2";
+const PNPM_NONINTERACTIVE_ARGS = ["--config.trustPolicy=off", "--config.confirmModulesPurge=false"];
+const PNPM_UPDATE_INSTALL_ARGS = ["install", "--force", "--frozen-lockfile"];
 const DOCKER_IMAGE = "ghcr.io/pasta-devs/marinara-engine";
 const MANUAL_GIT_UPDATE_COMMAND =
-  "git fetch origin +refs/heads/main:refs/remotes/origin/main && (git merge --ff-only origin/main || git checkout --detach origin/main) && pnpm install && pnpm build && pnpm start";
+  "git fetch origin +refs/heads/main:refs/remotes/origin/main && (git merge --ff-only origin/main || git checkout --detach origin/main) && pnpm --config.trustPolicy=off --config.confirmModulesPurge=false install --force --frozen-lockfile && pnpm build && pnpm start";
 const DOCKER_UPDATE_COMMAND = "docker compose pull && docker compose up -d";
 const ANDROID_APK_NOTICE =
   "> [!IMPORTANT]\n" +
@@ -160,18 +162,22 @@ async function getUpdateChannelForCheckout(root: string, branch: string | null |
   return UPDATE_CHANNELS.stable;
 }
 
-function getManualGitApplyCommand(channel = UPDATE_CHANNELS.stable) {
+function getManualGitApplyCommand(channel = UPDATE_CHANNELS.stable, platform: ServerPlatform = "unknown") {
   const checkoutCommand =
     channel.id === "staging"
       ? `git show-ref --verify --quiet refs/heads/${channel.branch} && (git checkout ${channel.branch} && git merge --ff-only ${channel.targetRef}) || git checkout -b ${channel.branch} ${channel.targetRef}`
       : `(git merge --ff-only ${channel.targetRef} || git checkout --detach ${channel.targetRef})`;
-  return `git fetch ${UPDATE_REMOTE} ${channel.fetchRef} && ${checkoutCommand} && pnpm install --frozen-lockfile && pnpm --filter @marinara-engine/shared build && pnpm --filter @marinara-engine/server --filter @marinara-engine/client --parallel run build`;
+  const buildCommand =
+    platform === "android-termux"
+      ? "pnpm --filter @marinara-engine/shared build && pnpm --filter @marinara-engine/server build && pnpm --filter @marinara-engine/client build"
+      : "pnpm --filter @marinara-engine/shared build && pnpm --filter @marinara-engine/server --filter @marinara-engine/client --parallel run build";
+  return `git fetch ${UPDATE_REMOTE} ${channel.fetchRef} && ${checkoutCommand} && pnpm --config.trustPolicy=off --config.confirmModulesPurge=false ${PNPM_UPDATE_INSTALL_ARGS.join(" ")} && ${buildCommand}`;
 }
 
 function getManualUpdateCommand(installType: InstallType, platform: ServerPlatform, channel = UPDATE_CHANNELS.stable) {
   if (installType === "docker") return DOCKER_UPDATE_COMMAND;
   if (installType === "git" && channel.id === "staging") {
-    return getManualGitApplyCommand(channel);
+    return getManualGitApplyCommand(channel, platform);
   }
   if (installType === "git") return getGitLauncherCommand(platform);
   return null;
@@ -406,7 +412,7 @@ async function resolvePinnedPnpmRunner(root: string): Promise<PnpmRunner> {
 
 async function runPinnedPnpm(root: string, args: string[], timeout: number) {
   const runner = await resolvePinnedPnpmRunner(root);
-  await execFileAsync(runner.command, [...runner.prefixArgs, ...args], {
+  await execFileAsync(runner.command, [...runner.prefixArgs, ...PNPM_NONINTERACTIVE_ARGS, ...args], {
     cwd: root,
     timeout,
     shell: process.platform === "win32",
@@ -416,6 +422,11 @@ async function runPinnedPnpm(root: string, args: string[], timeout: number) {
 
 async function runPinnedBuild(root: string) {
   await runPinnedPnpm(root, ["--filter", "@marinara-engine/shared", "build"], 120_000);
+  if (process.platform === "android") {
+    await runPinnedPnpm(root, ["--filter", "@marinara-engine/server", "build"], 300_000);
+    await runPinnedPnpm(root, ["--filter", "@marinara-engine/client", "build"], 300_000);
+    return;
+  }
   await runPinnedPnpm(
     root,
     ["--filter", "@marinara-engine/server", "--filter", "@marinara-engine/client", "--parallel", "run", "build"],
@@ -824,7 +835,7 @@ export async function updatesRoutes(app: FastifyInstance) {
       }
 
       // Step 2: pnpm install
-      await runPinnedPnpm(root, ["install", "--frozen-lockfile"], 120_000);
+      await runPinnedPnpm(root, PNPM_UPDATE_INSTALL_ARGS, 180_000);
 
       // Step 3: Rebuild all packages
       await runPinnedBuild(root);

@@ -10,6 +10,7 @@
 #   • Local sidecar model (llama-server / Gemma)
 #   • Local embedding model (onnxruntime + all-MiniLM-L6-v2)
 #   • Memory recall (semantic search)
+#   • Local Whisper voice input (Conversation call speech-to-text)
 # ──────────────────────────────────────────────
 
 # ── Stage 1: Build ──
@@ -77,7 +78,9 @@ COPY packages/client/package.json packages/client/
 RUN --mount=type=cache,target=/app/.pnpm-store \
     pnpm install --frozen-lockfile --prod --ignore-scripts && \
     pnpm rebuild sharp && \
-    rm -rf node_modules/.pnpm/onnxruntime-node@* \
+    rm -rf .pnpm/onnxruntime-node@* \
+           .pnpm/onnxruntime-web@* \
+           node_modules/.pnpm/onnxruntime-node@* \
            node_modules/.pnpm/onnxruntime-web@* \
            packages/server/node_modules/onnxruntime-node \
            packages/server/node_modules/onnxruntime-web
@@ -85,6 +88,7 @@ RUN --mount=type=cache,target=/app/.pnpm-store \
 # Archive node_modules preserving pnpm symlinks — Docker COPY
 # dereferences them which would break module resolution.
 RUN tar cf /tmp/node_modules.tar \
+    .pnpm \
     node_modules \
     packages/shared/node_modules \
     packages/server/node_modules 2>/dev/null; true
@@ -109,12 +113,18 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 
+# Fail the image build if pnpm's symlinked virtual store is incomplete.
+RUN node -e "for (const dep of ['fastify', '@fastify/cors', 'sharp']) require.resolve(dep, { paths: ['/app/packages/server'] })"
+
 # Copy built artifacts from builder
 COPY --from=builder /app/packages/shared/dist packages/shared/dist
 COPY --from=builder /app/packages/server/dist packages/server/dist
 COPY --from=builder /app/packages/client/dist packages/client/dist
 COPY scripts/docker-entrypoint.mjs /usr/local/bin/marinara-docker-entrypoint.mjs
 COPY scripts/install-backgroundremover.mjs scripts/install-backgroundremover.mjs
+
+# User guides served by the in-app documentation viewer (/api/docs)
+COPY docs/ docs/
 
 # Ensure data directory exists
 RUN mkdir -p /app/data && \

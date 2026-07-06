@@ -1,11 +1,11 @@
 {
   "name": "@marinara-engine/client",
   "private": true,
-  "version": "2.0.9",
+  "version": "2.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node ./scripts/build.mjs",
     "clean": "node -e \"const fs=require('fs');['dist','tsconfig.tsbuildinfo'].forEach(p=>{try{fs.rmSync(p,{recursive:true,force:true})}catch{}})\"",
     "preview": "vite preview",
     "lint": "eslint ."

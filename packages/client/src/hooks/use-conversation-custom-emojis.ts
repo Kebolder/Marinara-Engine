@@ -5,6 +5,7 @@
 // emojis override a global of the same name (owner-wins). Used by the message
 // renderer, the composer autocomplete, and the picker's Custom tab.
 // ──────────────────────────────────────────────
+import { useRef } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
 import { useChatStore } from "../stores/chat.store";
@@ -36,6 +37,7 @@ function displayName(row: { data?: unknown; name?: unknown } | undefined, fallba
 }
 
 export function useConversationCustomEmojis(): { list: ConversationCustomEmoji[]; map: Map<string, string> } {
+  const stableResultRef = useRef<{ list: ConversationCustomEmoji[]; map: Map<string, string> } | null>(null);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: activeChat } = useChat(activeChatId);
   const personaId = (activeChat as { personaId?: string | null } | undefined)?.personaId ?? null;
@@ -90,7 +92,31 @@ export function useConversationCustomEmojis(): { list: ConversationCustomEmoji[]
     }
   });
 
-  const list = [...byName.values()];
-  const map = new Map(list.map((emoji) => [emoji.name, emoji.url] as const));
-  return { list, map };
+  // [#3223] The derivation above rebuilds fresh objects every render (the
+  // useQueries result arrays churn identity per render), but the resolved set
+  // rarely changes. Reuse the previous { list, map } when it is element-wise
+  // identical — every mounted ConversationMessage receives `map` as a prop, so
+  // a fresh Map per render broke React.memo for the whole transcript on every
+  // streaming frame (the #3164 disease; same ref-reuse pattern as ChatArea's
+  // chatCharacterRows).
+  const next = [...byName.values()];
+  const previous = stableResultRef.current;
+  if (
+    previous &&
+    previous.list.length === next.length &&
+    next.every((emoji, index) => {
+      const before = previous.list[index]!;
+      return (
+        before.name === emoji.name &&
+        before.url === emoji.url &&
+        before.source === emoji.source &&
+        before.editable === emoji.editable
+      );
+    })
+  ) {
+    return previous;
+  }
+  const result = { list: next, map: new Map(next.map((emoji) => [emoji.name, emoji.url] as const)) };
+  stableResultRef.current = result;
+  return result;
 }

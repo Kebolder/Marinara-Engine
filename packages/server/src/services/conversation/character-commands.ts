@@ -11,11 +11,13 @@
 // - [selfie], [selfie: context="description of the selfie"], [selfie: "description"], or [selfie: description]
 // - [memory: target="CharName", summary="description of the memory"]
 // - [scene: scenario="...", background="...", plan="..."] (initiate a mini-roleplay scene)
+// - [call] or [call: reason="..."] (ring the user for an audio call; Conversation mode)
 // - [uno] (start a game of UNO at the table; Conversation mode)
 // - [chess] (start a one-on-one chess game against the user; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
+//   with optional `to "Character Name"` suffix to react to that character's most recent part instead
 // - [haptic: action="vibrate", intensity=0.5, duration=3] (haptic device feedback)
 // - <influence>text</influence> (OOC influence for connected roleplay, one-shot)
 // - <note>text</note> (durable note for connected roleplay, persists until cleared)
@@ -33,7 +35,7 @@
 // - [navigate: panel="...", tab="..."]
 // - [fetch: type="character|persona|lorebook|chat|preset", name="..."]
 
-import { normalizeTextForMatch } from "@marinara-engine/shared";
+import { normalizeTextForMatch, stripLeadingMessageTimestamps } from "@marinara-engine/shared";
 
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
 
@@ -72,6 +74,14 @@ export interface SceneCommand {
   background?: string;
   /** Optional plot plan / outline for how the scene unfolds */
   plan?: string;
+}
+
+export interface CallCommand {
+  /** Ring the user for a Conversation-mode audio call. Param-less or optional reason/greeting. */
+  type: "call";
+  reason?: string;
+  /** Optional first thing to say after the user answers. */
+  greeting?: string;
 }
 
 export interface UnoCommand {
@@ -137,6 +147,13 @@ export interface ReactCommand {
   type: "react";
   /** The reaction token: a unicode emoji (e.g. "😂") or a custom-emoji ref `:name:`. */
   emoji: string;
+  /**
+   * Optional target character name (`[react: 😂 to "Name"]`): react to that
+   * character's most recent part instead of the user's latest message. Resolved
+   * against chat characters at execution time; unresolvable names fall back to
+   * the default user-message target.
+   */
+  targetCharacter?: string;
 }
 
 // ── Assistant commands (Professor Mari) ──
@@ -332,6 +349,7 @@ export type CharacterCommand =
   | SelfieCommand
   | MemoryCommand
   | SceneCommand
+  | CallCommand
   | UnoCommand
   | ChessCommand
   | InfluenceCommand
@@ -357,6 +375,7 @@ const CROSS_POST_RE = /\[cross_post:\s*target="([^"]+)"\]/gi;
 const SELFIE_RE = /\[selfie(?::\s*(?:context="([^"]*)"|"([^"]*)"|([^\]\r\n"]+)))?\]/gi;
 const MEMORY_RE = /\[memory:\s*target="([^"]+)"\s*,\s*summary="([^"]+)"\]/gi;
 const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+const CALL_RE = new RegExp(`\\[call(?::\\s*(${QUOTED_PARAM_BLOCK}))?\\]`, "gi");
 // Param-less UNO trigger. Tolerates a stray `[uno: ...]` so a chatty model can't dodge the match.
 const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
 // Param-less chess trigger. Same tolerant shape as UNO_RE.
@@ -364,12 +383,69 @@ const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
-// React to the user's latest message. Accepts [react: emoji="😂"], [react: "😂"], or
-// [react: 😂] — and likewise for a custom emoji ref :name:.
-const REACT_RE = /\[react:\s*(?:emoji="([^"\]]+)"|"([^"\]]+)"|([^\]\r\n"]+))\]/gi;
+// React with an emoji. Accepts [react: emoji="😂"], [react: "😂"], or [react: 😂]
+// — and likewise for a custom emoji ref :name:. An optional trailing
+// `to "Character Name"` (quotes optional) aims the reaction at that character's
+// most recent part instead of the user's latest message.
+// Deliberately a single-quantifier capture of the whole bracket body: a
+// suffix-aware regex with overlapping whitespace quantifiers is super-linear on
+// degenerate inputs (ReDoS), so the short captured body is split
+// deterministically in parseReactBody instead.
+const REACT_RE = /\[react:([^\]\r\n]+)\]/gi;
+
+/** Split a `[react: ...]` body into its emoji token + optional `to "Name"` target. */
+function parseReactBody(body: string): { emoji: string; targetCharacter?: string } | null {
+  const trimmed = body.trim();
+  // Tolerate spaces around '=' — a common model malformation of the advertised
+  // emoji="…" syntax.
+  const keyForm = trimmed.match(/^emoji\s*=\s*"/i);
+  let emoji: string;
+  let rest: string;
+  let quotedForm = false;
+  if (keyForm) {
+    quotedForm = true;
+    const close = trimmed.indexOf('"', keyForm[0].length);
+    if (close === -1) return null;
+    emoji = trimmed.slice(keyForm[0].length, close).trim();
+    rest = trimmed.slice(close + 1);
+  } else if (trimmed.startsWith('"')) {
+    quotedForm = true;
+    const close = trimmed.indexOf('"', 1);
+    if (close === -1) return null;
+    emoji = trimmed.slice(1, close).trim();
+    rest = trimmed.slice(close + 1);
+  } else {
+    const ws = trimmed.search(/\s/);
+    emoji = ws === -1 ? trimmed : trimmed.slice(0, ws);
+    rest = ws === -1 ? "" : trimmed.slice(ws);
+  }
+  if (!emoji || /^to$/i.test(emoji)) return null;
+  const suffix = rest.trim();
+  if (suffix) {
+    const toMatch = suffix.match(/^to\s+(.+)$/i);
+    if (toMatch) {
+      let target = toMatch[1]!.trim();
+      if (target.startsWith('"')) {
+        // Take the quoted name, tolerating junk after (or a missing) closing quote.
+        const close = target.indexOf('"', 1);
+        target = (close > 0 ? target.slice(1, close) : target.slice(1)).trim();
+      }
+      return target ? { emoji, targetCharacter: target } : { emoji };
+    }
+    // No recognizable target marker after a bare token — keep the old grammar's
+    // behavior where the whole body was the (possibly junk) emoji token. Bodies
+    // containing quotes were unreachable under the old grammar (prose asides
+    // like `[react: she said "hi"]`) — reject them rather than minting a junk
+    // text chip.
+    if (!quotedForm) return trimmed.includes('"') ? null : { emoji: trimmed };
+  }
+  return emoji.includes('"') ? null : { emoji };
+}
 const DIRECT_MESSAGE_RE = new RegExp(`\\[dm:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const INFLUENCE_RE = /<influence>([\s\S]*?)<\/influence>/gi;
 const NOTE_RE = /<note>([\s\S]*?)<\/note>/gi;
+const INFLUENCE_BRACKET_RE = new RegExp(`\\[influence:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+const NOTE_BRACKET_RE = new RegExp(`\\[note:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 
 // Assistant command regexes
 const CREATE_PERSONA_RE = new RegExp(`\\[create_persona:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -443,6 +519,18 @@ function parseQuotedParam(params: string, key: string, allowEmpty = false): stri
   const value = decodeQuotedParamValue(rawValue);
   if (!allowEmpty && value.length === 0) return undefined;
   return value;
+}
+
+function parseCommandTextParam(params: string, keys: string[]): string {
+  for (const key of keys) {
+    const value = parseQuotedParam(params, key);
+    if (value !== undefined) return value;
+  }
+  return params
+    .trim()
+    .replace(/^["“”‘’]\s*/, "")
+    .replace(/\s*["“”‘’]$/, "")
+    .trim();
 }
 
 function parseStringList(value: string | undefined): string[] | undefined {
@@ -684,11 +772,37 @@ function parseCreatePresetBlock(raw: string): CreatePresetCommand | null {
       .map((choiceBlock): CreatePresetChoiceBlockCommand | null => {
         if (!choiceBlock || typeof choiceBlock !== "object") return null;
         const data = choiceBlock as Record<string, unknown>;
-        const variableName = typeof data.variableName === "string" ? data.variableName.trim() : "";
-        const question = typeof data.question === "string" ? data.question.trim() : "";
-        const rawOptions = Array.isArray(data.options) ? data.options : [];
+        const variableName =
+          typeof data.variableName === "string"
+            ? data.variableName.trim()
+            : typeof data.variable === "string"
+              ? data.variable.trim()
+              : typeof data.name === "string"
+                ? data.name.trim()
+                : typeof data.key === "string"
+                  ? data.key.trim()
+                  : "";
+        const question =
+          typeof data.question === "string"
+            ? data.question.trim()
+            : typeof data.prompt === "string"
+              ? data.prompt.trim()
+              : typeof data.label === "string"
+                ? data.label.trim()
+                : "";
+        const rawOptions = Array.isArray(data.options)
+          ? data.options
+          : Array.isArray(data.choices)
+            ? data.choices
+            : Array.isArray(data.values)
+              ? data.values
+              : [];
         const options = rawOptions
           .map((option): CreatePresetChoiceOptionCommand | null => {
+            if (typeof option === "string" || typeof option === "number" || typeof option === "boolean") {
+              const text = String(option).trim();
+              return text ? { label: text, value: text } : null;
+            }
             if (!option || typeof option !== "object") return null;
             const optionData = option as Record<string, unknown>;
             const label =
@@ -872,6 +986,20 @@ export function parseCharacterCommands(content: string): {
     if (cmd.scenario) commands.push(cmd);
   }
 
+  // Parse call command — ring the user for an audio call. Only one per message.
+  for (const match of content.matchAll(CALL_RE)) {
+    const params = match[1] ?? "";
+    const reason = parseQuotedParam(params, "reason");
+    const greeting = parseQuotedParam(params, "greeting") ?? parseQuotedParam(params, "message");
+    const legacyReason = reason || greeting ? "" : params.replace(/^"|"$/g, "").trim();
+    commands.push({
+      type: "call",
+      reason: reason || legacyReason || undefined,
+      greeting: greeting || undefined,
+    });
+    break;
+  }
+
   // Parse uno command — start a game of UNO. Param-less; only one per message.
   for (const _unoMatch of content.matchAll(UNO_RE)) {
     commands.push({ type: "uno" });
@@ -890,9 +1018,21 @@ export function parseCharacterCommands(content: string): {
     if (text) commands.push({ type: "influence", content: text });
   }
 
+  // Backward compatibility for older prompts that described this as [influence: summary="..."].
+  for (const match of content.matchAll(INFLUENCE_BRACKET_RE)) {
+    const text = stripConversationPromptTimestamps(parseCommandTextParam(match[1]!, ["summary", "text", "content"]));
+    if (text) commands.push({ type: "influence", content: text });
+  }
+
   // Parse note commands (<note>text</note>)
   for (const match of content.matchAll(NOTE_RE)) {
     const text = stripConversationPromptTimestamps(match[1]!.trim());
+    if (text) commands.push({ type: "note", content: text });
+  }
+
+  // Backward compatibility for older prompts that described this as [note: text="..."].
+  for (const match of content.matchAll(NOTE_BRACKET_RE)) {
+    const text = stripConversationPromptTimestamps(parseCommandTextParam(match[1]!, ["text", "summary", "content"]));
     if (text) commands.push({ type: "note", content: text });
   }
 
@@ -941,10 +1081,11 @@ export function parseCharacterCommands(content: string): {
     }
   }
 
-  // Parse reaction commands — react to the user's latest message with an emoji
+  // Parse reaction commands — react with an emoji to the user's latest message,
+  // or to a specific character's most recent part via the `to "Name"` suffix.
   for (const match of content.matchAll(REACT_RE)) {
-    const emoji = (match[1] ?? match[2] ?? match[3])?.trim();
-    if (emoji) commands.push({ type: "react", emoji });
+    const parsed = parseReactBody(match[1]!);
+    if (parsed) commands.push({ type: "react", ...parsed });
   }
 
   // Parse assistant commands (Professor Mari)
@@ -1072,14 +1213,20 @@ export function parseCharacterCommands(content: string): {
     .replace(SELFIE_RE, "")
     .replace(MEMORY_RE, "")
     .replace(SCENE_RE, "")
+    .replace(CALL_RE, "")
     .replace(UNO_RE, "")
     .replace(CHESS_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")
-    .replace(REACT_RE, "")
+    // Only strip react tags that actually parse into a command — bodies
+    // parseReactBody rejects (junk prose with quotes, unterminated quotes)
+    // stay visible, matching the old stricter grammar's behavior.
+    .replace(REACT_RE, (match, reactBody: string) => (parseReactBody(reactBody) ? "" : match))
     .replace(INFLUENCE_RE, "")
     .replace(NOTE_RE, "")
+    .replace(INFLUENCE_BRACKET_RE, "")
+    .replace(NOTE_BRACKET_RE, "")
     .replace(CREATE_PERSONA_RE, "")
     .replace(CREATE_CHARACTER_RE, "")
     .replace(UPDATE_CHARACTER_RE, "")
@@ -1111,8 +1258,12 @@ export function parseCharacterCommands(content: string): {
  *
  * The authoritative command list and cleaned content come from a single whole-response
  * parse, so no command is dropped or reordered even if one spans a name boundary;
- * only the attribution is layered on. Commands with no matching segment (and text
- * before the first recognised name prefix) fall back to `fallbackCharacterId`.
+ * only the attribution is layered on. Commands with no matching segment fall back
+ * to `fallbackCharacterId`. Text ABOVE the first recognised name prefix is credited
+ * to the first named section's speaker (models park reply-opening commands like a
+ * `[react:]` header there, and crediting the generation-primary character instead
+ * deterministically mis-attributed every such command to the chat's first
+ * character — #3220); with no named sections at all it falls back as before.
  */
 export function parseCharacterCommandsBySpeaker(
   content: string,
@@ -1129,19 +1280,33 @@ export function parseCharacterCommandsBySpeaker(
 
   // Segment the response by leading "Name: " line prefixes, mirroring the client's
   // parseNamePrefixFormat so server-side attribution matches the rendered split.
-  const segments: Array<{ characterId: string | null; text: string }> = [];
+  // Segment the timestamp-stripped shape — the client strips leaked [HH:MM]
+  // tokens before rendering, so a line like "[12:01] Alice: hey" is Alice's
+  // section on screen and must be Alice's for attribution too. (Attribution
+  // only: commands and cleanContent still come from the raw whole-response
+  // parse above, and the strip never touches [command:] tokens.)
+  const attributionContent = stripLeadingMessageTimestamps(content);
+  const segments: Array<{ characterId: string | null; text: string; leading?: boolean }> = [];
   let currentId: string | null = fallbackCharacterId;
+  let inLeadingRegion = true;
   let currentLines: string[] = [];
   const flush = () => {
-    if (currentLines.length > 0) segments.push({ characterId: currentId, text: currentLines.join("\n") });
+    if (currentLines.length > 0) {
+      segments.push({
+        characterId: currentId,
+        text: currentLines.join("\n"),
+        ...(inLeadingRegion ? { leading: true } : {}),
+      });
+    }
     currentLines = [];
   };
-  for (const line of content.split("\n")) {
+  for (const line of attributionContent.split("\n")) {
     const colonIdx = line.indexOf(": ");
     if (colonIdx > 0) {
       const mappedId = nameToId.get(normalizeTextForMatch(line.slice(0, colonIdx)));
       if (mappedId) {
         flush();
+        inLeadingRegion = false;
         currentId = mappedId;
         currentLines = [line.slice(colonIdx + 2)];
         continue;
@@ -1150,6 +1315,15 @@ export function parseCharacterCommandsBySpeaker(
     currentLines.push(line);
   }
   flush();
+
+  // Credit the leading region (above the first name prefix) to the speaker whose
+  // section it opens, not the generation-primary character.
+  const firstNamed = segments.find((segment) => !segment.leading);
+  if (firstNamed) {
+    for (const segment of segments) {
+      if (segment.leading) segment.characterId = firstNamed.characterId;
+    }
+  }
 
   // Build a per-command attribution queue keyed by command shape, consumed in
   // segment order so duplicate commands attribute left-to-right.

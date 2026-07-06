@@ -92,6 +92,12 @@ export interface TurnGameEngine<TState, TMove, TConfig, TPublic = unknown> {
   readonly label: string;
   readonly minPlayers: number;
   readonly maxPlayers: number;
+  /**
+   * True when seats hold private information other players must not learn
+   * (e.g. UNO hands); false for open-information games (e.g. chess). Drives
+   * how freely a seated character may talk about their own position in chat.
+   */
+  readonly hiddenInformation: boolean;
 
   /** The default house-rule config (used when the UI sends nothing). */
   defaultConfig(): TConfig;
@@ -124,6 +130,15 @@ export interface TurnGameEngine<TState, TMove, TConfig, TPublic = unknown> {
    * chats mid-game. Reveals no private hands.
    */
   spectatorSummary(state: TState): string;
+
+  /**
+   * Like `spectatorSummary`, but from `seatId`'s own perspective: includes that
+   * seat's OWN private information (their hand, their color, their last move)
+   * so a seated character can talk about the game they are actually playing.
+   * Other seats' hidden information stays redacted. Must fall back to the
+   * spectator text when `seatId` isn't seated in this game.
+   */
+  participantSummary(state: TState, seatId: string): string;
 
   /** A deterministic legal move, so a misbehaving bot can never stall the game. */
   pickFallbackMove(state: TState, seatId: string): TMove;

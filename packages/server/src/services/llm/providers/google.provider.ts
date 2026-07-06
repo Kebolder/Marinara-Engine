@@ -366,6 +366,16 @@ function fileParts(files?: ChatMessage["files"]): Array<Record<string, unknown>>
   return parts;
 }
 
+function mediaParts(media?: ChatMessage["media"]): Array<Record<string, unknown>> {
+  if (!media?.length) return [];
+  const parts: Array<Record<string, unknown>> = [];
+  for (const item of media) {
+    const match = item.data.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) parts.push({ inline_data: { mime_type: item.mimeType || match[1], data: match[2] } });
+  }
+  return parts;
+}
+
 function parseToolResultContent(content: string): Record<string, unknown> {
   const trimmed = content.trim();
   if (!trimmed) return { result: "" };
@@ -412,7 +422,7 @@ function formatGoogleContents(
     }
 
     if (message.role === "user" || message.role === "assistant") {
-      const parts = [...fileParts(message.files), ...imageParts(message.images)];
+      const parts = [...fileParts(message.files), ...imageParts(message.images), ...mediaParts(message.media)];
       if (message.content?.trim()) parts.push({ text: message.content });
       if (parts.length > 0) contents.push({ role: message.role === "assistant" ? "model" : "user", parts });
     }
@@ -484,7 +494,11 @@ export class GoogleProvider extends BaseLLMProvider {
     const isGemini3 = /gemini-3/i.test(model);
     const supportsThinking = isGemini3 || /gemini-2\.5|gemini-2\.0-flash-thinking/i.test(model);
     let thinkingConfig: Record<string, unknown> | undefined;
-    if (this.shouldSendParameter(options, "reasoningEffort") && supportsThinking && (options.enableThinking || options.reasoningEffort)) {
+    if (
+      this.shouldSendParameter(options, "reasoningEffort") &&
+      supportsThinking &&
+      (options.enableThinking || options.reasoningEffort)
+    ) {
       if (isGemini3) {
         const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
         thinkingConfig = {
@@ -516,7 +530,9 @@ export class GoogleProvider extends BaseLLMProvider {
         ...(this.shouldSendParameter(options, "temperature") ? { temperature: options.temperature ?? 1 } : {}),
         ...(this.shouldSendParameter(options, "maxTokens") ? { maxOutputTokens: maxTokens } : {}),
         ...(this.shouldSendParameter(options, "topP") ? { topP: options.topP ?? 1 } : {}),
-        ...(this.shouldSendParameter(options, "topK") && typeof options.topK === "number" && Number.isFinite(options.topK)
+        ...(this.shouldSendParameter(options, "topK") &&
+        typeof options.topK === "number" &&
+        Number.isFinite(options.topK)
           ? { topK: Math.max(0, Math.trunc(options.topK)) }
           : {}),
         ...(this.shouldSendParameter(options, "frequencyPenalty") && options.frequencyPenalty
@@ -604,7 +620,11 @@ export class GoogleProvider extends BaseLLMProvider {
       !suppressModelParameters && (isGemini3 || /gemini-2\.5|gemini-2\.0-flash-thinking/i.test(model));
 
     let thinkingConfig: Record<string, unknown> | undefined;
-    if (this.shouldSendParameter(options, "reasoningEffort") && supportsThinking && (options.enableThinking || options.reasoningEffort)) {
+    if (
+      this.shouldSendParameter(options, "reasoningEffort") &&
+      supportsThinking &&
+      (options.enableThinking || options.reasoningEffort)
+    ) {
       if (isGemini3) {
         const levelMap = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const;
         thinkingConfig = {
@@ -640,7 +660,7 @@ export class GoogleProvider extends BaseLLMProvider {
     // Convert to Gemini format — filter out empty-content messages
     const systemMessages = messages.filter((m) => m.role === "system" && m.content?.trim());
     const chatMessages = messages.filter(
-      (m) => m.role !== "system" && (m.content?.trim() || m.images?.length || m.files?.length),
+      (m) => m.role !== "system" && (m.content?.trim() || m.images?.length || m.files?.length || m.media?.length),
     );
 
     const contents = chatMessages.map((m) => {
@@ -651,7 +671,11 @@ export class GoogleProvider extends BaseLLMProvider {
         return { role: "model" as const, parts: storedParts };
       }
 
-      const parts: Array<Record<string, unknown>> = [...fileParts(m.files), ...imageParts(m.images)];
+      const parts: Array<Record<string, unknown>> = [
+        ...fileParts(m.files),
+        ...imageParts(m.images),
+        ...mediaParts(m.media),
+      ];
       if (m.content?.trim()) parts.push({ text: m.content });
       return {
         role: m.role === "assistant" ? ("model" as const) : ("user" as const),

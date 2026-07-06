@@ -107,6 +107,40 @@ export class OpenAIProvider extends BaseLLMProvider {
     );
   }
 
+  private static dataUrlPayload(data: string): { mimeType: string; base64: string } | null {
+    const match = data.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) return null;
+    return { mimeType: match[1]?.toLowerCase() ?? "", base64: match[2] ?? "" };
+  }
+
+  private static openAIAudioFormat(mimeType: string, filename?: string): "wav" | "mp3" | null {
+    const normalized = mimeType.toLowerCase().split(";", 1)[0] ?? "";
+    const ext = filename?.toLowerCase().split(".").pop();
+    if (normalized === "audio/wav" || normalized === "audio/x-wav" || normalized === "audio/wave" || ext === "wav") {
+      return "wav";
+    }
+    if (normalized === "audio/mpeg" || normalized === "audio/mp3" || ext === "mp3") return "mp3";
+    return null;
+  }
+
+  private static openAIMediaContentParts(media: ChatMessage["media"] | undefined): Array<Record<string, unknown>> {
+    if (!media?.length) return [];
+    const parts: Array<Record<string, unknown>> = [];
+    for (const item of media) {
+      if (item.kind !== "audio") continue;
+      const payload = OpenAIProvider.dataUrlPayload(item.data);
+      if (!payload) continue;
+      const format = OpenAIProvider.openAIAudioFormat(item.mimeType || payload.mimeType, item.filename);
+      if (!format) continue;
+      parts.push({ type: "input_audio", input_audio: { data: payload.base64, format } });
+    }
+    return parts;
+  }
+
+  private static hasProviderNativeMedia(messages: ChatMessage[]): boolean {
+    return messages.some((message) => message.media?.length);
+  }
+
   private static async parseJsonBody<T>(response: Response, context: string): Promise<T> {
     const raw = await response.text();
     try {
@@ -809,7 +843,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         if (m.role === "tool") return true;
         if (m.role === "assistant" && m.tool_calls?.length) return true;
         // Drop messages with no text or provider-native attachments.
-        return m.content?.trim() || m.images?.length || m.files?.length;
+        return m.content?.trim() || m.images?.length || m.files?.length || m.media?.length;
       })
       .map((m) => {
         const reasoningPayload =
@@ -826,7 +860,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           };
         }
         // Multimodal/file input: use content array format
-        if (m.images?.length || m.files?.length) {
+        if (m.images?.length || m.files?.length || m.media?.length) {
           const parts: Array<Record<string, unknown>> = [
             ...OpenAIProvider.openAIFileContentParts(m.files, "chat_completions"),
           ];
@@ -834,6 +868,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           for (const img of m.images ?? []) {
             parts.push({ type: "image_url", image_url: { url: img } });
           }
+          parts.push(...OpenAIProvider.openAIMediaContentParts(m.media));
           return { role: m.role, content: parts };
         }
         // Map system → developer for newer OpenAI models
@@ -854,7 +889,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         : this.applyMaxTokensCap(contextFit.maxTokens ?? configuredMaxTokens);
 
     // Route to Responses API for models that require it
-    if (this.useResponsesAPI(options.model, options)) {
+    if (!OpenAIProvider.hasProviderNativeMedia(messages) && this.useResponsesAPI(options.model, options)) {
       logger.debug(
         "[OpenAI] Routing chat() to Responses API for model=%s stream=%s",
         options.model,
@@ -1120,7 +1155,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         : this.applyMaxTokensCap(contextFit.maxTokens ?? configuredMaxTokens);
 
     // Route to Responses API for models that require it
-    if (this.useResponsesAPI(options.model, options)) {
+    if (!OpenAIProvider.hasProviderNativeMedia(messages) && this.useResponsesAPI(options.model, options)) {
       logger.debug(
         "[OpenAI] Routing chatComplete() to Responses API for model=%s onToken=%s",
         options.model,

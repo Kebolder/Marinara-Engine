@@ -1197,7 +1197,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       ) {
         return reply.status(409).send({
           error:
-            "Embedding dimensions changed. Re-vectorize all entries instead of only missing entries before switching embedding models.",
+            "Embedding dimensions changed. Use Re-vectorize all entries instead of only missing entries before switching embedding models.",
         });
       }
       for (let j = 0; j < batchEntries.length; j++) {

@@ -66,7 +66,6 @@ export type MetadataUpdater = (current: MetadataPatch) => MetadataPatch | Promis
 export type MetadataPatchInput = MetadataPatch | MetadataUpdater;
 
 const MAX_APPEND_BYTES = 16 * 1024;
-const MAX_LOREBOOK_ENTRY_CONTENT_BYTES = 64 * 1024;
 const MAX_LOREBOOK_ENTRY_DESCRIPTION_BYTES = 4 * 1024;
 const MAX_LOREBOOK_ENTRY_NAME_LENGTH = 160;
 const MAX_LOREBOOK_ENTRY_KEYS = 24;
@@ -774,7 +773,7 @@ async function saveLorebookEntry(
   }
 
   const name = args.name.trim().slice(0, MAX_LOREBOOK_ENTRY_NAME_LENGTH);
-  const content = trimToUtf8Bytes(args.content.trim(), MAX_LOREBOOK_ENTRY_CONTENT_BYTES);
+  const content = args.content.trim();
   const description =
     typeof args.description === "string" && args.description.trim()
       ? trimToUtf8Bytes(args.description.trim(), MAX_LOREBOOK_ENTRY_DESCRIPTION_BYTES)

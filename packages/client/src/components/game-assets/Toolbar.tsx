@@ -154,6 +154,7 @@ export function Toolbar({
     open
       ? createPortal(
           <div
+            data-chat-floating-panel
             ref={ref}
             className="fixed z-[60] min-w-[10rem] rounded-lg border border-[var(--border)] bg-[var(--card)] py-1 shadow-xl"
             style={{ left: pos.x, top: pos.y }}

@@ -16,10 +16,12 @@ import { createPortal } from "react-dom";
 import {
   useDeleteSummaryEntry,
   useGenerateSummary,
+  useRollingSummaryBackfill,
   useToggleSummaryEntry,
   useUpdateChatMetadata,
   useUpdateSummaryEntry,
 } from "../../hooks/use-chats";
+import { useRollingBackfillStore } from "../../stores/backfill.store";
 import {
   Check,
   ChevronRight,
@@ -28,6 +30,7 @@ import {
   Loader2,
   PenLine,
   Plus,
+  RefreshCw,
   Save,
   ScrollText,
   Sparkles,
@@ -158,7 +161,8 @@ function isSummaryConnectionOption(value: unknown): value is SummaryConnectionOp
     typeof record.name === "string" &&
     typeof record.model === "string" &&
     typeof record.provider === "string" &&
-    record.provider !== "image_generation"
+    record.provider !== "image_generation" &&
+    record.provider !== "video_generation"
   );
 }
 
@@ -303,6 +307,9 @@ export function SummaryPopover({
   const toggleSummaryEntry = useToggleSummaryEntry();
   const entryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const { startBackfill, stopBackfill } = useRollingSummaryBackfill();
+  const backfillState = useRollingBackfillStore();
 
   // Per-chat preference, default off — no global fallback, so one chat never
   // inherits another's setting.
@@ -969,6 +976,62 @@ export function SummaryPopover({
                       <span>user messages</span>
                     </span>
                   </label>
+
+                  {backfillState.status === "running" && backfillState.chatId === chatId && (
+                    <div className="space-y-1.5">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--border)]">
+                        <div
+                          role="progressbar"
+                          aria-valuenow={backfillState.completedBatches}
+                          aria-valuemin={0}
+                          aria-valuemax={backfillState.totalBatches}
+                          aria-labelledby="backfill-progress-label"
+                          className="h-full rounded-full bg-[var(--primary)] transition-all duration-300"
+                          style={{
+                            width: `${backfillState.totalBatches > 0 ? (backfillState.completedBatches / backfillState.totalBatches) * 100 : 0}%`,
+                          }}
+                        />
+                      </div>
+                      <p id="backfill-progress-label" className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                        {backfillState.currentRangeStart && backfillState.currentRangeEnd
+                          ? `Summarizing messages ${backfillState.currentRangeStart}-${backfillState.currentRangeEnd} (${backfillState.completedBatches}/${backfillState.totalBatches})`
+                          : `${backfillState.completedBatches}/${backfillState.totalBatches} batches`}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-1.5">
+                    {backfillState.status === "running" && backfillState.chatId === chatId ? (
+                      <button
+                        type="button"
+                        onClick={stopBackfill}
+                        className="flex items-center gap-1.5 rounded-md bg-[var(--destructive)]/10 px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/30 transition-colors hover:bg-[var(--destructive)]/20"
+                      >
+                        <Loader2 size="0.75rem" className="animate-spin" />
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          startBackfill({
+                            chatId,
+                            summaryEntries: displayEntries,
+                            batchSize: normalizedAutomaticSummaryInterval,
+                            maxMessagesPerBatch: persistedContextSize,
+                            promptTemplateId: activePromptTemplateId,
+                          });
+                        }}
+                        disabled={
+                          totalMessageCount === 0
+                        }
+                        className="flex items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <RefreshCw size="0.75rem" />
+                        Backfill Summary
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 

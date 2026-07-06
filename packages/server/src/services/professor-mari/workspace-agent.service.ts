@@ -18,9 +18,14 @@ import { createLLMProvider } from "../llm/provider-registry.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import {
+  appendReadableAttachmentsToContent,
+  extractFileAttachmentInputs,
+  extractImageAttachmentDataUrls,
+  getAttachmentFilename,
   resolveBaseUrl,
   mergeCustomParameters,
   normalizeServiceTier,
+  type PromptAttachment,
 } from "../../routes/generate/generate-route-utils.js";
 import { getFileStorageDir, getMonorepoRoot, getPort, getServerProtocol } from "../../config/runtime-config.js";
 import { apiConnections } from "../../db/schema/index.js";
@@ -67,6 +72,7 @@ type WorkspaceConnection = Pick<
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
+type ProfessorMariPromptAttachment = PromptAttachment;
 type WorkspaceCommandCall = {
   id: string;
   name: MariWorkspaceToolName;
@@ -372,7 +378,7 @@ Command families:
 - \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`.
 - \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits.
 - \`mari lorebooks\`: list, get, entries <lorebook-id>, search, create, update <lorebook-id>, add-entry <lorebook-id>, update-entry <entry-id>, delete-entry <entry-id>, link-character, unlink-character, delete.
-- \`mari presets\`: no dedicated shell helper — use \`app_data\` \`preset.*\` for preset-level reads/writes. Use \`mari db\` for advanced \`prompt_groups\`, \`prompt_sections\`, and \`choice_blocks\` edits after inspecting schemas.
+- \`mari presets\`: no dedicated shell helper — use \`app_data\` \`preset.*\` for preset reads/writes. \`preset.create\` and \`preset.update\` can include \`groups\`, \`sections\`, and \`choiceBlocks\` for preset variables. Use \`mari db\` only for advanced raw-table repairs after inspecting schemas.
 - \`mari chats\`: read-only list/get/messages/search.
 - \`mari agents\`: no dedicated shell helper — use \`app_data\` \`agent.*\` for agent configs.
 - \`mari extensions\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.
@@ -419,6 +425,7 @@ Field rules:
 - Writes: \`character.create|update\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry\`, \`theme.create|update|setActive\`, \`agent.create|update\`, \`preset.create|update\`.
 - Put write fields in \`data\` for creates and \`patch\` for updates. Use \`entryId\` for \`lorebook.updateEntry\`; use \`lorebookId\` only for a lorebook or for \`lorebook.addEntry\`.
 - New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, \`agent.create\`, \`preset.create\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
+- For \`preset.create\`, put prompt sections in \`data.sections\` and preset variables in \`data.choiceBlocks\`. Each choice block needs \`variableName\`, \`question\`, and \`options\` with \`label\`/\`value\` pairs.
 - Existing-data changes: use \`apply:true\` for requested \`*.update\`, \`lorebook.updateEntry\`, and \`theme.setActive\`. Marinara will save first and show the user an in-chat Keep/Restore review card for reversible changes.
 - Use \`apply:false\` only for explicit preview/dry-run requests or when you need to inspect validation before making a risky change.
 - Do not say "preview" unless you show the concrete fields/content in \`say\` or the UI has returned an explicit preview artifact.
@@ -427,6 +434,7 @@ Examples:
 {"say":"","commands":[{"name":"app_data","arguments":{"action":"lorebook.list","limit":50}}],"stop":false}
 {"say":"I found the lorebook. I'll read its entries now.","commands":[{"name":"app_data","arguments":{"action":"lorebook.entries","lorebookId":"lorebook-id","limit":100}}],"stop":false}
 {"say":"","commands":[{"name":"app_data","arguments":{"action":"persona.create","data":{"name":"Dr. Marisia Voss","description":"A successful alternate version of Mari.","personality":"Confident, witty, organized, still warmly sarcastic."},"reason":"User requested a test persona","apply":true}}],"stop":false}
+{"say":"","commands":[{"name":"app_data","arguments":{"action":"preset.create","data":{"name":"Test preset","sections":[{"name":"Main","content":"You are {{char}}.","role":"system"}],"choiceBlocks":[{"variableName":"tone","question":"Tone","options":[{"label":"Warm","value":"warm"},{"label":"Sharp","value":"sharp"}]}]},"reason":"User requested a preset with variables","apply":true}}],"stop":false}
 {"say":"","commands":[{"name":"app_data","arguments":{"action":"lorebook.updateEntry","entryId":"entry-id","patch":{"content":"new content"},"reason":"Update requested by user","apply":false}}],"stop":false}
 {"say":"Done — I created it and verified it saved.","commands":[],"stop":true}
 
@@ -482,6 +490,38 @@ function normalizeMariMaxTokens(value: unknown): number | undefined {
 
 function parseExtra(value: unknown): Record<string, unknown> {
   return parseJsonObject(value) ?? {};
+}
+
+function normalizeProfessorMariAttachments(value: unknown): ProfessorMariPromptAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((attachment): ProfessorMariPromptAttachment | null => {
+      if (!attachment || typeof attachment !== "object") return null;
+      const record = attachment as Record<string, unknown>;
+      const type = typeof record.type === "string" ? record.type.trim() : "";
+      const data = typeof record.data === "string" ? record.data.trim() : "";
+      if (!type || !data.startsWith("data:")) return null;
+      const name =
+        typeof record.name === "string" && record.name.trim()
+          ? record.name.trim()
+          : typeof record.filename === "string" && record.filename.trim()
+            ? record.filename.trim()
+            : "attachment";
+      return { type, data, name, filename: name };
+    })
+    .filter((attachment): attachment is ProfessorMariPromptAttachment => attachment !== null);
+}
+
+function appendProfessorMariAttachmentNames(content: string, attachments: ProfessorMariPromptAttachment[]): string {
+  const withReadableFiles = appendReadableAttachmentsToContent(content, attachments);
+  if (attachments.length === 0) return withReadableFiles;
+  const names = attachments
+    .map((attachment) => {
+      const label = typeof attachment.type === "string" && attachment.type.startsWith("image/") ? "image" : "file";
+      return `[Attached ${label}: ${getAttachmentFilename(attachment)}]`;
+    })
+    .join("\n");
+  return `${withReadableFiles.trim() || "Please inspect the attached file."}\n\n${names}`;
 }
 
 type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
@@ -1308,10 +1348,27 @@ export class ProfessorMariWorkspaceService {
     if (options?.clearHistory === true) await getMariDbService(this.app.db).clearHistory();
   }
 
-  async prompt(args: { chatId: string; text: string; connectionId?: string | null; onEvent: PromptEventSink }) {
+  async prompt(args: {
+    chatId: string;
+    text: string;
+    connectionId?: string | null;
+    attachments?: ProfessorMariPromptAttachment[];
+    onEvent: PromptEventSink;
+  }) {
     if (!this.enabled) throw new Error("Professor Mari workspace mode is disabled.");
     const chatStorage = createChatsStorage(this.app.db);
-    await chatStorage.createMessage({ chatId: args.chatId, role: "user", characterId: null, content: args.text });
+    const attachments = normalizeProfessorMariAttachments(args.attachments);
+    const userMessage = await chatStorage.createMessage({
+      chatId: args.chatId,
+      role: "user",
+      characterId: null,
+      content: args.text,
+    });
+    if (attachments.length > 0 && userMessage) {
+      const extra = { attachments };
+      await chatStorage.updateMessageExtra(userMessage.id, extra);
+      await chatStorage.updateSwipeExtra(userMessage.id, 0, extra);
+    }
 
     const connection = await this.resolveConnection(args.connectionId);
     if (!connection) throw new Error("Set up a language connection before using Professor Mari workspace mode.");
@@ -1323,8 +1380,40 @@ export class ProfessorMariWorkspaceService {
 
     const workspaceTrace: MariWorkspaceTraceItem[] = [];
     let assistantText = "";
+    let streamedVisibleText = "";
     let thinkingText = "";
     let totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const commandResultsForContinuity: WorkspaceCommandResult[] = [];
+    let assistantMessagePersisted = false;
+
+    const persistAssistantMessage = async () => {
+      const persistedText = assistantText.trim();
+      if (!persistedText || assistantMessagePersisted) return null;
+
+      const message = await chatStorage.createMessage({
+        chatId: args.chatId,
+        role: "assistant",
+        characterId: PROFESSOR_MARI_ID,
+        content: persistedText,
+      });
+      if (!message) return null;
+      assistantMessagePersisted = true;
+
+      const extraUpdate: Record<string, unknown> = {};
+      const storedTrace = sanitizeTraceForStorage(workspaceTrace);
+      if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
+      if (storedTrace.length > 0) extraUpdate.mariWorkspaceTimeline = storedTrace;
+      const continuity = buildWorkspaceContinuitySnapshot({
+        userText: args.text,
+        assistantText: persistedText,
+        commandResults: commandResultsForContinuity,
+      });
+      if (continuity) extraUpdate.mariWorkspaceContinuity = continuity;
+      extraUpdate.generationInfo = { provider: connection.provider, model: connection.model, usage: totalUsage };
+      await chatStorage.updateMessageExtra(message.id, extraUpdate);
+      await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
+      return message;
+    };
 
     try {
       await this.ensureMariCliShim();
@@ -1335,14 +1424,17 @@ export class ProfessorMariWorkspaceService {
         appendTraceThinking(workspaceTrace, delta);
         args.onEvent({ type: "thinking", data: delta });
       });
-      const commandResultsForContinuity: WorkspaceCommandResult[] = [];
       const repeatedFailureCounts = new Map<string, number>();
       let protocolRepairRounds = 0;
 
       for (let round = 0; round < MAX_COMMAND_ROUNDS; round += 1) {
         if (controller.signal.aborted) throw new Error("aborted");
-        const onToken = (chunk: string) => args.onEvent({ type: "token", data: chunk });
-      const result = await this.chatCompleteWorkspace(provider, messages, baseOptions, onToken);
+        streamedVisibleText = "";
+        const onToken = (chunk: string) => {
+          streamedVisibleText += chunk;
+          args.onEvent({ type: "token", data: chunk });
+        };
+        const result = await this.chatCompleteWorkspace(provider, messages, baseOptions, onToken);
         const usage = mapUsage(result.usage);
         totalUsage = {
           promptTokens: totalUsage.promptTokens + usage.promptTokens,
@@ -1406,6 +1498,7 @@ export class ProfessorMariWorkspaceService {
           assistantText = appendVisibleText(assistantText, action.visibleText);
           appendTraceText(workspaceTrace, `${action.visibleText}\n`);
         }
+        streamedVisibleText = "";
 
         messages.push({ role: "assistant", content: action.assistantHistoryContent });
 
@@ -1474,6 +1567,7 @@ export class ProfessorMariWorkspaceService {
             args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
             for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
           }
+          streamedVisibleText = "";
         }
       }
 
@@ -1489,36 +1583,32 @@ export class ProfessorMariWorkspaceService {
         for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
       }
 
-      const persistedText = assistantText.trim();
-      if (persistedText) {
-        const message = await chatStorage.createMessage({
-          chatId: args.chatId,
-          role: "assistant",
-          characterId: PROFESSOR_MARI_ID,
-          content: persistedText,
-        });
-        if (message) {
-          const extraUpdate: Record<string, unknown> = {};
-          const storedTrace = sanitizeTraceForStorage(workspaceTrace);
-          if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
-          if (storedTrace.length > 0) extraUpdate.mariWorkspaceTimeline = storedTrace;
-          const continuity = buildWorkspaceContinuitySnapshot({
-            userText: args.text,
-            assistantText: persistedText,
-            commandResults: commandResultsForContinuity,
-          });
-          if (continuity) extraUpdate.mariWorkspaceContinuity = continuity;
-          extraUpdate.generationInfo = { provider: connection.provider, model: connection.model, usage: totalUsage };
-          await chatStorage.updateMessageExtra(message.id, extraUpdate);
-          await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
-        }
-      }
+      await persistAssistantMessage();
       args.onEvent({ type: "metadata", data: { connection: connectionSummary(connection) ?? undefined } });
     } catch (err) {
       if (controller.signal.aborted) {
-        const content = "Professor Mari workspace run was cancelled.";
+        if (streamedVisibleText.trim()) {
+          assistantText = appendVisibleText(assistantText, streamedVisibleText);
+          streamedVisibleText = "";
+        }
+        const hadPartialWorkspaceState =
+          assistantText.trim().length > 0 || thinkingText.trim().length > 0 || workspaceTrace.length > 0;
+        const content = assistantText.trim()
+          ? "Professor Mari workspace run was cancelled after saving the partial response."
+          : "Professor Mari workspace run was cancelled.";
         appendTraceStatus(workspaceTrace, content);
         args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+        if (!assistantText.trim() && hadPartialWorkspaceState) {
+          assistantText = appendVisibleText(assistantText, content);
+        }
+        try {
+          await persistAssistantMessage();
+        } catch (saveErr) {
+          logger.error(
+            saveErr instanceof Error ? saveErr : new Error(String(saveErr)),
+            "[Professor Mari] Failed to persist aborted workspace response",
+          );
+        }
       } else {
         this.lastError = err instanceof Error ? err.message : String(err);
         throw err;
@@ -1556,10 +1646,18 @@ export class ProfessorMariWorkspaceService {
       const content = typeof row.content === "string" ? row.content : String(row.content ?? "");
       if (!content.trim()) continue;
       const role = roleForMessage(row);
+      const attachments = role === "user" ? normalizeProfessorMariAttachments(extra.attachments) : [];
+      const images = extractImageAttachmentDataUrls(attachments);
+      const files = extractFileAttachmentInputs(attachments);
       messages.push({
         role,
-        content: role === "assistant" ? assistantHistoryContentFromVisibleText(content) : content,
+        content:
+          role === "assistant"
+            ? assistantHistoryContentFromVisibleText(content)
+            : appendProfessorMariAttachmentNames(content, attachments),
         contextKind: "history",
+        ...(role === "user" && images.length > 0 ? { images } : {}),
+        ...(role === "user" && files.length > 0 ? { files } : {}),
       });
     }
     if (continuityPrompt) messages.push({ role: "system", content: continuityPrompt, contextKind: "injection" });
@@ -2091,7 +2189,7 @@ ${sections.join("\n\n")}
     }
 
     const rows = (await this.app.db.select().from(apiConnections)) as Array<typeof apiConnections.$inferSelect>;
-    const languageRows = rows.filter((row) => row.provider !== "image_generation");
+    const languageRows = rows.filter((row) => row.provider !== "image_generation" && row.provider !== "video_generation");
     const selected = connectionId ? languageRows.find((row) => row.id === connectionId) : null;
     const fallback =
       selected ??

@@ -570,7 +570,7 @@ export function CharacterLibraryView() {
           )}
 
           {!isLoading && characterPages.hasNextPage && (
-            <div className="mt-4 flex justify-center">
+            <div className="sticky bottom-0 z-20 -mx-4 mt-4 flex justify-center border-t border-[var(--border)]/45 bg-[var(--background)]/92 px-4 py-3 backdrop-blur-md md:-mx-6 md:px-6">
               <button
                 type="button"
                 onClick={() => void characterPages.fetchNextPage()}

@@ -12,6 +12,7 @@ export interface PromptOverrideVariable {
 
 export interface PromptOverrideSummary {
   key: string;
+  label: string | null;
   description: string;
   variables: PromptOverrideVariable[];
   hasOverride: boolean;
@@ -28,6 +29,7 @@ export interface PromptOverrideRow {
 
 export interface PromptOverrideDetail {
   key: string;
+  label: string | null;
   description: string;
   variables: PromptOverrideVariable[];
   override: PromptOverrideRow | null;
@@ -35,6 +37,7 @@ export interface PromptOverrideDetail {
 
 export interface PromptOverrideDefault {
   key: string;
+  label: string | null;
   template: string;
   exampleContext: Record<string, string | number | undefined>;
 }

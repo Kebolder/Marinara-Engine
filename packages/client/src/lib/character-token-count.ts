@@ -20,7 +20,7 @@ const CARD_TEXT_FIELDS: Array<keyof CharacterData> = [
   "post_history_instructions",
 ];
 
-function estimateTokens(text: string): number {
+export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
@@ -83,7 +83,7 @@ export function estimateCharacterCardTokens(data: CharacterTokenData): number {
 
   collectCharacterBook(data.character_book, textParts);
 
-  return estimateTokens(textParts.join("\n"));
+  return estimateTextTokens(textParts.join("\n"));
 }
 
 export function formatEstimatedTokens(tokens: number): string {

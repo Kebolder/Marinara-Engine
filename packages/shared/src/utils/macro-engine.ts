@@ -578,7 +578,7 @@ function stripOuterQuotes(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed.length < 2) return null;
   const openingKind = quoteKind(trimmed[0]);
-  if (!openingKind || quoteKind(trimmed.at(-1)) !== openingKind) return null;
+  if (!openingKind || quoteKind(trimmed[trimmed.length - 1]) !== openingKind) return null;
   return trimmed
     .slice(1, -1)
     .replace(/\\(["'\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f\\])/g, "$1")
@@ -1041,7 +1041,7 @@ function pickWeightedRandomChoice(choices: string[], options: ResolveMacroOption
     if (roll < 0) return choice.text;
   }
 
-  return weightedChoices.at(-1)?.text ?? "";
+  return weightedChoices[weightedChoices.length - 1]?.text ?? "";
 }
 
 type MacroDateTimeParts = {
@@ -1263,14 +1263,20 @@ export function resolveMacros(template: string, ctx: MacroContext, options: Reso
   result = result.replace(/\{\{idle_duration\}\}/gi, ctx.idleDuration ?? "");
 
   // ── Date/time ──
+  // #3164: formatting the date/time parts constructs Intl.DateTimeFormat — a
+  // large share of the pipeline's fixed cost — so build them only when a
+  // date/time macro is actually present. `now` is still captured once per
+  // invocation so all six macros agree on the instant. (Function replacers
+  // are output-identical here: date strings never contain "$" sequences.)
   const now = new Date();
-  const macroDateTime = formatMacroDateTime(now, ctx.timeZone);
-  result = result.replace(/\{\{date\}\}/gi, macroDateTime.date);
-  result = result.replace(/\{\{time\}\}/gi, macroDateTime.time);
-  result = result.replace(/\{\{datetime\}\}/gi, macroDateTime.datetime);
-  result = result.replace(/\{\{isotime\}\}/gi, macroDateTime.isoTime);
-  result = result.replace(/\{\{weekday\}\}/gi, macroDateTime.weekday);
-  result = result.replace(/\{\{timezone\}\}/gi, macroDateTime.timeZone);
+  let macroDateTime: ReturnType<typeof formatMacroDateTime> | null = null;
+  const getMacroDateTime = () => (macroDateTime ??= formatMacroDateTime(now, ctx.timeZone));
+  result = result.replace(/\{\{date\}\}/gi, () => getMacroDateTime().date);
+  result = result.replace(/\{\{time\}\}/gi, () => getMacroDateTime().time);
+  result = result.replace(/\{\{datetime\}\}/gi, () => getMacroDateTime().datetime);
+  result = result.replace(/\{\{isotime\}\}/gi, () => getMacroDateTime().isoTime);
+  result = result.replace(/\{\{weekday\}\}/gi, () => getMacroDateTime().weekday);
+  result = result.replace(/\{\{timezone\}\}/gi, () => getMacroDateTime().timeZone);
 
   // ── Random values ──
   result = result.replace(/\{\{random\}\}/gi, (original) => {

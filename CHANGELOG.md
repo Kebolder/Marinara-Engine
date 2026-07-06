@@ -4,6 +4,128 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+## [2.1.0]
+
+### Added
+
+- Added an in-app documentation viewer: the guides shipped in the `docs` folder (installation, configuration, troubleshooting, macros, extensions, Game Mode, and more) can now be browsed and read inside Marinara via a **Documentation** button in the home page footer next to **Replay Tutorial**, and a new "Where can I find documentation?" FAQ entry that shows the on-disk docs path and opens the viewer (#3238).
+- Added Conversation-mode audio/video calls with per-chat call toggles, character-initiated incoming calls, a Discord-style desktop/mobile call surface, call-only chat, speaking highlights, mute/camera/screen-share controls, soundboard support, minimized active-call popouts, call history cards, and post-call summary injection.
+- Added Conversation Call message reactions, including user reactions in the call-only chat and hidden character `[react]` call commands that react to the user's latest written call message; character-initiated calls can now include a greeting that plays after the user answers.
+- Added Conversation Call character video presence: when enabled, Marinara uses the Default for Videos connection to generate cached avatar-based idle, talking, laughing, angry, crying, and sighing clips, then plays them in-call from TTS cues while returning characters to idle after speech.
+- Added per-slot Conversation Call clip generation from Character/Persona editor **Sprites -> Clips** empty/error clip cards, so individual idle/talking/reaction clips can be tested without generating the full batch.
+- Added Video Generation services for Google AI Studio (Gemini Omni/Veo), OpenRouter, and Seedance 2.0, including connection defaults, asynchronous job polling, MP4 download handling, OpenRouter first-frame references, Veo first/last-frame avatar interpolation, and Seedance first/last-frame URL references for cleaner generated loops.
+- Added Advanced > Video Generation settings for editing Game/Gallery scene-video defaults, Conversation Call clip lengths, and the reusable video prompt templates for Game scene videos and call presence clips.
+- Added opt-in custom Conversation Call video clips: when Character Video Presence and Custom Clips are enabled, characters can sparsely use `[custom_clip]` for explicit user-requested visual clips that are saved into that character's **Sprites -> Clips** library.
+- Added **Sprites -> Clips** to Character and Persona editors for reusable video-call presence clips, including standard idle/talking/reaction slots and named custom call clips.
+- Renamed Gallery clips to **Videos** for broader Roleplay/Game/Conversation generated or uploaded video assets, with Character and Persona Gallery **Images** / **Videos** tabs.
+- Added user-uploaded MP4 support for both Gallery **Videos** and reusable video-call clips: Character/Persona **Sprites -> Clips** can replace standard call-presence slots such as Idle or Talking or store extra custom call clips, and custom call-clip libraries now allow up to 128 entries.
+- Added animated Expression Engine portrait generation: Portrait sprite generation can use Video Generation connections to create short expression clips, convert them into looping GIF sprites, and save them into expression slots, with Advanced > Video Generation controls for duration and prompt templates.
+- Added Conversation call voice input through provider-native audio/video when supported, Local Whisper transcription with downloadable Whisper Tiny/Base models, browser speech recognition fallback, and manual system dictation mode.
+- Added xAI as a Text-to-Speech provider option with built-in voice fallbacks and xAI speech request handling.
+- Added Conversation mode reactions that can target an individual character's part of a merged multi-character reply, including per-segment add-reaction buttons, per-segment reaction rows, and prompt-visible `[User reacted with ...]` notes under the exact targeted segment (#3210).
+- Added character-to-character Conversation reactions through `[react: emoji="..." to "Character Name"]`, placing the reaction on the target character's most recent matching part and showing it in both UI chips and prompt context (#3210).
+- Conversation mode: character emoji reactions now have their own **Reactions** card in the per-command Commands grid (Chat Settings and the chat setup wizard), so they can be toggled independently like Selfies or Music (#3219).
+- Added the Agent Suite to the Chat Settings drawer's Agents section: a window listing the agents active in the current chat where you can view and edit everything they have stored — agent memory, tracker state, and custom-agent outputs — manually or with AI-assisted rewrites (select text, give an instruction, optionally attach grounding context such as character cards or active-lorebook entries, and pick a connection) (#3160).
+- Added first-class scene video generation for Game Mode, Roleplay, and Visual Novel galleries, including Video Generation connections for Gemini Omni and xAI Imagine, editable `game.video` prompts, manual Gallery video actions, per-image Animate buttons, Gallery video previews with prompt copy, live View Latest media, and draggable/resizable pinned video overlays.
+- Added Game Mode turn storyboards: the active storyboard prompt preset splits completed GM narration into anchored keyframes, renders keyframe media concurrently, follows the current story section in a draggable/resizable viewer, can be reopened from Gallery, and supports off-by-default **Automatic Storyboard Animations**.
+- Added per-chat Game Mode media prompt presets with separate **Illustration Prompt**, **Animation Prompt**, and **Game Video Prompt** selectors, read-only built-ins for Still Keyframes, Comic Page, Colored Manga, B&W Manga, and Cinematic Scene Video, plus chat-local editable copies.
+- Added Gallery **Images** and **Videos** tabs so generated videos are reachable without scrolling through every still image first.
+- Added an optional Game Illustrator toggle for Dynamic LLM Prompt Generation, letting the selected prompt model rewrite Game Mode NPC portrait, location background, and key-moment illustration prompts before image generation (#3225).
+- Added `/illustrate` in Conversation, Roleplay, and Game chats to trigger the same illustration action as the Gallery **Illustrate** button without opening the Gallery first.
+
+### Changed
+
+- Bumped release metadata to v2.1.0 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Documented Conversation audio/video call setup, Local Whisper download, audio input modes, character-initiated call behavior, reusable video-call clips, and Professor Mari's built-in guidance for the feature.
+- Refreshed the v2.1.0 documentation set with current setup flows, provider lists, Bot Browser sources, Agent Suite behavior, knowledge sources, custom tools, emoji/sticker uploads, regex scripts, prompt presets, macros, Conversation/Roleplay/Game Mode workflows, Home Assistant setup, remote access, extension safety, container/iOS/Android update notes, storyboard/video guidance, and the current architecture map.
+- Made Android/Termux update builds use low-memory build wrappers: server builds transpile runtime JS with esbuild, client builds skip memory-heavy typechecking/PWA generation on Android, and the updater builds shared, server, and client sequentially on Android devices (#3156).
+- Removed the Gallery **View latest** button because galleries already show newest images and videos first.
+
+### Fixed
+
+- Fixed root-level Connections panel dragging by adding a Custom sort order backed by saved `sortOrder`, so unfiled connections can be reordered or moved into folders the same way foldered connections can (#3295).
+- Fixed merged group Conversation autonomous-message accounting so the selected autonomous character receives the saved message attribution, follow-up count, and daily-budget count instead of every turn being charged to the first group member (#3299).
+- Fixed launcher startup messages on Windows, macOS/Linux, and Termux so they show the configured bind host instead of always claiming `127.0.0.1`, while still printing/opening a browser-friendly local URL when the bind host is `0.0.0.0` (#3300).
+- Fixed Game Assets create menus inside the in-game floating asset browser so portaled New menus and create modals no longer close the browser, empty names cannot be submitted, and failed create actions keep the modal open with the error visible (#3301).
+- Improved mobile browser compatibility by lowering the production client bundle target for Safari and replacing newer `Array.prototype.at` / `replaceAll` usage in shared/client code paths that older iOS Safari versions may not provide (#3302).
+- Fixed Game Mode background selection from Settings so a manually selected chat background overrides automatic GM scene background selection until the user removes it (#3304).
+- Fixed character library favorites and non-favorites filtering so server-side pagination searches the full library before returning each 100-item page, and kept the **Load more** control in a bottom footer instead of overlapping character cards in both the side panel and full library (#3286).
+- Fixed Roleplay `/as` so `/as Character "message"` posts the exact message as that character, while bare `/as Character` still asks the model to generate that character's next response.
+- Fixed Roleplay tracker locks so AI tracker updates cannot bypass a locked field by renaming or replacing the locked row at the same position.
+- Fixed Game Mode NPC portrait generation so GM-created NPC profile descriptions from initial world setup are rebuilt from current game state at asset-send time, sent as required canonical visual guidance for portrait prompts, and preserved when generated avatars are written back to NPC metadata.
+- Fixed launcher startup ordering so `.env` values such as `BACKGROUNDREMOVER_AUTO_INSTALL=true` are loaded before optional background-remover setup begins (#3269).
+- Fixed Home Assistant documentation and defaults to point at Marinara's current port, note `WEBHOOK_LOCAL_URLS_ENABLED=true` for local webhooks, and explain that re-syncing updates existing generated tools.
+- Added delete controls to Character/Persona Gallery **Videos** and **Sprites -> Clips**, including call-video resets plus custom call clip and scene/game video cleanup from the originating stored media.
+- Forced generated Conversation Call character video clips to play silently in calls and **Sprites -> Clips** previews so provider-generated audio tracks cannot overlap Marinara's TTS playback.
+- Fixed Google AI Studio Veo reference-image clip generation by retrying with Google's alternate `bytesBase64Encoded` image payload when a Veo model rejects `inlineData`, preserving avatar first/last-frame loop requests.
+- Fixed Conversation Call video clips continuing to use stale avatar references by fingerprinting the actual avatar bytes for standard clip freshness and cache-busting regenerated `idle`/`talking`/reaction MP4 URLs.
+- Shortened default Conversation Call video-clip prompts so providers get crisp locked-camera loop instructions instead of long identity-preservation prompts that could invite camera drift.
+- Fixed **Sprites -> Clips** call-clip generation status so stale `generating` slots from older jobs no longer light up when only one clip, such as Idle, is being generated; Google Veo video extraction now also accepts more completed-operation shapes and reports provider no-video reasons.
+- Revised the default Conversation Call video-clip prompts using Google's Veo guidance so clip generation now gives providers explicit composition, subject identity, action, ambiance, locked-camera, looping, and focus instructions.
+- Fixed **Sprites -> Clips** call-clip prompts to use the provider-effective clip duration, so Google Veo avatar-reference clips now ask for the same 8-second loop length that Veo actually generates.
+- Trimmed Conversation Call video-clip prompts to avoid hard-coded lighting/ambiance and audio-related wording, making avatar-reference clips depend on the uploaded reference image instead of invented call-scene details.
+- Added non-destructive trim points for Conversation Call clips, with a small **Sprites -> Clips** trim editor and in-call playback that loops inside the saved start/end range.
+- Added a dismissible 10-second muted-microphone reminder when a Conversation Call starts, made **Sprites -> Clips** call-clip pre-generation queue provider requests one clip at a time, removed character-card description dumps from call-video generation prompts, strengthened locked-camera/reference-image loop instructions, and made standard call-video clips regenerate when the character avatar changes.
+- Fixed Seedance 2.0 completed video jobs so Marinara reads MP4 URLs returned in `data.results[]` instead of reporting a missing downloadable video.
+- Added an opt-in Seedance 2.0 temporary reference-frame upload toggle under **Default for Videos** in Video Generation connections, so local avatar/gallery first/last-frame references can be uploaded to temporary public URLs when Seedance cannot fetch local Marinara files directly.
+- Fixed group-chat character reactions always being credited to the first character in the chat: commands placed above the first `Name:` line of a merged reply now attribute to the speaker whose section they open (leaked `[HH:MM]` timestamps no longer skew this), merged group chats now instruct models to write the `[react:]` tag inside the reacting character's own section — and that several characters may react in the same reply — and a react aimed at the user's persona name (or "User") explicitly targets the user's latest message (#3220).
+- Hardened Conversation reaction processing against stalls and junk: the shared timestamp strip is no longer quadratic on pathological whitespace runs (~7s → <1ms at 100KB), each `[react:]` command persists with far fewer storage scans so multi-react group replies no longer block generations for seconds on large installs, malformed quote-bearing react tags stay visible instead of becoming junk text chips, and per-segment add-reaction buttons mount their emoji picker only while open.
+- Fixed Conversation Call video-clip avatar framing by preparing call-video references as top-aligned 16:9 frames before provider upload, reducing head/hair cropping when Seedance or other video providers animate square avatars.
+- Loosened Conversation Call talking-clip prompts so providers can animate natural speaking motion beyond mouth-only movement while keeping the camera, framing, and loop return stable.
+- Loosened Conversation Call reaction-clip prompts for laughing, angry, crying, and sighing states so providers can create smoother natural motion while preserving the locked camera, identity, accessories, and loop return.
+- Aligned Conversation Call reaction-clip prompts with the successful Talking/Idle prompt shape: one smooth restrained video-call motion, subtle breathing/body/expression motion, and a return to the first-frame pose by the final frame.
+- Tightened Conversation Call custom clip generation so the command prompt becomes the clip action, the action returns to the starting pose by the final frame, and Seedance receives explicit first/final avatar references even when both frames are identical.
+- Sequenced Conversation Call character video clips from ordered TTS cues, so lines like `[sighs] I thought so [soft laugh]` play sighing, talking, and laughing clips in order instead of using one reaction clip for the whole voice turn.
+- Improved Seedance 2.0 task-failure handling by extracting provider failure reasons from more response fields, logging compact failed task payloads, and retrying once when Seedance only reports an opaque unknown operation error.
+- Fixed lorebook entry rows collapsing when editing the entry title by making row-header inline controls opt out of the expand/collapse click handler (#3244).
+- Capped NanoGPT image-generation reference payloads at three images so Qwen Image/edit-capable NanoGPT models only receive the number of references those services accept.
+- Fixed Windows dark-mode contrast for prompt/chat preset dropdown option menus so preset choices no longer render as pale text on a white native popup (#3237).
+- Fixed Roleplay empty-input generation so pressing Generate after an assistant reply renders the new assistant output as its own bubble, while explicit `/continue` still appends to the previous assistant message.
+- Fixed Roleplay `/continue` with tracker agents enabled so late tracker/cache refreshes no longer restore the previous assistant text and make the continued output vanish.
+- Fixed Conversation call prompt assembly so call output JSON format and command instructions stay attached to the latest call input, adjacent same-role call history messages are merged, older TTS cue tags are stripped from call history, command turns use the same descriptive command guidance as normal Conversation mode, and `[end_call]` waits until prior voice lines finish before ending the call.
+- Fixed Conversation call command execution so hidden commands such as selfies, memories, music, haptics, influences, notes, soundboard actions, character leave, and call end are executed as call actions instead of leaking into the visible call chat.
+- Fixed Conversation call media and UI reliability by keeping speech-only transcripts out of the visible call chat, returning server-resolved character IDs for playback, preserving active calls while navigating elsewhere in Marinara, stacking the call popout with Professor Mari, improving mobile control scaling/participant tiling, and keeping offline characters out of calls.
+- Fixed group Conversation calls so each speaking character is prompted as its own ordered turn, server voice-capability checks match the call playback resolver more closely, and accidental voice turns for characters without a resolvable voice fall back to visible call text instead of disappearing.
+- Fixed Conversation Call video prompts so generated standard/custom character clips rely on the current avatar/reference frame and concise action/loop instructions instead of stale or overlong character-card dumps, helping video providers preserve visual constraints such as masks or hidden eyes from the reference.
+- Fixed Conversation Call prompts so calls with character video presence enabled explicitly tell the model that voice turns are paired with video-call clips.
+- Strengthened Conversation Call and animated Expression portrait video prompts so generated clips preserve identity/outfits/framing and return to matching first/final frames for cleaner loops; reaction call clips now default to 5 seconds.
+- Fixed the Connections panel Local Model card so a downloaded/running Local Whisper speech model is shown in the collapsed status instead of reporting the whole card as not downloaded when the Gemma helper model is absent.
+- Fixed 1:1 Conversation prompt history so assistant turns are speaker-labeled with the character name, preserving multi-turn user/assistant roles while making prior DM replies unambiguous to the model.
+- Prevented Echo Chamber from triggering on `/continue` generations; it now stays limited to fresh user messages rather than assistant continuation rewrites.
+- Fixed agent pipeline phase overrides so changing built-in agents such as Echo Chamber, Prose Guardian, Continuity, Immersive HTML, Expression, or Music DJ in the agent editor is respected in storage, normal generation, and manual agent retries instead of being forced back to a built-in default.
+- Fixed Android APK chat background imports by allowing WebView picker-granted `content://` image URIs and handling Android multi-select file picker results safely instead of returning null picker entries (#3233).
+- Fixed the Mari CLI flag parser so boolean flags such as `--tail`, `--raw`, `--patch`, `--strict`, and `--staged` no longer swallow positional arguments in commands like `mari chats messages --tail <chat-id>` (#3222).
+- Fixed Local Whisper availability after updates by adding a post-install native dependency repair step that rebuilds or refreshes `onnxruntime-node` for the Node architecture used to run Marinara, and documented the repair path for Windows, macOS/Linux, and Termux installs.
+- Renamed the editable scene-video prompt template from `game.omniVideo` to `game.video`, with legacy override fallback, and shortened scene-video prompts for smaller video providers by summarizing narration into a compact story beat, excerpting source illustration prompts, and loosening default motion guidance.
+- Fixed escaped roleplay HTML such as `&lt;font color=...&gt;` rendering as visible code by decoding allowed escaped tags before the existing sanitized HTML render path (#3206).
+- Fixed Professor Mari preset creation so structured `app_data` `preset.create`/`preset.update` commands can create prompt groups, prompt sections, and preset variables/choice blocks in the same reversible operation (#3207).
+- Added a root `pnpm mari -- --help` wrapper that exposes the built Mari CLI from source checkouts without requiring a global install or manual shell alias (#3208).
+- Fixed impersonate prompt assembly so fallback chat presets still drop conflicting non-marker sections, while explicitly selected impersonate presets keep their normal prompt sections (#3209).
+- Fixed Smart group response order so hidden responder selection no longer overrides `/guided` or `/impersonate` directives in Roleplay group chats (#3212).
+- Fixed stopped partial replies being cache-only placeholders, so editing a kept unfinished reply persists it as a real message instead of deleting it on refresh (#3213).
+- Fixed Game Mode party recruitment for mid-session NPCs by creating a game-scoped tracked NPC/card fallback instead of throwing when the NPC was not generated at setup (#3216).
+- Fixed starting the next Game Mode session when backup branches exist by using the active concluded session as the source and preventing branch labels from carrying into newly created sessions (#3229).
+- Removed the hard-coded three-sprite limit from Roleplay sprite selection, setup, and display paths so chats can enable all uploaded sprite owners they need (#3169).
+- Let Image Captioning use any non-image-generation connection instead of hiding local or custom multimodal models behind model-name heuristics (#3170).
+- Stabilized emoji and sticker popover positioning above the mobile composer when Android browsers resize the visual viewport around the keyboard (#3171).
+- Switched Persona editor textarea counters from raw character counts to the same approximate token counts used elsewhere in the UI (#3172).
+- Fixed Illustrator prompt tag cleanup so grouped weighted tags such as `(shaved head, bald:1.2)` stay intact during deduplication and negative-prompt extraction (#3173).
+- Fixed Windows server builds failing from install paths with spaces by launching the TypeScript compiler through Node directly instead of a shell-resolved shim.
+- Restored chat input and generation cleanup behavior so post-generation agents such as Illustrator keep the UI busy state without leaving a duplicate live-stream message visible, and preserved textarea caret position while quote formatting runs on apostrophes.
+- Removed the agent/tool write-path size cap on lorebook entry content so large entries are no longer truncated before storage.
+- Fixed readable text-file attachments being pre-truncated to 60,000 characters before prompt context fitting, so large uploaded text files can use the selected model's actual context window.
+- Fixed Termux dependency refreshes so Android installs that add the `wasm32` optional-dependency architecture run `pnpm install --force`, allowing `@img/sharp-wasm32` to be linked for sprite generation and other sharp-backed image processing (#3167).
+- Fixed Android/Termux git updates aborting during release rebuilds with exit status 134 by making the default package build scripts Android-aware and documenting the low-memory update path (#3156).
+- Fixed `pnpm install --frozen-lockfile` failures with `ERR_PNPM_TRUST_DOWNGRADE` for older locked dependencies such as `pino` and `semver` by disabling trust-downgrade enforcement for released Marinara installs.
+- Fixed partial installs after aborted pnpm runs so launchers detect missing workspace dependencies such as `chess.js` and repair `node_modules` before shared builds run.
+- Fixed non-interactive launcher, installer, and in-app updater installs so pnpm can purge and recreate stale dependency folders without stopping for a TTY confirmation prompt.
+- Hardened `start.bat` so the Windows launcher explicitly repairs dependencies and runs the root `pnpm build` whenever updates, version mismatches, commit mismatches, or missing build outputs require it, using Corepack/installed pnpm/temporary npx pnpm as available.
+
+### Platform Notes
+
+- Android `versionName` is `2.1.0` with `versionCode 29`.
+- Windows, macOS/Linux, Termux, Docker, APK, and PWA users can update through the usual v2 updater paths once release assets are published.
+
 ## [2.0.9]
 
 ### Added

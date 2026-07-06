@@ -190,11 +190,19 @@ export function clearUnusedRuntimeAgentSections(
 ): void {
   let changed = false;
   for (const [, tokens] of tokenEntries) {
-    const sectionPattern = new RegExp(escapeRegExp(tokens.start) + "[\\s\\S]*?" + escapeRegExp(tokens.end), "g");
+    const sectionPattern = new RegExp(escapeRegExp(tokens.start) + "([\\s\\S]*?)" + escapeRegExp(tokens.end), "g");
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]!;
-      if (!message.content.includes(tokens.start)) continue;
-      const content = message.content.replace(sectionPattern, "").trim();
+      if (!message.content.includes(tokens.start) && !message.content.includes(tokens.placeholder)) continue;
+      const content = message.content
+        .replace(sectionPattern, (_match, sectionContent: string) => sectionContent.split(tokens.placeholder).join(""))
+        .split(tokens.start)
+        .join("")
+        .split(tokens.end)
+        .join("")
+        .split(tokens.placeholder)
+        .join("")
+        .trim();
       if (content) {
         messages[i] = { ...message, content };
       } else {

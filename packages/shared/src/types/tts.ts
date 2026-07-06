@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { z } from "zod";
 
-export const ttsSourceSchema = z.enum(["openai", "elevenlabs", "pockettts"]);
+export const ttsSourceSchema = z.enum(["openai", "elevenlabs", "pockettts", "xai"]);
 export type TTSSource = z.infer<typeof ttsSourceSchema>;
 
 export const ttsAudioFormatSchema = z.enum(["mp3", "wav"]);
@@ -14,6 +14,9 @@ export type TTSDialogueScope = z.infer<typeof ttsDialogueScopeSchema>;
 
 export const ttsVoiceModeSchema = z.enum(["single", "per-character"]);
 export type TTSVoiceMode = z.infer<typeof ttsVoiceModeSchema>;
+
+export const ttsConversationCallAudioInputModeSchema = z.enum(["system", "auto", "transcribe", "local_whisper"]);
+export type TTSConversationCallAudioInputMode = z.infer<typeof ttsConversationCallAudioInputModeSchema>;
 
 export const ttsVoiceAssignmentSchema = z.object({
   characterId: z.string().default(""),
@@ -129,6 +132,24 @@ export const ttsConfigSchema = z.object({
   audioFormat: ttsAudioFormatSchema.default("mp3"),
   dialogueScope: ttsDialogueScopeSchema.default("all"),
   dialogueCharacterName: z.string().default(""),
+  /** Global gate for Conversation-mode calls. Individual chats opt in separately. */
+  callAudioEnabled: z.boolean().default(false),
+  /** Deprecated: call transcription now uses the active conversation connection. */
+  callSttConnectionId: z.string().default(""),
+  /** Deprecated: call transcription now follows the selected call audio input mode. */
+  callSttModel: z.string().default(""),
+  /** Conversation call mic path: local Whisper, browser speech, manual OS dictation, or provider-native media. */
+  callAudioInputMode: ttsConversationCallAudioInputModeSchema.default("local_whisper"),
+  /** UI gate for camera/screen controls. Provider-native video input remains capability-gated by the call pipeline. */
+  callVideoInputEnabled: z.boolean().default(false),
+  /** Generate and play cached character presence videos during Conversation Calls. */
+  callCharacterVideoEnabled: z.boolean().default(false),
+  /** Automatically generate the minimum idle/talking call-presence clips for call participants. */
+  callAutomaticVideoClipsEnabled: z.boolean().default(false),
+  /** Let characters sparsely generate custom call-presence clips on explicit user request. */
+  callCustomVideoClipsEnabled: z.boolean().default(false),
+  /** Deprecated: soundboard is always available during calls. */
+  callSoundboardEnabled: z.boolean().default(true),
 });
 
 export type TTSConfig = z.infer<typeof ttsConfigSchema>;

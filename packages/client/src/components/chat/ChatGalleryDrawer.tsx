@@ -14,6 +14,7 @@ import {
   ROLEPLAY_POPOVER_TITLE,
 } from "./roleplay-popover-styles";
 import type { Chat } from "@marinara-engine/shared";
+import type { ChatImage } from "../../hooks/use-gallery";
 
 interface ChatGalleryDrawerProps {
   chat: Chat;
@@ -22,8 +23,19 @@ interface ChatGalleryDrawerProps {
   anchor?: { right: number; top: number } | null;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void | Promise<void>;
+  /** Generate an on-demand Conversation selfie. */
+  onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
+  selfieCharacters?: Array<{ id: string; name: string }>;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
+  /** Generate a storyboard for the latest completed Game Mode GM turn. */
+  onGenerateStoryboard?: () => void | Promise<void>;
+  /** Show the latest Game Mode storyboard viewer. */
+  onViewStoryboard?: () => void;
+  /** Generate a scene video from the latest illustration. */
+  onGenerateVideo?: () => void | Promise<void>;
+  /** Generate a scene video from a specific gallery illustration. */
+  onAnimateImage?: (image: ChatImage) => void | Promise<void>;
 }
 
 export function ChatGalleryDrawer({
@@ -32,7 +44,13 @@ export function ChatGalleryDrawer({
   onClose,
   anchor,
   onIllustrate,
+  onGenerateSelfie,
+  selfieCharacters,
   onGenerateBackground,
+  onGenerateStoryboard,
+  onViewStoryboard,
+  onGenerateVideo,
+  onAnimateImage,
 }: ChatGalleryDrawerProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -90,6 +108,12 @@ export function ChatGalleryDrawer({
             chatId={chat.id}
             mode={chat.mode}
             onIllustrate={onIllustrate}
+            onGenerateSelfie={onGenerateSelfie}
+            selfieCharacters={selfieCharacters}
+            onGenerateStoryboard={onGenerateStoryboard}
+            onViewStoryboard={onViewStoryboard}
+            onGenerateVideo={onGenerateVideo}
+            onAnimateImage={onAnimateImage}
             onGenerateBackground={onGenerateBackground}
           />
         </div>

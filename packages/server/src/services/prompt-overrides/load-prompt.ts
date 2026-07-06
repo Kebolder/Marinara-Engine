@@ -19,10 +19,16 @@ export async function loadPrompt<TCtx extends Record<string, string | number | u
   ctx: TCtx,
 ): Promise<string> {
   try {
+    const declared = def.variables.map((v) => v.name);
     const row = await storage.get(def.key);
-    if (row && row.enabled) {
-      const declared = def.variables.map((v) => v.name);
-      return renderTemplate(row.template, ctx, declared);
+    if (row) {
+      return row.enabled ? renderTemplate(row.template, ctx, declared) : def.defaultBuilder(ctx);
+    }
+    for (const legacyKey of def.legacyKeys ?? []) {
+      const legacyRow = await storage.get(legacyKey);
+      if (legacyRow) {
+        return legacyRow.enabled ? renderTemplate(legacyRow.template, ctx, declared) : def.defaultBuilder(ctx);
+      }
     }
   } catch (err) {
     logger.warn(err, "[prompt-overrides] Failed to load %s, falling back to default", def.key);

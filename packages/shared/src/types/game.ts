@@ -111,7 +111,7 @@ export interface GameNpc {
   name: string;
   emoji: string;
   description: string;
-  /** Origin of the description. Only "model" descriptions should be treated as canonical profile text. */
+  /** Origin of the description. "model", "library", and "user" descriptions are canonical profile text. */
   descriptionSource?: "model" | "library" | "narration" | "user";
   /** Optional presentation hint used for systems like NPC voice matching. */
   gender?: string | null;
@@ -179,6 +179,12 @@ export interface GameSetupConfig {
   enableSpriteGeneration?: boolean;
   /** Connection ID for image generation (NPC portraits + location backgrounds) */
   imageConnectionId?: string;
+  /** Connection ID for video generation (animated scene clips from generated illustrations). */
+  videoConnectionId?: string;
+  /** Automatically create storyboard keyframe illustrations after completed GM turns. */
+  gameStoryboardAutoIllustrationsEnabled?: boolean;
+  /** Automatically create storyboard keyframe videos after completed GM turns. */
+  gameStoryboardAutoGenerationEnabled?: boolean;
   /** Unified art style prompt applied to all generated images (auto-generated at setup) */
   artStylePrompt?: string;
   /** Optional image style profile applied to generated images in this game. */
@@ -583,4 +589,96 @@ export interface GameCheckpoint {
   timeOfDay: string | null;
   turnNumber: number | null;
   createdAt: string;
+}
+
+export type GameSceneVideoAspectRatio = "16:9" | "9:16";
+
+export interface GeneratedSceneVideo {
+  id: string;
+  chatId: string;
+  filePath: string;
+  url: string;
+  sourceIllustrationTag: string | null;
+  sourceIllustrationPath: string | null;
+  prompt: string;
+  provider: string;
+  model: string;
+  durationSeconds: number;
+  aspectRatio: GameSceneVideoAspectRatio;
+  createdAt: string;
+}
+
+export type GameStoryboardStatus =
+  | "planning"
+  | "rendering_images"
+  | "rendering_videos"
+  | "complete"
+  | "partial"
+  | "failed";
+
+export type GameStoryboardKeyframeStatus =
+  | "planned"
+  | "rendering_image"
+  | "image_complete"
+  | "rendering_video"
+  | "complete"
+  | "failed";
+
+export interface GameStoryboardMediaRef {
+  id: string;
+  url: string;
+  prompt: string;
+  provider: string;
+  model: string;
+  createdAt: string;
+}
+
+export interface GameTurnStoryboardKeyframe {
+  id: string;
+  storyboardId: string;
+  index: number;
+  title: string;
+  sectionStartIndex: number | null;
+  sectionEndIndex: number | null;
+  anchorQuote: string;
+  anchorKind: "narration" | "dialogue" | "readable" | "system" | "";
+  narrationBeat: string;
+  mangaPanelPrompt: string;
+  imagePrompt: string;
+  videoPrompt: string;
+  characters: string[];
+  continuityNotes: string;
+  cameraMotion: string;
+  transitionHint: string;
+  durationSeconds: number;
+  aspectRatio: GameSceneVideoAspectRatio;
+  chatImageId: string | null;
+  sceneVideoId: string | null;
+  image: GameStoryboardMediaRef | null;
+  video: GeneratedSceneVideo | null;
+  status: GameStoryboardKeyframeStatus;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GameTurnStoryboard {
+  id: string;
+  chatId: string;
+  messageId: string;
+  swipeIndex: number;
+  snapshotId: string | null;
+  sessionNumber: number | null;
+  turnNumber: number | null;
+  title: string;
+  sourceNarration: string;
+  sourceNarrationHash: string;
+  status: GameStoryboardStatus;
+  provider: string;
+  model: string;
+  directorPrompt: string;
+  error: string | null;
+  keyframes: GameTurnStoryboardKeyframe[];
+  createdAt: string;
+  updatedAt: string;
 }

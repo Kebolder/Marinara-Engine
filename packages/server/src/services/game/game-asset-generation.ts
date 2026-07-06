@@ -335,17 +335,20 @@ function addUniqueVisualTag(tags: string[], value: string | null | undefined): v
 function collectNpcVisualAttributeTags(text: string): string[] {
   const tags: string[] = [];
   const clean = text.replace(/\s+/g, " ");
-  const nounPattern = /\b((?:short|long|curly|wavy|straight|messy|neat|dark|light|pale|bright|piercing|deep|warm|cool|grey|gray|blue|green|hazel|brown|black|blonde|blond|auburn|red|white|silver|golden|olive|tan|tanned|fair|freckled|weathered)(?:[-\s]+[a-z]+){0,4}\s+(?:hair|eyes|skin))\b/gi;
+  const nounPattern =
+    /\b((?:short|long|curly|wavy|straight|messy|neat|dark|light|pale|bright|piercing|deep|warm|cool|grey|gray|blue|green|hazel|brown|black|blonde|blond|auburn|red|white|silver|golden|olive|tan|tanned|fair|freckled|weathered)(?:[-\s]+[a-z]+){0,4}\s+(?:hair|eyes|skin))\b/gi;
   for (const match of clean.matchAll(nounPattern)) {
     addUniqueVisualTag(tags, match[1]);
   }
 
-  const eyesArePattern = /\beyes?\s+(?:are|is|were|was)\s+(?:a\s+|an\s+)?((?:piercing|bright|deep|pale|dark|light|grey|gray|blue|green|hazel|brown|black|amber)(?:[-\s]+[a-z]+){0,3})\b/gi;
+  const eyesArePattern =
+    /\beyes?\s+(?:are|is|were|was)\s+(?:a\s+|an\s+)?((?:piercing|bright|deep|pale|dark|light|grey|gray|blue|green|hazel|brown|black|amber)(?:[-\s]+[a-z]+){0,3})\b/gi;
   for (const match of clean.matchAll(eyesArePattern)) {
     addUniqueVisualTag(tags, `${match[1]} eyes`);
   }
 
-  const skinPattern = /\b(?:skin|complexion)\s+(?:is|are|was|were)?\s*(?:a\s+|an\s+)?((?:pale|fair|tan|tanned|olive|brown|dark|light|warm|cool|freckled|weathered)(?:[-\s]+[a-z]+){0,3})\b/gi;
+  const skinPattern =
+    /\b(?:skin|complexion)\s+(?:is|are|was|were)?\s*(?:a\s+|an\s+)?((?:pale|fair|tan|tanned|olive|brown|dark|light|warm|cool|freckled|weathered)(?:[-\s]+[a-z]+){0,3})\b/gi;
   for (const match of clean.matchAll(skinPattern)) {
     addUniqueVisualTag(tags, `${match[1]} skin`);
   }
@@ -367,7 +370,7 @@ function buildNpcAppearanceLine(req: NpcPortraitRequest, explicitNonHuman: boole
 
   const identityLine = identityTags.length > 0 ? `Appearance: ${identityTags.join(", ")}.` : "";
   if (!context) return identityLine || "Appearance: human or humanoid adult.";
-  return `${identityLine} Canonical visual description from the current game: ${context}.`.trim();
+  return `${identityLine} Required canonical NPC visual profile from the GM-created game state: ${context}. Use these traits as the subject identity.`.trim();
 }
 
 function npcPortraitVariables(req: NpcPortraitRequest) {
@@ -417,6 +420,8 @@ export interface NpcPortraitRequest {
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
+  /** Optional LLM prompt director used to rewrite the deterministic prompt before provider submission. */
+  dynamicPromptGenerator?: GameDynamicImagePromptGenerator;
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
@@ -430,6 +435,20 @@ export type CompiledGameImagePrompt = {
   prompt: string;
   negativePrompt: string;
 };
+
+export type GameDynamicImagePromptKind = "portrait" | "background" | "illustration";
+
+export type GameDynamicImagePromptRequest = {
+  kind: GameDynamicImagePromptKind;
+  title: string;
+  sourcePrompt: string;
+  assetContext: string[];
+  maxCharacters: number;
+};
+
+export type GameDynamicImagePromptGenerator = (
+  request: GameDynamicImagePromptRequest,
+) => Promise<string | null | undefined>;
 
 async function buildNpcPortraitRawPrompt(req: NpcPortraitRequest): Promise<string> {
   const vars = npcPortraitVariables(req);
@@ -445,13 +464,21 @@ export async function buildNpcPortraitProviderPrompt(req: NpcPortraitRequest): P
       negativePrompt: req.negativePromptOverride?.trim() || "",
     };
   }
-  return compileGameImagePrompt(
-    req,
-    "portrait",
-    await buildNpcPortraitRawPrompt(req),
-    1400,
-    GAME_PORTRAIT_NEGATIVE_PROMPT,
-  );
+  const sourcePrompt = await buildNpcPortraitRawPrompt(req);
+  const prompt = await maybeGenerateDynamicGameImagePrompt(req.dynamicPromptGenerator, {
+    kind: "portrait",
+    title: req.npcName,
+    sourcePrompt,
+    maxCharacters: 1400,
+    assetContext: [
+      `NPC name: ${req.npcName}`,
+      req.appearance ? `Required canonical NPC visual profile: ${req.appearance}` : "",
+      req.gender ? `Gender: ${req.gender}` : "",
+      req.pronouns ? `Pronouns: ${req.pronouns}` : "",
+      req.artStyle ? `Art style: ${req.artStyle}` : "",
+    ],
+  });
+  return compileGameImagePrompt(req, "portrait", prompt, 1400, GAME_PORTRAIT_NEGATIVE_PROMPT);
 }
 
 export async function buildNpcPortraitImagePrompt(req: NpcPortraitRequest): Promise<string> {
@@ -489,6 +516,31 @@ function compileGameImagePrompt(
     prompt: compiled.prompt.slice(0, maxLength),
     negativePrompt: compiled.negativePrompt,
   };
+}
+
+async function maybeGenerateDynamicGameImagePrompt(
+  generator: GameDynamicImagePromptGenerator | undefined,
+  request: GameDynamicImagePromptRequest,
+): Promise<string> {
+  if (!generator) return request.sourcePrompt;
+  try {
+    const generated = cleanDynamicGameImagePrompt(await generator(request), request.maxCharacters);
+    return generated || request.sourcePrompt;
+  } catch (err) {
+    logger.warn(err, "[game-asset-gen] Dynamic image prompt generation failed; using deterministic prompt");
+    return request.sourcePrompt;
+  }
+}
+
+function cleanDynamicGameImagePrompt(value: string | null | undefined, maxCharacters: number): string | null {
+  const clean = (value ?? "")
+    .replace(/^```(?:json|text)?/i, "")
+    .replace(/```$/i, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (clean.length < 20) return null;
+  return clean.slice(0, Math.max(1, maxCharacters)).trim() || null;
 }
 
 /**
@@ -601,6 +653,8 @@ export interface BackgroundGenRequest {
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
+  /** Optional LLM prompt director used to rewrite the deterministic prompt before provider submission. */
+  dynamicPromptGenerator?: GameDynamicImagePromptGenerator;
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
@@ -644,6 +698,8 @@ export interface SceneIllustrationGenRequest {
   debugLog?: (message: string, ...args: any[]) => void;
   /** Storage for user-supplied prompt overrides. Optional — falls back to default builder when omitted. */
   promptOverridesStorage?: PromptOverridesStorage;
+  /** Optional LLM prompt director used to rewrite the deterministic prompt before provider submission. */
+  dynamicPromptGenerator?: GameDynamicImagePromptGenerator;
   size?: ImageGenerationSize;
   promptOverride?: string;
   negativePromptOverride?: string;
@@ -711,13 +767,25 @@ export async function buildBackgroundProviderPrompt(req: BackgroundGenRequest): 
       negativePrompt: req.negativePromptOverride?.trim() || "",
     };
   }
-  return compileGameImagePrompt(
-    req,
-    "background",
-    await buildBackgroundRawPrompt(req),
-    1000,
-    GAME_BACKGROUND_NEGATIVE_PROMPT,
-  );
+  const sourcePrompt = await buildBackgroundRawPrompt(req);
+  const prompt = await maybeGenerateDynamicGameImagePrompt(req.dynamicPromptGenerator, {
+    kind: "background",
+    title: req.locationSlug,
+    sourcePrompt,
+    maxCharacters: 1000,
+    assetContext: [
+      `Location slug: ${req.locationSlug}`,
+      `Scene description: ${req.sceneDescription}`,
+      req.genre ? `Genre: ${req.genre}` : "",
+      req.setting ? `Setting: ${req.setting}` : "",
+      req.currentLocation ? `Current location: ${req.currentLocation}` : "",
+      req.currentWeather ? `Weather: ${req.currentWeather}` : "",
+      req.currentTimeOfDay ? `Time of day: ${req.currentTimeOfDay}` : "",
+      req.worldOverview ? `World overview: ${req.worldOverview}` : "",
+      req.artStyle ? `Art style: ${req.artStyle}` : "",
+    ],
+  });
+  return compileGameImagePrompt(req, "background", prompt, 1000, GAME_BACKGROUND_NEGATIVE_PROMPT);
 }
 
 export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Promise<string> {
@@ -769,7 +837,10 @@ function sceneIllustrationContextTitle(req: SceneIllustrationGenRequest): string
 
 function cleanSceneIllustrationContext(value: string | null | undefined): string {
   return (value ?? "")
-    .replace(/\b(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment|narrative purpose)\s*[-:]\s*/gi, "")
+    .replace(
+      /\b(?:major character moment|key emotional moment|major reveal|dramatic action scene|important scene|scene moment|narrative purpose)\s*[-:]\s*/gi,
+      "",
+    )
     .replace(/\s+/g, " ")
     .replace(/[.!?]+$/g, "")
     .trim()
@@ -777,7 +848,9 @@ function cleanSceneIllustrationContext(value: string | null | undefined): string
 }
 
 function hasSceneSubjectCue(value: string): boolean {
-  return /\b(?:seeing|watching|looking|facing|meeting|holding|reaching|standing|kneeling|falling|fighting|duel|kiss|confession|reveal|transformation|mirror|uniform|door|character|protagonist|player|npc|self|room|hall|chamber|courtyard|battle|boss|monster|creature|arrival|entrance)\b/i.test(value);
+  return /\b(?:seeing|watching|looking|facing|meeting|holding|reaching|standing|kneeling|falling|fighting|duel|kiss|confession|reveal|transformation|mirror|uniform|door|character|protagonist|player|npc|self|room|hall|chamber|courtyard|battle|boss|monster|creature|arrival|entrance)\b/i.test(
+    value,
+  );
 }
 
 function isGenericSceneMomentLabel(value: string): boolean {
@@ -795,13 +868,26 @@ export async function buildSceneIllustrationProviderPrompt(
       negativePrompt: req.negativePromptOverride?.trim() || "",
     };
   }
-  return compileGameImagePrompt(
-    req,
-    "illustration",
-    await buildSceneIllustrationRawPrompt(req),
-    7000,
-    GAME_ILLUSTRATION_NEGATIVE_PROMPT,
-  );
+  const sourcePrompt = await buildSceneIllustrationRawPrompt(req);
+  const prompt = await maybeGenerateDynamicGameImagePrompt(req.dynamicPromptGenerator, {
+    kind: "illustration",
+    title: req.title || req.reason || req.slug || "Scene illustration",
+    sourcePrompt,
+    maxCharacters: 7000,
+    assetContext: [
+      req.title ? `Title: ${req.title}` : "",
+      `Scene prompt: ${req.prompt}`,
+      req.reason ? `Narrative purpose: ${req.reason}` : "",
+      req.characters?.length ? `Visible characters: ${req.characters.join(", ")}` : "",
+      req.characterDescriptions?.length ? `Character appearance notes: ${req.characterDescriptions.join("; ")}` : "",
+      req.genre ? `Genre: ${req.genre}` : "",
+      req.setting ? `Setting: ${req.setting}` : "",
+      req.artStyle ? `Art style: ${req.artStyle}` : "",
+      req.imagePromptInstructions ? `User image instructions: ${req.imagePromptInstructions}` : "",
+      req.referenceImages?.length ? `Reference images attached: ${req.referenceImages.length}` : "",
+    ],
+  });
+  return compileGameImagePrompt(req, "illustration", prompt, 7000, GAME_ILLUSTRATION_NEGATIVE_PROMPT);
 }
 
 export async function buildSceneIllustrationImagePrompt(req: SceneIllustrationGenRequest): Promise<string> {

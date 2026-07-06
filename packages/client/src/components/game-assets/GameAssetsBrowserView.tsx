@@ -575,6 +575,7 @@ export function GameAssetsBrowserView({
       }
     } catch (err) {
       toast.error(`Action failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
     }
     setModal(null);
     setModalValue("");
@@ -817,7 +818,7 @@ export function GameAssetsBrowserView({
         {/* Sidebar tree */}
         <div className="w-56 overflow-y-auto border-r border-[var(--border)]/40 bg-[var(--card)]/30 p-2 max-md:hidden">
           {isLoading ? (
-            <div className="p-4 text-sm text-[var(--muted-foreground)]">Loading...</div>
+            <div className="mari-chrome-text-muted p-4 text-sm">Loading...</div>
           ) : tree ? (
             <FolderTree
               node={tree}
@@ -844,7 +845,7 @@ export function GameAssetsBrowserView({
           onDragLeave={handleDragLeave}
         >
           {isLoading ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted-foreground)]">
+            <div className="mari-chrome-text-muted flex flex-1 items-center justify-center text-sm">
               Loading assets...
             </div>
           ) : (
@@ -1018,6 +1019,7 @@ export function GameAssetsBrowserView({
       {/* Modals */}
       {modal && (
         <div
+          data-chat-floating-panel
           role="dialog"
           aria-modal="true"
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -1133,6 +1135,10 @@ export function GameAssetsBrowserView({
                     modal.node.type === "folder" &&
                     countItems(modal.node) > 0 &&
                     !deleteRecursive) ||
+                  ((modal.type === "create-folder" ||
+                    modal.type === "new-text-file" ||
+                    modal.type === "new-markdown-file") &&
+                    !modalValue.trim()) ||
                   ((modal.type === "move" || modal.type === "bulk-move" || modal.type === "bulk-copy") && !modalValue)
                 }
                 className={cn(

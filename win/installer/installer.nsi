@@ -13,7 +13,7 @@
 
 ; ── App metadata ──
 !define APP_NAME "Marinara Engine"
-!define APP_VERSION "2.0.9"
+!define APP_VERSION "2.1.0"
 !define APP_PUBLISHER "Pasta-Devs"
 !define APP_URL "https://github.com/Pasta-Devs/Marinara-Engine"
 !define REPO_URL "https://github.com/Pasta-Devs/Marinara-Engine.git"
@@ -27,7 +27,7 @@
 !define NODE_DOWNLOAD_URL "https://nodejs.org/dist/v24.15.0/node-v24.15.0-x64.msi"
 !define GIT_SHA256 "2b96e7854f0520f0f6b709c21041d9801b1be44d5e1a0d9fa621b2fbc40f1983"
 !define NODE_SHA256 "feffb8e5cb5ac47f793666636d496ef3e975be82c84c4da5d20e6aa8fa4eb806"
-!define RELEASE_TAG "v2.0.9"
+!define RELEASE_TAG "v2.1.0"
 !ifndef RELEASE_COMMIT
 !define RELEASE_COMMIT ""
 !endif
@@ -671,17 +671,17 @@ ${APP_URL}"
   DetailPrint ""
   DetailPrint "═══ Step 3/6: Installing dependencies ═══"
   DetailPrint ""
-  DetailPrint "Running pnpm install (this may take 2-5 minutes and creates dependency folders)..."
+  DetailPrint "Running pnpm install --force (this may take 2-5 minutes and creates dependency folders)..."
   ${If} $PNPM_RUNNER == "corepack"
-    nsExec::ExecToLog 'cmd /c corepack pnpm@${PNPM_VERSION} install'
+    nsExec::ExecToLog 'cmd /c corepack pnpm@${PNPM_VERSION} --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
     Pop $0
   ${EndIf}
   ${If} $PNPM_RUNNER == "npx"
-    nsExec::ExecToLog 'cmd /c npx --yes pnpm@${PNPM_VERSION} install'
+    nsExec::ExecToLog 'cmd /c npx --yes pnpm@${PNPM_VERSION} --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
     Pop $0
   ${EndIf}
   ${If} $PNPM_RUNNER == "pnpm"
-    nsExec::ExecToLog 'cmd /c pnpm install'
+    nsExec::ExecToLog 'cmd /c pnpm --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
     Pop $0
   ${EndIf}
   ${If} $0 != 0
@@ -693,15 +693,15 @@ Would you like to retry?" IDYES retryInstall IDNO skipRetryInstall
     retryInstall:
       DetailPrint "Retrying pnpm install..."
       ${If} $PNPM_RUNNER == "corepack"
-        nsExec::ExecToLog 'cmd /c corepack pnpm@${PNPM_VERSION} install'
+        nsExec::ExecToLog 'cmd /c corepack pnpm@${PNPM_VERSION} --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
         Pop $0
       ${EndIf}
       ${If} $PNPM_RUNNER == "npx"
-        nsExec::ExecToLog 'cmd /c npx --yes pnpm@${PNPM_VERSION} install'
+        nsExec::ExecToLog 'cmd /c npx --yes pnpm@${PNPM_VERSION} --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
         Pop $0
       ${EndIf}
       ${If} $PNPM_RUNNER == "pnpm"
-        nsExec::ExecToLog 'cmd /c pnpm install'
+        nsExec::ExecToLog 'cmd /c pnpm --config.trustPolicy=off --config.confirmModulesPurge=false install --force'
         Pop $0
       ${EndIf}
     skipRetryInstall:

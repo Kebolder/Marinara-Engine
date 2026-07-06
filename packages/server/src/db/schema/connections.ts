@@ -21,6 +21,7 @@ export const apiConnections = sqliteTable("api_connections", {
       "xai",
       "custom",
       "image_generation",
+      "video_generation",
     ],
   }).notNull(),
   baseUrl: text("base_url").notNull().default(""),
@@ -56,6 +57,10 @@ export const apiConnections = sqliteTable("api_connections", {
   imageService: text("image_service"),
   /** For endpoint-based image services (e.g. RunPod Serverless ComfyUI): the endpoint ID. */
   imageEndpointId: text("image_endpoint_id"),
+  /** Explicit video backend selection for video-generation connections. */
+  videoGenerationSource: text("video_generation_source"),
+  /** Video generation: explicitly selected service ID. */
+  videoService: text("video_service"),
   /** Default generation parameters (stored as JSON) for new chats using this connection */
   defaultParameters: text("default_parameters"),
   /** Optional prompt preset override for roleplay/visual-novel chats using this connection */

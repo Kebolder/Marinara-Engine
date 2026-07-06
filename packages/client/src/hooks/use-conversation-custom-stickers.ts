@@ -5,6 +5,7 @@
 // stickers override a global of the same name (owner-wins). Used by the message
 // renderer and the sticker selector.
 // ──────────────────────────────────────────────
+import { useRef } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
 import { useChatStore } from "../stores/chat.store";
@@ -36,6 +37,7 @@ function displayName(row: { data?: unknown; name?: unknown } | undefined, fallba
 }
 
 export function useConversationCustomStickers(): { list: ConversationCustomSticker[]; map: Map<string, string> } {
+  const stableResultRef = useRef<{ list: ConversationCustomSticker[]; map: Map<string, string> } | null>(null);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const { data: activeChat } = useChat(activeChatId);
   const personaId = (activeChat as { personaId?: string | null } | undefined)?.personaId ?? null;
@@ -90,7 +92,31 @@ export function useConversationCustomStickers(): { list: ConversationCustomStick
     }
   });
 
-  const list = [...byName.values()];
-  const map = new Map(list.map((sticker) => [sticker.name, sticker.url] as const));
-  return { list, map };
+  // [#3223] The derivation above rebuilds fresh objects every render (the
+  // useQueries result arrays churn identity per render), but the resolved set
+  // rarely changes. Reuse the previous { list, map } when it is element-wise
+  // identical — every mounted ConversationMessage receives `map` as a prop, so
+  // a fresh Map per render broke React.memo for the whole transcript on every
+  // streaming frame (the #3164 disease; same ref-reuse pattern as ChatArea's
+  // chatCharacterRows).
+  const next = [...byName.values()];
+  const previous = stableResultRef.current;
+  if (
+    previous &&
+    previous.list.length === next.length &&
+    next.every((sticker, index) => {
+      const before = previous.list[index]!;
+      return (
+        before.name === sticker.name &&
+        before.url === sticker.url &&
+        before.source === sticker.source &&
+        before.editable === sticker.editable
+      );
+    })
+  ) {
+    return previous;
+  }
+  const result = { list: next, map: new Map(next.map((sticker) => [sticker.name, sticker.url] as const)) };
+  stableResultRef.current = result;
+  return result;
 }

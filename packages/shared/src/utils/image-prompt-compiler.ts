@@ -169,6 +169,129 @@ function imageNegativePromptPrefixFromDefaults(defaults: ImageGenerationDefaults
   return "";
 }
 
+function splitPromptListItems(value: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  let quote: '"' | null = null;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    const clean = current.trim();
+    if (clean) parts.push(clean);
+    current = "";
+  };
+
+  for (const char of value) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"') {
+      current += char;
+      quote = char;
+      continue;
+    }
+
+    if (char === "(") parenDepth += 1;
+    else if (char === ")" && parenDepth > 0) parenDepth -= 1;
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]" && bracketDepth > 0) bracketDepth -= 1;
+    else if (char === "{") braceDepth += 1;
+    else if (char === "}" && braceDepth > 0) braceDepth -= 1;
+
+    const insideGroup = parenDepth > 0 || bracketDepth > 0 || braceDepth > 0;
+    if (!insideGroup && (char === "," || char === ";" || char === "\n")) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return parts;
+}
+
+function splitNaturalPromptClauses(value: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  let quote: '"' | null = null;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    const clean = current.trim();
+    if (clean) parts.push(clean);
+    current = "";
+  };
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]!;
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"') {
+      current += char;
+      quote = char;
+      continue;
+    }
+
+    if (char === "(") parenDepth += 1;
+    else if (char === ")" && parenDepth > 0) parenDepth -= 1;
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]" && bracketDepth > 0) bracketDepth -= 1;
+    else if (char === "{") braceDepth += 1;
+    else if (char === "}" && braceDepth > 0) braceDepth -= 1;
+
+    const insideGroup = parenDepth > 0 || bracketDepth > 0 || braceDepth > 0;
+    const startsNegativeClause = /^\s*(?:avoid|no|without)\b/i.test(value.slice(index + 1));
+    if (!insideGroup && (char === "\n" || (char === "," && startsNegativeClause))) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return parts;
+}
+
 export function mergeCompiledPromptMeta(
   meta: Record<string, unknown> | undefined,
   compiled: Pick<CompiledImagePrompt, "profile" | "diagnostics">,
@@ -203,35 +326,31 @@ function splitPromptFragments(
 
   const normalized = text
     .replace(/\r\n?/g, "\n")
-    .replace(
-      /((?:^|[\n,])\s*(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;\n]+),/gi,
-      "$1\n",
-    )
     .replace(/[.!?]\s+(?=(?:avoid|no|without|exclude|do not include|don't include)\b)/gi, "\n")
     .replace(/\b(?:avoid|negative prompt|undesired content)\s*:/gi, "\navoid ")
-    .replace(/\b(?:positive prompt|tags?)\s*:/gi, "\n")
-    .replace(/((?:^|[\n,])\s*(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;\n]+),/gi, "$1\n");
+    .replace(/\b(?:positive prompt|tags?)\s*:/gi, "\n");
 
   if (promptMode === "natural") {
-    return normalized
-      .split(/\n+|,(?=\s*(?:avoid|no|without)\b)/i)
-      .map((part) => part.trim())
-      .filter(Boolean);
+    const fragments: string[] = [];
+    for (const part of splitNaturalPromptClauses(normalized)) {
+      const clean = part.trim();
+      if (!clean) continue;
+      if (hasAvoidInstructionPrefix(clean)) {
+        fragments.push(...splitPromptListItems(clean));
+      } else {
+        fragments.push(clean);
+      }
+    }
+    return fragments;
   }
 
   const prepared = sourcePrompt ? distillTaggedPromptSource(normalized) : normalized;
 
-  return prepared
-    .split(/[,;\n]+/g)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  return splitPromptListItems(prepared);
 }
 
 function splitNegativePromptItems(value: string): string[] {
-  return value
-    .split(/[,;]/g)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  return splitPromptListItems(value);
 }
 
 function distillTaggedPromptSource(value: string): string {
@@ -241,7 +360,7 @@ function distillTaggedPromptSource(value: string): string {
     if (!sentence) continue;
     const negative = extractNegativeFragment(sentence);
     if (negative) {
-      for (const item of negative.split(/[,;]/g)) {
+      for (const item of splitNegativePromptItems(negative)) {
         const cleanNegative = item.trim();
         if (cleanNegative) fragments.push(`avoid ${cleanNegative}`);
       }
@@ -271,7 +390,7 @@ function distillTaggedPromptSource(value: string): string {
     if (distilled.length > 0) {
       fragments.push(...distilled);
     }
-    for (const item of clean.split(/[,;]/g)) {
+    for (const item of splitPromptListItems(clean)) {
       const cleanItem = item.trim();
       if (hasAvoidInstructionPrefix(cleanItem)) {
         fragments.push(cleanItem);
@@ -309,8 +428,7 @@ function reconcileProfileSubjectTags(tags: string, sourceCues: string[]): string
   const genderCue = sourceCues.find((cue) => /^(?:female|male|androgynous)$/.test(cue));
   if (!tags.trim() || !genderCue) return tags;
 
-  return tags
-    .split(/[,;\n]+/g)
+  return splitPromptListItems(tags)
     .map((tag) => tag.trim())
     .filter(Boolean)
     .flatMap((tag) => reconcileGenderedTag(tag, genderCue))
@@ -398,8 +516,7 @@ function distillLabeledPromptValue(label: string, value: string): string[] {
   }
 
   if (/^(?:appearance|canonical appearance|species|equipment|composition)$/i.test(normalizedLabel)) {
-    return cleanValue
-      .split(/[,;]|\s+\band\b\s+/gi)
+    return splitPromptListItems(cleanValue)
       .map((part) => part.trim())
       .filter((part) => shouldKeepTaggedSourceFragment(part));
   }
@@ -594,9 +711,9 @@ function isLowPriorityCompactTag(value: string): boolean {
 
 function extractNegativeFragment(fragment: string): string | null {
   const clean = fragment.trim();
-  const match = clean.match(/^(?:avoid|no|without|exclude|do not include|don't include)\s+([^,;]+)/i);
+  const match = clean.match(/^(?:avoid|no|without|exclude|do not include|don't include)\s+(.+)/i);
   if (!match?.[1]) return null;
-  const negative = match[1]
+  const negative = (splitPromptListItems(match[1])[0] ?? "")
     .replace(/[.]+$/g, "")
     .replace(/^(?:any|all)\s+/i, "")
     .trim();
@@ -605,10 +722,10 @@ function extractNegativeFragment(fragment: string): string | null {
 }
 
 function stripLeadingNegativeClause(fragment: string): string {
-  return fragment
-    .trim()
-    .replace(/^(?:avoid|no|without|exclude|do not include|don't include)\s+[^,;]+[,;]?\s*/i, "")
-    .trim();
+  const clean = fragment.trim();
+  const match = clean.match(/^(?:avoid|no|without|exclude|do not include|don't include)\s+(.+)/i);
+  if (!match?.[1]) return clean;
+  return splitPromptListItems(match[1]).slice(1).join(", ").trim();
 }
 
 function hasAvoidInstructionPrefix(fragment: string): boolean {

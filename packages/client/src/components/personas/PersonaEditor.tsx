@@ -3,7 +3,7 @@
 // Replaces the chat area when editing a persona.
 // Sections: Metadata, Card, Lorebook, Sprites, Colors, Stats
 // ──────────────────────────────────────────────
-import { useState, useEffect, useRef, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   useCreateCharacter,
@@ -17,9 +17,17 @@ import {
   useRestorePersonaVersion,
   useDeletePersonaVersion,
   usePersonaGalleryImages,
+  usePersonaGalleryClips,
   useUploadPersonaGalleryImage,
+  useUploadPersonaGalleryClip,
+  useUploadPersonaGalleryVideo,
   useDeletePersonaGalleryImage,
+  useDeletePersonaGalleryClip,
+  useGeneratePersonaCallVideoClips,
+  useGeneratePersonaCustomCallVideoClip,
   useTagPersonaGalleryImage,
+  type CharacterCallVideoGenerationInput,
+  type CharacterGalleryClip,
   type PersonaGalleryImage,
 } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
@@ -41,6 +49,7 @@ import {
   Upload,
   Download,
   FolderOpen,
+  Film,
   History,
   Loader2,
   Copy,
@@ -60,8 +69,10 @@ import { ColorPicker } from "../ui/ColorPicker";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
+import { CallClipGenerationModal } from "../ui/CallClipGenerationModal";
 import { api } from "../../lib/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
+import { estimateTextTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import {
   useCharacterSprites,
   useUploadSprite,
@@ -120,6 +131,10 @@ const PERSONA_CARD_SECTIONS = [
   { id: "persona-card-scenario", label: "Scenario" },
 ] as const;
 
+function formatPersonaTextTokens(value: string): string {
+  return formatEstimatedTokens(estimateTextTokens(value));
+}
+
 const PERSONA_METADATA_HELP =
   "Use metadata for identity, sharing, and library organization. Name is injected as your persona name, creator/version help track authorship and revisions, tags make the persona searchable, and creator notes stay private.";
 
@@ -129,8 +144,7 @@ const PERSONA_CARD_HELP =
 const PERSONA_DESCRIPTION_HELP =
   "Your persona's general identity and role. This is sent in prompts so the AI knows who you are in the scene.";
 
-const PERSONA_PERSONALITY_HELP =
-  "Your temperament, behavior, speech habits, preferences, and emotional patterns.";
+const PERSONA_PERSONALITY_HELP = "Your temperament, behavior, speech habits, preferences, and emotional patterns.";
 
 const PERSONA_BACKSTORY_HELP =
   "History, origin, important relationships, and formative events that explain your persona.";
@@ -233,7 +247,41 @@ function formatPersonaFieldValue<K extends keyof PersonaFormData>(
 
 // ── Gallery Tab ──
 
+type PersonaGalleryMediaTab = "images" | "clips";
+
+function personaGalleryClipSourceLabel(source: CharacterGalleryClip["source"]) {
+  switch (source) {
+    case "game-scene":
+      return "Game scene";
+    case "scene-video":
+      return "Scene video";
+    case "conversation-call":
+      return "Call presence";
+    case "conversation-call-custom":
+      return "Custom call clip";
+    case "uploaded-video":
+      return "Uploaded video";
+    default:
+      return "Video";
+  }
+}
+
+function formatPersonaClipDate(value: string | null) {
+  if (!value) return "Not generated";
+  return new Date(value).toLocaleDateString();
+}
+
+function canDeletePersonaGalleryClip(clip: CharacterGalleryClip) {
+  if (clip.source === "conversation-call" && clip.status === "missing") return false;
+  return clip.status !== "generating";
+}
+
+function isPersonaCallVideoClip(clip: CharacterGalleryClip) {
+  return clip.source === "conversation-call" || clip.source === "conversation-call-custom";
+}
+
 function PersonaGalleryTab({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const [mediaTab, setMediaTab] = useState<PersonaGalleryMediaTab>("images");
   const { data: images, isLoading } = usePersonaGalleryImages(personaId);
   const upload = useUploadPersonaGalleryImage(personaId);
   const remove = useDeletePersonaGalleryImage(personaId);
@@ -275,82 +323,115 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
       <div className="mb-4">
         <h2 className="text-lg font-bold">Persona Gallery</h2>
         <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
-          Keep reference art and alternate looks attached to this persona, independent of any chat.
+          Keep reference art, alternate looks, and generated videos attached to this persona.
         </p>
       </div>
 
-      <ImageUploadDropzone
-        label="Upload Persona Images"
-        pending={upload.isPending}
-        pendingLabel="Uploading…"
-        dragLabel="Drop persona images to upload"
-        onFilesSelected={handleUpload}
-        icon={<Upload size="1rem" />}
-        className="w-full"
-      />
-
-      {isLoading ? (
-        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="shimmer aspect-square rounded-xl" />
-          ))}
-        </div>
-      ) : images && images.length > 0 ? (
-        <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
-          {images.map((image) => (
-            <div
-              key={image.id}
-              className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+      <div className="inline-flex rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-1">
+        {[
+          { id: "images" as const, label: "Images", icon: Camera, count: images?.length ?? 0 },
+          { id: "clips" as const, label: "Videos", icon: Film, count: null },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const active = mediaTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setMediaTab(tab.id)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+                active
+                  ? "bg-[var(--primary)] text-[var(--primary-foreground)] shadow-sm"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--muted)] hover:text-[var(--foreground)]",
+              )}
             >
-              <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
-              <button
-                type="button"
-                className="block aspect-square w-full bg-[var(--secondary)]"
-                onClick={() => setLightbox(image)}
-              >
-                <img
-                  src={image.url}
-                  alt={image.prompt || personaName || "Persona image"}
-                  className="h-full w-full object-cover"
-                />
-              </button>
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
-                <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
-                  {new Date(image.createdAt).toLocaleDateString()}
-                </span>
-                <div className="flex gap-1">
-                  <a
-                    href={image.url}
-                    download
-                    className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
-                    title="Download"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Download size="0.75rem" />
-                  </a>
+              <Icon size="0.8rem" />
+              <span>{tab.label}</span>
+              {typeof tab.count === "number" ? <span className="text-[0.65rem] opacity-70">{tab.count}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+
+      {mediaTab === "images" ? (
+        <>
+          <ImageUploadDropzone
+            label="Upload Persona Images"
+            pending={upload.isPending}
+            pendingLabel="Uploading…"
+            dragLabel="Drop persona images to upload"
+            onFilesSelected={handleUpload}
+            icon={<Upload size="1rem" />}
+            className="w-full"
+          />
+
+          {isLoading ? (
+            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="shimmer aspect-square rounded-xl" />
+              ))}
+            </div>
+          ) : images && images.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3 md:grid-cols-4">
+              {images.map((image) => (
+                <div
+                  key={image.id}
+                  className="group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md"
+                >
+                  <CustomEmojiTagButton image={image} onApply={(patch) => tag.mutate({ imageId: image.id, patch })} />
                   <button
                     type="button"
-                    onClick={() => void handleDelete(image)}
-                    className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
-                    title="Delete"
+                    className="block aspect-square w-full bg-[var(--secondary)]"
+                    onClick={() => setLightbox(image)}
                   >
-                    <Trash2 size="0.75rem" />
+                    <img
+                      src={image.url}
+                      alt={image.prompt || personaName || "Persona image"}
+                      className="h-full w-full object-cover"
+                    />
                   </button>
+                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/75 via-black/25 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">
+                    <span className="max-w-[8rem] truncate text-[0.6875rem] font-medium text-white/85">
+                      {new Date(image.createdAt).toLocaleDateString()}
+                    </span>
+                    <div className="flex gap-1">
+                      <a
+                        href={image.url}
+                        download
+                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                        title="Download"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Download size="0.75rem" />
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(image)}
+                        className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
+                        title="Delete"
+                      >
+                        <Trash2 size="0.75rem" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+              <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+              <div>
+                <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona images yet</p>
+                <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+                  Upload images here to keep them tied to {personaName || "this persona"} instead of a specific chat.
+                </p>
               </div>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       ) : (
-        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
-          <Camera size="1.75rem" className="text-[var(--muted-foreground)]/40" />
-          <div>
-            <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona images yet</p>
-            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
-              Upload images here to keep them tied to {personaName || "this persona"} instead of a specific chat.
-            </p>
-          </div>
-        </div>
+        <PersonaVideosGallery personaId={personaId} personaName={personaName} />
       )}
 
       {lightbox && (
@@ -383,6 +464,379 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function PersonaVideosGallery({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const { data, isLoading } = usePersonaGalleryClips(personaId);
+  const uploadVideo = useUploadPersonaGalleryVideo(personaId);
+  const deleteClip = useDeletePersonaGalleryClip(personaId);
+  const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
+  const clips = (data?.clips ?? []).filter((clip) => !isPersonaCallVideoClip(clip));
+
+  const handleUploadVideos = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      try {
+        for (const file of files) {
+          await uploadVideo.mutateAsync({ file });
+        }
+        toast.success(files.length === 1 ? "Video uploaded." : "Videos uploaded.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not upload video.");
+      }
+    },
+    [uploadVideo],
+  );
+
+  const handleDeleteClip = useCallback(
+    async (clip: CharacterGalleryClip) => {
+      if (!canDeletePersonaGalleryClip(clip)) return;
+      if (
+        !(await showConfirmDialog({
+          title: "Delete Clip",
+          message: "Delete this clip everywhere it appears in Marinara? This cannot be undone.",
+          confirmLabel: "Delete",
+          tone: "destructive",
+        }))
+      ) {
+        return;
+      }
+
+      setDeletingClipId(clip.id);
+      try {
+        await deleteClip.mutateAsync(clip.id);
+        toast.success("Video deleted.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not delete video.");
+      } finally {
+        setDeletingClipId(null);
+      }
+    },
+    [deleteClip],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="shimmer aspect-video rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <ImageUploadDropzone
+        label="Upload Persona Videos"
+        pending={uploadVideo.isPending}
+        pendingLabel="Uploading…"
+        dragLabel="Drop persona videos to upload"
+        onFilesSelected={handleUploadVideos}
+        icon={<Upload size="1rem" />}
+        accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+        fileKind="video"
+        className="w-full"
+      />
+
+      {clips.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {clips.map((clip) => (
+            <PersonaClipCard
+              key={clip.id}
+              clip={clip}
+              personaName={personaName}
+              deleting={deletingClipId === clip.id}
+              onDelete={handleDeleteClip}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+          <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+          <div>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">No persona videos yet</p>
+            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+              Upload videos or generate game and scene videos from chats using {personaName || "this persona"}.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PersonaCallClipsGallery({ personaId, personaName }: { personaId: string; personaName?: string }) {
+  const { data, isLoading } = usePersonaGalleryClips(personaId);
+  const uploadClip = useUploadPersonaGalleryClip(personaId);
+  const deleteClip = useDeletePersonaGalleryClip(personaId);
+  const generateCallClips = useGeneratePersonaCallVideoClips(personaId);
+  const generateCustomCallClip = useGeneratePersonaCustomCallVideoClip(personaId);
+  const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
+  const [generationDialogOpen, setGenerationDialogOpen] = useState(false);
+  const clipUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const clips = (data?.clips ?? []).filter(isPersonaCallVideoClip);
+  const standardCallClips = clips.filter((clip) => clip.source === "conversation-call");
+  const customCallClipCount = clips.filter((clip) => clip.source === "conversation-call-custom").length;
+  const readyCallClipCount = standardCallClips.filter((clip) => clip.status === "ready").length;
+  const generationLockActive =
+    data?.callVideoGenerating === true ||
+    clips.some((clip) => clip.status === "generating") ||
+    generateCallClips.isPending ||
+    generateCustomCallClip.isPending;
+
+  const handleUploadClipFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+
+      try {
+        await uploadClip.mutateAsync({ file });
+        toast.success("Call clip uploaded.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not upload clip.");
+      }
+    },
+    [uploadClip],
+  );
+
+  const handleGenerateCallClips = useCallback(
+    async (input: CharacterCallVideoGenerationInput) => {
+      const standardKinds = input.clipKinds?.length ? input.clipKinds : input.clipKind ? [input.clipKind] : [];
+      const customClip = input.customClip?.label.trim() && input.customClip.prompt.trim() ? input.customClip : null;
+      try {
+        if (standardKinds.length > 0) {
+          await generateCallClips.mutateAsync({
+            ...input,
+            clipKinds: standardKinds,
+            clipCount: standardKinds.length,
+            customClip: null,
+          });
+        }
+        if (customClip) {
+          await generateCustomCallClip.mutateAsync({
+            ...input,
+            customClip,
+          });
+        }
+        toast.success(
+          customClip && standardKinds.length === 0
+            ? "Custom call clip generation started."
+            : customClip
+              ? "Call clip and custom clip generation started."
+              : "Call clip generation started.",
+        );
+        setGenerationDialogOpen(false);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not start call clip generation.");
+      }
+    },
+    [generateCallClips, generateCustomCallClip],
+  );
+
+  const handleDeleteClip = useCallback(
+    async (clip: CharacterGalleryClip) => {
+      if (!canDeletePersonaGalleryClip(clip)) return;
+      if (
+        !(await showConfirmDialog({
+          title: "Delete Clip",
+          message: "Delete this call clip? This cannot be undone.",
+          confirmLabel: "Delete",
+          tone: "destructive",
+        }))
+      ) {
+        return;
+      }
+
+      setDeletingClipId(clip.id);
+      try {
+        await deleteClip.mutateAsync(clip.id);
+        toast.success(clip.source === "conversation-call" ? "Call clip reset." : "Clip deleted.");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not delete clip.");
+      } finally {
+        setDeletingClipId(null);
+      }
+    },
+    [deleteClip],
+  );
+
+  if (isLoading) {
+    return (
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="shimmer aspect-video rounded-xl" />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <input
+        ref={clipUploadInputRef}
+        type="file"
+        accept="video/mp4,.mp4"
+        className="hidden"
+        onChange={handleUploadClipFile}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--card)] p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Video call clips</p>
+          <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">
+            {readyCallClipCount}/{standardCallClips.length || 6} standard ready · {customCallClipCount} custom
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => clipUploadInputRef.current?.click()}
+            disabled={uploadClip.isPending}
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] transition-colors hover:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {uploadClip.isPending ? <Loader2 size="0.85rem" className="animate-spin" /> : <Upload size="0.85rem" />}
+            Upload extra
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerationDialogOpen(true)}
+            disabled={generationLockActive}
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--primary)] px-3 py-2 text-xs font-semibold text-[var(--primary-foreground)] transition-all hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {generateCallClips.isPending || generateCustomCallClip.isPending ? (
+              <Loader2 size="0.85rem" className="animate-spin" />
+            ) : (
+              <Wand2 size="0.85rem" />
+            )}
+            {generateCallClips.isPending || generateCustomCallClip.isPending ? "Generating" : "Generate Clips"}
+          </button>
+        </div>
+      </div>
+
+      {clips.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {clips.map((clip) => (
+            <PersonaClipCard
+              key={clip.id}
+              clip={clip}
+              personaName={personaName}
+              deleting={deletingClipId === clip.id}
+              onDelete={handleDeleteClip}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-[var(--border)] py-12 text-center">
+          <Film size="1.75rem" className="text-[var(--muted-foreground)]/40" />
+          <div>
+            <p className="text-sm font-medium text-[var(--muted-foreground)]">No call clips yet</p>
+            <p className="mt-0.5 text-xs text-[var(--muted-foreground)]/60">
+              Generate or upload video-call loops for {personaName || "this persona"}.
+            </p>
+          </div>
+        </div>
+      )}
+      <CallClipGenerationModal
+        open={generationDialogOpen}
+        entityName={personaName || "this persona"}
+        generating={generateCallClips.isPending || generateCustomCallClip.isPending}
+        onClose={() => setGenerationDialogOpen(false)}
+        onGenerate={handleGenerateCallClips}
+      />
+    </div>
+  );
+}
+
+function PersonaClipCard({
+  clip,
+  personaName,
+  deleting,
+  onDelete,
+}: {
+  clip: CharacterGalleryClip;
+  personaName?: string;
+  deleting: boolean;
+  onDelete: (clip: CharacterGalleryClip) => void | Promise<void>;
+}) {
+  const sourceLabel = clip.origin === "uploaded" ? "Uploaded" : personaGalleryClipSourceLabel(clip.source);
+  const dateLabel = formatPersonaClipDate(clip.updatedAt ?? clip.createdAt);
+  const isReady = clip.status === "ready" && Boolean(clip.url);
+  const canDelete = canDeletePersonaGalleryClip(clip);
+  const isCallVideoClip = clip.source === "conversation-call" || clip.source === "conversation-call-custom";
+  const clipDetails = [clip.durationSeconds ? `${clip.durationSeconds}s` : null, clip.aspectRatio]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="group overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] transition-all hover:border-[var(--primary)]/30 hover:shadow-md">
+      <div className="relative aspect-video bg-[var(--secondary)]">
+        {isReady && clip.url ? (
+          <video
+            src={clip.url}
+            controls
+            muted={isCallVideoClip}
+            preload="metadata"
+            className="h-full w-full bg-black object-contain"
+          />
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-xs text-[var(--muted-foreground)]">
+            {clip.status === "generating" ? (
+              <Loader2 size="1.25rem" className="animate-spin text-[var(--primary)]" />
+            ) : clip.status === "error" ? (
+              <AlertTriangle size="1.25rem" className="text-[var(--destructive)]" />
+            ) : (
+              <Film size="1.25rem" className="opacity-50" />
+            )}
+            <span>{clip.status === "missing" ? "Not generated" : clip.status}</span>
+          </div>
+        )}
+        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/65 px-2 py-1 text-[0.65rem] font-semibold text-white">
+          {sourceLabel}
+        </div>
+      </div>
+      <div className="space-y-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-[var(--foreground)]">
+              {clip.label || personaName || "Clip"}
+            </p>
+            <p className="mt-0.5 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+              {clip.chatName ? `${clip.chatName} · ${dateLabel}` : dateLabel}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {isReady && clip.url ? (
+              <a
+                href={clip.url}
+                download
+                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)]"
+                title="Download"
+              >
+                <Download size="0.75rem" />
+              </a>
+            ) : null}
+            {canDelete ? (
+              <button
+                type="button"
+                onClick={() => void onDelete(clip)}
+                disabled={deleting}
+                className="rounded-lg border border-red-500/25 bg-red-500/10 p-1.5 text-red-400 transition-colors hover:border-red-500/45 hover:bg-red-500/20 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+                title="Delete"
+                aria-label={`Delete ${clip.label || "clip"}`}
+              >
+                {deleting ? <Loader2 size="0.75rem" className="animate-spin" /> : <Trash2 size="0.75rem" />}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {clip.prompt ? (
+          <p className="line-clamp-2 text-xs leading-relaxed text-[var(--muted-foreground)]">{clip.prompt}</p>
+        ) : null}
+        {clipDetails ? <p className="text-[0.65rem] text-[var(--muted-foreground)]/70">{clipDetails}</p> : null}
+      </div>
     </div>
   );
 }
@@ -842,12 +1296,7 @@ export function PersonaEditor() {
       {/* ── Header ── */}
       <div className="mari-editor-header items-start">
         <div className="mari-editor-header-main max-md:min-w-full">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="mari-editor-action inline-flex"
-            title="Back"
-          >
+          <button type="button" onClick={handleClose} className="mari-editor-action inline-flex" title="Back">
             <ArrowLeft size="1.125rem" />
           </button>
 
@@ -964,11 +1413,7 @@ export function PersonaEditor() {
               />
             )}
             {activeTab === "card" && (
-              <PersonaCardTab
-                formData={formData}
-                updateField={updateField}
-                setDirty={setDirty}
-              />
+              <PersonaCardTab formData={formData} updateField={updateField} setDirty={setDirty} />
             )}
             {activeTab === "lorebook" && personaId && (
               <PersonaLorebookTab personaId={personaId} personaName={formData.name} />
@@ -1033,7 +1478,7 @@ function PersonaSpritesTab({
   defaultAppearance?: string;
   defaultAvatarUrl?: string | null;
 }) {
-  type SpriteCategory = "expressions" | "full-body";
+  type SpriteCategory = "expressions" | "full-body" | "clips";
 
   const { data: sprites, isLoading } = useCharacterSprites(personaId);
   const { data: spriteCapabilities } = useSpriteCapabilities();
@@ -1069,7 +1514,11 @@ function PersonaSpritesTab({
     .filter((s) => !s.expression.toLowerCase().startsWith("full_"))
     .map((s) => s.expression);
   const visibleSprites = allSprites.filter((s) =>
-    category === "full-body" ? s.expression.startsWith("full_") : !s.expression.startsWith("full_"),
+    category === "clips"
+      ? false
+      : category === "full-body"
+        ? s.expression.startsWith("full_")
+        : !s.expression.startsWith("full_"),
   );
   const existingExpressions = new Set(
     visibleSprites.map((s) => (category === "full-body" ? s.expression.replace(/^full_/, "") : s.expression)),
@@ -1082,6 +1531,30 @@ function PersonaSpritesTab({
   const backgroundRemoverUnavailable = spriteCapabilities?.backgroundRemover?.installed === false;
   const backgroundRemoverReason =
     spriteCapabilities?.backgroundRemover?.reason ?? "Local backgroundremover is not installed.";
+
+  const categoryTabs = (
+    <div className="inline-flex rounded-xl bg-[var(--secondary)] p-1 ring-1 ring-[var(--border)]">
+      {[
+        { id: "expressions" as const, label: "Facial Expressions" },
+        { id: "full-body" as const, label: "Full-body" },
+        { id: "clips" as const, label: "Clips" },
+      ].map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => setCategory(tab.id)}
+          className={cn(
+            "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+            category === tab.id
+              ? "bg-[var(--primary)]/15 text-[var(--primary)]"
+              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
 
   const normalizeExpressionForCategory = (raw: string) => {
     return normalizeSpriteExpressionLabel(raw, { fullBody: category === "full-body" });
@@ -1323,6 +1796,22 @@ function PersonaSpritesTab({
     [displayExpression, personaId, uploadSprite, wandCleanupSprite],
   );
 
+  if (category === "clips") {
+    return (
+      <div className="space-y-6">
+        <SectionHeader
+          title="Persona Sprites"
+          subtitle="Upload VN-style sprites and video-call clips for your persona."
+          helpText={PERSONA_SPRITES_HELP}
+        />
+
+        {categoryTabs}
+
+        <PersonaCallClipsGallery personaId={personaId} personaName={personaName} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1331,32 +1820,7 @@ function PersonaSpritesTab({
         helpText={PERSONA_SPRITES_HELP}
       />
 
-      <div className="inline-flex rounded-xl bg-[var(--secondary)] p-1 ring-1 ring-[var(--border)]">
-        <button
-          type="button"
-          onClick={() => setCategory("expressions")}
-          className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-            category === "expressions"
-              ? "bg-[var(--primary)]/15 text-[var(--primary)]"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-          )}
-        >
-          Facial Expressions
-        </button>
-        <button
-          type="button"
-          onClick={() => setCategory("full-body")}
-          className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
-            category === "full-body"
-              ? "bg-[var(--primary)]/15 text-[var(--primary)]"
-              : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
-          )}
-        >
-          Full-body
-        </button>
-      </div>
+      {categoryTabs}
 
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
       <input
@@ -1861,7 +2325,6 @@ function PersonaColorsTab({
         label="Message Box Color"
         helpText="Background color for your persona's chat message bubbles. Use a semi-transparent color for best results (e.g. rgba)."
       />
-
     </div>
   );
 }
@@ -2057,7 +2520,6 @@ function PersonaStatsTab({
               ))}
             </div>
           </div>
-
         </>
       )}
 
@@ -2185,7 +2647,6 @@ function PersonaStatsTab({
                 ))}
               </div>
             </div>
-
           </>
         )}
       </div>
@@ -2315,11 +2776,7 @@ function PersonaMetadataTab({
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
             placeholder="1.0"
           />
-          <PersonaVersionHistoryPanel
-            personaId={personaId}
-            currentData={formData}
-            currentAvatarPath={avatarPreview}
-          />
+          <PersonaVersionHistoryPanel personaId={personaId} currentData={formData} currentAvatarPath={avatarPreview} />
         </label>
       </div>
 
@@ -2341,10 +2798,7 @@ function PersonaMetadataTab({
         </div>
         <div className="flex flex-wrap gap-1.5">
           {formData.tags.map((tag) => (
-            <span
-              key={tag}
-              className="mari-chrome-control mari-chrome-control--compact group/tag"
-            >
+            <span key={tag} className="mari-chrome-control mari-chrome-control--compact group/tag">
               <Tag size="0.625rem" />
               {tag}
               <button
@@ -2459,12 +2913,7 @@ function formatPersonaVersionValue(data: PersonaCardSnapshot, key: keyof Persona
   const value = data[key];
   if (typeof value !== "string") return "";
   if (!value.trim()) return "";
-  if (
-    key === "avatarCrop" ||
-    key === "trackerCardColors" ||
-    key === "personaStats" ||
-    key === "tags"
-  ) {
+  if (key === "avatarCrop" || key === "trackerCardColors" || key === "personaStats" || key === "tags") {
     try {
       return JSON.stringify(JSON.parse(value), null, 2);
     } catch {
@@ -2781,7 +3230,7 @@ function DescriptionTab({
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
       <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
-        {formData.description.length} characters
+        {formatPersonaTextTokens(formData.description)}
       </p>
     </div>
   );
@@ -2837,7 +3286,9 @@ function TextareaTab({
         title={title}
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
-      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
+      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
+        {formatPersonaTextTokens(value)}
+      </p>
     </div>
   );
 }

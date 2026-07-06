@@ -22,7 +22,14 @@ import { useTTSConfig, useUpdateTTSConfig, useTTSVoices } from "../../../hooks/u
 import { useCharacters } from "../../../hooks/use-characters";
 import { ttsService } from "../../../lib/tts-service";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
-import type { TTSConfig, TTSSource, TTSVoiceAssignment, TTSVoiceMode, TTSAudioFormat } from "@marinara-engine/shared";
+import type {
+  TTSConfig,
+  TTSSource,
+  TTSVoiceAssignment,
+  TTSVoiceMode,
+  TTSAudioFormat,
+  TTSConversationCallAudioInputMode,
+} from "@marinara-engine/shared";
 import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
@@ -69,12 +76,20 @@ const TTS_SOURCE_DEFAULTS: Record<
     voice: "alba",
     idleText: "Local PocketTTS",
   },
+  xai: {
+    label: "xAI Voice",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-tts",
+    voice: "eve",
+    idleText: "xAI Voice",
+  },
 };
 
 const TTS_SOURCE_OPTIONS: Array<{ value: TTSSource; label: string }> = [
   { value: "openai", label: "OpenAI-compatible" },
   { value: "elevenlabs", label: "ElevenLabs" },
   { value: "pockettts", label: "PocketTTS" },
+  { value: "xai", label: "xAI Voice" },
 ];
 
 const ELEVENLABS_TTS_MODELS = [
@@ -286,7 +301,7 @@ function NpcDefaultVoicePool({
         </div>
       ) : (
         <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          No ElevenLabs voices loaded yet.
+          No provider voices loaded yet.
         </p>
       )}
       {note && <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">{note}</p>}
@@ -324,6 +339,12 @@ export function TTSConfigCard() {
   const [progressivePlayback, setProgressivePlayback] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
   const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
+  const [callAudioEnabled, setCallAudioEnabled] = useState(false);
+  const [callAudioInputMode, setCallAudioInputMode] = useState<TTSConversationCallAudioInputMode>("local_whisper");
+  const [callVideoInputEnabled, setCallVideoInputEnabled] = useState(false);
+  const [callCharacterVideoEnabled, setCallCharacterVideoEnabled] = useState(false);
+  const [callAutomaticVideoClipsEnabled, setCallAutomaticVideoClipsEnabled] = useState(false);
+  const [callCustomVideoClipsEnabled, setCallCustomVideoClipsEnabled] = useState(false);
 
   const [expanded, setExpanded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -370,6 +391,12 @@ export function TTSConfigCard() {
     setProgressivePlayback(savedConfig.progressivePlayback ?? false);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
     setAudioFormat(savedConfig.audioFormat ?? "mp3");
+    setCallAudioEnabled(savedConfig.callAudioEnabled ?? false);
+    setCallAudioInputMode(savedConfig.callAudioInputMode ?? "local_whisper");
+    setCallVideoInputEnabled(savedConfig.callVideoInputEnabled ?? false);
+    setCallCharacterVideoEnabled(savedConfig.callCharacterVideoEnabled ?? false);
+    setCallAutomaticVideoClipsEnabled(savedConfig.callAutomaticVideoClipsEnabled ?? false);
+    setCallCustomVideoClipsEnabled(savedConfig.callCustomVideoClipsEnabled ?? false);
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -419,6 +446,16 @@ export function TTSConfigCard() {
     audioFormat,
     dialogueScope: "all",
     dialogueCharacterName: "",
+    callAudioEnabled,
+    callSttConnectionId: "",
+    callSttModel: "",
+    callAudioInputMode,
+    callVideoInputEnabled,
+    callCharacterVideoEnabled,
+    callAutomaticVideoClipsEnabled,
+    callCustomVideoClipsEnabled,
+    // Soundboard is intentionally always-on for Conversation Calls. Saving this card also migrates old false values.
+    callSoundboardEnabled: true,
     ...overrides,
   });
 
@@ -566,19 +603,25 @@ export function TTSConfigCard() {
   }, [elevenLabsMatchedFemaleVoiceOptions, npcDefaultFemaleVoices, voiceOptions]);
   const maleNpcVoiceFallbackNote =
     voiceOptions.length > 0 && elevenLabsMatchedMaleVoiceOptions.length === 0
-      ? "No male-labeled defaults were detected, so choose male voices manually here."
+      ? "No male-labeled defaults were detected, so this pool uses the provider voice list."
       : undefined;
   const femaleNpcVoiceFallbackNote =
     voiceOptions.length > 0 && elevenLabsMatchedFemaleVoiceOptions.length === 0
-      ? "No female-labeled defaults were detected, so choose female voices manually here."
+      ? "No female-labeled defaults were detected, so this pool uses the provider voice list."
       : undefined;
   const defaultMaleVoiceIds = useMemo(
-    () => elevenLabsMatchedMaleVoiceOptions.map((option) => option.id),
-    [elevenLabsMatchedMaleVoiceOptions],
+    () =>
+      (elevenLabsMatchedMaleVoiceOptions.length > 0 ? elevenLabsMatchedMaleVoiceOptions : voiceOptions).map(
+        (option) => option.id,
+      ),
+    [elevenLabsMatchedMaleVoiceOptions, voiceOptions],
   );
   const defaultFemaleVoiceIds = useMemo(
-    () => elevenLabsMatchedFemaleVoiceOptions.map((option) => option.id),
-    [elevenLabsMatchedFemaleVoiceOptions],
+    () =>
+      (elevenLabsMatchedFemaleVoiceOptions.length > 0 ? elevenLabsMatchedFemaleVoiceOptions : voiceOptions).map(
+        (option) => option.id,
+      ),
+    [elevenLabsMatchedFemaleVoiceOptions, voiceOptions],
   );
   const characterOptions = useMemo<CharacterOption[]>(() => {
     return ((characters ?? []) as Array<{ id?: string; data?: unknown; comment?: string | null }>)
@@ -611,15 +654,17 @@ export function TTSConfigCard() {
   const selectedLanguage =
     ELEVENLABS_TTS_LANGUAGE_OPTIONS.find((option) => option.code === elevenLabsLanguageCode) ??
     ELEVENLABS_TTS_LANGUAGE_OPTIONS[0];
-  const speedMin = source === "elevenlabs" ? 0.7 : 0.25;
-  const speedMax = source === "elevenlabs" ? 1.2 : 4.0;
+  const speedMin = source === "elevenlabs" || source === "xai" ? 0.7 : 0.25;
+  const speedMax = source === "elevenlabs" ? 1.2 : source === "xai" ? 1.5 : 4.0;
   const speedHelp =
     source === "elevenlabs"
       ? "Playback speed. ElevenLabs supports 0.7×–1.2×; wider saved values are clamped when spoken."
-      : "Playback speed. 1.0 is normal; range is 0.25×–4.0×.";
+      : source === "xai"
+        ? "Playback speed. xAI Voice supports 0.7×–1.5×; wider saved values are clamped when spoken."
+        : "Playback speed. 1.0 is normal; range is 0.25×–4.0×.";
   const speedSliderValue = Math.min(speedMax, Math.max(speedMin, speed));
   const speedLabel =
-    source === "elevenlabs" && speedSliderValue !== speed
+    (source === "elevenlabs" || source === "xai") && speedSliderValue !== speed
       ? `Speed — ${speedSliderValue.toFixed(2)}× (clamped from ${speed.toFixed(2)}×)`
       : `Speed — ${speed.toFixed(2)}×`;
   const previewDisabled = !enabled || ttsState === "loading" || (source === "elevenlabs" && !previewVoice);
@@ -631,7 +676,6 @@ export function TTSConfigCard() {
         : ttsState === "playing"
           ? "Stop preview"
           : "Preview voice";
-
   const updateVoiceAssignments = (nextAssignments: TTSVoiceAssignment[]) => {
     setVoiceAssignments(nextAssignments);
     mark({ voiceAssignments: nextAssignments });
@@ -792,7 +836,9 @@ export function TTSConfigCard() {
                 ? "The ElevenLabs API root. Use the default unless you proxy ElevenLabs through another server."
                 : source === "pockettts"
                   ? "The PocketTTS server root. Start it with pocket-tts serve, then use http://localhost:8000 unless you changed the port."
-                  : "The OpenAI-compatible TTS API endpoint. Use the default for OpenAI or point to a self-hosted server."
+                  : source === "xai"
+                    ? "The xAI Voice API root. Use https://api.x.ai/v1 unless you proxy xAI through another server."
+                    : "The OpenAI-compatible TTS API endpoint. Use the default for OpenAI or point to a self-hosted server."
             }
           >
             <div className="relative">
@@ -840,7 +886,9 @@ export function TTSConfigCard() {
                 ? "ElevenLabs model_id to use. Use eleven_v3 for Eleven v3 speech; eleven_ttv_v3 is a voice-design model and cannot generate TTS."
                 : source === "pockettts"
                   ? "PocketTTS selects its language/model when you start the local server. This field is kept for clarity and future compatible servers."
-                  : "TTS model to use. e.g. tts-1, tts-1-hd, gpt-4o-mini-tts, or any model your provider supports."
+                  : source === "xai"
+                    ? "xAI Voice currently uses the /tts endpoint; this is saved for compatibility with future model selection."
+                    : "TTS model to use. e.g. tts-1, tts-1-hd, gpt-4o-mini-tts, or any model your provider supports."
             }
           >
             <div className="relative">
@@ -903,7 +951,9 @@ export function TTSConfigCard() {
                   ? "ElevenLabs voices are fetched by name and saved by voice ID."
                   : source === "pockettts"
                     ? "PocketTTS built-in voice name or a voice URL/path accepted by your PocketTTS server."
-                    : "Voice to use for synthesis. Fetched from your configured provider when available."
+                    : source === "xai"
+                      ? "xAI Voice ID. Built-ins include eve, ara, rex, sal, and leo; custom xAI voice IDs can be typed after saving."
+                      : "Voice to use for synthesis. Fetched from your configured provider when available."
               }
             >
               <div className="flex gap-2">
@@ -974,6 +1024,11 @@ export function TTSConfigCard() {
               {!voicesFromProvider && source === "pockettts" && voices.length > 0 && (
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                   Showing PocketTTS built-in voices. You can type a custom voice URL or path accepted by your server.
+                </p>
+              )}
+              {!voicesFromProvider && source === "xai" && voices.length > 0 && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Showing xAI built-in voices. Save with an API key, then refresh to load account/custom voices.
                 </p>
               )}
             </FieldRow>
@@ -1144,46 +1199,44 @@ export function TTSConfigCard() {
             </FieldRow>
           )}
 
-          {source === "elevenlabs" && (
-            <FieldRow
-              label="Random NPC Voices"
-              help="When enabled, tracked game NPCs without a character-specific voice use a stable random ElevenLabs default voice matched to inferred male/female presentation."
-            >
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
-                <ToggleRow
-                  label="Use default voices for random NPCs"
-                  checked={npcDefaultVoicesEnabled}
-                  onChange={toggleNpcDefaultVoices}
-                />
-                {npcDefaultVoicesEnabled && (
-                  <div className="space-y-3 pt-1">
-                    <NpcDefaultVoicePool
-                      label="Male NPC defaults"
-                      options={elevenLabsNpcMaleVoiceOptions}
-                      selected={npcDefaultMaleVoices}
-                      onToggle={(voiceId, checked) => toggleNpcDefaultVoice("male", voiceId, checked)}
-                      note={maleNpcVoiceFallbackNote}
-                    />
-                    <NpcDefaultVoicePool
-                      label="Female NPC defaults"
-                      options={elevenLabsNpcFemaleVoiceOptions}
-                      selected={npcDefaultFemaleVoices}
-                      onToggle={(voiceId, checked) => toggleNpcDefaultVoice("female", voiceId, checked)}
-                      note={femaleNpcVoiceFallbackNote}
-                    />
-                    <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                      NPCs with unclear gender use a stable pick from both pools. Assigned character voices still win.
+          <FieldRow
+            label="Random NPC Voices"
+            help="When enabled, tracked game NPCs without a character-specific voice use a stable random provider voice. If voice metadata is available, Marinara prefers matching male/female pools."
+          >
+            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
+              <ToggleRow
+                label="Use default voices for random NPCs"
+                checked={npcDefaultVoicesEnabled}
+                onChange={toggleNpcDefaultVoices}
+              />
+              {npcDefaultVoicesEnabled && (
+                <div className="space-y-3 pt-1">
+                  <NpcDefaultVoicePool
+                    label="Male NPC defaults"
+                    options={elevenLabsNpcMaleVoiceOptions}
+                    selected={npcDefaultMaleVoices}
+                    onToggle={(voiceId, checked) => toggleNpcDefaultVoice("male", voiceId, checked)}
+                    note={maleNpcVoiceFallbackNote}
+                  />
+                  <NpcDefaultVoicePool
+                    label="Female NPC defaults"
+                    options={elevenLabsNpcFemaleVoiceOptions}
+                    selected={npcDefaultFemaleVoices}
+                    onToggle={(voiceId, checked) => toggleNpcDefaultVoice("female", voiceId, checked)}
+                    note={femaleNpcVoiceFallbackNote}
+                  />
+                  <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    NPCs with unclear gender use a stable pick from both pools. Assigned character voices still win.
+                  </p>
+                  {!voicesFromProvider && (
+                    <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
+                      Save and enable this TTS provider, then refresh voices to load provider voice options.
                     </p>
-                    {!voicesFromProvider && (
-                      <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
-                        Save the ElevenLabs connection and refresh voices to load the provider's default voice list.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </FieldRow>
-          )}
+                  )}
+                </div>
+              )}
+            </div>
+          </FieldRow>
 
           {/* Speed */}
           <FieldRow label={speedLabel} help={speedHelp}>

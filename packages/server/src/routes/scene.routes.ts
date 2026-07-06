@@ -250,7 +250,9 @@ export async function sceneRoutes(app: FastifyInstance) {
       characterIds: finalParticipantIds,
       groupId: originChat.groupId,
       personaId: originChat.personaId,
-      promptPresetId: originChat.promptPresetId,
+      // Scene chats use the generated sceneSystemPrompt as their prompt source.
+      // Copying the origin conversation preset can make those instructions clash.
+      promptPresetId: null,
       connectionId: connectionId ?? originChat.connectionId,
     });
 

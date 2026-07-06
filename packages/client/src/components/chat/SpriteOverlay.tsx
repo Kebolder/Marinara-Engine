@@ -250,7 +250,6 @@ export function SpriteOverlay({
     setStates(newStates);
   }, [messages, characterIds, expressionResult, spriteExpressions, fullBodyOnly]);
 
-  const visibleChars = useMemo(() => characterIds.slice(0, 3), [characterIds]);
   const renderModes = useMemo<SpriteRenderMode[]>(() => {
     if (fullBodyOnly) return ["full-body"];
     const modes: SpriteRenderMode[] = [];
@@ -262,9 +261,9 @@ export function SpriteOverlay({
     const entries: VisibleSpriteEntry[] = [];
     const hasPairedSprites = renderModes.length > 1;
 
-    for (const [index, charId] of visibleChars.entries()) {
+    for (const [index, charId] of characterIds.entries()) {
       const basePlacement = clampSpritePlacement(
-        spritePlacements?.[charId] ?? getDefaultSpritePlacement(index, visibleChars.length, side),
+        spritePlacements?.[charId] ?? getDefaultSpritePlacement(index, characterIds.length, side),
       );
 
       for (const [modeIndex, renderMode] of renderModes.entries()) {
@@ -283,7 +282,7 @@ export function SpriteOverlay({
     }
 
     return entries;
-  }, [renderModes, side, spritePlacements, visibleChars]);
+  }, [characterIds, renderModes, side, spritePlacements]);
 
   if (visibleSpriteEntries.length === 0) return null;
 
@@ -304,7 +303,7 @@ export function SpriteOverlay({
           expression={states[entry.characterId]?.expression ?? "neutral"}
           transition={states[entry.characterId]?.transition ?? "crossfade"}
           placement={entry.placement}
-          spriteCount={visibleChars.length}
+          spriteCount={characterIds.length}
           editing={editing}
           zIndex={entry.zIndex}
           stageRef={stageRef}

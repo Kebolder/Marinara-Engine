@@ -14,6 +14,7 @@ import {
   isAgentConfigDeleted,
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
+  normalizeAgentPhaseValue,
   normalizeAgentPromptTemplateSelectionMap,
   resolveAgentPromptTemplate,
   stripMacroComments,
@@ -394,17 +395,8 @@ function applyRetryMusicPlayerSource(
   };
 }
 
-function resolveRetryAgentRuntimePhase(agentType: string, configuredPhase: string): string {
-  if (
-    agentType === "prose-guardian" ||
-    agentType === "continuity" ||
-    agentType === "html" ||
-    agentType === "expression" ||
-    agentType === "spotify"
-  ) {
-    return "post_processing";
-  }
-  return configuredPhase;
+function resolveRetryAgentRuntimePhase(_agentType: string, configuredPhase: string): string {
+  return normalizeAgentPhaseValue(configuredPhase);
 }
 
 function getRetryAgentFallbackPrompt(agentType: string, settings: Record<string, unknown>): string {
@@ -1711,7 +1703,6 @@ async function attachRetrySpotifyToolContexts(args: {
 
     const allowedToolNames = new Set(tools.map((tool) => tool.function.name));
     if (entry.resolved.type === "spotify") {
-      entry.resolved.phase = "post_processing";
       entry.resolved.settings = {
         ...settings,
         enabledTools: spotifyEnabledNames,

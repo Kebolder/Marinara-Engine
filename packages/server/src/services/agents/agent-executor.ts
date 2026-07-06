@@ -1947,8 +1947,9 @@ function buildAgentMessages(
     finalParts.push(`</agent_results>`);
   }
 
-  // Echo Chamber is a parallel agent, so group-chat history can end on assistant.
-  // Anthropic treats a trailing assistant turn as prefill and rejects some models.
+  // Echo Chamber prompts can be assembled from group-chat history that ends on
+  // assistant. Anthropic treats a trailing assistant turn as prefill and rejects
+  // some models, so add a terminal user instruction for that agent type too.
   const requiresTerminalUserInstruction = finalParts.length > 0 || contextAgentTypes.includes("echo-chamber");
 
   if (requiresTerminalUserInstruction) {

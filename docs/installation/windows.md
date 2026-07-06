@@ -37,7 +37,7 @@ cd Marinara-Engine
 start.bat
 ```
 
-`start.bat` handles the rest: it aligns pnpm to the repo-pinned version, installs dependencies, builds the app, prepares local file-backed storage, and opens the app in your browser.
+`start.bat` handles the rest: it aligns pnpm to the repo-pinned version, installs dependencies, builds the app, prepares local file-backed storage, and opens the app in your browser. You do not need pnpm installed globally; the launcher uses Corepack when available, falls back to an installed pnpm if present, and can download a temporary repo-pinned pnpm through `npx`.
 
 ### Manual Setup
 
@@ -46,7 +46,7 @@ If you prefer to run commands yourself without the launcher:
 ```bat
 git clone https://github.com/Pasta-Devs/Marinara-Engine.git
 cd Marinara-Engine
-pnpm install
+pnpm install --force
 pnpm build
 pnpm start
 ```
@@ -84,7 +84,7 @@ When you launch Marinara Engine via the Start Menu shortcut or `start.bat` from 
 1. Fetches the latest code for the current update branch, then fast-forwards normal clones or moves installer-created release checkouts to that commit. Local `staging` branches follow `origin/staging`; all other launcher checkouts follow stable `origin/main`.
 2. Detects whether the checkout changed
 3. Temporarily stashes tracked local changes if needed, then reapplies them
-4. Reinstalls dependencies and rebuilds when needed
+4. Reinstalls dependencies, refreshes native packages for the current Node architecture, and rebuilds when needed
 5. Starts the app on the current version
 
 This applies to both manual clones and installs created by the Windows installer.
@@ -102,7 +102,7 @@ If you use a git checkout without the launcher or the in-app updater:
 ```bat
 git fetch origin +refs/heads/main:refs/remotes/origin/main
 git merge --ff-only origin/main || git checkout --detach origin/main
-pnpm install
+pnpm install --force
 pnpm build
 ```
 
@@ -111,7 +111,7 @@ For tester builds, use the staging target instead:
 ```bat
 git fetch origin +refs/heads/staging:refs/remotes/origin/staging
 git checkout -B staging origin/staging
-pnpm install
+pnpm install --force
 pnpm build
 ```
 

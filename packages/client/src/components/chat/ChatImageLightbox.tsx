@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Download, Pin, X } from "lucide-react";
+import type { GeneratedSceneVideo } from "@marinara-engine/shared";
 import type { ChatImage } from "../../hooks/use-gallery";
 import { useGalleryStore } from "../../stores/gallery.store";
 import { ImagePromptPanel } from "./ImagePromptPanel";
@@ -18,6 +19,24 @@ export function getChatImageDownloadName(image: Pick<ChatImage, "filePath" | "ur
   if (fromPath) return fromPath;
   const fromUrl = image.url.split("?")[0]?.split("/").pop();
   return fromUrl || `gallery-${image.id}.png`;
+}
+
+export function formatSceneVideoMeta(
+  video: Pick<GeneratedSceneVideo, "model" | "provider" | "durationSeconds" | "aspectRatio">,
+) {
+  const details: string[] = [];
+  if (video.model) details.push(video.model);
+  if (video.provider) details.push(video.provider.replace(/_/g, " "));
+  details.push(`${video.durationSeconds}s`);
+  details.push(video.aspectRatio);
+  return details.join(" | ");
+}
+
+export function getSceneVideoDownloadName(video: Pick<GeneratedSceneVideo, "filePath" | "url" | "id">) {
+  const fromPath = video.filePath.split(/[\\/]/).pop();
+  if (fromPath) return fromPath;
+  const fromUrl = video.url.split("?")[0]?.split("/").pop();
+  return fromUrl || `scene-video-${video.id}.mp4`;
 }
 
 interface ChatImageLightboxProps {
@@ -56,7 +75,9 @@ export function ChatImageLightbox({
       aria-modal="true"
       aria-label="Image preview"
       tabIndex={-1}
-      onClick={onClose}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
@@ -113,6 +134,114 @@ export function ChatImageLightbox({
               ref={closeButtonRef}
               onClick={onClose}
               aria-label="Close image"
+              className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+            >
+              <X size="0.875rem" />
+            </button>
+          </div>
+        </div>
+        <ImagePromptPanel prompt={prompt} meta={meta} className="w-full max-w-3xl" />
+      </div>
+    </div>,
+    portalRoot,
+  );
+}
+
+interface ChatVideoLightboxProps {
+  video: GeneratedSceneVideo;
+  pinEnabled?: boolean;
+  downloadEnabled?: boolean;
+  onPin?: (video: GeneratedSceneVideo) => void;
+  onClose: () => void;
+}
+
+export function ChatVideoLightbox({
+  video,
+  pinEnabled = true,
+  downloadEnabled = true,
+  onPin,
+  onClose,
+}: ChatVideoLightboxProps) {
+  const pinVideo = useGalleryStore((s) => s.pinVideo);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const portalRoot = typeof document !== "undefined" ? document.body : null;
+  const prompt = video.prompt.trim();
+  const meta = formatSceneVideoMeta(video);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+  }, []);
+
+  if (!portalRoot) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 max-md:pt-[env(safe-area-inset-top)]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Video preview"
+      tabIndex={-1}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <div
+        className="flex max-h-[90vh] w-[min(90vw,64rem)] max-w-[90vw] flex-col items-center gap-2"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="relative flex min-h-0 max-w-full justify-center">
+          <video
+            src={video.url}
+            controls
+            muted
+            playsInline
+            autoPlay
+            className={
+              prompt || meta
+                ? "max-h-[calc(90vh-10rem)] max-w-full rounded-lg bg-black object-contain shadow-2xl"
+                : "max-h-[85vh] max-w-full rounded-lg bg-black object-contain shadow-2xl"
+            }
+          />
+          <div className="absolute right-2 top-2 flex gap-2">
+            {pinEnabled && (
+              <button
+                type="button"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (onPin) onPin(video);
+                  else pinVideo(video);
+                  onClose();
+                }}
+                aria-label="Pin video to chat"
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+                title="Pin to chat"
+              >
+                <Pin size="0.875rem" />
+              </button>
+            )}
+            {downloadEnabled && (
+              <a
+                href={video.url}
+                download={getSceneVideoDownloadName(video)}
+                aria-label="Download video"
+                className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
+              >
+                <Download size="0.875rem" />
+              </a>
+            )}
+            <button
+              type="button"
+              ref={closeButtonRef}
+              onClick={onClose}
+              aria-label="Close video"
               className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black/80"
             >
               <X size="0.875rem" />

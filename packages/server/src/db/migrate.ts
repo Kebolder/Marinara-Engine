@@ -41,6 +41,41 @@ const CREATE_TABLES: string[] = [
     extra TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_sessions (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'audio',
+    initiator TEXT NOT NULL,
+    initiator_character_id TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    summary TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_messages (
+    id TEXT PRIMARY KEY NOT NULL,
+    call_id TEXT NOT NULL REFERENCES conversation_call_sessions(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    character_id TEXT,
+    participant_kind TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    extra TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_sounds (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    file_path TEXT,
+    mime_type TEXT NOT NULL DEFAULT 'audio/mpeg',
+    duration_ms INTEGER,
+    built_in TEXT NOT NULL DEFAULT 'false',
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS characters (
     id TEXT PRIMARY KEY NOT NULL,
     data TEXT NOT NULL,
@@ -394,6 +429,64 @@ const CREATE_TABLES: string[] = [
     time_of_day TEXT,
     turn_number INTEGER,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS game_scene_videos (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    source_illustration_tag TEXT,
+    source_illustration_path TEXT,
+    prompt TEXT NOT NULL DEFAULT '',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    duration_seconds INTEGER NOT NULL DEFAULT 10,
+    aspect_ratio TEXT NOT NULL DEFAULT '16:9',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS game_turn_storyboards (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
+    swipe_index INTEGER NOT NULL DEFAULT 0,
+    snapshot_id TEXT,
+    session_number INTEGER,
+    turn_number INTEGER,
+    title TEXT NOT NULL DEFAULT '',
+    source_narration TEXT NOT NULL DEFAULT '',
+    source_narration_hash TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planning',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    director_prompt TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS game_turn_storyboard_keyframes (
+    id TEXT PRIMARY KEY NOT NULL,
+    storyboard_id TEXT NOT NULL REFERENCES game_turn_storyboards(id) ON DELETE CASCADE,
+    "index" INTEGER NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    section_start_index INTEGER,
+    section_end_index INTEGER,
+    anchor_quote TEXT NOT NULL DEFAULT '',
+    anchor_kind TEXT NOT NULL DEFAULT '',
+    narration_beat TEXT NOT NULL DEFAULT '',
+    manga_panel_prompt TEXT NOT NULL DEFAULT '',
+    image_prompt TEXT NOT NULL DEFAULT '',
+    video_prompt TEXT NOT NULL DEFAULT '',
+    characters TEXT NOT NULL DEFAULT '[]',
+    continuity_notes TEXT NOT NULL DEFAULT '',
+    camera_motion TEXT NOT NULL DEFAULT '',
+    transition_hint TEXT NOT NULL DEFAULT '',
+    duration_seconds INTEGER NOT NULL DEFAULT 6,
+    aspect_ratio TEXT NOT NULL DEFAULT '16:9',
+    chat_image_id TEXT REFERENCES chat_images(id) ON DELETE SET NULL,
+    scene_video_id TEXT REFERENCES game_scene_videos(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS regex_scripts (
     id TEXT PRIMARY KEY NOT NULL,
@@ -976,6 +1069,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     definition: "TEXT",
   },
   {
+    table: "api_connections",
+    column: "video_generation_source",
+    definition: "TEXT",
+  },
+  {
+    table: "api_connections",
+    column: "video_service",
+    definition: "TEXT",
+  },
+  {
     table: "memory_chunks",
     column: "source_chat_id",
     definition: "TEXT",
@@ -1040,6 +1143,26 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "server_js",
     definition: "TEXT",
   },
+  {
+    table: "game_turn_storyboard_keyframes",
+    column: "section_start_index",
+    definition: "INTEGER",
+  },
+  {
+    table: "game_turn_storyboard_keyframes",
+    column: "section_end_index",
+    definition: "INTEGER",
+  },
+  {
+    table: "game_turn_storyboard_keyframes",
+    column: "anchor_quote",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "game_turn_storyboard_keyframes",
+    column: "anchor_kind",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
 ];
 
 /**
@@ -1064,10 +1187,7 @@ export async function runMigrations(db: DB) {
   const customToolOrderRows = await db.all<{ id: string; sort_order: number | null }>(
     sql.raw(`SELECT id, sort_order FROM custom_tools ORDER BY sort_order ASC, updated_at DESC, id ASC`),
   );
-  if (
-    customToolOrderRows.length > 1 &&
-    customToolOrderRows.every((row) => Number(row.sort_order ?? 0) === 0)
-  ) {
+  if (customToolOrderRows.length > 1 && customToolOrderRows.every((row) => Number(row.sort_order ?? 0) === 0)) {
     for (const [index, row] of customToolOrderRows.entries()) {
       await db.run(sql`UPDATE custom_tools SET sort_order = ${(index + 1) * 10} WHERE id = ${row.id}`);
     }
@@ -1092,7 +1212,9 @@ export async function runMigrations(db: DB) {
 
   // 3. Create indexes if they don't exist
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_chats_last_message_at ON chats(last_message_at DESC)`));
-  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_messages_chat_created_at ON messages(chat_id, created_at DESC)`));
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_messages_chat_created_at ON messages(chat_id, created_at DESC)`),
+  );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_state_chat_id ON game_state_snapshots(chat_id, created_at DESC)`),
   );
@@ -1104,6 +1226,24 @@ export async function runMigrations(db: DB) {
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_engine_state_message ON game_engine_state(message_id, swipe_index)`),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_game_storyboards_chat_turn ON game_turn_storyboards(chat_id, session_number, turn_number DESC)`,
+    ),
+  );
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_game_scene_videos_chat ON game_scene_videos(chat_id, created_at DESC)`),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_game_storyboards_message ON game_turn_storyboards(message_id, swipe_index)`,
+    ),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_game_storyboard_keyframes_parent ON game_turn_storyboard_keyframes(storyboard_id, "index")`,
+    ),
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_lorebook_character_links_book ON lorebook_character_links(lorebook_id)`),

@@ -16,7 +16,8 @@ export type APIProvider =
   | "nanogpt"
   | "xai"
   | "custom"
-  | "image_generation";
+  | "image_generation"
+  | "video_generation";
 
 /** An API connection configuration. */
 export interface APIConnection {
@@ -59,6 +60,10 @@ export interface APIConnection {
   imageService: string | null;
   /** For endpoint-based image services (e.g. RunPod Serverless): the endpoint ID sent alongside the base URL. */
   imageEndpointId: string | null;
+  /** Explicit video backend selection for video-generation connections (e.g. Gemini Omni). */
+  videoGenerationSource: string | null;
+  /** Explicitly selected video generation service ID. Overrides URL/model inference when set. */
+  videoService: string | null;
   /** Default generation parameters for new chats using this connection (JSON) */
   defaultParameters: string | null;
   /** Prompt preset to use instead of a chat's selected preset when this connection is active */

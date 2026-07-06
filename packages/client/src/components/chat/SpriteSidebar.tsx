@@ -42,11 +42,11 @@ export const SpriteSidebar = memo(function SpriteSidebar({
   return (
     <div
       className={cn(
-        "hidden sm:flex w-48 flex-col items-center justify-end gap-2 overflow-hidden py-2",
+        "hidden sm:flex w-48 flex-col items-center justify-end gap-2 overflow-x-hidden overflow-y-auto py-2",
         isRoleplay ? "bg-black/40 border-white/5" : "bg-[var(--secondary)]/50 border-[var(--border)]",
       )}
     >
-      {characterIds.slice(0, 3).map((charId) => (
+      {characterIds.map((charId) => (
         <SidebarSprite
           key={charId}
           characterId={charId}

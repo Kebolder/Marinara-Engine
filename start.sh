@@ -36,11 +36,11 @@ PNPM_RUNNER="pnpm"
 
 run_pnpm() {
     if [ "$PNPM_RUNNER" = "corepack" ]; then
-        corepack "pnpm@${PNPM_VERSION}" "$@"
+        corepack "pnpm@${PNPM_VERSION}" --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     elif [ "$PNPM_RUNNER" = "npx" ]; then
-        npx --yes "pnpm@${PNPM_VERSION}" "$@"
+        npx --yes "pnpm@${PNPM_VERSION}" --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     else
-        pnpm "$@"
+        pnpm --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     fi
 }
 
@@ -162,8 +162,8 @@ if [ -d ".git" ]; then
                 echo "  [WARN] Update did not land on ${TARGET_REF}. Continuing with current version."
             else
                 echo "  [OK] Updated to $(git log -1 --format='%h %s' 2>/dev/null)"
-                echo "  [..] Reinstalling dependencies..."
-                run_pnpm install
+                echo "  [..] Reinstalling dependencies and refreshing native packages..."
+                run_pnpm install --force
                 # Force rebuild
                 rm -rf packages/shared/dist packages/server/dist packages/client/dist
                 rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
@@ -191,26 +191,33 @@ if [ -f "packages/shared/dist/constants/defaults.js" ]; then
     if [ -n "$SOURCE_VER" ] && [ -n "$DIST_VER" ] && [ "$SOURCE_VER" != "$DIST_VER" ]; then
         echo "  [WARN] Version mismatch: source v$SOURCE_VER but dist has v$DIST_VER"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
     if [ -n "$SOURCE_COMMIT" ] && [ "$SOURCE_COMMIT" != "$DIST_COMMIT" ]; then
         echo "  [WARN] Build commit mismatch: source $SOURCE_COMMIT but dist has ${DIST_COMMIT:-<missing>}"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
 fi
 
 # ── Install dependencies ──
-if [ ! -d "node_modules" ]; then
+if [ ! -d "node_modules" ] || ! node scripts/check-workspace-install.mjs >/dev/null 2>&1; then
     echo ""
-    echo "  [..] Installing dependencies (first run)..."
+    echo "  [..] Installing dependencies..."
     echo "       This may take a few minutes."
     echo ""
-    run_pnpm install
+    run_pnpm install --force
+fi
+
+# Load .env if present (respects user overrides)
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
 fi
 
 # ── Optional AI sprite background remover ──
@@ -245,13 +252,6 @@ fi
 
 # ── Start ──
 
-# Load .env if present (respects user overrides)
-if [ -f .env ]; then
-  set -a
-  . ./.env
-  set +a
-fi
-
 export NODE_ENV=production
 export PORT=${PORT:-7860}
 export HOST=${HOST:-0.0.0.0}
@@ -261,6 +261,11 @@ if [ -n "$SSL_CERT" ] && [ -n "$SSL_KEY" ]; then
 else
   PROTOCOL=http
 fi
+
+BROWSER_HOST="$HOST"
+case "$BROWSER_HOST" in
+  ""|"0.0.0.0"|"::") BROWSER_HOST="127.0.0.1" ;;
+esac
 
 AUTO_OPEN_BROWSER_VALUE="${AUTO_OPEN_BROWSER:-true}"
 AUTO_OPEN_BROWSER_NORMALIZED=$(printf '%s' "$AUTO_OPEN_BROWSER_VALUE" | tr '[:upper:]' '[:lower:]')
@@ -275,14 +280,17 @@ fi
 
 echo ""
 echo "  ══════════════════════════════════════════"
-echo "    Starting Marinara Engine on ${PROTOCOL}://127.0.0.1:$PORT"
+echo "    Starting Marinara Engine on ${PROTOCOL}://${HOST}:$PORT"
+if [ "$BROWSER_HOST" != "$HOST" ]; then
+echo "    Local browser URL: ${PROTOCOL}://${BROWSER_HOST}:$PORT"
+fi
 echo "    Press Ctrl+C to stop"
 echo "  ══════════════════════════════════════════"
 echo ""
 
 # Open browser after a short delay
 if [ "$AUTO_OPEN_BROWSER_ENABLED" = "1" ]; then
-  (sleep 3 && open "${PROTOCOL}://127.0.0.1:$PORT" 2>/dev/null || xdg-open "${PROTOCOL}://127.0.0.1:$PORT" 2>/dev/null) &
+  (sleep 3 && open "${PROTOCOL}://${BROWSER_HOST}:$PORT" 2>/dev/null || xdg-open "${PROTOCOL}://${BROWSER_HOST}:$PORT" 2>/dev/null) &
 else
   echo "  [OK] Auto-open disabled (AUTO_OPEN_BROWSER=${AUTO_OPEN_BROWSER_VALUE})"
 fi

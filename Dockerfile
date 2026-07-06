@@ -13,6 +13,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 COPY scripts/clean-stale-client-artifacts.mjs scripts/clean-stale-client-artifacts.mjs
+COPY scripts/ensure-native-deps.mjs scripts/ensure-native-deps.mjs
 
 # Enable corepack — version is read from the packageManager field in package.json
 RUN corepack enable && corepack install
@@ -58,6 +59,7 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/server/package.json packages/server/
 COPY packages/client/package.json packages/client/
 COPY scripts/clean-stale-client-artifacts.mjs scripts/clean-stale-client-artifacts.mjs
+COPY scripts/ensure-native-deps.mjs scripts/ensure-native-deps.mjs
 
 # Enable corepack — version is read from the packageManager field in package.json
 RUN corepack enable && corepack install
@@ -75,6 +77,9 @@ COPY --from=builder /app/packages/server/dist packages/server/dist
 COPY --from=builder /app/packages/client/dist packages/client/dist
 COPY scripts/docker-entrypoint.mjs /usr/local/bin/marinara-docker-entrypoint.mjs
 COPY scripts/install-backgroundremover.mjs scripts/install-backgroundremover.mjs
+
+# User guides served by the in-app documentation viewer (/api/docs)
+COPY docs/ docs/
 
 # Ensure /app/data exists for runtime use (file storage, uploads, generated assets)
 RUN mkdir -p /app/data && \

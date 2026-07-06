@@ -2,8 +2,8 @@
 // Schema: Chat Gallery Images
 // ──────────────────────────────────────────────
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
-import { chats } from "./chats.ts";
-import { characters, personas } from "./characters.ts";
+import { chats } from "./chats.js";
+import { characters, personas } from "./characters.js";
 
 export const chatImages = sqliteTable("chat_images", {
   id: text("id").primaryKey(),

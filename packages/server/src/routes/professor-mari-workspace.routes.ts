@@ -13,6 +13,17 @@ const promptSchema = z.object({
   chatId: z.string().min(1),
   message: z.string().min(1),
   connectionId: z.string().optional().nullable(),
+  attachments: z
+    .array(
+      z.object({
+        type: z.string().min(1),
+        data: z.string().min(1),
+        name: z.string().optional(),
+        filename: z.string().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
 });
 
 const resetSchema = z.object({
@@ -123,6 +134,7 @@ export async function professorMariWorkspaceRoutes(app: FastifyInstance) {
         chatId: body.chatId,
         text: body.message,
         connectionId: body.connectionId ?? null,
+        attachments: body.attachments,
         onEvent: send,
       });
       send({ type: "done", data: { ok: true } });

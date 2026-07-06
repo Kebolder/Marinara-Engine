@@ -113,11 +113,11 @@ PNPM_RUNNER="pnpm"
 
 run_pnpm() {
     if [ "$PNPM_RUNNER" = "corepack" ]; then
-        corepack "pnpm@${PNPM_VERSION}" "$@"
+        corepack "pnpm@${PNPM_VERSION}" --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     elif [ "$PNPM_RUNNER" = "npx" ]; then
-        npx --yes "pnpm@${PNPM_VERSION}" "$@"
+        npx --yes "pnpm@${PNPM_VERSION}" --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     else
-        pnpm "$@"
+        pnpm --config.trustPolicy=off --config.confirmModulesPurge=false "$@"
     fi
 }
 
@@ -241,8 +241,8 @@ elif [ -d ".git" ]; then
                 echo "  [WARN] Update did not land on ${TARGET_REF}. Continuing with current version."
             else
                 echo "  [OK] Updated to $(git log -1 --format='%h %s' 2>/dev/null)"
-                echo "  [..] Reinstalling dependencies..."
-                run_pnpm install
+                echo "  [..] Reinstalling dependencies and refreshing native packages..."
+                run_pnpm install --force
                 rm -rf packages/shared/dist packages/server/dist packages/client/dist
                 rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
             fi
@@ -279,26 +279,26 @@ if [ -f "packages/shared/dist/constants/defaults.js" ]; then
     if [ -n "$SOURCE_VER" ] && [ -n "$DIST_VER" ] && [ "$SOURCE_VER" != "$DIST_VER" ]; then
         echo "  [WARN] Version mismatch: source v$SOURCE_VER but dist has v$DIST_VER"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
     if [ -n "$SOURCE_COMMIT" ] && [ "$SOURCE_COMMIT" != "$DIST_COMMIT" ]; then
         echo "  [WARN] Build commit mismatch: source $SOURCE_COMMIT but dist has ${DIST_COMMIT:-<missing>}"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
 fi
 
 # ── Install dependencies ──
-if [ ! -d "node_modules" ] || [ "$TERMUX_FORCE_INSTALL" = "1" ]; then
+if [ ! -d "node_modules" ] || [ "$TERMUX_FORCE_INSTALL" = "1" ] || ! node scripts/check-workspace-install.mjs >/dev/null 2>&1; then
     echo ""
     echo "  [..] Installing dependencies${TERMUX_FORCE_INSTALL:+ (refreshing for platform fix)}..."
     echo "       This may take several minutes on mobile."
     echo ""
-    run_pnpm install
+    run_pnpm install --force
 fi
 
 # ── Build if needed ──
@@ -344,6 +344,11 @@ else
   PROTOCOL=http
 fi
 
+BROWSER_HOST="$HOST"
+case "$BROWSER_HOST" in
+  ""|"0.0.0.0"|"::") BROWSER_HOST="127.0.0.1" ;;
+esac
+
 AUTO_OPEN_BROWSER_VALUE="${AUTO_OPEN_BROWSER:-true}"
 case "${AUTO_OPEN_BROWSER_VALUE,,}" in
   0|false|no|off) AUTO_OPEN_BROWSER_ENABLED=0 ;;
@@ -359,7 +364,10 @@ fi
 # ── Start ──
 echo ""
 echo "  ══════════════════════════════════════════"
-echo "    Starting Marinara Engine on ${PROTOCOL}://127.0.0.1:${PORT}"
+echo "    Starting Marinara Engine on ${PROTOCOL}://${HOST}:${PORT}"
+if [ "$BROWSER_HOST" != "$HOST" ]; then
+echo "    Local browser URL: ${PROTOCOL}://${BROWSER_HOST}:${PORT}"
+fi
 if [ -n "$LOCAL_IP" ]; then
 echo "    LAN access: ${PROTOCOL}://${LOCAL_IP}:${PORT}"
 fi
@@ -371,7 +379,7 @@ echo ""
 
 # Open in Termux browser if available (no-op if not)
 if [ "$AUTO_OPEN_BROWSER_ENABLED" = "1" ] && command -v termux-open-url &> /dev/null; then
-    (sleep 3 && termux-open-url "${PROTOCOL}://127.0.0.1:${PORT}") &
+    (sleep 3 && termux-open-url "${PROTOCOL}://${BROWSER_HOST}:${PORT}") &
 elif [ "$AUTO_OPEN_BROWSER_ENABLED" != "1" ]; then
     echo "  [OK] Auto-open disabled (AUTO_OPEN_BROWSER=${AUTO_OPEN_BROWSER_VALUE})"
 fi

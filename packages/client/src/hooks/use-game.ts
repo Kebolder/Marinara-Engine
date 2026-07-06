@@ -259,7 +259,7 @@ export function useStartSession() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { gameId: string; connectionId?: string }) =>
+    mutationFn: (data: { gameId: string; sourceChatId?: string; connectionId?: string }) =>
       api.post<StartSessionResponse>("/game/session/start", data),
     onMutate: (variables) => {
       toast.loading("Starting the next session and generating recap...", {

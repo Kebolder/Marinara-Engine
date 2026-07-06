@@ -1151,7 +1151,7 @@ export function PresetsPanel() {
                   innerClassName="flex flex-col gap-0.5"
                 >
                   {folderItems.length === 0 ? (
-                    <p className="py-2 text-[0.625rem] italic text-[var(--muted-foreground)]">Drop presets here.</p>
+                    <p className="mari-chrome-text-muted py-2 text-[0.625rem] italic">Drop presets here.</p>
                   ) : (
                     folderItems.map((preset) => renderPresetRow(preset))
                   )}
@@ -1176,7 +1176,7 @@ export function PresetsPanel() {
             <div className="mari-panel-gradient-surface mari-panel-gradient--presets animate-float flex h-12 w-12 items-center justify-center rounded-2xl">
               <FileText size="1.25rem" />
             </div>
-            <p className="text-xs text-[var(--muted-foreground)]">
+            <p className="mari-chrome-text-muted text-xs">
               {search ? "No matching presets" : "No presets yet"}
             </p>
           </div>
@@ -1375,10 +1375,14 @@ function RegexSection({
       <div className="mb-1.5 px-1 text-[0.625rem] text-[var(--muted-foreground)]">
         Find/replace patterns applied to AI output or user input
       </div>
-      {regexImportError && <div className="mb-1 px-1 text-xs text-red-500">{regexImportError}</div>}
+      {regexImportError && (
+        <div className="mb-1 rounded-md border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-2 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-text)]">
+          {regexImportError}
+        </div>
+      )}
       {regexImportSuccess && <div className="mb-1 px-1 text-xs text-green-500">{regexImportSuccess}</div>}
       {sortedRegexScripts.length === 0 ? (
-        <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No regexes yet</p>
+        <p className="mari-chrome-text-muted px-1 py-2 text-[0.625rem]">No regexes yet</p>
       ) : (
         <div data-preset-regex-root className="flex flex-col gap-0.5">
           {sortedRegexScripts.map((script, index) => {
@@ -1623,10 +1627,14 @@ function FunctionsSection({
       <div className="mb-1.5 px-1 text-[0.625rem] text-[var(--muted-foreground)]">
         Custom function calls available from Chat Settings
       </div>
-      {functionImportError && <div className="mb-1 px-1 text-xs text-red-500">{functionImportError}</div>}
+      {functionImportError && (
+        <div className="mb-1 rounded-md border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-2 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-text)]">
+          {functionImportError}
+        </div>
+      )}
       {functionImportSuccess && <div className="mb-1 px-1 text-xs text-green-500">{functionImportSuccess}</div>}
       {customToolRows.length === 0 ? (
-        <p className="px-1 py-2 text-[0.625rem] text-[var(--muted-foreground)]">No functions yet</p>
+        <p className="mari-chrome-text-muted px-1 py-2 text-[0.625rem]">No functions yet</p>
       ) : (
         <div data-preset-functions-root className="flex flex-col gap-0.5">
           {customToolRows.map((tool, index) => {

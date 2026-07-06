@@ -3,6 +3,7 @@ import type { SpriteSide } from "@marinara-engine/shared";
 import { ChevronUp, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import type { PeekPromptData } from "./chat-area.types";
 import type { LocalSpriteVisualSettings } from "./local-sprite-visual-settings";
+import type { ChatImage } from "../../hooks/use-gallery";
 
 const loadChatSettingsDrawer = async () => {
   const module = await import("./ChatSettingsDrawer");
@@ -232,10 +233,22 @@ type ChatCommonOverlaysProps = {
   sceneSettings: SharedSceneSettingsProps;
   onCloseSettings: () => void;
   onCloseGallery: () => void;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void;
+  /** Generate an on-demand Conversation selfie. */
+  onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
+  selfieCharacters?: Array<{ id: string; name: string }>;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
+  /** Generate a storyboard for the latest completed Game Mode GM turn. */
+  onGenerateStoryboard?: () => void | Promise<void>;
+  /** Show the latest Game Mode storyboard viewer. */
+  onViewStoryboard?: () => void;
+  /** Generate a scene video from the latest gallery image. */
+  onGenerateVideo?: () => void | Promise<void>;
+  /** Generate a scene video from a specific gallery image. */
+  onAnimateImage?: (image: ChatImage) => void | Promise<void>;
   onWizardFinish: () => void;
   onClosePeekPrompt: () => void;
   onDeleteConfirm: () => void;
@@ -267,8 +280,15 @@ export function ChatCommonOverlays({
   sceneSettings,
   onCloseSettings,
   onCloseGallery,
+  onOpenScheduleEditor,
   onIllustrate,
+  onGenerateSelfie,
+  selfieCharacters,
   onGenerateBackground,
+  onGenerateStoryboard,
+  onViewStoryboard,
+  onGenerateVideo,
+  onAnimateImage,
   onWizardFinish,
   onClosePeekPrompt,
   onDeleteConfirm,
@@ -297,6 +317,7 @@ export function ChatCommonOverlays({
             onSpriteSideChange={sceneSettings.onSpriteSideChange}
             spriteVisualSettings={sceneSettings.spriteVisualSettings}
             onSpriteVisualSettingsChange={sceneSettings.onSpriteVisualSettingsChange}
+            onOpenScheduleEditor={onOpenScheduleEditor}
           />
         </Suspense>
       )}
@@ -309,6 +330,12 @@ export function ChatCommonOverlays({
               onClose={onCloseGallery}
               anchor={galleryAnchor}
               onIllustrate={onIllustrate}
+              onGenerateSelfie={onGenerateSelfie}
+              selfieCharacters={selfieCharacters}
+              onGenerateStoryboard={onGenerateStoryboard}
+              onViewStoryboard={onViewStoryboard}
+              onGenerateVideo={onGenerateVideo}
+              onAnimateImage={onAnimateImage}
               onGenerateBackground={onGenerateBackground}
             />
           )}

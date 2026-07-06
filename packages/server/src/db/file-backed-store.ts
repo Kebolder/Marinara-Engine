@@ -151,6 +151,9 @@ export const FILE_BACKED_TABLES = [
   "chats",
   "messages",
   "message_swipes",
+  "conversation_call_sessions",
+  "conversation_call_messages",
+  "conversation_call_sounds",
   "characters",
   "character_card_versions",
   "personas",
@@ -175,6 +178,9 @@ export const FILE_BACKED_TABLES = [
   "game_state_snapshots",
   "game_engine_state",
   "game_checkpoints",
+  "game_scene_videos",
+  "game_turn_storyboards",
+  "game_turn_storyboard_keyframes",
   "regex_scripts",
   "chat_images",
   "character_images",
@@ -209,6 +215,8 @@ const warnedFlushFailures = new Set<string>();
 
 const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
   { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "agent_runs", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "agent_memory", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
@@ -218,6 +226,14 @@ const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentK
   { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "discord_bridge_thread_bindings", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "chat_participants", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "game_turn_storyboards", parentKey: "id", childKey: "chatId" },
+  {
+    parent: "game_turn_storyboards",
+    child: "game_turn_storyboard_keyframes",
+    parentKey: "id",
+    childKey: "storyboardId",
+  },
   { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
   { parent: "messages", child: "discord_bridge_message_mappings", parentKey: "id", childKey: "marinaraMessageId" },
   {
@@ -226,6 +242,7 @@ const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentK
     parentKey: "id",
     childKey: "bindingId",
   },
+  { parent: "conversation_call_sessions", child: "conversation_call_messages", parentKey: "id", childKey: "callId" },
   { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
   { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },
   { parent: "personas", child: "persona_images", parentKey: "id", childKey: "personaId" },
@@ -239,6 +256,21 @@ const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentK
   { parent: "prompt_presets", child: "choice_blocks", parentKey: "id", childKey: "presetId" },
   { parent: "agent_configs", child: "agent_runs", parentKey: "id", childKey: "agentConfigId" },
   { parent: "agent_configs", child: "agent_memory", parentKey: "id", childKey: "agentConfigId" },
+];
+
+const SET_NULL_RELATIONS: Array<{
+  parent: FileBackedTable;
+  child: FileBackedTable;
+  parentKey: string;
+  childKey: string;
+}> = [
+  { parent: "chat_images", child: "game_turn_storyboard_keyframes", parentKey: "id", childKey: "chatImageId" },
+  {
+    parent: "game_scene_videos",
+    child: "game_turn_storyboard_keyframes",
+    parentKey: "id",
+    childKey: "sceneVideoId",
+  },
 ];
 
 const tableMetasByObject = new WeakMap<object, TableMeta>();
@@ -576,13 +608,13 @@ function parseJsonFile<T>(path: string, fallback: T): ParseResult<T> {
           backupPath,
           staleness,
         );
-        logger.error(
-          backupErr,
-          "[file-storage] Backup %s parse failure while recovering %s.",
-          backupPath,
-          path,
-        );
-        return { value: fallback, recoveredFromBackup: false, recoveredFromFallback: true, unreadablePaths: [path, backupPath] };
+        logger.error(backupErr, "[file-storage] Backup %s parse failure while recovering %s.", backupPath, path);
+        return {
+          value: fallback,
+          recoveredFromBackup: false,
+          recoveredFromFallback: true,
+          unreadablePaths: [path, backupPath],
+        };
       }
     }
     logger.error(
@@ -1236,7 +1268,26 @@ class FileTableStore {
     this.recordTxMutation(meta.name);
     this.tables.set(meta.name, kept);
     this.markDirty(meta.name);
+    this.applySetNullRelations(meta.name as FileBackedTable, deleted);
     this.applyCascades(meta.name as FileBackedTable, deleted);
+  }
+
+  private applySetNullRelations(parentTable: FileBackedTable, deletedRows: Row[]) {
+    for (const relation of SET_NULL_RELATIONS.filter((entry) => entry.parent === parentTable)) {
+      const childMeta = getMeta(relation.child);
+      const deletedValues = new Set(deletedRows.map((row) => row[relation.parentKey]));
+      let changed = false;
+      for (const row of this.rows(childMeta.name)) {
+        if (row[relation.childKey] != null && deletedValues.has(row[relation.childKey])) {
+          row[relation.childKey] = null;
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.recordTxMutation(childMeta.name);
+        this.markDirty(childMeta.name);
+      }
+    }
   }
 
   private applyCascades(parentTable: FileBackedTable, deletedRows: Row[]) {
@@ -1290,7 +1341,12 @@ class FileTableStore {
     for (const table of FILE_BACKED_TABLES) {
       const meta = getMeta(table);
       const path = tableFilePath(this.rootDir, table);
-      const { value: rows, recoveredFromBackup, recoveredFromFallback, unreadablePaths } = parseJsonFile<Row[]>(path, []);
+      const {
+        value: rows,
+        recoveredFromBackup,
+        recoveredFromFallback,
+        unreadablePaths,
+      } = parseJsonFile<Row[]>(path, []);
       const normalized = (Array.isArray(rows) ? rows : []).map((row) => normalizeRow(meta, row));
       this.tables.set(table, normalized);
       counts[table] = normalized.length;

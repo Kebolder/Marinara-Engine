@@ -11,6 +11,12 @@ import type {
   SidecarModelInfo,
   SidecarRuntimeDiagnostics,
   SidecarRuntimeInfo,
+  SidecarSpeechConfig,
+  SidecarSpeechModelId,
+  SidecarSpeechModelInfo,
+  SidecarSpeechRuntimeDiagnostics,
+  SidecarSpeechStatus,
+  SidecarSpeechStatusResponse,
   SidecarStatus,
   SidecarStatusResponse,
   SidecarQuantization,
@@ -64,14 +70,27 @@ interface SidecarState {
   hasBeenPrompted: boolean;
   testMessagePending: boolean;
   testMessageResult: SidecarTestMessageResult | null;
+  speechStatus: SidecarSpeechStatus;
+  speechConfig: SidecarSpeechConfig;
+  speechAvailable: boolean;
+  speechModelDownloaded: boolean;
+  speechModelDisplayName: string | null;
+  speechModelSize: number | null;
+  speechModels: SidecarSpeechModelInfo[];
+  speechRuntime: SidecarSpeechRuntimeDiagnostics | null;
+  speechDownloadProgress: SidecarDownloadProgress | null;
+  speechError: string | null;
 
   fetchStatus: () => Promise<void>;
+  fetchSpeechStatus: () => Promise<void>;
   startDownload: (quantization: SidecarQuantization) => Promise<void>;
+  startSpeechDownload: (modelId: SidecarSpeechModelId) => Promise<void>;
   startCustomDownload: (repo: string, modelPath?: string) => Promise<void>;
   listHuggingFaceModels: (repo: string) => Promise<SidecarCustomModelEntry[]>;
   clearCustomModels: () => void;
   cancelDownload: () => Promise<void>;
   deleteModel: () => Promise<void>;
+  deleteSpeechModel: (modelId?: SidecarSpeechModelId) => Promise<void>;
   unloadModel: () => Promise<void>;
   restartRuntime: () => Promise<void>;
   installRuntime: (reinstall?: boolean) => Promise<void>;
@@ -104,6 +123,7 @@ const PROMPTED_KEY = "marinara_sidecar_prompted";
 const TRANSITIONAL_STATUSES = new Set<SidecarStatus>(["downloading_runtime", "downloading_model", "starting_server"]);
 let statusPollTimer: number | null = null;
 let activeDownloadController: AbortController | null = null;
+let activeSpeechDownloadController: AbortController | null = null;
 let downloadCancelRequested = false;
 
 function clearStatusPollTimer() {
@@ -261,6 +281,132 @@ async function consumeDownloadStream(
   }
 }
 
+async function consumeSpeechDownloadStream(
+  path: string,
+  body: unknown,
+  set: (partial: Partial<SidecarState>) => void,
+  get: () => SidecarState,
+): Promise<void> {
+  activeSpeechDownloadController?.abort();
+  const controller = new AbortController();
+  activeSpeechDownloadController = controller;
+
+  const apiPath = path.startsWith("/api/") ? path.slice(4) : path;
+  try {
+    const response = await api.raw(apiPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      let detail = text.slice(0, 300) || response.statusText || "unknown error";
+      try {
+        const parsed = JSON.parse(text) as { error?: string; message?: string };
+        detail = parsed.error ?? parsed.message ?? detail;
+      } catch {
+        // Keep the plain-text detail.
+      }
+      throw new Error(`Local Whisper download failed (${response.status}): ${detail}`);
+    }
+
+    if (!response.body) {
+      throw new Error(`Local Whisper download failed (${response.status}): missing response body`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    type DownloadSseData = Partial<SidecarDownloadProgress> & {
+      done?: boolean;
+      status?: string;
+      error?: string;
+    };
+    const readSseData = (line: string): string | null => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return null;
+      return trimmed.slice(5).trimStart();
+    };
+    const handleSseData = async (data: DownloadSseData): Promise<boolean> => {
+      if (data.done) {
+        set({ speechDownloadProgress: null });
+        await get().fetchSpeechStatus();
+        return true;
+      }
+
+      if (data.status === "error") {
+        set({
+          speechStatus: "error",
+          speechError: data.error ?? "Local Whisper download failed",
+          speechDownloadProgress: {
+            phase: "model",
+            status: "error",
+            downloaded: 0,
+            total: 0,
+            speed: 0,
+            error: data.error ?? "Local Whisper download failed",
+            label: data.label,
+          },
+        });
+        await get().fetchSpeechStatus();
+        return true;
+      }
+
+      if (data.status === "downloading") {
+        set({
+          speechStatus: "downloading_model",
+          speechDownloadProgress: {
+            phase: "model",
+            status: "downloading",
+            downloaded: Number(data.downloaded ?? 0),
+            total: Number(data.total ?? 0),
+            speed: Number(data.speed ?? 0),
+            label: data.label,
+          },
+        });
+      }
+
+      return false;
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = done ? "" : (lines.pop() ?? "");
+
+      for (const line of lines) {
+        const payload = readSseData(line);
+        if (payload == null) continue;
+        try {
+          if (await handleSseData(JSON.parse(payload) as DownloadSseData)) return;
+        } catch {
+          // Ignore malformed SSE chunks.
+        }
+      }
+      if (done) break;
+    }
+
+    set({ speechDownloadProgress: null });
+    await get().fetchSpeechStatus();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      set({ speechDownloadProgress: null });
+      await get().fetchSpeechStatus();
+      return;
+    }
+    throw error;
+  } finally {
+    if (activeSpeechDownloadController === controller) {
+      activeSpeechDownloadController = null;
+    }
+  }
+}
+
 export const useSidecarStore = create<SidecarState>((set, get) => ({
   status: "not_downloaded",
   config: { ...SIDECAR_DEFAULT_CONFIG },
@@ -284,6 +430,16 @@ export const useSidecarStore = create<SidecarState>((set, get) => ({
   hasBeenPrompted: localStorage.getItem(PROMPTED_KEY) === "true",
   testMessagePending: false,
   testMessageResult: null,
+  speechStatus: "not_downloaded",
+  speechConfig: { modelId: null },
+  speechAvailable: false,
+  speechModelDownloaded: false,
+  speechModelDisplayName: null,
+  speechModelSize: null,
+  speechModels: [],
+  speechRuntime: null,
+  speechDownloadProgress: null,
+  speechError: null,
 
   fetchStatus: async () => {
     try {
@@ -317,6 +473,26 @@ export const useSidecarStore = create<SidecarState>((set, get) => ({
     }
   },
 
+  fetchSpeechStatus: async () => {
+    try {
+      const response = await api.get<SidecarSpeechStatusResponse>("/sidecar/speech/status");
+      set({
+        speechStatus: response.status,
+        speechConfig: response.config,
+        speechAvailable: response.available,
+        speechModelDownloaded: response.modelDownloaded,
+        speechModelDisplayName: response.modelDisplayName,
+        speechModelSize: response.modelSize,
+        speechModels: response.models,
+        speechRuntime: response.runtime ?? null,
+        speechDownloadProgress: response.downloadProgress,
+        speechError: response.error,
+      });
+    } catch {
+      // Best-effort: the server may not support the speech sidecar yet.
+    }
+  },
+
   startDownload: async (quantization) => {
     set({
       status: "downloading_model",
@@ -344,6 +520,38 @@ export const useSidecarStore = create<SidecarState>((set, get) => ({
           total: 0,
           speed: 0,
           error: error instanceof Error ? error.message : "Download failed",
+        },
+      });
+    }
+  },
+
+  startSpeechDownload: async (modelId) => {
+    set({
+      speechStatus: "downloading_model",
+      speechError: null,
+      speechDownloadProgress: {
+        phase: "model",
+        status: "downloading",
+        downloaded: 0,
+        total: 0,
+        speed: 0,
+      },
+    });
+
+    try {
+      await consumeSpeechDownloadStream("/api/sidecar/speech/download", { modelId }, set, get);
+    } catch (error) {
+      await get().fetchSpeechStatus();
+      set({
+        speechStatus: "error",
+        speechError: error instanceof Error ? error.message : "Local Whisper download failed",
+        speechDownloadProgress: {
+          phase: "model",
+          status: "error",
+          downloaded: 0,
+          total: 0,
+          speed: 0,
+          error: error instanceof Error ? error.message : "Local Whisper download failed",
         },
       });
     }
@@ -429,6 +637,24 @@ export const useSidecarStore = create<SidecarState>((set, get) => ({
         testMessageResult: null,
       });
       await get().fetchStatus();
+    } catch {
+      // Best-effort delete.
+    }
+  },
+
+  deleteSpeechModel: async () => {
+    try {
+      await api.delete("/sidecar/speech/model");
+      set({
+        speechStatus: "not_downloaded",
+        speechConfig: { modelId: null },
+        speechModelDownloaded: false,
+        speechModelDisplayName: null,
+        speechModelSize: null,
+        speechDownloadProgress: null,
+        speechError: null,
+      });
+      await get().fetchSpeechStatus();
     } catch {
       // Best-effort delete.
     }
