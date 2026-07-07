@@ -5,7 +5,6 @@
 import { Fragment, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { ChevronRight, EyeOff, FileText, X } from "lucide-react";
 import {
-  normalizeTextForMatch,
   type ChatParticipantSnapshot,
   type GroupedSegment,
   type MessageExtra,
