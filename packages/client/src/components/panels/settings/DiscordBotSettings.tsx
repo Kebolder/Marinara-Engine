@@ -136,8 +136,19 @@ export function DiscordBotSettings() {
   });
 
   const defaults = defaultsQuery.data;
-  const selectedConnectionId = defaults?.settings.connectionId ?? "";
-  const selectedPromptPresetId = defaults?.settings.promptPresetId ?? "";
+
+  // Saved settings can reference a connection/preset id that no longer exists
+  // (e.g. imported from another install). Coerce any id not in the loaded list
+  // to "" once that list has loaded, so we never re-send a stale id the server
+  // 404s on ("Prompt preset not found" / "Connection not found").
+  const connectionIds = new Set((connectionsQuery.data?.connections ?? []).map((c) => c.id));
+  const promptPresetIds = new Set((promptPresetsQuery.data?.presets ?? []).map((p) => p.id));
+  const rawConnectionId = defaults?.settings.connectionId ?? "";
+  const rawPromptPresetId = defaults?.settings.promptPresetId ?? "";
+  const selectedConnectionId =
+    rawConnectionId === "random" || !connectionsQuery.data || connectionIds.has(rawConnectionId) ? rawConnectionId : "";
+  const selectedPromptPresetId =
+    !promptPresetsQuery.data || promptPresetIds.has(rawPromptPresetId) ? rawPromptPresetId : "";
 
   const status = statusQuery.data;
   const canStart = !!status?.configured && status.processState !== "running" && status.processState !== "starting";
