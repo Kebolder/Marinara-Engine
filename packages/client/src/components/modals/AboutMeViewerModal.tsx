@@ -14,6 +14,7 @@ import { useCharacter, usePersonas } from "../../hooks/use-characters";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
+import { parseChatMetadata } from "../../lib/chat-display";
 import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
 import { EmojiPicker } from "../ui/EmojiPicker";
 import { CustomEmojiTab } from "../chat/CustomEmojiTab";
@@ -132,7 +133,11 @@ export function AboutMeViewerModal({
   const displayName = displayNameProp || profile.displayName || profile.name || "Profile";
   const handle = profile.name && profile.name !== displayName ? profile.name : "";
 
-  const metadata = (chat?.metadata ?? {}) as Chat["metadata"];
+  // Parse defensively: a freshly-fetched chat carries `metadata` as a JSON STRING
+  // (only mutations normalize it to an object in cache). A raw cast here made the
+  // override read `undefined` after any reload/refetch — dropping the chat-specific
+  // about-me and, on save, clobbering every other character's override.
+  const metadata = parseChatMetadata(chat?.metadata) as Chat["metadata"];
   const overrides = (metadata.conversationAboutMeOverrides ?? {}) as Record<string, string>;
   const override = typeof overrides[id] === "string" ? overrides[id] : undefined;
   const hasOverride = override !== undefined && override.trim().length > 0;
