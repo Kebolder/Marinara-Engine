@@ -351,6 +351,31 @@ function normalizeWrapFormat(value: unknown): WrapFormat {
   return value === "markdown" || value === "none" || value === "xml" ? value : "xml";
 }
 
+function isChatAgentsEnabled(chatMeta: Record<string, unknown>): boolean {
+  if (chatMeta.enableAgents === true || chatMeta.enableAgents === "true") return true;
+  if (chatMeta.enableAgents === false || chatMeta.enableAgents === "false") return false;
+  return Array.isArray(chatMeta.activeAgentIds)
+    ? chatMeta.activeAgentIds.some((id) => typeof id === "string" && id.trim().length > 0)
+    : false;
+}
+
+function normalizeRetryAgentTypeId(agentType: string): string {
+  return agentType === "youtube" ? "spotify" : agentType;
+}
+
+function resolveActiveRetryAgentTypes(chatMode: ChatMode, chatMeta: Record<string, unknown>): Set<string> {
+  if (!isChatAgentsEnabled(chatMeta)) return new Set();
+  const activeAgentIds = Array.isArray(chatMeta.activeAgentIds)
+    ? chatMeta.activeAgentIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+  const normalizedActiveIds = activeAgentIds.map((agentType) => normalizeRetryAgentTypeId(agentType.trim()));
+  return new Set(
+    filterGameInternalAgentIds(chatMode, normalizedActiveIds).filter((agentType) =>
+      isAgentAvailableInChatMode(chatMode, agentType),
+    ),
+  );
+}
+
 async function resolveRetryAgentWrapFormat(args: {
   chat: any;
   chatMode: ChatMode;
@@ -970,11 +995,12 @@ async function resolveRetryAgents(args: {
   const chatMode = ((chat as { mode?: ChatMode }).mode ?? "conversation") as ChatMode;
   const chatMeta = parseExtra((chat as { metadata?: unknown }).metadata);
   const agentPromptTemplateSelections = normalizeAgentPromptTemplateSelectionMap(chatMeta.agentPromptTemplateIds);
-  const normalizedAgentTypes = agentTypes.map((agentType) => (agentType === "youtube" ? "spotify" : agentType));
+  const activeAgentTypeSet = resolveActiveRetryAgentTypes(chatMode, chatMeta);
+  const normalizedAgentTypes = agentTypes.map(normalizeRetryAgentTypeId);
   const agentTypeSet = new Set(
-    filterGameInternalAgentIds(chatMode, normalizedAgentTypes).filter((agentType) =>
-      isAgentAvailableInChatMode(chatMode, agentType),
-    ),
+    filterGameInternalAgentIds(chatMode, normalizedAgentTypes)
+      .filter((agentType) => isAgentAvailableInChatMode(chatMode, agentType))
+      .filter((agentType) => activeAgentTypeSet.has(agentType)),
   );
   const configs = await agentsStore.list();
   const deletedBuiltInTypes = new Set(

@@ -17,7 +17,12 @@ import {
   type ChatMLMessage,
   DEFAULT_AGENT_PROMPTS,
 } from "../../packages/shared/src/index.js";
-import { renderAgentPromptTemplate } from "../../packages/server/src/services/agents/agent-executor.js";
+import {
+  compactGameStateForAgentContext,
+  executeAgent,
+  executeAgentBatch,
+  renderAgentPromptTemplate,
+} from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
@@ -70,6 +75,69 @@ type RegressionCase = {
 };
 
 type RegressionPromptSection = AssemblerInput["sections"][number];
+
+function makeCapturingProvider(response: string) {
+  const calls: any[][] = [];
+  return {
+    calls,
+    provider: {
+      maxTokensOverrideValue: null,
+      async chatComplete(messages: any[]) {
+        calls.push(messages);
+        return {
+          content: response,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        };
+      },
+    },
+  };
+}
+
+function makeRegressionAgentContext(overrides: Partial<AgentContext> = {}): AgentContext {
+  return {
+    chatId: "chat-agent-output-format",
+    chatMode: "roleplay",
+    recentMessages: [
+      { role: "user", content: "Check the street behind us." },
+      { role: "assistant", content: "The street is quiet, but the rain keeps falling." },
+    ],
+    mainResponse: null,
+    gameState: null,
+    characters: [{ id: "char-dottore", name: "Dottore", description: "A precise researcher." }],
+    persona: { name: "Mari", description: "The active user persona." },
+    memory: {},
+    activatedLorebookEntries: null,
+    writableLorebookIds: null,
+    chatSummary: null,
+    wrapFormat: "markdown",
+    streaming: false,
+    ...overrides,
+  };
+}
+
+function makeRegressionAgentConfig(overrides: Record<string, unknown> = {}) {
+  const type = typeof overrides.type === "string" ? overrides.type : "background";
+  const name = typeof overrides.name === "string" ? overrides.name : "Background";
+  const settings =
+    overrides.settings && typeof overrides.settings === "object" && !Array.isArray(overrides.settings)
+      ? (overrides.settings as Record<string, unknown>)
+      : {};
+  return {
+    id: `builtin:${type}`,
+    type,
+    name,
+    phase: "post_processing",
+    promptTemplate: 'Return JSON: {"chosen": null}',
+    connectionId: null,
+    ...overrides,
+    settings: {
+      contextSize: 5,
+      maxTokens: 256,
+      resultType: "background_change",
+      ...settings,
+    },
+  };
+}
 
 function promptSection(
   overrides: Pick<RegressionPromptSection, "id" | "identifier" | "name"> & Partial<RegressionPromptSection>,
@@ -380,7 +448,10 @@ const cases: RegressionCase[] = [
   {
     name: "ElevenLabs TTS input does not prepend sprite tone tags",
     run() {
-      assert.equal(buildElevenLabsTextInput("Reserved. Tomorrow afternoon.", "neutral"), "Reserved. Tomorrow afternoon.");
+      assert.equal(
+        buildElevenLabsTextInput("Reserved. Tomorrow afternoon.", "neutral"),
+        "Reserved. Tomorrow afternoon.",
+      );
       assert.equal(buildElevenLabsTextInput("Your ribs require rest.", "thinking"), "Your ribs require rest.");
       assert.equal(buildElevenLabsTextInput("A bold strategy.", "smirk"), "A bold strategy.");
     },
@@ -675,7 +746,8 @@ const cases: RegressionCase[] = [
     run() {
       const ctx = {
         gameContextBlock: "<game_context>\nMode: exploration\n</game_context>",
-        sourceSectionsBlock: '<turn_sections>\n<section index="0" kind="narration">A door opens.</section>\n</turn_sections>',
+        sourceSectionsBlock:
+          '<turn_sections>\n<section index="0" kind="narration">A door opens.</section>\n</turn_sections>',
         sourceNarration: "A door opens.",
         keyframeCount: 4,
         durationSeconds: 6,
@@ -711,7 +783,12 @@ const cases: RegressionCase[] = [
           return [];
         },
         async upsert(input) {
-          return { key: input.key, template: input.template, enabled: input.enabled, updatedAt: "2026-01-01T00:00:00.000Z" };
+          return {
+            key: input.key,
+            template: input.template,
+            enabled: input.enabled,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
         },
         async remove() {},
       } satisfies PromptOverridesStorage;
@@ -890,6 +967,114 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         rendered,
         "Do NOT include the player's Mari. Track Dottore with care. Latest: Track the current party.",
       );
+    },
+  },
+  {
+    name: "agent current game state hides quest progress from non-quest agents",
+    run() {
+      const gameState = {
+        date: "Day 1",
+        playerStats: {
+          status: "Recognized by the northern clerk",
+          inventory: [{ name: "glass earring", description: "A dangerous token", quantity: 1, location: "on_person" }],
+          activeQuests: [
+            {
+              questEntryId: "The Man Called Maukie",
+              name: "The Man Called Maukie",
+              currentStage: 1,
+              objectives: [{ text: "Secure passage north", completed: false }],
+              completed: false,
+            },
+          ],
+        },
+        fieldLocks: {
+          "quests.id:The%20Man%20Called%20Maukie.name": true,
+          "playerStats.status": true,
+        },
+      };
+
+      const backgroundState = compactGameStateForAgentContext(gameState, ["background"]) as {
+        playerStats: Record<string, unknown>;
+        fieldLocks: Record<string, unknown>;
+      };
+      assert.equal("activeQuests" in backgroundState.playerStats, false);
+      assert.equal(backgroundState.playerStats.status, "Recognized by the northern clerk");
+      assert.equal(backgroundState.fieldLocks["quests.id:The%20Man%20Called%20Maukie.name"], undefined);
+      assert.equal(backgroundState.fieldLocks["playerStats.status"], true);
+
+      const questState = compactGameStateForAgentContext(gameState, ["quest"]) as {
+        playerStats: { activeQuests?: Array<{ name?: string }> };
+        fieldLocks: Record<string, unknown>;
+      };
+      assert.equal(Array.isArray(questState.playerStats.activeQuests), true);
+      assert.equal(questState.playerStats.activeQuests?.[0]?.name, "The Man Called Maukie");
+      assert.equal(questState.fieldLocks["quests.id:The%20Man%20Called%20Maukie.name"], true);
+    },
+  },
+  {
+    name: "single agent output format is terminal user message using selected wrapper",
+    async run() {
+      const { calls, provider } = makeCapturingProvider(`{"chosen":null,"generate":null}`);
+      const config = makeRegressionAgentConfig();
+      const context = makeRegressionAgentContext({
+        wrapFormat: "markdown",
+        mainResponse: "Dottore studies the rain-slick street and chooses a darker alley backdrop.",
+      });
+
+      const result = await executeAgent(config as any, context, provider as any, "regression-model");
+      assert.equal(result.success, true);
+      const messages = calls[0]!;
+      const last = messages[messages.length - 1]!;
+      assert.equal(last.role, "user");
+      assert.match(last.content, /<assistant_response>/);
+      assert.match(last.content, /Now return the requested format/);
+      assert.match(last.content, /## Output Format/);
+      assert.match(last.content, /Return ONLY one valid JSON object for active agent "background"\./);
+      assert.match(last.content, /Agent "background" \(Background\):/);
+      assert.doesNotMatch(last.content, /Agent "quest"/);
+      assert.equal(last.content.trim().endsWith('Return JSON: {"chosen": null}'), true);
+    },
+  },
+  {
+    name: "batched agent output format lists only active requested agents in terminal user message",
+    async run() {
+      const { calls, provider } = makeCapturingProvider(
+        `{"background":{"chosen":null,"generate":null},"character-tracker":{"updates":[]}}`,
+      );
+      const background = makeRegressionAgentConfig();
+      const characterTracker = makeRegressionAgentConfig({
+        id: "builtin:character-tracker",
+        type: "character-tracker",
+        name: "Character Tracker",
+        promptTemplate: 'Return JSON: {"updates": []}',
+        settings: {
+          contextSize: 5,
+          maxTokens: 256,
+          resultType: "character_tracker_update",
+        },
+      });
+      const context = makeRegressionAgentContext({
+        wrapFormat: "xml",
+        mainResponse: "Dottore notices Mari tense when the door opens.",
+      });
+
+      const results = await executeAgentBatch(
+        [background, characterTracker] as any,
+        context,
+        provider as any,
+        "regression-model",
+      );
+      assert.equal(results.length, 2);
+      const messages = calls[0]!;
+      const system = messages[0]!;
+      const last = messages[messages.length - 1]!;
+      assert.equal(last.role, "user");
+      assert.doesNotMatch(system.content, /REQUIRED OUTPUT FORMAT/);
+      assert.match(last.content, /<output_format>/);
+      assert.match(last.content, /"background": null/);
+      assert.match(last.content, /"character-tracker": null/);
+      assert.doesNotMatch(last.content, /"quest": null/);
+      assert.equal(last.content.trim().endsWith("</output_format>"), true);
     },
   },
   {
@@ -1256,7 +1441,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     async run() {
       const lorebookScanResult = {
         worldInfoBefore: "Use <START> and <tone soft> exactly.",
-        worldInfoAfter: "Keep <ritual_step id=\"2\"> literal.",
+        worldInfoAfter: 'Keep <ritual_step id="2"> literal.',
         depthEntries: [{ content: "Depth keeps <scene-note> literal.", role: "system" as const, depth: 0, order: 0 }],
         totalEntries: 3,
         totalTokensEstimate: 24,

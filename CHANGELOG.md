@@ -4,6 +4,19 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+## [2.1.2]
+
+### Changed
+
+- Bumped release metadata to v2.1.2 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Android `versionName` is `2.1.2` with `versionCode 31`.
+
+### Fixed
+
+- Fixed manual agent retry/rerun requests so only agents currently added to the chat can be resolved, preventing removed agents from being prompted by stale retry requests.
+- Fixed agent prompt assembly so the required output format is appended to the terminal user message after chat history using the selected chat prompt preset wrapper (`<output_format>`, `## Output Format`, or raw text).
+- Fixed non-Quest agents receiving active quest progress in current game-state context while keeping compact quest state available to the Quest Tracker when it is active.
+
 ## [2.1.1]
 
 ### Added

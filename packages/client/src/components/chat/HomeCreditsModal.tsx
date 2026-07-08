@@ -2,17 +2,17 @@ import { ExternalLink } from "lucide-react";
 import { Modal } from "../ui/Modal";
 
 const CONTRIBUTORS = [
-  { login: "SpicyMarinara", url: "https://github.com/SpicyMarinara", contributions: 1080 },
+  { login: "SpicyMarinara", url: "https://github.com/SpicyMarinara", contributions: 1116 },
   { login: "cha1latte", url: "https://github.com/cha1latte", contributions: 319 },
   { login: "Romuromylus", url: "https://github.com/Romuromylus", contributions: 175 },
-  { login: "kolacheee", url: "https://github.com/kolacheee", contributions: 143 },
+  { login: "kolacheee", url: "https://github.com/kolacheee", contributions: 150 },
   { login: "LukaTheHero", url: "https://github.com/LukaTheHero", contributions: 86 },
   { login: "Xelvanis", url: "https://github.com/Xelvanis", contributions: 70 },
   { login: "TheLonelyDevil9", url: "https://github.com/TheLonelyDevil9", contributions: 69 },
   { login: "Promansis", url: "https://github.com/Promansis", contributions: 64 },
   { login: "coxde", url: "https://github.com/coxde", contributions: 60 },
-  { login: "thetopham", url: "https://github.com/thetopham", contributions: 49 },
-  { login: "Gunterlie", url: "https://github.com/Gunterlie", contributions: 48 },
+  { login: "thetopham", url: "https://github.com/thetopham", contributions: 52 },
+  { login: "Gunterlie", url: "https://github.com/Gunterlie", contributions: 49 },
   { login: "munimunigamer", url: "https://github.com/munimunigamer", contributions: 30 },
   { login: "Minsklatte", url: "https://github.com/Minsklatte", contributions: 16 },
   { login: "aeriondyseti", url: "https://github.com/aeriondyseti", contributions: 15 },
