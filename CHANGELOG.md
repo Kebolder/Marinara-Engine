@@ -6,7 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
-- Reworked the Settings panel with search-first navigation, compact pinned sections and pinned live controls, fixed top-level category labels, and finer section chips for quicker jumps within General, Appearance, Generations, Addons, Imports, and Advanced.
+- Reworked Settings with search-first navigation, compact pinned controls, fixed top-level categories, and finer section shortcuts for faster navigation.
 
 ## [2.1.1]
 
