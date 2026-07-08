@@ -250,7 +250,9 @@ export function AboutMeViewerModal({
   return createPortal(
     <div
       // Inline z-index (Tailwind didn't emit an arbitrary z-[9990]); far above chat UI.
-      className="fixed inset-0"
+      // `mari-card-css` recreates the card-CSS scope root here (the popout portals to
+      // body, outside the chat area), so a card's/persona's custom CSS can theme it.
+      className="mari-card-css fixed inset-0"
       style={{ zIndex: 9990 }}
       data-component="AboutMeProfilePopout"
       // Transparent — no dimming, Discord-style. Click outside closes, but NOT
@@ -263,9 +265,12 @@ export function AboutMeViewerModal({
     >
       <div
         ref={cardRef}
+        // `data-card-css` + the mari-about-me-* classes are the stable hooks a
+        // character's/persona's custom CSS targets (see the Card CSS Theming Guide).
+        data-card-css={id}
         // No overflow-hidden — the emoji panel opens upward past the card top and
         // must not be clipped. The banner rounds its own top corners instead.
-        className="mari-modal-panel absolute w-80 max-w-[calc(100vw-1rem)] rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl"
+        className="mari-about-me-popout mari-modal-panel absolute w-80 max-w-[calc(100vw-1rem)] rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-2xl"
         style={{
           top: pos?.top ?? (anchorRect?.top ?? 80),
           left: pos?.left ?? (anchorRect ? anchorRect.right + 12 : 80),
@@ -273,7 +278,7 @@ export function AboutMeViewerModal({
         }}
       >
         {/* Banner */}
-        <div className="h-14 w-full rounded-t-2xl" style={{ background: nameColor || "var(--accent)" }} />
+        <div className="mari-about-me-banner h-14 w-full rounded-t-2xl" style={{ background: nameColor || "var(--accent)" }} />
 
         <button
           type="button"
@@ -287,7 +292,7 @@ export function AboutMeViewerModal({
         <div className="px-4 pb-4">
           {/* Blown-up avatar overlapping the banner */}
           <div className="-mt-9 mb-2 flex items-end justify-between">
-            <div className="relative">
+            <div className="mari-about-me-avatar relative">
               <div className="h-[4.5rem] w-[4.5rem] overflow-hidden rounded-full border-4 border-[var(--card)] bg-[var(--accent)]">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
@@ -301,7 +306,7 @@ export function AboutMeViewerModal({
                 <span
                   title={statusLabel(status)}
                   className={cn(
-                    "absolute bottom-0.5 right-0.5 h-4 w-4 rounded-full border-[3px] border-[var(--card)]",
+                    "mari-about-me-status absolute bottom-0.5 right-0.5 h-4 w-4 rounded-full border-[3px] border-[var(--card)]",
                     statusDotClass(status),
                   )}
                 />
@@ -311,12 +316,12 @@ export function AboutMeViewerModal({
 
           {/* Identity */}
           <div className="mb-3">
-            <h2 className="text-lg font-bold leading-tight text-[var(--foreground)]" style={nameStyle(nameColor)}>
+            <h2 className="mari-about-me-name text-lg font-bold leading-tight text-[var(--foreground)]" style={nameStyle(nameColor)}>
               {displayName}
             </h2>
-            {handle && <p className="text-[0.8125rem] text-[var(--muted-foreground)]">{profile.name}</p>}
+            {handle && <p className="mari-about-me-handle text-[0.8125rem] text-[var(--muted-foreground)]">{profile.name}</p>}
             {kind === "character" && (
-              <p className="mt-0.5 text-[0.75rem] text-[var(--muted-foreground)]">
+              <p className="mari-about-me-presence mt-0.5 text-[0.75rem] text-[var(--muted-foreground)]">
                 {statusLabel(status)}
                 {activity ? ` · ${activity}` : ""}
               </p>
@@ -324,14 +329,14 @@ export function AboutMeViewerModal({
           </div>
 
           {/* About Me */}
-          <div className="rounded-xl bg-[var(--secondary)]/50 p-3">
+          <div className="mari-about-me-box rounded-xl bg-[var(--secondary)]/50 p-3">
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-[0.6875rem] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">
+              <span className="mari-about-me-label text-[0.6875rem] font-bold uppercase tracking-wide text-[var(--muted-foreground)]">
                 About Me
               </span>
               <span
                 className={cn(
-                  "rounded-full px-1.5 py-0.5 text-[0.5625rem] font-medium",
+                  "mari-about-me-badge rounded-full px-1.5 py-0.5 text-[0.5625rem] font-medium",
                   hasOverride
                     ? "bg-[var(--primary)]/15 text-[var(--primary)]"
                     : "bg-[var(--background)]/60 text-[var(--muted-foreground)]",
@@ -342,7 +347,7 @@ export function AboutMeViewerModal({
             </div>
 
             {!editing ? (
-              <div className="min-h-[2.5rem] whitespace-pre-wrap text-[0.8125rem] leading-relaxed text-[var(--foreground)]">
+              <div className="mari-about-me-text min-h-[2.5rem] whitespace-pre-wrap text-[0.8125rem] leading-relaxed text-[var(--foreground)]">
                 {effective.trim() ? (
                   renderAbout(effective)
                 ) : (
