@@ -19,6 +19,7 @@ export const markerTypeSchema = z.enum([
   "world_info_after",
   "dialogue_examples",
   "agent_data",
+  "participants",
 ]);
 
 export const markerConfigSchema = z.object({

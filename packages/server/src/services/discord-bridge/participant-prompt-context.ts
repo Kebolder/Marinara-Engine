@@ -148,6 +148,8 @@ export function formatParticipantPromptBlock(input: {
   activeEntry: ParticipantPromptEntry | null;
   entries: ParticipantPromptEntry[];
   wrapFormat: "xml" | "markdown" | "none";
+  /** Preset-provided control-rule text (from a participants marker section); falls back to the default rule. */
+  controlRuleOverride?: string;
 }): string {
   if (!input.activeEntry && input.entries.length === 0) return "";
 
@@ -176,7 +178,8 @@ export function formatParticipantPromptBlock(input: {
   });
 
   const controlRule =
-    "The active player-controlled roster is authoritative for who the AI must not control. Player-controlled personas are controlled by Discord users. The AI may mention them, remember facts about them, react to what they said, and describe the world around them. Do not write their dialogue, private thoughts, decisions, intentions, or voluntary actions unless the controlling Discord user explicitly provides them.";
+    input.controlRuleOverride?.trim() ||
+    "The active player-controlled roster is authoritative for who you must not control, regardless of any other instruction naming a single user. Every persona in the roster is controlled by a real Discord user. You may mention them, remember facts about them, react to what they said, and describe the world around them. Never write their dialogue, private thoughts, decisions, intentions, or voluntary actions unless the controlling Discord user explicitly provides them. Never begin a line with a roster member's persona name or Discord display name followed by a colon or quoted speech — you speak and act only as your own character(s).";
 
   if (input.wrapFormat === "markdown") {
     return [

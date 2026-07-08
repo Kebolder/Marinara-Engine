@@ -41,6 +41,7 @@ import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import {
   applyHistoryContentTransforms,
+  renderParticipantPromptBlock,
   resolvePreviewParticipantContext,
 } from "../../services/generation/content-hooks.js";
 import {
@@ -1278,6 +1279,8 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         idleDuration: promptIdleDuration,
         impersonate,
         preserveImpersonatePresetSections: impersonate && effectivePresetSource === "impersonate",
+        renderParticipantBlock: (blockWrapFormat, controlRuleOverride) =>
+          renderParticipantPromptBlock(previewParticipants.promptBlockHandle, blockWrapFormat, controlRuleOverride),
       };
 
       const assembled = await assemblePrompt(assemblerInput);

@@ -198,6 +198,8 @@ export interface AssemblerInput {
   preserveImpersonatePresetSections?: boolean;
   /** Preserve character-scoped macros for a later known-speaker finalization pass. */
   deferCharacterMacros?: boolean;
+  /** Renders the multiplayer participant prompt block for `participants` marker sections. */
+  renderParticipantBlock?: (wrapFormat: WrapFormat, controlRuleOverride?: string) => string | null;
 }
 
 /** Output of the assembler. */
@@ -218,6 +220,8 @@ export interface AssemblerOutput {
   lorebookBudgetSkippedEntries?: LorebookScanResult["budgetSkippedEntries"];
   /** Agent types whose runtime data was consumed by enabled agent_data sections. */
   runtimeAgentTypesUsed?: string[];
+  /** True when an enabled `participants` marker section owned the participant block placement. */
+  hasParticipantsMarker?: boolean;
 }
 
 function parsePresetParameters(raw: string): GenerationParameters {
@@ -366,6 +370,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
   const depthSections: ResolvedSection[] = [];
   let lorebookDepthEntriesCount = 0;
   let hasChatSummaryMarker = false;
+  let hasParticipantsMarker = false;
   const runtimeAgentTypesUsed = new Set<string>();
 
   for (const sectionId of sectionOrder) {
@@ -382,11 +387,14 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
       if (group && group.enabled !== "true") continue;
     }
 
-    // Track whether a chat_summary marker is present in the preset
+    // Track whether chat_summary / participants markers are present in the preset
     if (section.isMarker === "true" && section.markerConfig) {
       try {
         const mc = JSON.parse(section.markerConfig) as MarkerConfig;
         if (mc.type === "chat_summary") hasChatSummaryMarker = true;
+        // Only claim participant-block ownership when the caller can actually render it;
+        // otherwise the caller's fallback injection must still fire.
+        if (mc.type === "participants" && input.renderParticipantBlock) hasParticipantsMarker = true;
       } catch {
         /* ignore */
       }
@@ -401,6 +409,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
         wrapFormat,
         runtimeAgentData: input.runtimeAgentData ?? {},
         runtimeAgentTypesUsed,
+        renderParticipantBlock: input.renderParticipantBlock,
       });
     } catch (err) {
       logger.warn(err, "[prompt] Skipping section %s after marker expansion failed", section.id);
@@ -563,6 +572,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
         }
       : {}),
     ...(runtimeAgentTypesUsed.size > 0 ? { runtimeAgentTypesUsed: Array.from(runtimeAgentTypesUsed) } : {}),
+    hasParticipantsMarker,
   };
 }
 
@@ -586,6 +596,7 @@ interface ResolveSectionCtx {
   wrapFormat: WrapFormat;
   runtimeAgentData: Record<string, string | RuntimeAgentData>;
   runtimeAgentTypesUsed: Set<string>;
+  renderParticipantBlock?: (wrapFormat: WrapFormat, controlRuleOverride?: string) => string | null;
 }
 
 // ═══════════════════════════════════════════════
@@ -611,6 +622,25 @@ async function resolveSection(
     const markerConfig = JSON.parse(section.markerConfig) as MarkerConfig;
     if (markerConfig.type === "chat_summary") {
       wrapperName = "Chat Summary";
+    }
+
+    // Participants marker: render the multiplayer participant block in place.
+    // Section content, when present, replaces the default player-control rule.
+    // The block is already wrapped by its formatter, so skip section auto-wrapping.
+    if (markerConfig.type === "participants") {
+      if (!ctx.renderParticipantBlock) return null;
+      const ruleOverride = section.content?.trim()
+        ? resolveMacros(section.content, ctx.macroCtx, ctx.macroOptions)
+        : undefined;
+      const block = ctx.renderParticipantBlock(ctx.wrapFormat, ruleOverride);
+      if (!block?.trim()) return null;
+      return {
+        id: section.id,
+        groupId: section.groupId,
+        role,
+        messages: [{ role, content: block, contextKind: "prompt" }],
+        depth: section.injectionDepth,
+      };
     }
     const runtimeAgentType =
       markerConfig.type === "agent_data" && markerConfig.agentType ? markerConfig.agentType : null;

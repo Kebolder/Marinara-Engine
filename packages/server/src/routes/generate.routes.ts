@@ -2537,6 +2537,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const lorebookScopeExclusions = resolveLorebookScopeExclusions(chatMode, chatMeta);
         let lorebookScanSnapshot: LorebookScanSnapshot = emptyLorebookScanSnapshot();
         let presetHandledLorebooks = false;
+        let presetHandledParticipants = false;
         const presetHasLorebookMarker = (sections: Array<{ isMarker: string; markerConfig: string | null }>) =>
           sections.some((section) => {
             if (section.isMarker !== "true" || !section.markerConfig) return false;
@@ -2843,9 +2844,12 @@ export async function generateRoutes(app: FastifyInstance) {
             impersonate: input.impersonate === true,
             preserveImpersonatePresetSections: input.impersonate === true && presetSource === "impersonate",
             deferCharacterMacros,
+            renderParticipantBlock: (blockWrapFormat, controlRuleOverride) =>
+              renderParticipantPromptBlock(participantContext.promptBlockHandle, blockWrapFormat, controlRuleOverride),
           };
 
           const assembled = await assemblePrompt(assemblerInput);
+          presetHandledParticipants = assembled.hasParticipantsMarker === true;
           if (assembled.lorebookActivatedEntries || assembled.lorebookBudgetSkippedEntries) {
             lorebookScanSnapshot = {
               activatedEntries: assembled.lorebookActivatedEntries ?? [],
@@ -5175,11 +5179,15 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
-        const participantPromptBlock = renderParticipantPromptBlock(participantContext.promptBlockHandle, wrapFormat);
-        if (participantPromptBlock) {
-          const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
-          const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
-          finalMessages.splice(insertAt, 0, { role: "system", content: participantPromptBlock });
+        // A `participants` marker in the preset owns block placement; without one,
+        // fall back to injecting the block before the first non-system message.
+        if (!presetHandledParticipants) {
+          const participantPromptBlock = renderParticipantPromptBlock(participantContext.promptBlockHandle, wrapFormat);
+          if (participantPromptBlock) {
+            const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
+            const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+            finalMessages.splice(insertAt, 0, { role: "system", content: participantPromptBlock });
+          }
         }
 
         // Get current game state (if any)

@@ -129,12 +129,13 @@ export function registerDiscordBridgeHooks(db: DB): void {
         promptBlockHandle: handle,
       };
     },
-    (handle, wrapFormat) => {
+    (handle, wrapFormat, controlRuleOverride) => {
       const typed = handle as ParticipantPromptBlockHandle;
       return formatParticipantPromptBlock({
         activeEntry: typed.activeEntry,
         entries: typed.entries,
         wrapFormat: wrapFormat as "xml" | "markdown" | "none",
+        controlRuleOverride,
       });
     },
   );
@@ -156,10 +157,12 @@ export function registerDiscordBridgeHooks(db: DB): void {
         [...entries].reverse().find((entry) => entry.participant.hasSpoken) ??
         entries[0] ??
         null;
+      const handle: ParticipantPromptBlockHandle = { activeEntry, entries };
       return {
         speakerName: participantSpeakerName(activeEntry, request.personaName),
         speakerPersona: compactPersonaSummary(activeEntry?.persona ?? persona ?? null),
         participantsMacro: formatParticipantsMacro(entries),
+        promptBlockHandle: handle,
       };
     },
   );

@@ -80,7 +80,7 @@ export interface ParticipantContext {
 }
 
 type ParticipantContextProvider = (request: ParticipantContextRequest) => Promise<ParticipantContext>;
-type ParticipantPromptBlockRenderer = (handle: unknown, wrapFormat: string) => string | null;
+type ParticipantPromptBlockRenderer = (handle: unknown, wrapFormat: string, controlRuleOverride?: string) => string | null;
 
 let participantContextProvider: ParticipantContextProvider | null = null;
 let participantPromptBlockRenderer: ParticipantPromptBlockRenderer | null = null;
@@ -108,9 +108,13 @@ export async function resolveParticipantContext(request: ParticipantContextReque
 }
 
 /** Render the participant prompt block for the given context handle and wrap format. */
-export function renderParticipantPromptBlock(handle: unknown, wrapFormat: string): string | null {
+export function renderParticipantPromptBlock(
+  handle: unknown,
+  wrapFormat: string,
+  controlRuleOverride?: string,
+): string | null {
   if (!participantPromptBlockRenderer || handle == null) return null;
-  return participantPromptBlockRenderer(handle, wrapFormat);
+  return participantPromptBlockRenderer(handle, wrapFormat, controlRuleOverride);
 }
 
 // ── Preview participant context ───────────────────
@@ -135,6 +139,8 @@ export interface PreviewParticipantContext {
   speakerName: string;
   speakerPersona?: string;
   participantsMacro?: string;
+  /** Opaque handle for rendering the participant prompt block in previews, or null. */
+  promptBlockHandle?: unknown;
 }
 
 type PreviewParticipantContextProvider = (

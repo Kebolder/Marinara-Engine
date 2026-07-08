@@ -27,7 +27,8 @@ export type MarkerType =
   | "world_info_before"
   | "world_info_after"
   | "dialogue_examples"
-  | "agent_data";
+  | "agent_data"
+  | "participants";
 
 /** Configuration for marker-type sections. */
 export interface MarkerConfig {

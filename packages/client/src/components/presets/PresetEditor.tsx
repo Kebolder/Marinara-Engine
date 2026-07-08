@@ -167,6 +167,7 @@ const MARKER_LABELS: Record<MarkerType, string> = {
   world_info_after: "Lorebook Marker (After)",
   dialogue_examples: "Dialogue Examples",
   agent_data: "Agent Data",
+  participants: "Multiplayer Participants",
 };
 
 function lorebookWarningDismissalKey(presetId: string) {
@@ -1492,6 +1493,32 @@ function SectionsTab({
                               ? JSON.parse(section.markerConfig)
                               : section.markerConfig;
                           const isAgentMarker = mc.type === "agent_data";
+                          if (mc.type === "participants") {
+                            return (
+                              <div className="space-y-2">
+                                <div className="mari-editor-panel mari-editor-panel--soft p-3 text-xs text-[var(--marinara-editor-text)]">
+                                  Marker type: <strong>{MARKER_LABELS.participants}</strong>
+                                  <p className="mt-1 text-[var(--muted-foreground)]">
+                                    Renders the multiplayer participant block (active speaker, player-controlled
+                                    roster, and player-control rule) for Discord-bridged chats. Only appears when the
+                                    chat has multiplayer participants. Text below replaces the default player-control
+                                    rule; leave empty to use the built-in rule.
+                                  </p>
+                                </div>
+                                <SectionContentTextarea
+                                  value={section.content || ""}
+                                  sectionName={section.name}
+                                  onCommit={(content) =>
+                                    onUpdateSection.mutate({
+                                      presetId,
+                                      sectionId: section.id,
+                                      content,
+                                    })
+                                  }
+                                />
+                              </div>
+                            );
+                          }
                           return isAgentMarker ? (
                             <div className="space-y-2">
                               <div className="mari-editor-panel mari-editor-panel--soft p-3 text-xs text-[var(--marinara-editor-text)]">
