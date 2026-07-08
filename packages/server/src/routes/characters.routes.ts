@@ -19,6 +19,7 @@ import { createPersonaGalleryStorage } from "../services/storage/persona-gallery
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
@@ -542,6 +543,7 @@ export async function charactersRoutes(app: FastifyInstance) {
   const storage = createCharactersStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const personaGallery = createPersonaGalleryStorage(app.db);
+  const lorebooksStorage = createLorebooksStorage(app.db);
 
   // ── Characters ──
 
