@@ -601,12 +601,18 @@ export async function charactersRoutes(app: FastifyInstance) {
       (input.instruction?.trim() ? `Extra direction from the user: ${input.instruction.trim()}\n\n` : "") +
       `Write their Conversation-mode "about me" now, staying true to who they are.`;
 
+    // A short bio needs little output, but "thinking" models (e.g. Gemini 3.x) draw
+    // reasoning tokens from the SAME output budget — so the old 512 cap was consumed
+    // entirely by thinking and returned no content ("finished without content
+    // (MAX_TOKENS)"). Use a generous ceiling (not a target — a short bio still stops
+    // early, so this doesn't inflate cost) plus low reasoning effort so thinking
+    // models don't overthink a casual bio and always leave room for the text.
     const result = await provider.chatComplete(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      { model: conn.model, temperature: 0.9, maxTokens: 512 },
+      { model: conn.model, temperature: 0.9, maxTokens: 4096, reasoningEffort: "low" },
     );
     return { aboutMe: (result.content ?? "").trim() };
   });
