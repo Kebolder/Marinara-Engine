@@ -97,6 +97,8 @@ export interface AboutMeSourceConfig {
   convoBehavior?: boolean;
   /** The character's linked + embedded lorebook entries. */
   lorebook?: boolean;
+  /** When set, only these linked lorebook entry ids are included; absent → all of them. */
+  lorebookEntryIds?: string[];
   /** Recent chat messages — only meaningful for a chat-specific (override) about me. */
   chatContext?: boolean;
   /** How many recent messages to include when chatContext is on. */

@@ -623,8 +623,11 @@ export async function charactersRoutes(app: FastifyInstance) {
         const books = (await lorebooksStorage.listByCharacter(input.characterId)) as Array<{ id: string }>;
         const linkedIds = books.map((b) => b.id).filter((id) => id !== embeddedLbId);
         const linkedEntries = linkedIds.length ? await lorebooksStorage.listEntriesByLorebooks(linkedIds) : [];
-        for (const e of linkedEntries as Array<{ content?: string; name?: string; enabled?: boolean }>) {
+        // When the user picked specific linked entries, include only those; absent → all.
+        const selectedEntryIds = Array.isArray(sources.lorebookEntryIds) ? new Set(sources.lorebookEntryIds) : null;
+        for (const e of linkedEntries as Array<{ id?: string; content?: string; name?: string; enabled?: boolean }>) {
           if (e.enabled === false) continue;
+          if (selectedEntryIds && (!e.id || !selectedEntryIds.has(e.id))) continue;
           const content = typeof e.content === "string" ? e.content.trim() : "";
           if (content) loreLines.push(e.name ? `[${e.name}] ${content}` : content);
         }
@@ -676,6 +679,39 @@ export async function charactersRoutes(app: FastifyInstance) {
       { model: conn.model, temperature: 0.9, maxTokens: 4096, reasoningEffort: "low" },
     );
     return { aboutMe: (result.content ?? "").trim() };
+  });
+
+  /**
+   * GET /api/characters/:id/lorebook-entries
+   * A character's LINKED lorebook entries (the standalone that mirrors the card's
+   * embedded book is skipped) — used by the AI-write source picker to let the user
+   * choose which entries feed the "about me". Content is not returned; names only.
+   */
+  app.get<{ Params: { id: string } }>("/:id/lorebook-entries", async (req) => {
+    const books = (await lorebooksStorage.listByCharacter(req.params.id)) as Array<{ id: string }>;
+    let embeddedLbId: string | null = null;
+    try {
+      const charRow = await storage.getById(req.params.id);
+      const cdata = charRow
+        ? ((typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data) as Record<string, unknown>)
+        : null;
+      embeddedLbId = cdata ? getEmbeddedLorebookId(cdata) : null;
+    } catch {
+      /* ignore */
+    }
+    const linkedIds = books.map((b) => b.id).filter((id) => id !== embeddedLbId);
+    if (linkedIds.length === 0) return { entries: [] };
+    const entries = (await lorebooksStorage.listEntriesByLorebooks(linkedIds)) as unknown as Array<{
+      id: string;
+      name?: string;
+      content?: string;
+      enabled?: boolean;
+    }>;
+    return {
+      entries: entries
+        .filter((e) => e.enabled !== false && typeof e.content === "string" && e.content.trim().length > 0)
+        .map((e) => ({ id: e.id, name: e.name || "(unnamed entry)" })),
+    };
   });
 
   // ── Characters ──

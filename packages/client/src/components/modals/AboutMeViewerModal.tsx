@@ -6,7 +6,7 @@
 // ──────────────────────────────────────────────
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Loader2, Pencil, RotateCcw, Save, Settings2, Smile, Trash2, User, Wand2, X } from "lucide-react";
+import { Loader2, Pencil, RotateCcw, Save, Settings2, Smile, Trash2, Undo2, User, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
 import { resolveAboutMeSources, type AboutMeSourceConfig, type Chat } from "@marinara-engine/shared";
 import { useChat, useUpdateChatMetadata } from "../../hooks/use-chats";
@@ -185,6 +185,8 @@ export function AboutMeViewerModal({
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // Value the draft started at (edit-entry) so a Revert can undo AI-write / typing.
+  const [editBaseline, setEditBaseline] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [sourceOverride, setSourceOverride] = useState<AboutMeSourceConfig | null>(null);
@@ -319,7 +321,9 @@ export function AboutMeViewerModal({
     if (top + ch > vh - 8) top = vh - ch - 8;
     if (top < 8) top = 8;
     setPos({ top, left });
-  }, [open, anchorRect, editing, effective, isMobile]);
+    // `sourcesOpen`/`draft` change the card height (the AI-write source panel and
+    // generated text), so re-measure and re-clamp to keep it on screen.
+  }, [open, anchorRect, editing, effective, isMobile, sourcesOpen, draft]);
 
   if (!open) return null;
 
@@ -620,6 +624,7 @@ export function AboutMeViewerModal({
                   type="button"
                   onClick={() => {
                     setDraft(effective);
+                    setEditBaseline(effective);
                     setEditing(true);
                   }}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-2.5 py-1.5 text-xs font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
@@ -630,6 +635,17 @@ export function AboutMeViewerModal({
               </>
             ) : (
               <>
+                {draft !== editBaseline && (
+                  <button
+                    type="button"
+                    onClick={() => setDraft(editBaseline)}
+                    title="Undo the changes to this about me"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
+                  >
+                    <Undo2 size="0.8125rem" />
+                    Revert
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setEditing(false)}

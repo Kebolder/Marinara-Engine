@@ -983,6 +983,17 @@ export function useGenerateAboutMe() {
   });
 }
 
+/** A character's linked lorebook entries (names only) for the AI-write source picker. */
+export function useCharacterLorebookEntries(characterId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["character-lorebook-entries", characterId],
+    queryFn: () =>
+      api.get<{ entries: Array<{ id: string; name: string }> }>(`/characters/${characterId}/lorebook-entries`),
+    enabled: !!characterId,
+    staleTime: 30_000,
+  });
+}
+
 export function useCreatePersona() {
   const qc = useQueryClient();
   return useMutation({

@@ -4,7 +4,7 @@
 // These fields only affect Conversation mode; they are never read in RP/VN/Game.
 // ──────────────────────────────────────────────
 import { useMemo, useRef, useState } from "react";
-import { Loader2, Settings2, Smile, Wand2 } from "lucide-react";
+import { Loader2, RotateCcw, Settings2, Smile, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   resolveAboutMeSources,
@@ -13,7 +13,7 @@ import {
   type ConvoBehaviorInsertionStrategy,
 } from "@marinara-engine/shared";
 import { useConnections } from "../../hooks/use-connections";
-import { useGenerateAboutMe } from "../../hooks/use-characters";
+import { useGenerateAboutMe, useCharacterLorebookEntries } from "../../hooks/use-characters";
 import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { EmojiPicker } from "../ui/EmojiPicker";
@@ -83,18 +83,30 @@ export function ConvoProfileFields({
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const resolvedSources = resolveAboutMeSources(sources);
   const showSourcePicker = kind === "character" && !!onSourcesChange;
+  const { data: lorebookEntriesData } = useCharacterLorebookEntries(
+    showSourcePicker && sourcesOpen ? characterId : null,
+  );
+
+  // Revert: snapshot the about-me right before the first edit (manual or AI Write),
+  // so the user can undo changes they don't like. Cleared once reverted.
+  const [revertTo, setRevertTo] = useState<string | null>(null);
+  const captureRevert = () => setRevertTo((prev) => (prev === null ? aboutMe : prev));
+  const changeAboutMe = (value: string) => {
+    captureRevert();
+    onAboutMeChange(value);
+  };
 
   // Insert an emoji at the caret (or replace the selection), like the chat picker.
   const insertEmoji = (token: string) => {
     const el = aboutMeRef.current;
     if (!el) {
-      onAboutMeChange(aboutMe + token);
+      changeAboutMe(aboutMe + token);
       return;
     }
     const start = el.selectionStart;
     const end = el.selectionEnd;
     const next = el.value.slice(0, start) + token + el.value.slice(end);
-    onAboutMeChange(next);
+    changeAboutMe(next);
     const caret = start + token.length;
     requestAnimationFrame(() => {
       el.focus();
@@ -135,6 +147,7 @@ export function ConvoProfileFields({
         toast.message("The model left the about me blank — keeping your current text.");
         return;
       }
+      captureRevert();
       onAboutMeChange(result.aboutMe);
       toast.success("About me drafted — review and edit to taste");
     } catch (err) {
@@ -180,7 +193,7 @@ export function ConvoProfileFields({
         </div>
         <MacroTextarea
           value={aboutMe}
-          onChange={onAboutMeChange}
+          onChange={changeAboutMe}
           textareaRef={aboutMeRef}
           placeholder="A line or two, an emoji, a joke, or nothing at all — whatever fits them…"
           rows={5}
@@ -214,6 +227,20 @@ export function ConvoProfileFields({
               </option>
             ))}
           </select>
+          {revertTo !== null && revertTo !== aboutMe && (
+            <button
+              type="button"
+              onClick={() => {
+                onAboutMeChange(revertTo);
+                setRevertTo(null);
+              }}
+              title="Undo the changes to this about me"
+              className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2 py-1.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+            >
+              <RotateCcw size="0.8125rem" />
+              Revert
+            </button>
+          )}
           {showSourcePicker && (
             <button
               type="button"
@@ -240,7 +267,12 @@ export function ConvoProfileFields({
           </button>
         </div>
         {showSourcePicker && sourcesOpen && onSourcesChange && (
-          <AboutMeSourcePicker value={resolvedSources} onChange={onSourcesChange} allowChatContext={false} />
+          <AboutMeSourcePicker
+            value={resolvedSources}
+            onChange={onSourcesChange}
+            allowChatContext={false}
+            lorebookEntries={lorebookEntriesData?.entries ?? []}
+          />
         )}
       </div>
 

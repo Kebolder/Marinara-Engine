@@ -52,6 +52,8 @@ export const aboutMeSourceConfigSchema = z.object({
   appearance: z.boolean().optional(),
   convoBehavior: z.boolean().optional(),
   lorebook: z.boolean().optional(),
+  /** When set, only these linked lorebook entry ids are included; absent → all of them. */
+  lorebookEntryIds: z.array(z.string()).optional(),
   chatContext: z.boolean().optional(),
   chatContextLimit: z.number().int().min(1).max(200).optional(),
 });

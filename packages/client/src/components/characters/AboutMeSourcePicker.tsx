@@ -54,12 +54,29 @@ export function AboutMeSourcePicker({
   onChange,
   /** In-chat (chat-specific about me) enables the chat-context source; the card editor doesn't. */
   allowChatContext,
+  /** The character's linked lorebook entries (card editor only) — enables per-entry selection.
+   *  Undefined means the caller (e.g. the chat popout) can't select entries here. */
+  lorebookEntries,
 }: {
   value: AboutMeSourceConfig;
   onChange: (next: AboutMeSourceConfig) => void;
   allowChatContext: boolean;
+  lorebookEntries?: Array<{ id: string; name: string }>;
 }) {
   const toggle = (key: keyof AboutMeSourceConfig, checked: boolean) => onChange({ ...value, [key]: checked });
+
+  // Per-entry selection: absent `lorebookEntryIds` means "all". First toggle materializes
+  // the full list so unchecking one keeps the rest.
+  const allEntryIds = (lorebookEntries ?? []).map((e) => e.id);
+  const selectedEntryIds = value.lorebookEntryIds ?? allEntryIds;
+  const toggleEntry = (entryId: string, checked: boolean) => {
+    const base = value.lorebookEntryIds ?? allEntryIds;
+    const next = checked ? Array.from(new Set([...base, entryId])) : base.filter((x) => x !== entryId);
+    onChange({ ...value, lorebookEntryIds: next });
+  };
+  const lorebookTooltip = lorebookEntries
+    ? "This character's linked and embedded lorebook entries — handy when the card fields are blank and the substance lives in the lorebook. Pick which linked entries below."
+    : "This character's linked and embedded lorebook entries. To choose which linked entries feed the bio, open this character's card → Convo → About Me.";
 
   return (
     <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--background)]/60 p-3">
@@ -81,8 +98,25 @@ export function AboutMeSourcePicker({
           label="Lorebook entries"
           checked={!!value.lorebook}
           onToggle={(c) => toggle("lorebook", c)}
-          tooltip="This character's linked and embedded lorebook entries — handy when the card fields are blank and the substance lives in the lorebook."
+          tooltip={lorebookTooltip}
         />
+        {/* Card editor only: pick which linked entries feed the bio. */}
+        {lorebookEntries !== undefined && value.lorebook && (
+          <div className="ml-5 max-h-40 space-y-1 overflow-y-auto border-l border-[var(--border)] pl-2">
+            {lorebookEntries.length === 0 ? (
+              <p className="text-[0.6875rem] text-[var(--muted-foreground)]/70">No linked lorebook entries.</p>
+            ) : (
+              lorebookEntries.map((e) => (
+                <SourceRow
+                  key={e.id}
+                  label={e.name}
+                  checked={selectedEntryIds.includes(e.id)}
+                  onToggle={(c) => toggleEntry(e.id, c)}
+                />
+              ))
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <SourceRow
             label="Chat context"
