@@ -357,7 +357,7 @@ export function AboutMeViewerModal({
                 {emojiOpen && (
                   <div
                     ref={emojiPanelRef}
-                    className="absolute bottom-full right-0 z-30 mb-2 flex h-[17rem] w-[18rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-xl"
+                    className="absolute bottom-full right-0 z-30 mb-2 flex h-[22rem] w-[21rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] shadow-xl"
                   >
                     <EmojiPicker
                       embedded
