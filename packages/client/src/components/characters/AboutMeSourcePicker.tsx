@@ -152,10 +152,19 @@ export function AboutMeSourcePicker({
                 max={200}
                 value={value.chatContextLimit ?? DEFAULT_ABOUT_ME_CHAT_CONTEXT_LIMIT}
                 onChange={(e) => {
-                  const n = Number(e.target.value);
+                  // Empty (mid-edit) clears to the default; only clamp real numbers, so
+                  // clearing the field to retype doesn't snap it to 1 (Number("") === 0).
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    onChange({ ...value, chatContextLimit: undefined });
+                    return;
+                  }
+                  const n = Number(raw);
                   onChange({
                     ...value,
-                    chatContextLimit: Number.isFinite(n) ? Math.max(1, Math.min(200, Math.round(n))) : undefined,
+                    chatContextLimit: Number.isFinite(n)
+                      ? Math.max(1, Math.min(200, Math.round(n)))
+                      : value.chatContextLimit,
                   });
                 }}
                 className="w-14 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-1.5 py-0.5 text-xs outline-none focus:border-[var(--primary)]/40"

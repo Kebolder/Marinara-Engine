@@ -1269,7 +1269,10 @@ function ConvoTab({
 }) {
   const ext = formData.extensions;
   return (
+    // Key by the edited character so all transient state (revert snapshot, open
+    // panels, connection choice) resets on switch — the editor reuses this instance.
     <ConvoProfileFields
+      key={characterId ?? "new-character"}
       kind={kind}
       baseName={formData.name}
       displayName={(ext.convoDisplayName as string) ?? ""}

@@ -1446,7 +1446,11 @@ export function PersonaEditor() {
             {activeTab === "card" && (
               <PersonaCardTab formData={formData} updateField={updateField} setDirty={setDirty} />
             )}
-            {activeTab === "convo" && <PersonaConvoTab formData={formData} updateField={updateField} />}
+            {activeTab === "convo" && (
+              // Key by the edited persona so the Convo fields' transient state resets on
+              // switch — the editor reuses this instance across personas.
+              <PersonaConvoTab key={personaId ?? "new-persona"} formData={formData} updateField={updateField} />
+            )}
             {activeTab === "lorebook" && personaId && (
               <PersonaLorebookTab personaId={personaId} personaName={formData.name} />
             )}

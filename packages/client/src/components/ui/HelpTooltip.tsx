@@ -62,6 +62,15 @@ export function HelpTooltip({
     setShow(true);
   };
 
+  // On unmount, release the module singleton if we still hold it — otherwise a
+  // pinned tooltip whose host unmounts leaves a defunct closer that the next
+  // openSelf would call (setState on an unmounted instance).
+  useEffect(() => {
+    return () => {
+      if (activeTooltipClose === closeSelfRef.current) activeTooltipClose = null;
+    };
+  }, []);
+
   // Programmatic open (e.g. a mobile tap with no hover): open pinned when the signal changes.
   const prevSignalRef = useRef(openSignal);
   useEffect(() => {
