@@ -240,6 +240,7 @@ import {
   resolveLorebookKeeperTarget,
 } from "./generate/lorebook-keeper-utils.js";
 import { registerDryRunRoute } from "./generate/dry-run-route.js";
+import { registerRawRoute } from "./generate/raw-route.js";
 import { registerRetryAgentsRoute } from "./generate/retry-agents-route.js";
 import { fingerprintChatSummary } from "../services/prompt/chat-summary-fingerprint.js";
 import { sendSseEvent, startSseKeepalive, startSseReply, trySendSseEvent } from "./generate/sse.js";
@@ -8135,5 +8136,6 @@ export async function generateRoutes(app: FastifyInstance) {
   });
 
   await registerDryRunRoute(app);
+  await registerRawRoute(app);
   await registerRetryAgentsRoute(app);
 }
