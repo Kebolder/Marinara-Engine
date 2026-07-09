@@ -3,7 +3,7 @@
 // and behavior directive. Shared by the character and persona editors.
 // These fields only affect Conversation mode; they are never read in RP/VN/Game.
 // ──────────────────────────────────────────────
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, RotateCcw, Settings2, Smile, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -31,6 +31,8 @@ const STRATEGY_OPTIONS: Array<{ value: ConvoBehaviorInsertionStrategy; label: st
 
 interface ConvoProfileFieldsProps {
   kind: "character" | "persona";
+  /** Stable edited entity key, used to reset transient UI state on switches. */
+  entityKey?: string;
   /** Base name, used as the display-name placeholder. */
   baseName: string;
   displayName: string;
@@ -60,6 +62,7 @@ interface ConvoProfileFieldsProps {
 
 export function ConvoProfileFields({
   kind,
+  entityKey,
   baseName,
   displayName,
   onDisplayNameChange,
@@ -90,6 +93,13 @@ export function ConvoProfileFields({
   // Revert: snapshot the about-me right before the first edit (manual or AI Write),
   // so the user can undo changes they don't like. Cleared once reverted.
   const [revertTo, setRevertTo] = useState<string | null>(null);
+  useEffect(() => {
+    setConnectionId("");
+    setRevertTo(null);
+    setSourcesOpen(false);
+    setEmojiOpen(false);
+  }, [entityKey, kind]);
+
   const captureRevert = () => setRevertTo((prev) => (prev === null ? aboutMe : prev));
   const changeAboutMe = (value: string) => {
     captureRevert();

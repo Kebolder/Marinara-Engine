@@ -1274,6 +1274,7 @@ function ConvoTab({
     <ConvoProfileFields
       key={characterId ?? "new-character"}
       kind={kind}
+      entityKey={characterId ?? "new-character"}
       baseName={formData.name}
       displayName={(ext.convoDisplayName as string) ?? ""}
       onDisplayNameChange={(v) => updateExtension("convoDisplayName", v)}
