@@ -28,6 +28,7 @@ import { characterKeys } from "../../hooks/use-characters";
 import { buildGuidedGenerationInstructionMessage, formatTextQuotes, type Message } from "@marinara-engine/shared";
 import {
   matchSlashCommand,
+  shouldExecuteQuickPostAsCommand,
   getSlashCompletions,
   type SlashCommand,
   type SlashCommandContext,
@@ -1001,12 +1002,17 @@ export const ChatInput = memo(function ChatInput({
     const hasFiles = attachments.length > 0;
     if (!hasText && !hasFiles) return;
 
+    const normalized = formatTextQuotes(raw.trim(), quoteFormat);
+    if (shouldExecuteQuickPostAsCommand(normalized)) {
+      await handleSend();
+      return;
+    }
+
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
     }
 
-    const normalized = formatTextQuotes(raw.trim(), quoteFormat);
     const chat = useChatStore.getState().activeChat;
     const cachedCharacters = qc.getQueryData<Array<{ id: string; data: unknown }>>(characterKeys.list());
     const cachedPersonas = qc.getQueryData<Array<Record<string, unknown>>>(characterKeys.personas);
@@ -1111,6 +1117,7 @@ export const ChatInput = memo(function ChatInput({
     deleteMessage,
     updateMessageExtra,
     clearResponseQueue,
+    handleSend,
     quoteFormat,
   ]);
 
@@ -1746,10 +1753,7 @@ export const ChatInput = memo(function ChatInput({
         )}
 
         {showQuickRepliesMenu && quickReplyActions.length > 0 && (
-          <QuickReplyMenu
-            actions={quickReplyActions}
-            disabled={!activeChatId || isInputBusy || isReadingAttachments}
-          />
+          <QuickReplyMenu actions={quickReplyActions} disabled={!activeChatId || isInputBusy || isReadingAttachments} />
         )}
 
         {/* Send / Stop button */}

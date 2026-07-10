@@ -1278,6 +1278,11 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
   return null;
 }
 
+/** Keep Quick Replies' Post Only action from saving a real slash command as plain chat text. */
+export function shouldExecuteQuickPostAsCommand(input: string): boolean {
+  return matchSlashCommand(input.trim()) !== null;
+}
+
 /** Get all commands that match a partial prefix (for autocomplete). */
 export function getSlashCompletions(partial: string): SlashCommand[] {
   if (!partial.startsWith("/")) return [];

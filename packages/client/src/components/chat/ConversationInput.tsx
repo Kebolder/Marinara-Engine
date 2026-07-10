@@ -32,6 +32,7 @@ import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, cha
 import { characterKeys } from "../../hooks/use-characters";
 import {
   matchSlashCommand,
+  shouldExecuteQuickPostAsCommand,
   getSlashCompletions,
   type SlashCommand,
   type SlashCommandContext,
@@ -1157,6 +1158,11 @@ export function ConversationInput({
     const hasFiles = attachments.length > 0;
     if (!hasText && !hasFiles) return;
 
+    if (shouldExecuteQuickPostAsCommand(raw)) {
+      await handleSend();
+      return;
+    }
+
     if (draftTimerRef.current) {
       clearTimeout(draftTimerRef.current);
       draftTimerRef.current = null;
@@ -1272,6 +1278,7 @@ export function ConversationInput({
     createMessage,
     deleteMessage,
     updateMessageExtra,
+    handleSend,
   ]);
 
   const handleGuidedGenerationButton = useCallback(async () => {

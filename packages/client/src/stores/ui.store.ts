@@ -548,7 +548,7 @@ interface UIState {
   gameAutoPlayDelay: number;
   /** When true, image generation requests are sent one at a time for providers that reject concurrent jobs. */
   queueImageGenerationRequests: boolean;
-  /** When true, generated game image prompts are shown for review before provider calls are sent. */
+  /** When true, generated image prompts are shown for review before supported provider calls are sent. */
   reviewImagePromptsBeforeSend: boolean;
   imageBackgroundWidth: number;
   imageBackgroundHeight: number;

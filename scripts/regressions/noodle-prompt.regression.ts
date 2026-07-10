@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { noodleRefreshSchema } from "../../packages/shared/src/schemas/noodle.schema.js";
 import { canManageNoodleReply } from "../../packages/shared/src/utils/noodle-interactions.js";
 import {
   canGenerateNoodleActivityForAccountKind,
@@ -15,6 +16,10 @@ import {
 assert.equal(canGenerateNoodleActivityForAccountKind("persona"), false);
 assert.equal(canGenerateNoodleActivityForAccountKind("character"), true);
 assert.equal(canGenerateNoodleActivityForAccountKind("random_user"), true);
+assert.equal(
+  noodleRefreshSchema.parse({ reviewImagePromptsBeforeSend: true }).reviewImagePromptsBeforeSend,
+  true,
+);
 assert.match(NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION, /controlled exclusively by the user/u);
 assert.match(
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,

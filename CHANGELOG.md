@@ -31,6 +31,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Quick Replies' **Post only** action saving recognized slash commands as ordinary messages; known commands now execute normally while unknown slash-prefixed text can still be posted.
+- Moved **Quick replies** from Advanced settings to **General -> Input & Editing**, and clarified that image prompt review is a global generation preference rather than a Game-only option.
+- Fixed manual Noodle timeline refreshes bypassing **Expose image prompts before sending**; generated Noodle images now present their final positive and negative prompts for editing before provider submission.
+- Fixed character-assigned lorebooks failing validation when duplicated from the Lorebooks pane, while preserving their assignment and vector-search settings (#3433).
 - Fixed the Noodle reply image picker separator inheriting a pink chrome accent instead of using Noodle blue.
 - Fixed character-authored Noodle comments being read-only; their edit and delete controls now use the same flow as persona comments, while generated random-user comments remain protected.
 - Fixed custom and imported preset variables disabling **Confirm Choices** when a valid blank-valued option was selected (#3429).

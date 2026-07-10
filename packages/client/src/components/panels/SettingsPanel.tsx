@@ -141,10 +141,7 @@ import { inspectCharacterFilesForEmbeddedLorebooks } from "../../lib/character-i
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { downloadJsonFile, sanitizeExportFilenamePart } from "../../lib/download-json";
 import { downloadZipFile } from "../../lib/download-zip";
-import {
-  createExtensionFolderPackageFilename,
-  createExtensionFolderPackageFiles,
-} from "../../lib/extension-transfer";
+import { createExtensionFolderPackageFilename, createExtensionFolderPackageFiles } from "../../lib/extension-transfer";
 import {
   collectFolderPackageEntries,
   getPackagePathBasename,
@@ -167,11 +164,26 @@ type CustomFontFace = {
 
 const TABS = [
   { id: "general", label: "General", icon: Settings2, description: "App behavior, responses, input, and playback." },
-  { id: "appearance", label: "Appearance", icon: Palette, description: "Theme, chat display, art, motion, and backgrounds." },
-  { id: "generations", label: "Generations", icon: WandSparkles, description: "Image/video defaults and prompt templates." },
+  {
+    id: "appearance",
+    label: "Appearance",
+    icon: Palette,
+    description: "Theme, chat display, art, motion, and backgrounds.",
+  },
+  {
+    id: "generations",
+    label: "Generations",
+    icon: WandSparkles,
+    description: "Image/video defaults and prompt templates.",
+  },
   { id: "addons", label: "Addons", icon: Puzzle, description: "Themes, extensions, and custom behavior." },
   { id: "import", label: "Imports", icon: Download, description: "Imports, asset folders, and data transfer." },
-  { id: "advanced", label: "Advanced", icon: Terminal, description: "Admin access, updates, tools, backups, and danger zone." },
+  {
+    id: "advanced",
+    label: "Advanced",
+    icon: Terminal,
+    description: "Admin access, updates, tools, backups, and danger zone.",
+  },
 ] as const;
 
 type SettingsTabId = (typeof TABS)[number]["id"];
@@ -255,7 +267,20 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     tab: "general",
     label: "Input & Editing",
     description: "Message input behavior and fast edit controls.",
-    aliases: ["enter", "send", "microphone", "speech", "swipe", "reroll", "double click", "arrow up"],
+    aliases: [
+      "enter",
+      "send",
+      "microphone",
+      "speech",
+      "swipe",
+      "reroll",
+      "double click",
+      "arrow up",
+      "quick replies",
+      "post only",
+      "guide reply",
+      "impersonate",
+    ],
   },
   {
     id: "text-rules",
@@ -304,7 +329,17 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     tab: "appearance",
     label: "Text & Scale",
     description: "Fonts, display size, chat text colors, and legibility controls.",
-    aliases: ["font", "google fonts", "display size", "chat font", "text", "stroke", "outline", "chrome text", "legibility"],
+    aliases: [
+      "font",
+      "google fonts",
+      "display size",
+      "chat font",
+      "text",
+      "stroke",
+      "outline",
+      "chrome text",
+      "legibility",
+    ],
   },
   {
     id: "chat-display",
@@ -968,7 +1003,7 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
   },
   {
     id: "quick-replies",
-    sectionId: "message-tools",
+    sectionId: "input-editing",
     label: "Quick replies",
     description: "Show alternate draft actions beside Send.",
     aliases: ["post only", "guide reply", "impersonate"],
@@ -1123,7 +1158,14 @@ function searchSettings(query: string): SettingsSearchResult[] {
   const controlResults = SETTINGS_SEARCHABLE_CONTROLS.flatMap((control) => {
     const section = SETTINGS_SECTION_BY_ID.get(control.sectionId);
     if (!section) return [];
-    const haystack = [control.label, control.description, control.kind, section.label, section.description, ...control.aliases]
+    const haystack = [
+      control.label,
+      control.description,
+      control.kind,
+      section.label,
+      section.description,
+      ...control.aliases,
+    ]
       .join(" ")
       .toLowerCase();
     return parts.every((part) => haystack.includes(part)) ? [{ type: "control" as const, control, section }] : [];
@@ -1990,7 +2032,10 @@ function TrackerPanelAppearanceDrawer({
               })}
             </div>
           </div>
-          <div id={getSettingsControlAnchorId("tracker-thought-display-mode")} className="mt-2 grid scroll-mt-3 gap-1.5">
+          <div
+            id={getSettingsControlAnchorId("tracker-thought-display-mode")}
+            className="mt-2 grid scroll-mt-3 gap-1.5"
+          >
             <span className="inline-flex items-center gap-1 text-[0.6875rem] font-medium">
               Thought display mode
               <HelpTooltip text="Choose whether featured character thoughts open inside the tracker card or float beside the portrait. This no longer changes automatically when the panel width changes." />
@@ -2121,13 +2166,16 @@ export function SettingsPanel() {
     (result: SettingsSearchResult) => {
       const section = result.section;
       const targetId =
-        result.type === "control" ? getSettingsControlAnchorId(result.control.id) : getSettingsSectionAnchorId(section.id);
+        result.type === "control"
+          ? getSettingsControlAnchorId(result.control.id)
+          : getSettingsSectionAnchorId(section.id);
       setSettingsTab(section.tab);
       mountedSettingsTabs.add(section.tab);
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           const panel = activePanelRef.current;
-          const target = document.getElementById(targetId) ?? document.getElementById(getSettingsSectionAnchorId(section.id));
+          const target =
+            document.getElementById(targetId) ?? document.getElementById(getSettingsSectionAnchorId(section.id));
           if (!panel || !target) return;
           panel.scrollTo({ top: Math.max(0, target.offsetTop - 12), behavior: "smooth" });
           const focusTarget = target.querySelector<HTMLElement>(
@@ -2289,7 +2337,6 @@ export function SettingsPanel() {
             </div>
           </div>
         )}
-
       </div>
 
       <div className="relative min-h-0 flex-1">
@@ -2316,6 +2363,171 @@ export function SettingsPanel() {
     </div>
   );
 }
+
+function QuickRepliesSetting() {
+  const showQuickRepliesMenu = useUIStore((s) => s.showQuickRepliesMenu);
+  const setShowQuickRepliesMenu = useUIStore((s) => s.setShowQuickRepliesMenu);
+  const showQuickReplyPostOnly = useUIStore((s) => s.showQuickReplyPostOnly);
+  const setShowQuickReplyPostOnly = useUIStore((s) => s.setShowQuickReplyPostOnly);
+  const showQuickReplyGuide = useUIStore((s) => s.showQuickReplyGuide);
+  const setShowQuickReplyGuide = useUIStore((s) => s.setShowQuickReplyGuide);
+  const showQuickReplyImpersonate = useUIStore((s) => s.showQuickReplyImpersonate);
+  const setShowQuickReplyImpersonate = useUIStore((s) => s.setShowQuickReplyImpersonate);
+  const [drawerOpen, setDrawerOpen] = useState(true);
+
+  const handleEnabledChange = (enabled: boolean) => {
+    setShowQuickRepliesMenu(enabled);
+    if (enabled) setDrawerOpen(true);
+  };
+
+  return (
+    <div
+      id={getSettingsControlAnchorId("quick-replies")}
+      className={cn(
+        "scroll-mt-3 overflow-hidden rounded-xl border transition-colors",
+        showQuickRepliesMenu
+          ? "border-[var(--primary)]/30 bg-[var(--secondary)]/15"
+          : "border-transparent bg-transparent hover:bg-[var(--secondary)]/30",
+      )}
+    >
+      <div className="flex min-h-9 items-stretch">
+        <div className="flex min-w-0 items-center gap-1.5 py-2 pl-1.5 pr-2">
+          <label className="flex min-w-0 cursor-pointer items-center gap-2.5">
+            <input
+              type="checkbox"
+              checked={showQuickRepliesMenu}
+              onChange={(event) => handleEnabledChange(event.target.checked)}
+              className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
+            />
+            <span className="min-w-0 text-xs">Quick replies</span>
+          </label>
+          <span className="shrink-0" onClick={(event) => event.preventDefault()}>
+            <HelpTooltip text="Adds alternate draft actions beside Send. One action appears directly; multiple actions open from the ellipsis." />
+          </span>
+        </div>
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!showQuickRepliesMenu) return;
+            setDrawerOpen((open) => !open);
+          }}
+          aria-disabled={!showQuickRepliesMenu}
+          aria-controls="quick-replies-actions-drawer"
+          aria-expanded={showQuickRepliesMenu && drawerOpen}
+          aria-label={
+            !showQuickRepliesMenu
+              ? "Quick replies options disabled"
+              : drawerOpen
+                ? "Collapse Quick replies options"
+                : "Expand Quick replies options"
+          }
+          title={
+            !showQuickRepliesMenu
+              ? "Enable Quick replies to configure options"
+              : drawerOpen
+                ? "Collapse options"
+                : "Expand options"
+          }
+          className={cn(
+            "flex min-w-10 flex-1 items-center justify-end py-2 pl-2 pr-2 text-[var(--muted-foreground)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
+            showQuickRepliesMenu && drawerOpen ? "rounded-tr-xl" : "rounded-r-xl",
+            showQuickRepliesMenu
+              ? "cursor-pointer hover:bg-[var(--secondary)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
+              : "cursor-not-allowed opacity-35",
+          )}
+          tabIndex={showQuickRepliesMenu ? 0 : -1}
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg">
+            <ChevronDown
+              size="0.875rem"
+              aria-hidden="true"
+              className={cn("transition-transform", showQuickRepliesMenu && drawerOpen ? "" : "-rotate-90")}
+            />
+          </span>
+        </button>
+      </div>
+      {showQuickRepliesMenu && drawerOpen && (
+        <div
+          id="quick-replies-actions-drawer"
+          className="grid gap-1 border-t border-[var(--border)]/60 bg-[var(--background)]/25 p-1"
+          role="group"
+          aria-label="Quick replies actions to include"
+        >
+          {[
+            {
+              label: "Post only",
+              checked: showQuickReplyPostOnly,
+              onChange: setShowQuickReplyPostOnly,
+              description: "Add persona message without triggering a reply.",
+              icon: FileText,
+            },
+            {
+              label: "Guide reply",
+              checked: showQuickReplyGuide,
+              onChange: setShowQuickReplyGuide,
+              description: "Use draft as /guided direction.",
+              icon: WandSparkles,
+            },
+            {
+              label: "Impersonate",
+              checked: showQuickReplyImpersonate,
+              onChange: setShowQuickReplyImpersonate,
+              description: "Generate a persona-side user reply.",
+              icon: UserCheck,
+            },
+          ].map((option) => {
+            const Icon = option.icon;
+            return (
+              <button
+                type="button"
+                key={option.label}
+                aria-pressed={option.checked}
+                onClick={() => option.onChange(!option.checked)}
+                className={cn(
+                  "group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] active:scale-[0.99]",
+                  option.checked
+                    ? "bg-[var(--primary)]/8 text-[var(--foreground)] ring-1 ring-[var(--primary)]/30"
+                    : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--secondary)]/45 hover:text-[var(--foreground)]",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
+                    option.checked
+                      ? "bg-[var(--primary)]/12 text-[var(--primary)] ring-[var(--primary)]/30"
+                      : "bg-[var(--secondary)]/35 text-[var(--muted-foreground)] ring-[var(--border)]/60 group-hover:text-[var(--foreground)]",
+                  )}
+                >
+                  <Icon size="0.8125rem" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-semibold">{option.label}</span>
+                  <span className="block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
+                    {option.description}
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
+                    option.checked
+                      ? "mari-accent-animated bg-[var(--accent)] text-[var(--primary)] ring-[var(--primary)]/35"
+                      : "bg-[var(--background)]/45 text-transparent ring-[var(--border)]/70 group-hover:text-[var(--muted-foreground)]",
+                  )}
+                  aria-hidden="true"
+                >
+                  <Check size="0.625rem" strokeWidth={3} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GeneralSettings() {
   const language = useUIStore((s) => s.language);
   const setLanguage = useUIStore((s) => s.setLanguage);
@@ -2556,6 +2768,8 @@ function GeneralSettings() {
             </div>
           </div>
 
+          <QuickRepliesSetting />
+
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("speech-to-text")}
             label="Speech-to-text microphone"
@@ -2772,7 +2986,7 @@ function ImageGenerationSettings() {
           label="Expose image prompts before sending"
           checked={reviewImagePromptsBeforeSend}
           onChange={setReviewImagePromptsBeforeSend}
-          help="Shows generated image prompts for review before sending Game assets, character or persona avatars, and sprite generations to the image provider."
+          help="Pauses supported user-started image generation so you can review and edit the final positive and negative prompts before provider submission. This applies across Game and Roleplay scenes, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
         />
 
         <ImageDimensionRow
@@ -3177,10 +3391,7 @@ function GameAssetsSettings() {
             className="hidden"
             onChange={(e) => setAssetFiles(Array.from(e.target.files ?? []))}
           />
-          <button
-            onClick={() => assetFileRef.current?.click()}
-            className={cn(SETTINGS_BUTTON_CLASS, "justify-center")}
-          >
+          <button onClick={() => assetFileRef.current?.click()} className={cn(SETTINGS_BUTTON_CLASS, "justify-center")}>
             <Upload size="0.875rem" />
             Choose Files
           </button>
@@ -3508,7 +3719,9 @@ function AppearanceSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <SettingsIntro>Visual preferences, grouped by global chrome, text, Conversation, Roleplay, and Game presentation.</SettingsIntro>
+      <SettingsIntro>
+        Visual preferences, grouped by global chrome, text, Conversation, Roleplay, and Game presentation.
+      </SettingsIntro>
 
       <SettingsSection
         title="App Style"
@@ -3643,7 +3856,6 @@ function AppearanceSettings() {
             switchClassName={appAccentRgbMode ? "mari-rgb-toggle-track" : undefined}
             help="Cycles the app accent through Marinara's rainbow palette while enabled. Your saved Accent Color stays unchanged. Reduced-motion preferences are respected."
           />
-
         </div>
       </SettingsSection>
 
@@ -3910,7 +4122,6 @@ function AppearanceSettings() {
               )}
             </div>
           </div>
-
         </div>
       </SettingsSection>
 
@@ -3936,42 +4147,42 @@ function AppearanceSettings() {
       </div>
 
       <SettingsSection
-          title="Roleplay Messages"
-          description="Roleplay bubbles, avatars, sprite scale, and message opacity."
-          icon={<Image size="0.875rem" />}
-          {...getSettingsSectionAnchorProps("roleplay-messages")}
-        >
-          <div className="flex flex-col gap-3">
-            <label
-              id={getSettingsControlAnchorId("roleplay-message-opacity")}
-              className="flex scroll-mt-3 flex-col gap-1"
+        title="Roleplay Messages"
+        description="Roleplay bubbles, avatars, sprite scale, and message opacity."
+        icon={<Image size="0.875rem" />}
+        {...getSettingsSectionAnchorProps("roleplay-messages")}
+      >
+        <div className="flex flex-col gap-3">
+          <label
+            id={getSettingsControlAnchorId("roleplay-message-opacity")}
+            className="flex scroll-mt-3 flex-col gap-1"
+          >
+            <span className="text-[0.6875rem] font-medium">Roleplay Messages Background Opacity</span>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={chatFontOpacity}
+                onChange={(e) => setChatFontOpacity(Number(e.target.value))}
+                className="flex-1 accent-[var(--primary)]"
+              />
+              <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
+                {chatFontOpacity}%
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setChatFontOpacity(90)}
+              disabled={chatFontOpacity === 90}
+              className="self-start text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-45"
             >
-              <span className="text-[0.6875rem] font-medium">Roleplay Messages Background Opacity</span>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={chatFontOpacity}
-                  onChange={(e) => setChatFontOpacity(Number(e.target.value))}
-                  className="flex-1 accent-[var(--primary)]"
-                />
-                <span className="text-xs tabular-nums text-[var(--muted-foreground)] w-8 text-right">
-                  {chatFontOpacity}%
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setChatFontOpacity(90)}
-                disabled={chatFontOpacity === 90}
-                className="self-start text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] disabled:pointer-events-none disabled:opacity-45"
-              >
-                Reset opacity to default
-              </button>
-            </label>
+              Reset opacity to default
+            </button>
+          </label>
 
-            <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <div className="flex items-center gap-1.5">
               <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
               <span className="text-xs font-medium">Roleplay Avatars</span>
@@ -3984,7 +4195,10 @@ function AppearanceSettings() {
               onChange={setRoleplayAvatarsScrollable}
               help="When enabled, roleplay avatars stay visible while you scroll through long messages and stop at the bottom of their own message."
             />
-            <div id={getSettingsControlAnchorId("roleplay-avatar-style")} className="grid scroll-mt-3 grid-cols-1 gap-2 sm:grid-cols-2">
+            <div
+              id={getSettingsControlAnchorId("roleplay-avatar-style")}
+              className="grid scroll-mt-3 grid-cols-1 gap-2 sm:grid-cols-2"
+            >
               {ROLEPLAY_AVATAR_STYLE_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
@@ -4129,8 +4343,8 @@ function AppearanceSettings() {
               Per-chat sprite sizing still overrides the default sprite scale here.
             </p>
           </div>
-          </div>
-        </SettingsSection>
+        </div>
+      </SettingsSection>
 
       <SettingsSection
         title="Game Presentation"
@@ -4219,7 +4433,10 @@ function AppearanceSettings() {
               <span className="text-xs font-medium">Game Dialogue Display</span>
               <HelpTooltip text="Choose whether Game mode uses the classic VN box or shows a scrollable segment history directly above it." />
             </div>
-            <div id={getSettingsControlAnchorId("game-dialogue-display")} className="grid scroll-mt-3 grid-cols-1 gap-2 sm:grid-cols-2">
+            <div
+              id={getSettingsControlAnchorId("game-dialogue-display")}
+              className="grid scroll-mt-3 grid-cols-1 gap-2 sm:grid-cols-2"
+            >
               {GAME_DIALOGUE_DISPLAY_OPTIONS.map((opt) => (
                 <button
                   key={opt.id}
@@ -4770,9 +4987,7 @@ function BackgroundPicker({
                             : "text-[var(--muted-foreground)]/70 hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                         )}
                         title={
-                          isDefaultRoleplay
-                            ? "Default for new Roleplay chats"
-                            : "Set as default for new Roleplay chats"
+                          isDefaultRoleplay ? "Default for new Roleplay chats" : "Set as default for new Roleplay chats"
                         }
                         aria-label={
                           isDefaultRoleplay
@@ -5143,11 +5358,7 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
               {livePreview ? <Eye size="0.6875rem" /> : <EyeOff size="0.6875rem" />}
               Preview
             </button>
-            <button
-              onClick={handleSave}
-              disabled={isSavingTheme}
-              className={SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS}
-            >
+            <button onClick={handleSave} disabled={isSavingTheme} className={SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS}>
               {isSavingTheme ? <Loader2 size="0.6875rem" className="animate-spin" /> : <Save size="0.6875rem" />}
               {isSavingTheme ? "Saving..." : "Save"}
             </button>
@@ -5365,9 +5576,7 @@ function ThemesSettings({ showIntro = true }: { showIntro?: boolean } = {}) {
             ))}
 
             {isLoading && syncedThemes.length === 0 && (
-              <p className="mari-chrome-text-muted py-2 text-center text-[0.625rem]">
-                Loading synced themes...
-              </p>
+              <p className="mari-chrome-text-muted py-2 text-center text-[0.625rem]">Loading synced themes...</p>
             )}
 
             {!isLoading && syncedThemes.length === 0 && (
@@ -5880,7 +6089,8 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
           <button
             onClick={() => {
               triggerFilePicker({
-                accept: ".zip,.json,.css,.js,.mjs,.cjs,.server.js,.server.mjs,.server.cjs,application/zip,application/json",
+                accept:
+                  ".zip,.json,.css,.js,.mjs,.cjs,.server.js,.server.mjs,.server.cjs,application/zip,application/json",
                 onSelect: (files) => {
                   const file = files[0];
                   if (file) void handleImportExtensionFile(file);
@@ -6011,8 +6221,8 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
           {/* Info box */}
           <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
             <strong>Folder format:</strong>{" "}
-            <code className="rounded bg-[var(--secondary)] px-1">Extensions/My Extension/manifest.json</code>
-            . Browser extensions can include CSS and/or JavaScript files to modify the UI.
+            <code className="rounded bg-[var(--secondary)] px-1">Extensions/My Extension/manifest.json</code>. Browser
+            extensions can include CSS and/or JavaScript files to modify the UI.
           </div>
           <div className="rounded-lg bg-[var(--secondary)]/50 p-2.5 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
             <strong>Server extensions:</strong> use{" "}
@@ -6810,14 +7020,6 @@ function AdvancedSettings() {
   const setShowMessageNumbers = useUIStore((s) => s.setShowMessageNumbers);
   const guideGenerations = useUIStore((s) => s.guideGenerations);
   const setGuideGenerations = useUIStore((s) => s.setGuideGenerations);
-  const showQuickRepliesMenu = useUIStore((s) => s.showQuickRepliesMenu);
-  const setShowQuickRepliesMenu = useUIStore((s) => s.setShowQuickRepliesMenu);
-  const showQuickReplyPostOnly = useUIStore((s) => s.showQuickReplyPostOnly);
-  const setShowQuickReplyPostOnly = useUIStore((s) => s.setShowQuickReplyPostOnly);
-  const showQuickReplyGuide = useUIStore((s) => s.showQuickReplyGuide);
-  const setShowQuickReplyGuide = useUIStore((s) => s.setShowQuickReplyGuide);
-  const showQuickReplyImpersonate = useUIStore((s) => s.showQuickReplyImpersonate);
-  const setShowQuickReplyImpersonate = useUIStore((s) => s.setShowQuickReplyImpersonate);
   const includeReasoningInExports = useUIStore((s) => s.includeReasoningInExports);
   const setIncludeReasoningInExports = useUIStore((s) => s.setIncludeReasoningInExports);
   const debugMode = useUIStore((s) => s.debugMode);
@@ -6830,15 +7032,9 @@ function AdvancedSettings() {
   const [exportProfileDialogOpen, setExportProfileDialogOpen] = useState(false);
   const [refreshingSpa, setRefreshingSpa] = useState(false);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
-  const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
   const nativeConsoleBridge = getMarinaraAndroidBridge();
   const canOpenNativeConsole = typeof nativeConsoleBridge?.openConsole === "function";
   const nativeConsoleHelp = getNativeConsoleShortcutHelp();
-
-  const handleQuickRepliesMenuChange = (enabled: boolean) => {
-    setShowQuickRepliesMenu(enabled);
-    if (enabled) setQuickRepliesDrawerOpen(true);
-  };
 
   const handleOpenNativeConsole = useCallback(() => {
     const bridge = getMarinaraAndroidBridge();
@@ -7185,9 +7381,7 @@ function AdvancedSettings() {
         onSelect={handleExportProfileChoice}
       />
 
-      <SettingsIntro>
-        Server maintenance, message utilities, backups, and data removal.
-      </SettingsIntro>
+      <SettingsIntro>Server maintenance, message utilities, backups, and data removal.</SettingsIntro>
 
       <SettingsSection
         title="Admin Access"
@@ -7334,9 +7528,7 @@ function AdvancedSettings() {
                   ) : (
                     <>
                       <Download size="0.8125rem" />
-                      {updateCheck.data.channelSwitch
-                        ? `Switch to ${updateCheck.data.channelLabel}`
-                        : "Apply Update"}
+                      {updateCheck.data.channelSwitch ? `Switch to ${updateCheck.data.channelLabel}` : "Apply Update"}
                     </>
                   )}
                 </button>
@@ -7382,9 +7574,7 @@ function AdvancedSettings() {
                       ) : null}
                     </span>
                   )}
-                  {manualUpdateCommand && (
-                    <ManualUpdateCommand command={manualUpdateCommand} />
-                  )}
+                  {manualUpdateCommand && <ManualUpdateCommand command={manualUpdateCommand} />}
                 </div>
               )}
             </div>
@@ -7425,158 +7615,11 @@ function AdvancedSettings() {
 
       <SettingsSection
         title="Message Tools"
-        description="Quick reply actions, message metadata, and debug visibility."
+        description="Message metadata and debug visibility."
         icon={<MessageCircle size="0.875rem" />}
         {...getSettingsSectionAnchorProps("message-tools")}
       >
         <div className="flex flex-col gap-2.5">
-          <div
-            id={getSettingsControlAnchorId("quick-replies")}
-            className={cn(
-              "scroll-mt-3 overflow-hidden rounded-xl border transition-colors",
-              showQuickRepliesMenu
-                ? "border-[var(--primary)]/30 bg-[var(--secondary)]/15"
-                : "border-transparent bg-transparent hover:bg-[var(--secondary)]/30",
-            )}
-          >
-            <div className="flex min-h-9 items-stretch">
-              <div className="flex min-w-0 items-center gap-1.5 py-2 pl-1.5 pr-2">
-                <label className="flex min-w-0 cursor-pointer items-center gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={showQuickRepliesMenu}
-                    onChange={(e) => handleQuickRepliesMenuChange(e.target.checked)}
-                    className="h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--primary)]"
-                  />
-                  <span className="min-w-0 text-xs">Quick replies</span>
-                </label>
-                <span className="shrink-0" onClick={(e) => e.preventDefault()}>
-                  <HelpTooltip text="Adds alternate draft actions beside Send. One action appears directly; multiple actions open from the ellipsis." />
-                </span>
-              </div>
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!showQuickRepliesMenu) return;
-                  setQuickRepliesDrawerOpen((open) => !open);
-                }}
-                aria-disabled={!showQuickRepliesMenu}
-                aria-controls="quick-replies-actions-drawer"
-                aria-expanded={showQuickRepliesMenu && quickRepliesDrawerOpen}
-                aria-label={
-                  !showQuickRepliesMenu
-                    ? "Quick replies options disabled"
-                    : quickRepliesDrawerOpen
-                      ? "Collapse Quick replies options"
-                      : "Expand Quick replies options"
-                }
-                title={
-                  !showQuickRepliesMenu
-                    ? "Enable Quick replies to configure options"
-                    : quickRepliesDrawerOpen
-                      ? "Collapse options"
-                      : "Expand options"
-                }
-                className={cn(
-                  "flex min-w-10 flex-1 items-center justify-end py-2 pl-2 pr-2 text-[var(--muted-foreground)] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]",
-                  showQuickRepliesMenu && quickRepliesDrawerOpen ? "rounded-tr-xl" : "rounded-r-xl",
-                  showQuickRepliesMenu
-                    ? "cursor-pointer hover:bg-[var(--secondary)]/35 hover:text-[var(--foreground)] active:scale-[0.99]"
-                    : "cursor-not-allowed opacity-35",
-                )}
-                tabIndex={showQuickRepliesMenu ? 0 : -1}
-              >
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg">
-                  <ChevronDown
-                    size="0.875rem"
-                    aria-hidden="true"
-                    className={cn(
-                      "transition-transform",
-                      showQuickRepliesMenu && quickRepliesDrawerOpen ? "" : "-rotate-90",
-                    )}
-                  />
-                </span>
-              </button>
-            </div>
-            {showQuickRepliesMenu && quickRepliesDrawerOpen && (
-              <div
-                id="quick-replies-actions-drawer"
-                className="grid gap-1 border-t border-[var(--border)]/60 bg-[var(--background)]/25 p-1"
-                role="group"
-                aria-label="Quick replies actions to include"
-              >
-                {[
-                  {
-                    label: "Post only",
-                    checked: showQuickReplyPostOnly,
-                    onChange: setShowQuickReplyPostOnly,
-                    description: "Add persona message without triggering a reply.",
-                    icon: FileText,
-                  },
-                  {
-                    label: "Guide reply",
-                    checked: showQuickReplyGuide,
-                    onChange: setShowQuickReplyGuide,
-                    description: "Use draft as /guided direction.",
-                    icon: WandSparkles,
-                  },
-                  {
-                    label: "Impersonate",
-                    checked: showQuickReplyImpersonate,
-                    onChange: setShowQuickReplyImpersonate,
-                    description: "Generate a persona-side user reply.",
-                    icon: UserCheck,
-                  },
-                ].map((option) => {
-                  const Icon = option.icon;
-                  return (
-                    <button
-                      type="button"
-                      key={option.label}
-                      aria-pressed={option.checked}
-                      onClick={() => option.onChange(!option.checked)}
-                      className={cn(
-                        "group flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] active:scale-[0.99]",
-                        option.checked
-                          ? "bg-[var(--primary)]/8 text-[var(--foreground)] ring-1 ring-[var(--primary)]/30"
-                          : "text-[var(--muted-foreground)] ring-1 ring-transparent hover:bg-[var(--secondary)]/45 hover:text-[var(--foreground)]",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1 transition-colors",
-                          option.checked
-                            ? "bg-[var(--primary)]/12 text-[var(--primary)] ring-[var(--primary)]/30"
-                            : "bg-[var(--secondary)]/35 text-[var(--muted-foreground)] ring-[var(--border)]/60 group-hover:text-[var(--foreground)]",
-                        )}
-                      >
-                        <Icon size="0.8125rem" aria-hidden="true" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold">{option.label}</span>
-                        <span className="block text-[0.65rem] leading-tight text-[var(--muted-foreground)]">
-                          {option.description}
-                        </span>
-                      </span>
-                      <span
-                        className={cn(
-                          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1 transition-colors",
-                          option.checked
-                            ? "mari-accent-animated bg-[var(--accent)] text-[var(--primary)] ring-[var(--primary)]/35"
-                            : "bg-[var(--background)]/45 text-transparent ring-[var(--border)]/70 group-hover:text-[var(--muted-foreground)]",
-                        )}
-                        aria-hidden="true"
-                      >
-                        <Check size="0.625rem" strokeWidth={3} />
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("show-message-timestamps")}
             label="Show message timestamps"
@@ -7651,11 +7694,7 @@ function AdvancedSettings() {
         {...getSettingsSectionAnchorProps("backup-export")}
       >
         <div className="flex flex-col gap-2">
-          <button
-            onClick={handleCreateBackup}
-            disabled={creatingBackup}
-            className={SETTINGS_PRIMARY_BUTTON_CLASS}
-          >
+          <button onClick={handleCreateBackup} disabled={creatingBackup} className={SETTINGS_PRIMARY_BUTTON_CLASS}>
             {creatingBackup ? (
               <>
                 <Loader2 size="0.8125rem" className="animate-spin" />
@@ -7779,7 +7818,10 @@ function AdvancedSettings() {
           {confirmAction && (
             <div className="flex flex-col gap-2 rounded-lg bg-[var(--background)]/55 p-2.5 ring-1 ring-[var(--border)]">
               <div className="flex items-start gap-2 text-[0.6875rem] font-medium text-[var(--marinara-chat-chrome-panel-text)]">
-                <AlertTriangle size="0.875rem" className="mt-0.5 shrink-0 text-[var(--marinara-chat-chrome-button-text-active)]" />
+                <AlertTriangle
+                  size="0.875rem"
+                  className="mt-0.5 shrink-0 text-[var(--marinara-chat-chrome-button-text-active)]"
+                />
                 {confirmAction === "all"
                   ? "Delete all supported data categories except Professor Mari? There is no undo."
                   : `Delete ${selectedScopes.length} selected data categor${selectedScopes.length === 1 ? "y" : "ies"}? There is no undo.`}

@@ -143,7 +143,7 @@ export function ImpersonateSection({ presets, connections }: ImpersonateSectionP
           </div>
 
           <p className="border-t border-[var(--border)]/60 px-2 pt-1.5 text-[0.65rem] leading-snug text-[var(--muted-foreground)]">
-            Enable Quick Send in Settings &gt; Advanced &gt; Quick replies.
+            Enable Quick Send in Settings &gt; General &gt; Input &amp; Editing &gt; Quick replies.
           </p>
         </div>
       </div>

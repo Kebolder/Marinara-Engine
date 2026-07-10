@@ -76,6 +76,12 @@ import {
 import { ChatImageLightbox } from "../chat/ChatImageLightbox";
 import { Modal } from "../ui/Modal";
 import {
+  ImagePromptReviewModal,
+  type ImagePromptOverride,
+  type ImagePromptReviewItem,
+} from "../ui/ImagePromptReviewModal";
+import {
+  useConfirmNoodleImagePrompts,
   useCreateNoodleInteraction,
   useCreateNoodlePost,
   useDeleteNoodleInteraction,
@@ -816,6 +822,7 @@ export function NoodleView() {
   const deleteInteraction = useDeleteNoodleInteraction();
   const rescheduleRefresh = useRescheduleNoodleRefresh();
   const refreshNoodle = useRefreshNoodle();
+  const confirmNoodleImagePrompts = useConfirmNoodleImagePrompts();
   const resetNoodleTimeline = useResetNoodleTimeline();
   const uploadGlobalImages = useUploadGlobalGalleryImages();
   const prefersReducedMotion = useReducedMotion();
@@ -898,6 +905,7 @@ export function NoodleView() {
   const [notificationReadOverrides, setNotificationReadOverrides] = useState<Record<string, string>>({});
   const [editingRefreshTime, setEditingRefreshTime] = useState<string | null>(null);
   const [refreshTimeDraft, setRefreshTimeDraft] = useState("");
+  const [imagePromptReviewItems, setImagePromptReviewItems] = useState<ImagePromptReviewItem[]>([]);
   const [postMenuId, setPostMenuId] = useState<string | null>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [editingPostContent, setEditingPostContent] = useState("");
@@ -1671,8 +1679,7 @@ export function NoodleView() {
   const notificationReadTime = Date.parse(notificationReadAt) || 0;
   const notificationCount =
     notificationLikes.filter((item) => new Date(item.interaction.createdAt).getTime() > notificationReadTime).length +
-    notificationFollowAccounts.filter((item) => (Date.parse(item.followedAt) || 0) > notificationReadTime)
-      .length +
+    notificationFollowAccounts.filter((item) => (Date.parse(item.followedAt) || 0) > notificationReadTime).length +
     notificationReplyItems.filter((item) => new Date(item.createdAt).getTime() > notificationReadTime).length;
   const notificationBadgeLabel = notificationCount > 99 ? "99+" : String(notificationCount);
   const followableCharacterAccounts = useMemo(
@@ -2145,10 +2152,27 @@ export function NoodleView() {
     refreshNoodle.mutate(
       { personaId: personaAccount?.entityId, connectionId: settings.generationConnectionId },
       {
-        onSuccess: () => toast.success("Noodle timeline refreshed."),
+        onSuccess: (result) => {
+          if (result.imagePromptReviewItems.length > 0) {
+            setImagePromptReviewItems(result.imagePromptReviewItems);
+            return;
+          }
+          toast.success("Noodle timeline refreshed.");
+        },
         onError: (error) => toast.error(error instanceof Error ? error.message : "Could not refresh Noodle."),
       },
     );
+  };
+
+  const confirmReviewedNoodleImagePrompts = (overrides: ImagePromptOverride[]) => {
+    confirmNoodleImagePrompts.mutate(overrides, {
+      onSuccess: () => {
+        setImagePromptReviewItems([]);
+        toast.success("Noodle timeline refreshed.");
+      },
+      onError: (error) =>
+        toast.error(error instanceof Error ? error.message : "Could not generate the reviewed Noodle images."),
+    });
   };
 
   const closeComposeModal = useCallback(() => {
@@ -3313,11 +3337,11 @@ export function NoodleView() {
                     : false;
                   const canManageReply = Boolean(
                     personaAccount &&
-                      canManageNoodleReply({
-                        actorKind: actorAccount?.kind ?? reply.actorSnapshot?.kind,
-                        actorAccountId: reply.actorAccountId,
-                        personaAccountId: personaAccount.id,
-                      }),
+                    canManageNoodleReply({
+                      actorKind: actorAccount?.kind ?? reply.actorSnapshot?.kind,
+                      actorAccountId: reply.actorAccountId,
+                      personaAccountId: personaAccount.id,
+                    }),
                   );
                   return (
                     <Fragment key={reply.id}>
@@ -3531,10 +3555,7 @@ export function NoodleView() {
   };
 
   const renderFollowNotification = (item: (typeof notificationFollowAccounts)[number]) => (
-    <div
-      key={item.account.id}
-      className="flex items-start gap-3 border-b border-[var(--noodle-divider)] px-4 py-4"
-    >
+    <div key={item.account.id} className="flex items-start gap-3 border-b border-[var(--noodle-divider)] px-4 py-4">
       <button
         type="button"
         onClick={() => openProfile(item.account)}
@@ -5056,6 +5077,13 @@ export function NoodleView() {
           </div>
         </Modal>
       )}
+      <ImagePromptReviewModal
+        open={imagePromptReviewItems.length > 0}
+        items={imagePromptReviewItems}
+        isSubmitting={confirmNoodleImagePrompts.isPending}
+        onCancel={() => setImagePromptReviewItems([])}
+        onConfirm={confirmReviewedNoodleImagePrompts}
+      />
     </div>
   );
 }
