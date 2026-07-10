@@ -504,6 +504,62 @@ export function createNoodleStorage(db: DB) {
       return rows.map(mapInteraction);
     },
 
+    async listRepliesByActorSince(actorAccountId: string, since: string, limit = 100): Promise<NoodleInteraction[]> {
+      const rows = await db
+        .select()
+        .from(noodleInteractions)
+        .where(
+          and(
+            eq(noodleInteractions.actorAccountId, actorAccountId),
+            eq(noodleInteractions.type, "reply"),
+            gt(noodleInteractions.createdAt, since),
+          ),
+        )
+        .orderBy(desc(noodleInteractions.createdAt))
+        .limit(Math.max(1, Math.min(200, Math.floor(limit))));
+      return rows.map(mapInteraction);
+    },
+
+    async getInteractionById(id: string): Promise<NoodleInteraction | null> {
+      const rows = await db.select().from(noodleInteractions).where(eq(noodleInteractions.id, id));
+      return rows[0] ? mapInteraction(rows[0]) : null;
+    },
+
+    async updateInteraction(
+      id: string,
+      input: { content?: string | null; imageUrl?: string | null },
+    ): Promise<NoodleInteraction | null> {
+      const existing = await this.getInteractionById(id);
+      if (!existing) return null;
+      await db
+        .update(noodleInteractions)
+        .set({
+          ...(input.content !== undefined && { content: input.content?.trim() || null }),
+          ...(input.imageUrl !== undefined && { imageUrl: input.imageUrl?.trim() || null }),
+        })
+        .where(eq(noodleInteractions.id, id));
+      return this.getInteractionById(id);
+    },
+
+    async deleteInteractionById(id: string): Promise<NoodleInteraction[]> {
+      const existing = await this.getInteractionById(id);
+      if (!existing) return [];
+      const rows = await db.select().from(noodleInteractions).where(eq(noodleInteractions.postId, existing.postId));
+      const deletedIds = new Set([id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const row of rows) {
+          if (deletedIds.has(row.id) || !row.parentInteractionId || !deletedIds.has(row.parentInteractionId)) continue;
+          deletedIds.add(row.id);
+          changed = true;
+        }
+      }
+      const deletedRows = rows.filter((row) => deletedIds.has(row.id));
+      await db.delete(noodleInteractions).where(inArray(noodleInteractions.id, [...deletedIds]));
+      return deletedRows.map(mapInteraction);
+    },
+
     async createInteraction(
       postId: string,
       input: Omit<NoodleCreateInteractionInput, "actorKind" | "actorEntityId"> & { actorAccountId: string },

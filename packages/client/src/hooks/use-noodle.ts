@@ -11,6 +11,7 @@ import type {
   NoodleCreateInteractionInput,
   NoodleCreatePostInput,
   NoodleInteraction,
+  NoodleInteractionUpdateInput,
   NoodlePost,
   NoodlePostUpdateInput,
   NoodleRemoveInteractionInput,
@@ -214,6 +215,52 @@ export function useRemoveNoodleInteraction() {
           ? {
               ...current,
               interactions: current.interactions.filter((item) => item.id !== interaction.id),
+            }
+          : current,
+      );
+    },
+  });
+}
+
+export function useUpdateNoodleInteraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      postId,
+      interactionId,
+      ...input
+    }: NoodleInteractionUpdateInput & { postId: string; interactionId: string }) =>
+      api.patch<NoodleInteraction>(
+        `/noodle/posts/${encodeURIComponent(postId)}/interactions/${encodeURIComponent(interactionId)}`,
+        input,
+      ),
+    onSuccess: (interaction) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              interactions: current.interactions.map((item) => (item.id === interaction.id ? interaction : item)),
+            }
+          : current,
+      );
+    },
+  });
+}
+
+export function useDeleteNoodleInteraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ postId, interactionId, personaId }: { postId: string; interactionId: string; personaId: string }) =>
+      api.delete<NoodleInteraction[]>(
+        `/noodle/posts/${encodeURIComponent(postId)}/interactions/${encodeURIComponent(interactionId)}?personaId=${encodeURIComponent(personaId)}`,
+      ),
+    onSuccess: (interactions) => {
+      const deletedIds = new Set(interactions.map((interaction) => interaction.id));
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              interactions: current.interactions.filter((item) => !deletedIds.has(item.id)),
             }
           : current,
       );

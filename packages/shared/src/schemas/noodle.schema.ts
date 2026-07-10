@@ -198,6 +198,19 @@ export const noodleRemoveInteractionSchema = z
     }
   });
 
+export const noodleInteractionOwnerSchema = z.object({
+  personaId: z.string().min(1),
+});
+
+export const noodleInteractionUpdateSchema = noodleInteractionOwnerSchema
+  .extend({
+    content: z.string().max(2000).nullable().optional(),
+    imageUrl: z.string().max(2000).nullable().optional(),
+  })
+  .refine((input) => input.content !== undefined || input.imageUrl !== undefined, {
+    message: "Provide comment text or an image update.",
+  });
+
 export const noodleRefreshSchema = z.object({
   personaId: z.string().min(1).optional(),
   connectionId: z.string().min(1).optional(),
@@ -221,11 +234,30 @@ export const noodleGeneratedPostSchema = z.object({
 export const noodleGeneratedInteractionSchema = z
   .object({
     actorEntityId: z.string().min(1),
-    targetTempId: z.string().min(1).optional(),
-    targetPostId: z.string().min(1).optional(),
+    targetTempId: z
+      .string()
+      .min(1)
+      .nullish()
+      .transform((value) => value ?? undefined),
+    targetPostId: z
+      .string()
+      .min(1)
+      .nullish()
+      .transform((value) => value ?? undefined),
+    parentInteractionId: z
+      .string()
+      .min(1)
+      .nullish()
+      .transform((value) => value ?? undefined),
     type: noodleInteractionTypeSchema,
     content: z.string().max(2000).nullable().optional(),
-    pollOptionIndex: z.number().int().min(0).max(3).optional(),
+    pollOptionIndex: z
+      .number()
+      .int()
+      .min(0)
+      .max(3)
+      .nullish()
+      .transform((value) => value ?? undefined),
   })
   .superRefine((interaction, ctx) => {
     if (interaction.type === "vote" && interaction.pollOptionIndex === undefined) {
@@ -233,6 +265,13 @@ export const noodleGeneratedInteractionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["pollOptionIndex"],
         message: "Poll votes require a poll option index.",
+      });
+    }
+    if (interaction.type !== "reply" && interaction.parentInteractionId !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["parentInteractionId"],
+        message: "Only replies can target an existing comment.",
       });
     }
   });
@@ -277,6 +316,8 @@ export type NoodleCreatePostInput = z.infer<typeof noodleCreatePostSchema>;
 export type NoodlePostUpdateInput = z.infer<typeof noodlePostUpdateSchema>;
 export type NoodleCreateInteractionInput = z.infer<typeof noodleCreateInteractionSchema>;
 export type NoodleRemoveInteractionInput = z.infer<typeof noodleRemoveInteractionSchema>;
+export type NoodleInteractionOwnerInput = z.infer<typeof noodleInteractionOwnerSchema>;
+export type NoodleInteractionUpdateInput = z.infer<typeof noodleInteractionUpdateSchema>;
 export type NoodleRefreshInput = z.infer<typeof noodleRefreshSchema>;
 export type NoodleRescheduleRefreshInput = z.infer<typeof noodleRescheduleRefreshSchema>;
 export type NoodleGeneratedRefresh = z.infer<typeof noodleGeneratedRefreshSchema>;

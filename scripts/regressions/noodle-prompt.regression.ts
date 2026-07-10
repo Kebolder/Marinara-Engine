@@ -1,10 +1,79 @@
 import assert from "node:assert/strict";
 import {
+  canGenerateNoodleActivityForAccountKind,
+  formatNoodleTimelineForPrompt,
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
+  noodlePersonaCommentPostIds,
+  NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
 } from "../../packages/server/src/services/noodle/noodle-prompt.js";
+
+assert.equal(canGenerateNoodleActivityForAccountKind("persona"), false);
+assert.equal(canGenerateNoodleActivityForAccountKind("character"), true);
+assert.equal(canGenerateNoodleActivityForAccountKind("random_user"), true);
+assert.match(NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION, /controlled exclusively by the user/u);
+assert.match(
+  NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
+  /Never generate posts, replies, likes, reposts, poll votes, or follows/u,
+);
+
+const threadedTimeline = formatNoodleTimelineForPrompt(
+  [
+    {
+      id: "post-1",
+      authorAccountId: "character-account",
+      authorSnapshot: {
+        id: "character-account",
+        kind: "character",
+        entityId: "character-1",
+        handle: "character_one",
+        displayName: "Character One",
+        avatarUrl: null,
+      },
+      content: "A character post.",
+      imagePrompt: null,
+      metadata: {},
+      createdAt: "2026-07-10T10:00:00.000Z",
+    },
+  ],
+  [
+    {
+      id: "persona-comment-1",
+      postId: "post-1",
+      parentInteractionId: null,
+      actorAccountId: "persona-account",
+      actorSnapshot: {
+        id: "persona-account",
+        kind: "persona",
+        entityId: "persona-1",
+        handle: "smarinara_spaghetti",
+        displayName: "Mari",
+        avatarUrl: null,
+      },
+      type: "reply",
+      content: "Mari asks a follow-up question.",
+      imageUrl: null,
+      createdAt: "2026-07-10T10:05:00.000Z",
+    },
+  ],
+  { priorityActorAccountId: "persona-account" },
+);
+assert.match(threadedTimeline, /replyId=persona-comment-1/u);
+assert.match(threadedTimeline, /@smarinara_spaghetti/u);
+assert.match(threadedTimeline, /Mari asks a follow-up question/u);
+assert.deepEqual(
+  noodlePersonaCommentPostIds(
+    [
+      { postId: "old-post-with-new-comment", actorAccountId: "persona-account", type: "reply" },
+      { postId: "other-post", actorAccountId: "character-account", type: "reply" },
+      { postId: "old-post-with-new-comment", actorAccountId: "persona-account", type: "reply" },
+    ],
+    "persona-account",
+  ),
+  ["old-post-with-new-comment"],
+);
 
 const activeAccountsInstruction = "- Use only the active accounts listed by entityId. Do not invent accounts.";
 const imageGenerationInstruction =

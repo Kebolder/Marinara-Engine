@@ -32,13 +32,55 @@ const generated = noodleGeneratedRefreshSchema.parse({
       type: "vote",
       pollOptionIndex: 1,
     },
+    {
+      actorEntityId: "character-1",
+      targetPostId: "existing-post-1",
+      parentInteractionId: "persona-comment-1",
+      type: "reply",
+      content: "A direct answer to the persona comment.",
+    },
   ],
 });
 assert.equal(generated.posts[0]?.poll?.options.length, 2);
 assert.equal(generated.interactions[0]?.pollOptionIndex, 1);
+assert.equal(generated.interactions[1]?.parentInteractionId, "persona-comment-1");
+
+const generatedWithNullPlaceholders = noodleGeneratedRefreshSchema.parse({
+  interactions: [
+    {
+      actorEntityId: "character-2",
+      targetTempId: "poll-1",
+      targetPostId: null,
+      type: "like",
+      content: null,
+      pollOptionIndex: null,
+    },
+  ],
+});
+assert.equal(generatedWithNullPlaceholders.interactions[0]?.targetPostId, undefined);
+assert.equal(generatedWithNullPlaceholders.interactions[0]?.pollOptionIndex, undefined);
 assert.equal(
   noodleGeneratedRefreshSchema.safeParse({
     interactions: [{ actorEntityId: "character-2", targetPostId: "post-1", type: "vote" }],
+  }).success,
+  false,
+);
+assert.equal(
+  noodleGeneratedRefreshSchema.safeParse({
+    interactions: [
+      {
+        actorEntityId: "character-2",
+        targetPostId: "post-1",
+        parentInteractionId: "comment-1",
+        type: "like",
+      },
+    ],
+  }).success,
+  false,
+);
+assert.equal(
+  noodleGeneratedRefreshSchema.safeParse({
+    interactions: [{ actorEntityId: "character-2", targetPostId: "post-1", type: "vote", pollOptionIndex: null }],
   }).success,
   false,
 );

@@ -1,11 +1,19 @@
 // ──────────────────────────────────────────────
 // Noodle Prompt Instructions
 // ──────────────────────────────────────────────
-import type { NoodleSettings } from "@marinara-engine/shared";
+import {
+  readNoodlePollFromMetadata,
+  type NoodleAccountKind,
+  type NoodleInteraction,
+  type NoodlePost,
+  type NoodleSettings,
+} from "@marinara-engine/shared";
 
 export const NOODLE_PAST_MEMORY_MIN_AGE_MS = 48 * 60 * 60 * 1000;
 export const NOODLE_PAST_MEMORY_MAX_ITEMS = 3;
 export const NOODLE_PAST_MEMORY_INCLUSION_CHANCE = 0.5;
+export const NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION =
+  "- The user persona is controlled exclusively by the user. Never generate posts, replies, likes, reposts, poll votes, or follows as a persona. Personas may only be mentioned or targeted by other accounts.";
 
 type NoodleTimelineFeatureSettings = Pick<
   NoodleSettings,
@@ -13,6 +21,104 @@ type NoodleTimelineFeatureSettings = Pick<
 >;
 
 type RandomSource = () => number;
+type NoodlePromptPost = Pick<
+  NoodlePost,
+  "id" | "authorAccountId" | "authorSnapshot" | "content" | "imagePrompt" | "metadata" | "createdAt"
+>;
+type NoodlePromptInteraction = Pick<
+  NoodleInteraction,
+  | "id"
+  | "postId"
+  | "parentInteractionId"
+  | "actorAccountId"
+  | "actorSnapshot"
+  | "type"
+  | "content"
+  | "imageUrl"
+  | "createdAt"
+>;
+
+const NOODLE_PROMPT_REPLIES_PER_POST = 12;
+
+export function canGenerateNoodleActivityForAccountKind(kind: NoodleAccountKind): boolean {
+  return kind === "character" || kind === "random_user";
+}
+
+export function noodlePersonaCommentPostIds(
+  interactions: Array<Pick<NoodleInteraction, "postId" | "actorAccountId" | "type">>,
+  personaAccountId?: string,
+): string[] {
+  if (!personaAccountId) return [];
+  return Array.from(
+    new Set(
+      interactions
+        .filter((interaction) => interaction.type === "reply" && interaction.actorAccountId === personaAccountId)
+        .map((interaction) => interaction.postId),
+    ),
+  );
+}
+
+function promptRepliesForPost(
+  interactions: NoodlePromptInteraction[],
+  postId: string,
+  priorityActorAccountId?: string,
+) {
+  const replies = interactions.filter((interaction) => interaction.postId === postId && interaction.type === "reply");
+  const prioritized = priorityActorAccountId
+    ? replies.filter((interaction) => interaction.actorAccountId === priorityActorAccountId).reverse()
+    : [];
+  const newest = replies.slice().reverse();
+  const selected = new Map<string, NoodlePromptInteraction>();
+  for (const reply of [...prioritized, ...newest]) {
+    if (selected.size >= NOODLE_PROMPT_REPLIES_PER_POST) break;
+    selected.set(reply.id, reply);
+  }
+  return [...selected.values()].sort(
+    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+  );
+}
+
+export function formatNoodleTimelineForPrompt(
+  posts: NoodlePromptPost[],
+  interactions: NoodlePromptInteraction[],
+  options: { emptyMessage?: string; includeTimestamp?: boolean; priorityActorAccountId?: string } = {},
+) {
+  if (posts.length === 0) return options.emptyMessage ?? "No recent Noodle posts.";
+  return posts
+    .slice()
+    .reverse()
+    .map((post) => {
+      const author = post.authorSnapshot?.displayName ?? post.authorAccountId;
+      const poll = readNoodlePollFromMetadata(post.metadata);
+      const pollSummary = poll
+        ? ` [poll: ${poll.question}; ${poll.options
+            .map((option, index) => {
+              const votes = interactions.filter(
+                (interaction) =>
+                  interaction.postId === post.id && interaction.type === "vote" && interaction.content === option.id,
+              ).length;
+              return `option ${index}: ${option.label} (${votes} vote${votes === 1 ? "" : "s"})`;
+            })
+            .join("; ")}]`
+        : "";
+      const timestamp = options.includeTimestamp ? ` at ${post.createdAt}` : "";
+      const replyLines = promptRepliesForPost(interactions, post.id, options.priorityActorAccountId).map((reply) => {
+        const replyAuthor = reply.actorSnapshot?.displayName ?? reply.actorAccountId;
+        const replyHandle = reply.actorSnapshot?.handle ? ` (@${reply.actorSnapshot.handle})` : "";
+        const parent = reply.parentInteractionId ? ` parentReplyId=${reply.parentInteractionId}` : "";
+        return `  - replyId=${reply.id}${parent} by ${replyAuthor}${replyHandle} at ${reply.createdAt}: ${
+          reply.content || (reply.imageUrl ? "[image reply]" : "[empty reply]")
+        }`;
+      });
+      return [
+        `- ${post.id} by ${author}${timestamp}: ${post.content}${pollSummary}${
+          post.imagePrompt ? ` [image prompt: ${post.imagePrompt}]` : ""
+        }`,
+        ...replyLines,
+      ].join("\n");
+    })
+    .join("\n");
+}
 
 function normalizedRandom(random: RandomSource): number {
   const value = random();
