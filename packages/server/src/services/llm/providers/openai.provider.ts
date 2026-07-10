@@ -23,6 +23,7 @@ import {
   shouldSuppressUnknownModelParameters,
 } from "@marinara-engine/shared";
 import { logger } from "../../../lib/logger.js";
+import { applyGlmThinkingParameters, isNativeGlmEndpoint } from "./glm-request-compat.js";
 
 /**
  * Models that ONLY support the Responses API (`/responses`) and not Chat Completions.
@@ -247,7 +248,11 @@ export class OpenAIProvider extends BaseLLMProvider {
   private normalizeChatCompletionsResponseFormat(responseFormat?: { type: string }): unknown | undefined {
     if (!responseFormat) return undefined;
 
-    if (this.isGenericCustomProvider() && responseFormat.type === "json_object") {
+    if (
+      this.isGenericCustomProvider() &&
+      !isNativeGlmEndpoint(this.baseUrl) &&
+      responseFormat.type === "json_object"
+    ) {
       return { type: "json_schema", json_schema: { name: "response", schema: { type: "object" }, strict: true } };
     }
 
@@ -657,30 +662,6 @@ export class OpenAIProvider extends BaseLLMProvider {
     delete body.presence_penalty;
   }
 
-  /** GLM variants on Z.AI/BigModel use a boolean thinking toggle instead of effort-based reasoning config. */
-  private isGLMModel(model: string): boolean {
-    return model.toLowerCase().includes("glm");
-  }
-
-  private isNativeGLMEndpoint(): boolean {
-    try {
-      const hostname = new URL(this.baseUrl).hostname.toLowerCase();
-      return (
-        hostname === "api.z.ai" ||
-        hostname.endsWith(".api.z.ai") ||
-        hostname === "open.bigmodel.cn" ||
-        hostname.endsWith(".open.bigmodel.cn")
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  private shouldSendGLMEnableThinking(model: string): boolean {
-    if (this.isGenericCustomProvider() || !this.isGLMModel(model)) return false;
-    return this.isNativeGLMEndpoint() || this.providerKind === "nanogpt";
-  }
-
   private hasActiveReasoningEffort(reasoningEffort?: string | null): boolean {
     return !!reasoningEffort && reasoningEffort !== "none";
   }
@@ -726,10 +707,16 @@ export class OpenAIProvider extends BaseLLMProvider {
       return;
     }
 
-    if (this.shouldSendGLMEnableThinking(options.model)) {
-      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
+    if (
+      applyGlmThinkingParameters(body, {
+        model: options.model,
+        baseUrl: this.baseUrl,
+        providerKind: this.providerKind,
+        enableThinking: options.enableThinking,
+        reasoningEffort: options.reasoningEffort,
+      })
+    )
       return;
-    }
 
     if (
       this.supportsOpenRouterUnifiedReasoning(options.model) &&
@@ -762,10 +749,16 @@ export class OpenAIProvider extends BaseLLMProvider {
       return;
     }
 
-    if (this.shouldSendGLMEnableThinking(options.model)) {
-      body.enable_thinking = this.hasActiveReasoningEffort(options.reasoningEffort);
+    if (
+      applyGlmThinkingParameters(body, {
+        model: options.model,
+        baseUrl: this.baseUrl,
+        providerKind: this.providerKind,
+        enableThinking: options.enableThinking,
+        reasoningEffort: options.reasoningEffort,
+      })
+    )
       return;
-    }
 
     if (!this.isReasoningModel(options.model)) {
       return;

@@ -17,6 +17,7 @@ export const NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION =
 export const NOODLE_CREATIVE_FORMAT_INSTRUCTIONS = [
   "- Characters and random users may create polls in their own posts and vote in polls. Occasionally use a poll when an audience question or set of choices fits naturally with the account and current activity; polls are optional, not a quota.",
   "- Standard Unicode emojis are allowed in post and reply content. Use them naturally when they fit the account's voice or reaction; emojis are optional, and not every post or reply needs one.",
+  "- Characters are allowed to be assholes to each other when it fits their personalities, history, and relationships. They may be rude, insulting, confrontational, jealous, petty, sarcastic, start arguments, revive old grievances, form rivalries, or deliberately stir up interpersonal drama. This is permission, not a quota: do not force hostility into every refresh or flatten established characterization just to create conflict.",
 ] as const;
 
 type NoodleTimelineFeatureSettings = Pick<

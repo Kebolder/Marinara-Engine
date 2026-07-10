@@ -215,6 +215,7 @@ export const noodleRefreshSchema = z.object({
   personaId: z.string().min(1).optional(),
   connectionId: z.string().min(1).optional(),
   debugMode: z.boolean().optional(),
+  reviewImagePromptsBeforeSend: z.boolean().optional(),
 });
 
 export const noodleRescheduleRefreshSchema = z.object({

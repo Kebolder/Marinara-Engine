@@ -5,6 +5,7 @@ import type { FastifyInstance } from "fastify";
 import { existsSync, readFileSync } from "fs";
 import { basename, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { z } from "zod";
 import {
   createNoodlePoll,
   canManageNoodleReply,
@@ -55,6 +56,7 @@ import {
   noodleRefreshSchedulerStatus,
   rescheduleNoodleRefreshTime,
 } from "../services/noodle/noodle-refresh-schedule.js";
+import { NOODLE_JSON_OUTPUT_HEADING, noodleResponseFormat } from "../services/noodle/noodle-response-format.js";
 import {
   canGenerateNoodleActivityForAccountKind,
   formatNoodleTimelineForPrompt,
@@ -656,8 +658,8 @@ async function buildRefreshPrompt(input: {
     "- To respond directly to an existing comment, create a reply interaction for its post and set parentInteractionId to that comment's exact replyId.",
     NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
     ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
-    "- For each interaction, set either targetTempId or targetPostId. The unused target field may be omitted or null.",
-    "- pollOptionIndex is required only for votes and must be a zero-based integer. For other interactions, omit it or use null.",
+    "- For each interaction, set either targetTempId or targetPostId and set the unused target field to null.",
+    "- pollOptionIndex must be a zero-based integer for votes and null for every other interaction.",
     "- An exact @handle in post or reply text tags that active account. Preserve the @handle exactly when mentioning someone.",
     ...noodleTimelineFeatureInstructions(input.settings),
     "- Return JSON only. No prose outside the JSON object.",
@@ -713,7 +715,7 @@ async function buildRefreshPrompt(input: {
   ].join("\n");
 
   const outputFormat = [
-    "# Output Format",
+    NOODLE_JSON_OUTPUT_HEADING,
     JSON.stringify(
       {
         posts: [
@@ -803,7 +805,7 @@ async function generateMissingNoodleProfiles(input: {
     )
     .join("\n\n");
   const outputFormat = [
-    "# Output Format",
+    NOODLE_JSON_OUTPUT_HEADING,
     JSON.stringify(
       {
         profiles: [
@@ -851,7 +853,7 @@ async function generateMissingNoodleProfiles(input: {
     topP: 0.9,
     stream: false,
     debugMode: input.debugMode,
-    responseFormat: { type: "json_object" },
+    responseFormat: noodleResponseFormat(input.connection.model, "profiles"),
   });
   const generated = noodleGeneratedProfilesSchema.parse(parseGameJsonish(result.content ?? ""));
   const profileByEntityId = new Map(generated.profiles.map((profile) => [profile.entityId, profile]));
@@ -888,6 +890,8 @@ async function generateNoodlePostImage(input: {
   imageConnection: NonNullable<Awaited<ReturnType<ReturnType<typeof createConnectionsStorage>["getWithKey"]>>>;
   app: FastifyInstance;
   debugMode: boolean;
+  previewOnly?: boolean;
+  promptOverride?: { prompt: string; negativePrompt?: string };
 }) {
   const imageSettings = await loadImageGenerationUserSettings(input.app.db);
   const imageDefaults = resolveConnectionImageDefaults(input.imageConnection);
@@ -958,19 +962,38 @@ async function generateNoodlePostImage(input: {
     styleProfiles: imageSettings.styleProfiles,
     imageDefaults,
   });
+  const finalPrompt = input.promptOverride?.prompt.trim() || compiledPrompt.prompt;
+  const finalNegativePrompt = input.promptOverride
+    ? input.promptOverride.negativePrompt?.trim() || undefined
+    : compiledPrompt.negativePrompt || undefined;
   logDebugOverride(
     input.debugMode,
     "[debug/noodle/image] final image prompt for %s:\n%s",
     input.account.displayName,
-    compiledPrompt.prompt,
+    finalPrompt,
   );
-  if (compiledPrompt.negativePrompt) {
-    logDebugOverride(input.debugMode, "[debug/noodle/image] negative prompt:\n%s", compiledPrompt.negativePrompt);
+  if (finalNegativePrompt) {
+    logDebugOverride(input.debugMode, "[debug/noodle/image] negative prompt:\n%s", finalNegativePrompt);
+  }
+
+  if (input.previewOnly) {
+    return {
+      imageUrl: null,
+      metadata: {},
+      preview: {
+        kind: "illustration" as const,
+        title: `${input.account.displayName} Noodle image`,
+        prompt: finalPrompt,
+        negativePrompt: finalNegativePrompt,
+        width: imageSettings.illustration.width,
+        height: imageSettings.illustration.height,
+      },
+    };
   }
 
   const image = await generateImage(imageSource, imageBaseUrl, input.imageConnection.apiKey || "", imageServiceHint, {
-    prompt: compiledPrompt.prompt,
-    negativePrompt: compiledPrompt.negativePrompt || undefined,
+    prompt: finalPrompt,
+    negativePrompt: finalNegativePrompt,
     model: imageModel,
     width: imageSettings.illustration.width,
     height: imageSettings.illustration.height,
@@ -985,7 +1008,7 @@ async function generateNoodlePostImage(input: {
     const galleryImage = await input.characterGallery.create({
       characterId: input.account.entityId,
       filePath,
-      prompt: compiledPrompt.prompt,
+      prompt: finalPrompt,
       provider,
       model: imageModel || "unknown",
       width: imageSettings.illustration.width,
@@ -1000,6 +1023,7 @@ async function generateNoodlePostImage(input: {
         imageStyleProfileId: compiledPrompt.profile.id,
         characterGalleryImageId: galleryImage?.id ?? null,
       },
+      preview: null,
     };
   }
 
@@ -1012,8 +1036,22 @@ async function generateNoodlePostImage(input: {
       imageModel: imageModel || "unknown",
       imageStyleProfileId: compiledPrompt.profile.id,
     },
+    preview: null,
   };
 }
+
+const noodleImagePromptConfirmationSchema = z.object({
+  prompts: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        prompt: z.string().trim().min(1).max(20_000),
+        negativePrompt: z.string().trim().max(20_000).optional(),
+      }),
+    )
+    .max(20),
+  debugMode: z.boolean().optional(),
+});
 
 export async function noodleRoutes(app: FastifyInstance) {
   const noodle = createNoodleStorage(app.db);
@@ -1295,6 +1333,53 @@ export async function noodleRoutes(app: FastifyInstance) {
     return interaction;
   });
 
+  app.post("/refresh/images", async (req, reply) => {
+    const parsed = noodleImagePromptConfirmationSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const settings = await noodle.getSettings();
+    const imageConnection = settings.imageGenerationConnectionId
+      ? await connections.getWithKey(settings.imageGenerationConnectionId)
+      : await connections.getDefaultForImageGeneration();
+    if (!imageConnection) return reply.code(400).send({ error: "Select a Noodle image generation connection first." });
+
+    for (const promptOverride of parsed.data.prompts) {
+      const post = await noodle.getPostById(promptOverride.id);
+      if (!post || !post.imagePrompt || post.imageUrl) continue;
+      const account = await noodle.getAccountById(post.authorAccountId);
+      if (!account) continue;
+      try {
+        const generatedImage = await generateNoodlePostImage({
+          account,
+          referenceAccounts: [account],
+          postContent: post.content,
+          draftPrompt: post.imagePrompt,
+          settings,
+          characters,
+          characterGallery,
+          promptOverrides,
+          imageConnection,
+          app,
+          debugMode: parsed.data.debugMode === true,
+          promptOverride,
+        });
+        await noodle.updatePostMedia(post.id, {
+          imageUrl: generatedImage.imageUrl,
+          metadata: generatedImage.metadata,
+        });
+      } catch (error) {
+        logger.warn(error, "[noodle] Failed to generate reviewed image for %s", account.displayName);
+        await noodle.updatePostMedia(post.id, {
+          metadata: {
+            imageGenerationFailed: true,
+            imageGenerationError: getErrorMessage(error).slice(0, 500),
+          },
+        });
+      }
+    }
+
+    return bootstrapVisibleNoodle(noodle, characters);
+  });
+
   app.post("/refresh", async (req, reply) => {
     const parsed = noodleRefreshSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
@@ -1396,7 +1481,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         topP: 0.95,
         stream: false,
         debugMode,
-        responseFormat: { type: "json_object" },
+        responseFormat: noodleResponseFormat(conn.model, "timeline"),
       });
       const content = result.content ?? "";
       const generated = noodleGeneratedRefreshSchema.parse(parseGameJsonish(content));
@@ -1418,6 +1503,15 @@ export async function noodleRoutes(app: FastifyInstance) {
         : 0;
       const tempIdToPostId = new Map<string, string>();
       const createdPostIds: string[] = [];
+      const imagePromptReviewItems: Array<{
+        id: string;
+        kind: "illustration";
+        title: string;
+        prompt: string;
+        negativePrompt?: string;
+        width: number;
+        height: number;
+      }> = [];
       const activeCharacterReferenceAccounts = activeAccounts.filter((account) => account.kind === "character");
 
       for (const generatedPost of generated.posts.slice(0, settings.maxGeneratedPostsPerRefresh)) {
@@ -1432,6 +1526,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         if (imagePrompt) remainingImagePrompts -= 1;
         let imageUrl: string | null = null;
         const mediaMetadata: Record<string, unknown> = {};
+        let imagePromptPreview: Omit<(typeof imagePromptReviewItems)[number], "id"> | null = null;
         if (imagePrompt && imageConnection) {
           try {
             const generatedImage = await generateNoodlePostImage({
@@ -1446,9 +1541,11 @@ export async function noodleRoutes(app: FastifyInstance) {
               imageConnection,
               app,
               debugMode,
+              previewOnly: parsed.data.reviewImagePromptsBeforeSend === true,
             });
             imageUrl = generatedImage.imageUrl;
             Object.assign(mediaMetadata, generatedImage.metadata);
+            imagePromptPreview = generatedImage.preview;
           } catch (err) {
             logger.warn(err, "[noodle] Failed to generate image for %s", account.displayName);
             mediaMetadata.imageGenerationFailed = true;
@@ -1483,6 +1580,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         });
         if (!post) continue;
         createdPostIds.push(post.id);
+        if (imagePromptPreview) imagePromptReviewItems.push({ id: post.id, ...imagePromptPreview });
         if (generatedPost.tempId) tempIdToPostId.set(generatedPost.tempId, post.id);
         const digest = await noodle.createDigest({
           accountIds: [account.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
@@ -1600,7 +1698,10 @@ export async function noodleRoutes(app: FastifyInstance) {
       }
 
       await noodle.finishRefreshRun(runId, { status: "completed", result: content });
-      return bootstrapVisibleNoodle(noodle, characters);
+      return {
+        bootstrap: await bootstrapVisibleNoodle(noodle, characters),
+        imagePromptReviewItems,
+      };
     } catch (error) {
       logger.error(error, "[noodle] Timeline refresh failed");
       if (run) await noodle.finishRefreshRun(run.id, { status: "failed", error: getErrorMessage(error) });

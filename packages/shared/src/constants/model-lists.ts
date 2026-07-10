@@ -521,6 +521,7 @@ export const MOONSHOT_MODELS: KnownModel[] = [
 
 // Z.AI / GLM (from #model_zai_select)
 export const ZAI_MODELS: KnownModel[] = [
+  { id: "glm-5.2", name: "glm-5.2", context: 1000000, maxOutput: 128000 },
   { id: "glm-5", name: "glm-5", context: 200000, maxOutput: 8192 },
   { id: "glm-4.7", name: "glm-4.7", context: 200000, maxOutput: 8192 },
   { id: "glm-4.7-flash", name: "glm-4.7-flash", context: 200000, maxOutput: 8192 },
@@ -850,7 +851,7 @@ export const MODEL_LISTS: Record<APIProvider, KnownModel[]> = {
   nanogpt: [], // NanoGPT aggregator — models fetched dynamically via API
   xai: XAI_MODELS,
   // Seed OAI-compatible endpoints with the OpenAI catalog; remote /models still merge on top.
-  custom: OPENAI_MODELS,
+  custom: [...OPENAI_MODELS, ...ZAI_MODELS],
   image_generation: IMAGE_GEN_MODELS,
   video_generation: VIDEO_GEN_MODELS,
 };

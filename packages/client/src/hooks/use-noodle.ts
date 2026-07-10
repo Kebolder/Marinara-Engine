@@ -20,6 +20,12 @@ import type {
   NoodleSettings,
   NoodleSettingsUpdateInput,
 } from "@marinara-engine/shared";
+import type { ImagePromptOverride, ImagePromptReviewItem } from "../components/ui/ImagePromptReviewModal";
+
+export type NoodleRefreshResult = {
+  bootstrap: NoodleBootstrap;
+  imagePromptReviewItems: ImagePromptReviewItem[];
+};
 
 export const noodleKeys = {
   all: ["noodle"] as const,
@@ -272,7 +278,24 @@ export function useRefreshNoodle() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { personaId?: string; connectionId?: string }) =>
-      api.post<NoodleBootstrap>("/noodle/refresh", { ...input, debugMode: useUIStore.getState().debugMode }),
+      api.post<NoodleRefreshResult>("/noodle/refresh", {
+        ...input,
+        debugMode: useUIStore.getState().debugMode,
+        reviewImagePromptsBeforeSend: useUIStore.getState().reviewImagePromptsBeforeSend,
+      }),
+    onSuccess: (result) => qc.setQueryData(noodleKeys.bootstrap(), result.bootstrap),
+    onSettled: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useConfirmNoodleImagePrompts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (prompts: ImagePromptOverride[]) =>
+      api.post<NoodleBootstrap>("/noodle/refresh/images", {
+        prompts,
+        debugMode: useUIStore.getState().debugMode,
+      }),
     onSuccess: (bootstrap) => qc.setQueryData(noodleKeys.bootstrap(), bootstrap),
     onSettled: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
   });

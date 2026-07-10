@@ -6,6 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added GLM-5.2 to custom OpenAI-compatible connection model choices, including its 1M context and 128K output limits.
 - Added prefix-matched `@handle` suggestions to Noodle post and reply composers, with click, touch, and keyboard insertion.
 - Added OpenAI GPT-5.6 Sol/Terra/Luna model support, including the `gpt-5.6` Sol alias, a `gpt-5.6-sol-pro` pro-mode alias, Responses API routing, GPT-5.6 `max` reasoning effort mapping, and reuse of the existing Exclude Past Reasoning toggle for GPT-5.6 reasoning context.
 - Added the first Noodle fake-social-media surface: a top-bar Noodle tab, persona-linked user profiles, character invites, a scrollable fake timeline with posts/replies/likes/reposts, configurable refresh generation, stored image-prompt slots, and optional recent-social activity carryover into Conversation, Roleplay/VN, and Game prompts using the chat preset wrapper.
@@ -23,6 +24,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
+- Updated Noodle timeline guidance so characters may naturally be rude, petty, confrontational, revive grudges, form rivalries, and stir up interpersonal drama when it fits their established personalities and relationships.
 - Restyled Noodle around the Klusek blue logo asset, replacing the always-visible settings column with a profile-triggered drawer and a more Twitter-like central feed.
 - Updated Noodle image prompt generation so character posts may request either character-focused images or in-character memes when image generation is enabled.
 - Updated Noodle timeline generation guidance so characters and random users know they may occasionally create and vote in polls and naturally use Unicode emoji in posts and replies; when random users are enabled, they may also very occasionally post clearly fictional parody ads or absurd fake crypto scams.
@@ -31,6 +33,13 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed GPT-5.6 Sol rejecting Noodle timeline/profile generation by supplying strict JSON schemas with `additionalProperties: false` at every object level and placing an explicit JSON instruction in Responses API input messages.
+- Fixed native Z.AI GLM-5.2 connections using legacy thinking parameters; Marinara now sends the documented `thinking.type` and compatible `reasoning_effort` values while preserving JSON mode on Z.AI endpoints.
+- Expanded every standard emoji picker from a hand-curated subset to the complete Unicode Emoji 17.0 base catalog, including science emoji such as 🧪 plus the previously missing travel, activity, object, symbol, animal, and flag groups.
+- Fixed Quick Replies' **Post only** action saving recognized slash commands as ordinary messages; known commands now execute normally while unknown slash-prefixed text can still be posted.
+- Moved **Quick replies** from Advanced settings to **General -> Input & Editing**, and clarified that image prompt review is a global generation preference rather than a Game-only option.
+- Fixed manual Noodle timeline refreshes bypassing **Expose image prompts before sending**; generated Noodle images now present their final positive and negative prompts for editing before provider submission.
+- Fixed character-assigned lorebooks failing validation when duplicated from the Lorebooks pane, while preserving their assignment and vector-search settings (#3433).
 - Fixed the Noodle reply image picker separator inheriting a pink chrome accent instead of using Noodle blue.
 - Fixed character-authored Noodle comments being read-only; their edit and delete controls now use the same flow as persona comments, while generated random-user comments remain protected.
 - Fixed custom and imported preset variables disabling **Confirm Choices** when a valid blank-valued option was selected (#3429).
