@@ -281,6 +281,36 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
     syntax: "{{convo_behavior}}",
     description: "Character convo behavior directive (Conversation mode only)",
   },
+  {
+    category: "Conversation",
+    syntax: "{{context}} / {{status}}",
+    description: "Place the context/status block here and skip its auto insertion (Conversation mode)",
+  },
+  {
+    category: "Conversation",
+    syntax: "{{commands}}",
+    description: "Place the commands reminder here and skip its auto insertion (Conversation mode)",
+  },
+  {
+    category: "Conversation",
+    syntax: "{{reactRules}}",
+    description: "Place the custom-emoji reaction rules here and skip their auto insertion (Conversation mode)",
+  },
+  {
+    category: "Conversation",
+    syntax: "{{replyRules}}",
+    description: "Place the custom-emoji/sticker reply rules here and skip their auto insertion (Conversation mode)",
+  },
+  {
+    category: "Conversation",
+    syntax: "{{memories}}",
+    description: "Place the memory-recall block here and skip its auto insertion (Conversation mode)",
+  },
+  {
+    category: "Conversation",
+    syntax: "{{lorebook}}",
+    description: "Place lorebook injections here and skip their auto insertion (Conversation mode)",
+  },
   { category: "Context", syntax: "{{input}}", description: "Most recent user message" },
   { category: "Context", syntax: "{{model}}", description: "Current model name" },
   { category: "Context", syntax: "{{chatId}}", description: "Current chat ID" },

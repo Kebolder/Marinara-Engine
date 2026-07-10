@@ -77,6 +77,21 @@ These four macros only work in Conversation Mode. In every other mode they alway
 
 You edit these fields on the **Convo** tab of the **Character Editor** and the **Persona Editor**. For the full setup, see [Conversation Mode Profiles](../conversation/profiles.md).
 
+## Conversation placement macros
+
+Conversation Mode automatically inserts several blocks into the prompt for you. These macros let a preset **move** a block to wherever you place the macro. When you use one, Marinara renders that block at the macro and **skips** its automatic insertion, so the content is never duplicated. Each macro has one or more aliases; every alias behaves the same.
+
+| Macro (and aliases) | Places |
+| --- | --- |
+| `{{context}}`, `{{status}}` | The conversation context / status block. |
+| `{{commands}}`, `{{commandList}}` | The available-commands reminder. |
+| `{{reactRules}}`, `{{emojiReact}}` | The custom-emoji **reaction** rules. |
+| `{{replyRules}}` | The custom-emoji and sticker **reply** rules. |
+| `{{memories}}`, `{{memoryRecall}}` | The memory-recall block. |
+| `{{lorebook}}`, `{{lore}}` | Lorebook injections. |
+
+These only apply in Conversation Mode. Placing the participant bios yourself with `{{char_about}}` / `{{persona_about}}` (see above) works the same way: Marinara then skips its automatic participant "about me" block so the bios are not inserted twice.
+
 ## Context macros
 
 These macros describe the current chat and the current request.
