@@ -631,7 +631,7 @@ function resolvePersonaText(ctx: MacroContext): string {
     .join("\n");
 }
 
-function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
+function resolveConditionalOperand(raw: string, ctx: MacroContext, options: ResolveMacroOptions): string {
   const quoted = stripOuterQuotes(raw);
   if (quoted !== null) return quoted;
 
@@ -694,6 +694,25 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
       if (/^var[:.]/i.test(token)) {
         const name = token.replace(/^var[:.]/i, "").trim();
         return ctx.variables[name] ?? "";
+      }
+      // Resolve any other bare operand through the same flat pass used for
+      // {{token}}, so every read macro valid in {{...}} is also testable bare in
+      // {{#if}} — conversation macros ({{char_about}} …), {{date}}/{{time}},
+      // {{agent::TYPE}}, {{lastGenerationType}}, etc. — instead of drifting out
+      // of sync with a hand-maintained switch (#3435). Guards:
+      //   • never run a variable-WRITE macro (side effect) as an operand;
+      //   • unknown tokens stay literal (the flat pass leaves them as-is), so a
+      //     plain word or number still compares as itself — unchanged behavior;
+      //   • force concrete resolution (deferCharacterMacros off) so a group chat
+      //     compares the real value, not a deferred per-character placeholder.
+      if (!/^(setvar|addvar|incvar|decvar)\b/i.test(token)) {
+        const braced = `{{${token}}}`;
+        const resolved = resolveMacros(braced, ctx, {
+          ...nestedMacroOptions(options),
+          trimResult: false,
+          deferCharacterMacros: undefined,
+        });
+        if (resolved !== braced) return resolved;
       }
       return ctx.variables[token] ?? token;
   }
@@ -777,9 +796,9 @@ function resolveConditionMacros(condition: string, ctx: MacroContext, options: R
 
 function evaluateCondition(condition: string, ctx: MacroContext, options: ResolveMacroOptions = {}): boolean {
   const parsed = parseConditionExpression(resolveConditionMacros(condition, ctx, options));
-  const left = resolveConditionalOperand(parsed.left, ctx);
+  const left = resolveConditionalOperand(parsed.left, ctx, options);
   if (parsed.operator === "truthy") return left.trim().length > 0 && !/^(false|0|no|off|null|undefined)$/i.test(left);
-  const right = resolveConditionalOperand(parsed.right ?? "", ctx);
+  const right = resolveConditionalOperand(parsed.right ?? "", ctx, options);
   return compareConditionValues(left, parsed.operator, right);
 }
 
@@ -972,14 +991,45 @@ function resolveConditionalBlocks(input: string, ctx: MacroContext, options: Res
       content: input.slice(branch.contentStart, branch.contentEnd),
     }));
 
-    result += resolveVariableOperationMacros(input.slice(index, blockStart), ctx, options);
+    const preTag = input.slice(index, blockStart);
+    // Resolve the pre-tag text first so its side effects (e.g. {{setvar}}) are
+    // applied before the condition is evaluated — preserves original ordering.
+    const resolvedPreTag = resolveVariableOperationMacros(preTag, ctx, options);
     if (options.deferCharacterMacros && branchDependsOnCharacter(branches)) {
+      result += resolvedPreTag;
       result += encodeDeferredConditional({ branches });
+      index = blockEnd.endEnd;
     } else {
       const selected = selectConditionalPayloadBranch({ branches }, ctx, options);
-      result += resolveConditionalBlocks(selected, ctx, options);
+      const resolvedBlock = resolveConditionalBlocks(selected, ctx, options);
+      // Standalone-block whitespace control (Jinja trim_blocks / lstrip_blocks):
+      // when the {{#if}} and/or {{/if}} tag occupies its own line, collapse that
+      // tag line so a block — whether removed or rendered — never leaves a stray
+      // blank line (#3435). Standalone-ness is judged from the raw layout, so an
+      // empty (removed) block is handled the same as a rendered one. Each side is
+      // decided independently, so inline tags stay exactly as authored.
+      const openLineStart = /(^|\n)[ \t]*$/.test(preTag);
+      const openLineEnd = /^[ \t]*\n/.test(input.slice(contentStart));
+      const openStandalone = openLineStart && openLineEnd;
+      const closeLineIndentStart = input.lastIndexOf("\n", blockEnd.endStart - 1) + 1;
+      const closeLineStart = /^[ \t]*$/.test(input.slice(closeLineIndentStart, blockEnd.endStart));
+      const closeTrailing = input.slice(blockEnd.endEnd).match(/^[ \t]*\n/);
+      const closeStandalone = closeLineStart && closeTrailing !== null;
+
+      let emittedPre = resolvedPreTag;
+      let emittedBlock = resolvedBlock;
+      let nextIndex = blockEnd.endEnd;
+      if (openStandalone) {
+        emittedPre = emittedPre.replace(/[ \t]*$/, ""); // lstrip {{#if}} indent
+        emittedBlock = emittedBlock.replace(/^[ \t]*\n/, ""); // trim newline after {{#if}}
+      }
+      if (closeStandalone) {
+        emittedBlock = emittedBlock.replace(/[ \t]*$/, ""); // lstrip {{/if}} indent
+        nextIndex = blockEnd.endEnd + closeTrailing![0].length; // trim newline after {{/if}}
+      }
+      result += emittedPre + emittedBlock;
+      index = nextIndex;
     }
-    index = blockEnd.endEnd;
   }
 
   return result;
