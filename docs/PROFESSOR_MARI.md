@@ -41,6 +41,7 @@ Implemented actions include:
 - Navigate to app panels and settings tabs.
 - Fetch existing characters, personas, lorebooks, chats, and presets so she can inspect their details before advising or editing.
 - Read public Fandom/MediaWiki pages
+- Offer quick-reply suggestion chips above the chat input, color-coded by entity type, to guide multi-step creation without making you type every detail by hand.
 
 When Mari creates something, she should ask for the important details first if your request is vague. When she updates something, she should fetch the current item first and change only the fields you asked her to change.
 
@@ -63,6 +64,8 @@ Helpful request shapes:
 - "Open the Connections panel and help me set up OpenRouter."
 - "Look up Nahida on the Genshin Impact Wiki and summarize her gameplay sections."
 
+On an empty Home Mari chat, you will see starter chips such as Create a Character, Create a Lorebook, and Create a Persona. Once Mari is guiding a creation or edit, she can switch to contextual chips for the next step in the flow. Clicking a chip fills the input draft, and you can still edit it before sending.
+
 For edits, name the item and the field or behavior you want changed. Requests like "rewrite this whole character" are riskier than "fetch Luna and tighten her greeting while keeping her personality the same."
 
 ## Important Safety Notes
@@ -74,6 +77,7 @@ Creating new content is usually safe because it does not overwrite anything. Edi
 - Mari should fetch an item before updating it so she can see the current values and avoid overwriting unrelated fields.
 - If Mari has not fetched the item yet, ask her to fetch it before making the edit.
 - Mari cannot reliably know what you meant if you ask for a broad rewrite with no constraints. Give her the specific field, tone, or behavior you want changed.
+- Mari should guide multi-step creation with chips and one question at a time instead of dumping a long form into a single reply.
 
 ## What Mari Cannot Do Yet
 

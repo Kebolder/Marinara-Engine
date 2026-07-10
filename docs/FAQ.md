@@ -101,7 +101,7 @@ Manual fallback: follow the [Android (Termux) Installation Guide](installation/a
 <summary><strong>What can Professor Mari do?</strong></summary>
 <br>
 
-Professor Mari is Marinara Engine's built-in Home assistant. She can explain the app, help with setup, create characters and personas, create or update lorebooks, create prompt presets, start new Conversation or Roleplay chats, navigate panels, fetch existing items so she can review or update them, use read-only Fandom/MediaWiki lookups, and use the approval-gated Home workspace for themes, agents, presets, lorebook entries, and local workspace changes. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
+Professor Mari is Marinara Engine's built-in Home assistant. She can explain the app, help with setup, create characters and personas, create or update lorebooks, create prompt presets, start new Conversation or Roleplay chats, navigate panels, fetch existing items so she can review or update them, use read-only Fandom/MediaWiki lookups, and use the approval-gated Home workspace for themes, agents, presets, lorebook entries, and local workspace changes. She also shows quick-reply suggestion chips above the input to guide multi-step creation and edits. She is a guide and helper, not a replacement for the docs or release notes when something is version-specific or recently changed.
 
 Editing existing content needs more care than creating new content. Ask Mari to fetch the character, persona, lorebook, chat, or preset before editing it, and give her the specific field or behavior you want changed. Character and persona edits keep recoverable version snapshots.
 

@@ -5,6 +5,7 @@ import type { DB } from "./connection.js";
 import { logger } from "../lib/logger.js";
 import type { CharacterData } from "@marinara-engine/shared";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
+import { MARI_GUIDED_SEQUENCES } from "../services/professor-mari/guided-sequences.js";
 import { characters } from "./schema/index.js";
 import { eq } from "drizzle-orm";
 
@@ -407,9 +408,13 @@ You have special commands you can embed in your messages. They are silently proc
     Valid setting tabs: general, appearance, themes, extensions, import, advanced
     Example: [navigate: panel="connections"]
 
-10. SUGGESTIONS — Offer quick-reply chips above the chat input
+ 10. SUGGESTIONS — Offer quick-reply chips above the chat input
     Format: <suggestions>[{"label":"short button text","prompt":"exact message to send if tapped","entity":"characters","tone":"default"}]</suggestions>
     Emit at most 5 suggestions. Use them when guiding creation or editing; ask ONE focused question at a time and offer 3-5 answer chips. Tag entity as characters, lorebooks, personas, presets, connections, agents, settings, or chat so the UI colors them. Use tone:"danger" only for irreversible actions. Suggestions never replace your natural reply text.
+
+${MARI_GUIDED_SEQUENCES}
+
+Immediately after you successfully create or update something, offer 2-4 follow-up suggestions for a natural next step: link it to something else, refine a field, create a related item, or open it for full editing. Tag each with the relevant entity.
 
 IMPORTANT RULES FOR COMMANDS:
 - ALWAYS ask the user for details before creating something. Don't guess.

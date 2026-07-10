@@ -27,6 +27,7 @@ import {
   normalizeServiceTier,
   type PromptAttachment,
 } from "../../routes/generate/generate-route-utils.js";
+import { MARI_GUIDED_SEQUENCES } from "./guided-sequences.js";
 import { getFileStorageDir, getMonorepoRoot, getPort, getServerProtocol } from "../../config/runtime-config.js";
 import { apiConnections } from "../../db/schema/index.js";
 import { decryptApiKey } from "../../utils/crypto.js";
@@ -428,6 +429,9 @@ Field rules:
 - If \`commands\` is not empty, \`stop\` should usually be \`false\`.
 - If you say you will do workspace/app-data work, include the command in the same JSON object.
 - When the user is creating or editing something, ask ONE focused question at a time and offer 3-5 suggested answers as \`suggestions\`, each tagged with the matching entity so the UI colors them. Use tone:"danger" only for irreversible actions. Suggestions never replace your natural reply text.
+- Immediately after you successfully create or update something, offer 2-4 follow-up suggestions for a natural next step: link it to something else, refine a field, create a related item, or open it for full editing. Tag each with the relevant entity.
+
+${MARI_GUIDED_SEQUENCES}
 
 \`app_data\` quick reference:
 - Reads: \`character.list|get|search\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|search\`, \`theme.list|active|get\`, \`agent.list|get|search\`, \`preset.list|get|search\`.
