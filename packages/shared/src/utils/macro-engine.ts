@@ -631,7 +631,7 @@ function resolvePersonaText(ctx: MacroContext): string {
     .join("\n");
 }
 
-function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
+function resolveConditionalOperand(raw: string, ctx: MacroContext, options: ResolveMacroOptions): string {
   const quoted = stripOuterQuotes(raw);
   if (quoted !== null) return quoted;
 
@@ -690,22 +690,29 @@ function resolveConditionalOperand(raw: string, ctx: MacroContext): string {
       return ctx.characterFields?.systemPrompt ?? "";
     case "charposthistory":
       return ctx.characterFields?.postHistoryInstructions ?? "";
-    // Conversation-mode-only macros. Resolve them the same way the flat {{...}}
-    // pass does (from convoFields) so `{{#if char_about != ""}}` compares the
-    // real value instead of the unresolved literal token (#3435). Kept in sync
-    // with the flat-pass replacements below.
-    case "convo_display":
-      return ctx.convoFields?.charDisplayName ?? "";
-    case "char_about":
-      return ctx.convoFields?.charAbout ?? "";
-    case "persona_about":
-      return ctx.convoFields?.personaAbout ?? "";
-    case "convo_behavior":
-      return ctx.convoFields?.convoBehavior ?? "";
     default:
       if (/^var[:.]/i.test(token)) {
         const name = token.replace(/^var[:.]/i, "").trim();
         return ctx.variables[name] ?? "";
+      }
+      // Resolve any other bare operand through the same flat pass used for
+      // {{token}}, so every read macro valid in {{...}} is also testable bare in
+      // {{#if}} — conversation macros ({{char_about}} …), {{date}}/{{time}},
+      // {{agent::TYPE}}, {{lastGenerationType}}, etc. — instead of drifting out
+      // of sync with a hand-maintained switch (#3435). Guards:
+      //   • never run a variable-WRITE macro (side effect) as an operand;
+      //   • unknown tokens stay literal (the flat pass leaves them as-is), so a
+      //     plain word or number still compares as itself — unchanged behavior;
+      //   • force concrete resolution (deferCharacterMacros off) so a group chat
+      //     compares the real value, not a deferred per-character placeholder.
+      if (!/^(setvar|addvar|incvar|decvar)\b/i.test(token)) {
+        const braced = `{{${token}}}`;
+        const resolved = resolveMacros(braced, ctx, {
+          ...nestedMacroOptions(options),
+          trimResult: false,
+          deferCharacterMacros: undefined,
+        });
+        if (resolved !== braced) return resolved;
       }
       return ctx.variables[token] ?? token;
   }
@@ -789,9 +796,9 @@ function resolveConditionMacros(condition: string, ctx: MacroContext, options: R
 
 function evaluateCondition(condition: string, ctx: MacroContext, options: ResolveMacroOptions = {}): boolean {
   const parsed = parseConditionExpression(resolveConditionMacros(condition, ctx, options));
-  const left = resolveConditionalOperand(parsed.left, ctx);
+  const left = resolveConditionalOperand(parsed.left, ctx, options);
   if (parsed.operator === "truthy") return left.trim().length > 0 && !/^(false|0|no|off|null|undefined)$/i.test(left);
-  const right = resolveConditionalOperand(parsed.right ?? "", ctx);
+  const right = resolveConditionalOperand(parsed.right ?? "", ctx, options);
   return compareConditionValues(left, parsed.operator, right);
 }
 
