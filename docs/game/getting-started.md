@@ -35,7 +35,7 @@ The seven steps are:
 4. **Goals.** Tell the GM what you want from the adventure.
 5. **Lorebooks.** Attach any lorebooks whose facts the GM should treat as canon. A lorebook is a set of background world facts. See [Lorebooks](../lorebooks/overview.md).
 6. **Features.** Turn on optional systems like Visual Generation, storyboards, Music DJ, and HUD widgets.
-7. **GM.** Review advanced GM instructions before the world is built.
+7. **GM.** Choose the presentation style and review advanced GM instructions before the world is built.
 
 When you finish, click **Start Game**.
 
@@ -54,11 +54,15 @@ These are the starting values in the **World**, **Party**, and **Features** step
 | Visual Generation | Off | Turn on for images; needs an image generation connection |
 | Automatic Storyboard Illustrations | On | Only active once Visual Generation is on |
 | Automatic Storyboard Animations | Off | Needs a video generation connection |
+| Keyframes per Turn | 3 | Available with storyboard illustrations; range 1 to 6 |
+| Presentation | Standard | **Anime Episode** coordinates the GM, storyboard director, and storyboard video prompts |
 | Music DJ | Off | Needs Spotify or a local music folder |
 | Custom HUD Widgets | On | Uses AI-made status widgets from the new world |
 | Start Muted | Off | Begins the game with audio muted |
 
 New to Game Mode? Leave **Game Master Mode** on **Standalone GM**. Marinara builds a fair, slightly snarky GM for you, and you can feel out the mode before writing a custom GM card.
+
+Choose **Anime Episode** on the final step when you want GM turns written as filmable visual beats. It selects the built-in **Anime Game Prompt**, **Anime Episode Director**, and **Anime Game Video** presets, and sends storyboard image prompts directly to the image provider. It does not turn image or video generation on and does not change your selected connections. The GM uses the wizard's **Keyframes per Turn** value as a target for strong visual anchor moments, but it can write fewer for a short exchange and can use more narration paragraphs when the story needs them.
 
 ## The three kinds of AI call
 

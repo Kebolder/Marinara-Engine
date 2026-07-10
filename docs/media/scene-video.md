@@ -123,6 +123,8 @@ Each chat picks its own video connection. You set this under **Chat Settings**, 
 - **Game Video Prompt**: the prompt template that decides how the picture animates. The built-in default is **Cinematic Scene Video**.
 - **Edit Video Presets**: add and edit your own copies of the video prompt template for this chat.
 
+The **Game Video Prompt** continues to control manual Gallery and Game Assets videos. Storyboard keyframe clips can choose a different **Storyboard Video Prompt** in **Chat Settings**, **Agents**, then **Storyboards**. If no separate storyboard choice is set, they inherit the Game Video Prompt.
+
 When you first create a Game Mode chat, the setup wizard also has a **Video Generation Connection** picker. It is on the **Features** step, and it appears after you turn on **Visual Generation**.
 
 If a chat has no video connection of its own, Marinara falls back to the connection you marked **Use as default video connection**. If there is no chat connection and no default, video actions show a warning telling you to pick one.
@@ -139,7 +141,7 @@ The same section has an **Animated expression length** setting. That belongs to 
 
 ## Storyboards
 
-Game Mode can also build a storyboard, which is an ordered set of keyframe pictures for one game turn. When storyboard animations are turned on, Marinara animates each keyframe into a clip using your video connection and the **Game Video Prompt**. A keyframe is one still frame in that ordered set.
+Game Mode can also build a storyboard, which is an ordered set of keyframe pictures for one game turn. When storyboard animations are turned on, Marinara animates each keyframe into a clip using your video connection and the **Storyboard Video Prompt**. It inherits the **Game Video Prompt** unless you choose a separate template. A keyframe is one still frame in that ordered set.
 
 Storyboards have their own controls and their own guide. See [Game Mode Storyboards](../game/storyboard.md) for the full setup and workflow.
 

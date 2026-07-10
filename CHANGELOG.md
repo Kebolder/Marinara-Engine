@@ -6,6 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added an Anime Episode presentation for Game Mode with coordinated **Anime Game Prompt**, **Anime Episode Director**, and **Anime Game Video** presets; setup-time keyframe targeting; a `{{gameStoryboardKeyframeCount}}` GM macro; and a storyboard-only video prompt selector that leaves manual scene videos unchanged.
 - Added GLM-5.2 to custom OpenAI-compatible connection model choices, including its 1M context and 128K output limits.
 - Added prefix-matched `@handle` suggestions to Noodle post and reply composers, with click, touch, and keyboard insertion.
 - Added OpenAI GPT-5.6 Sol/Terra/Luna model support, including the `gpt-5.6` Sol alias, a `gpt-5.6-sol-pro` pro-mode alias, Responses API routing, GPT-5.6 `max` reasoning effort mapping, and reuse of the existing Exclude Past Reasoning toggle for GPT-5.6 reasoning context.

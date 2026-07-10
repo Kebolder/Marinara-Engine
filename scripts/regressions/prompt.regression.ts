@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  ANIME_GAME_PROMPT_TEMPLATE_ID,
+  ANIME_GAME_SYSTEM_PROMPT,
+  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
   compileChatSummaryEntries,
@@ -20,11 +23,14 @@ import {
   type ChatMLMessage,
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
   DEFAULT_AGENT_PROMPTS,
+  GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE,
   hasDeferredRelocationConditionals,
+  normalizeGameStoryboardKeyframeCount,
   parseDeferredConditionalPayload,
   selectConditionalPayloadBranch,
 } from "../../packages/shared/src/index.js";
@@ -36,6 +42,7 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import { resolveGameGmPromptTemplate } from "../../packages/server/src/services/generation/game-gm-prompt-runtime.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
@@ -787,6 +794,53 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "Anime Game presets stay keyframe-aware and causally animation-ready",
+    run() {
+      const gmPreset = GAME_GM_BUILT_IN_PROMPT_TEMPLATES.find(
+        (template) => template.id === ANIME_GAME_PROMPT_TEMPLATE_ID,
+      );
+      const directorPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+      );
+      const resolvedGmPrompt = resolveMacros(
+        ANIME_GAME_SYSTEM_PROMPT,
+        {
+          user: "Mari",
+          char: "GM",
+          characters: ["GM"],
+          variables: { gameStoryboardKeyframeCount: "5" },
+        },
+        { trimResult: false },
+      );
+
+      assert.equal(normalizeGameStoryboardKeyframeCount(undefined), 3);
+      assert.equal(normalizeGameStoryboardKeyframeCount(0), 1);
+      assert.equal(normalizeGameStoryboardKeyframeCount(12), 6);
+      assert.equal(gmPreset?.promptTemplate, ANIME_GAME_SYSTEM_PROMPT);
+      assert.match(resolvedGmPrompt, /Aim to include 5 strong visual anchor moments/);
+      assert.doesNotMatch(resolvedGmPrompt, /\{\{gameStoryboardKeyframeCount\}\}/);
+      assert.match(directorPreset?.promptTemplate ?? "", /time T=0: the exact first frame/);
+      assert.match(directorPreset?.promptTemplate ?? "", /PROVIDER-SAFE STAGING/);
+      assert.match(directorPreset?.promptTemplate ?? "", /Create exactly \$\{keyframeCount\} shots/);
+    },
+  },
+  {
+    name: "custom Game GM text wins over a selected Anime Game preset",
+    run() {
+      assert.equal(
+        resolveGameGmPromptTemplate({
+          gameSystemPrompt: "My exact GM instructions",
+          gameGmPromptTemplateId: ANIME_GAME_PROMPT_TEMPLATE_ID,
+        }),
+        "My exact GM instructions",
+      );
+      assert.equal(
+        resolveGameGmPromptTemplate({ gameGmPromptTemplateId: ANIME_GAME_PROMPT_TEMPLATE_ID }),
+        ANIME_GAME_SYSTEM_PROMPT,
+      );
+    },
+  },
+  {
     name: "game storyboard illustrator remains the active storyboard prompt contract",
     run() {
       const ctx = {
@@ -922,6 +976,37 @@ const cases: RegressionCase[] = [
 
       assert.equal(prompt, "CHAT VIDEO Arrival Use image-123 as the first frame/reference image.");
       assert.doesNotMatch(prompt, /GLOBAL VIDEO OVERRIDE/);
+
+      const storyboardPrompt = await loadGameVideoPrompt({
+        promptOverridesStorage,
+        meta: {
+          gameVideoPromptTemplateId: "custom-video-motion",
+          gameVideoPromptTemplates: [
+            {
+              id: "custom-video-motion",
+              name: "Custom Video Motion",
+              description: "Regression template",
+              promptTemplate: "CHAT VIDEO ${sceneTitle}",
+            },
+          ],
+        },
+        templateId: ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+        ctx: {
+          sceneTitle: "Arrival",
+          narrationSummary: "The party reaches the gate.",
+          illustrationPrompt: "A wide gate at sunset.",
+          charactersLine: "Mira, Sol",
+          settingLine: "sunset city gate",
+          artStyleLine: "painterly fantasy",
+          durationSeconds: 6,
+          aspectRatio: "16:9",
+          sourceIllustrationLine: "Use image-123 as the first frame/reference image.",
+        },
+      });
+
+      assert.match(storyboardPrompt, /anime shot from the supplied first-frame illustration/);
+      assert.match(storyboardPrompt, /Stage severe harm with broadcast-anime restraint/);
+      assert.doesNotMatch(storyboardPrompt, /CHAT VIDEO|GLOBAL VIDEO OVERRIDE/);
     },
   },
   {

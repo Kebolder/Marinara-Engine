@@ -103,9 +103,12 @@ These macros describe the current chat and the current request.
 | `{{chatId}}` | The current chat's ID. |
 | `{{lastGenerationType}}` | A label for why this reply is being generated. |
 | `{{idle_duration}}` | How long since the last chat activity, as text like `8 minutes` or `1 hour 5 minutes`. |
+| `{{gameStoryboardKeyframeCount}}` | Game Mode's current **Keyframes per Turn** target, from 1 to 6. It defaults to `3`. |
 | `{{agent::TYPE}}` | The saved output of an agent of the given type. |
 
 The value of `{{lastGenerationType}}` is a plain label. Example values seen in the app include `normal`, `continue`, `regenerate`, `impersonate`, `guided`, `autonomous`, `turn_game`, `preview`, `game_setup`, `lorebook_scan`, and `retry_agents`. This list can grow, so treat it as examples, not a fixed set.
+
+`{{gameStoryboardKeyframeCount}}` is supplied to Game Mode GM prompts, including the built-in **Anime Game Prompt**. It is a narrative target, not a demand for exactly that many paragraphs. The storyboard director still returns fewer shots when a turn does not contain enough distinct visual moments.
 
 The `{{agent::TYPE}}` macro inserts the saved output of an agent (a background helper that fills in things like a scene tracker). The easiest way to add it is inside the **Preset Editor**: click **Add Section**, open the **Agent Sections** group, and pick an agent. Marinara creates a section that already contains the right `{{agent::TYPE}}` tag. This macro is resolved last, so agent text cannot inject more macros into your prompt.
 

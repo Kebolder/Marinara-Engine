@@ -1,6 +1,6 @@
 # Storyboard Engine Guide
 
-This guide explains storyboards in Marinara Engine. A storyboard turns one finished Game Mode turn into a short run of manga-style keyframe images. It can also add short animated clips. The turn then reads like a mini cutscene. Storyboards are a Game Mode feature only. They do not exist in Roleplay or Conversation chats.
+This guide explains storyboards in Marinara Engine. A storyboard turns one finished Game Mode turn into a short run of keyframe images. It can also add short animated clips, including continuous anime-style shots. The turn then reads like a mini cutscene. Storyboards are a Game Mode feature only. They do not exist in Roleplay or Conversation chats.
 
 ## What storyboards are
 
@@ -66,7 +66,7 @@ To set up clips:
 
 If you turn on animations without a video connection, the wizard warns you: "Choose a Video Generation connection below to save automatic storyboard animations."
 
-A storyboard usually creates 3 image jobs, one per keyframe. With animations on, it also creates up to 3 video jobs. Video jobs are much slower and cost more. Start with still illustrations, and add animations only for chats where the wait and cost are fine.
+A storyboard usually creates 3 image jobs, one per keyframe. With animations on, it also creates up to 3 video jobs. The number follows **Keyframes per Turn**, so choosing 5 can mean 5 image jobs and up to 5 video jobs. Video jobs are much slower and cost more. Start with still illustrations, and add animations only for chats where the wait and cost are fine.
 
 ## Storyboard settings
 
@@ -81,10 +81,13 @@ All of these live in the **Storyboards** card. Open **Chat Settings**, go to **A
 | **Viewer Display** | Floating | Floating panel or full background |
 | **Illustration Prompt** | Still Keyframes | Style preset for still-only storyboards |
 | **Animation Prompt** | Comic Page | Style preset when animations are on |
+| **Storyboard Video Prompt** | Same as Game Video Prompt | Motion prompt used only for storyboard keyframe clips |
 
 **Keyframes per Turn** is a slider. The engine tries to plan this many keyframes. A short turn may get fewer. It never plans more than 6.
 
 **Animation Clip Duration** is a number of seconds. It is greyed out unless **Automatic Storyboard Animations** is on. Until you set a value, it uses the 6-second default and shows a **Storyboard default** pill. Once you set your own value, a **Use storyboard default** button appears to clear it. Some video providers may clamp your value to a lower maximum, so the exact length is not promised.
+
+**Storyboard Video Prompt** is separate from the general **Game Video Prompt** in the **Scene Videos** card. Leave it on the inherited choice to reuse the general prompt, or select **Anime Game Video** for keyframe clips without changing manual Gallery or Game Assets videos.
 
 ## Style presets
 
@@ -93,23 +96,26 @@ The style presets shape how each keyframe looks. Two selectors pick them:
 - **Illustration Prompt** is used when storyboards make still keyframes without videos. Default: **Still Keyframes**.
 - **Animation Prompt** is used when **Automatic Storyboard Animations** is on. Default: **Comic Page**.
 
-There are five built-in presets. They are for Game Mode storyboards only. They are separate from Roleplay illustrator presets.
+There are six built-in presets. They are for Game Mode storyboards only. They are separate from Roleplay illustrator presets.
 
 | Preset | Best for |
 | --- | --- |
 | **Still Keyframes** | Normal reading. Single-scene keyframes. Avoids comic panels, speech bubbles, captions, and SFX text, so the viewer does not spoil later beats. |
 | **NovelAI Keyframes** | Compact tag prompts tuned for NovelAI V4 and V4.5. Best paired with **Use Storyboard Prompt Directly**. |
+| **Anime Episode Director** | Ordered, animation-ready single shots. It plans the exact first frame, one main movement, simple camera behavior, environmental motion, and an ending hold. |
 | **Comic Page** | Comic panels with dialogue bubbles, captions, and lettering. Meant for the animation path. |
 | **Colored Manga** | Colored manga staging, cell shading, screentones, speech bubbles, and SFX. |
 | **B&W Manga** | Black-and-white manga inks, screentones, heavy blacks, speech bubbles, and SFX. |
 
-The **NovelAI Keyframes** preset writes compact Danbooru tags. Danbooru tags are short comma-separated keyword tags that some anime image models expect. Choosing a comic or manga preset does not turn animations on by itself. You still need **Automatic Storyboard Animations** and a video connection for clips.
+The **Anime Episode Director** pairs with **Anime Game Video** and **Use Storyboard Prompt Directly** when you want the generated still to be the exact first frame of a continuous clip. The director keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
+
+The **NovelAI Keyframes** preset writes compact Danbooru tags. Danbooru tags are short comma-separated keyword tags that some anime image models expect. Choosing an animation, comic, or manga preset does not turn animations on by itself. You still need **Automatic Storyboard Animations** and a video connection for clips.
 
 ## Editing storyboard presets
 
 The built-in presets are read-only. To make your own, open the **Edit Storyboard Presets** section inside the **Storyboards** card. It shows a count of your custom copies.
 
-You copy a built-in into a chat-only editable template, then pick that copy in either selector. The copy buttons are **Add Still Copy**, **Add Comic Copy**, **Add NovelAI Copy**, **Add Colored Manga Copy**, and **Add B&W Manga Copy**.
+You copy a built-in into a chat-only editable template, then pick that copy in either selector. The copy controls include the built-in still, anime episode, comic, NovelAI, colored manga, and black-and-white manga templates.
 
 Each custom copy has a name, a short description, and the prompt body you edit. A trash button removes a copy after a confirm dialog. These copies are stored on that one chat, not across your whole app.
 

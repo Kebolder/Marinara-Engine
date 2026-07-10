@@ -184,6 +184,7 @@ import {
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
@@ -203,6 +204,7 @@ import {
   includesTextForMatch,
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
+  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
   isAgentAvailableInChatMode,
@@ -9551,6 +9553,14 @@ function GameStoryboardPromptLibrary({
             </button>
             <button
               type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Episode Copy
+            </button>
+            <button
+              type="button"
               onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
             >
@@ -9691,6 +9701,14 @@ function GameVideoPromptLibrary({
             >
               <Plus size="0.6875rem" />
               Add Video Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Video Copy
             </button>
           </div>
           {customTemplates.length === 0 ? (
