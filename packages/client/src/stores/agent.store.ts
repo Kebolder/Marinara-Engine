@@ -7,6 +7,8 @@ import type {
   AgentResult,
   AgentWriteApprovalProposal,
   CharacterCardFieldUpdate,
+  MariGuidedPlanStep,
+  MariSuggestionChip,
 } from "@marinara-engine/shared";
 import type { AgentFailure } from "../lib/agent-failures";
 
@@ -123,6 +125,17 @@ interface AgentState {
     text: string;
   }>;
   cyoaChoicesChatId: string | null;
+  mariChips: MariSuggestionChip[];
+  mariChipsChatId: string | null;
+  /**
+   * A guided-creation plan Mari returned in one call: an ordered list of question+chip
+   * steps. The client walks these locally (see recordMariPlanAnswer) with zero further
+   * LLM calls until the plan is exhausted and a summary message is sent back to her.
+   */
+  mariPlan: MariGuidedPlanStep[] | null;
+  mariPlanChatId: string | null;
+  mariPlanCursor: number;
+  mariPlanAnswers: Record<string, string>;
   /** Latest Music DJ YouTube "play" intent. nonce bumps each pick so the player reacts. */
   youtubePlay: { searchQuery: string; mood: string; nonce: number } | null;
   /** Latest Music DJ YouTube volume directive (0-100), independent of track changes. */
@@ -154,6 +167,12 @@ interface AgentState {
   setEchoLoadedChatId: (chatId: string | null) => void;
   setCyoaChoices: (choices: Array<{ label: string; text: string }>, chatId?: string | null) => void;
   clearCyoaChoices: () => void;
+  setMariChips: (chatId: string | null, chips: MariSuggestionChip[]) => void;
+  clearMariChips: () => void;
+  setMariPlan: (chatId: string | null, steps: MariGuidedPlanStep[]) => void;
+  /** Records the answer for the current step and advances the cursor. Returns "complete" once past the last step. */
+  recordMariPlanAnswer: (fieldKey: string, value: string) => "advanced" | "complete";
+  clearMariPlan: () => void;
   setYoutubePlay: (play: { searchQuery: string; mood: string }) => void;
   setYoutubeVolume: (volume: number | null) => void;
   clearYoutube: () => void;
@@ -186,6 +205,12 @@ type AgentDataState = Pick<
   | "echoLoadedChatId"
   | "cyoaChoices"
   | "cyoaChoicesChatId"
+  | "mariChips"
+  | "mariChipsChatId"
+  | "mariPlan"
+  | "mariPlanChatId"
+  | "mariPlanCursor"
+  | "mariPlanAnswers"
   | "youtubePlay"
   | "youtubeVolume"
   | "localMusicPlay"
@@ -211,6 +236,12 @@ function createInitialAgentDataState(): AgentDataState {
     echoLoadedChatId: null,
     cyoaChoices: [],
     cyoaChoicesChatId: null,
+    mariChips: [],
+    mariChipsChatId: null,
+    mariPlan: null,
+    mariPlanChatId: null,
+    mariPlanCursor: 0,
+    mariPlanAnswers: {},
     youtubePlay: null,
     youtubeVolume: null,
     localMusicPlay: null,
@@ -220,7 +251,7 @@ function createInitialAgentDataState(): AgentDataState {
   };
 }
 
-export const useAgentStore = create<AgentState>((set) => ({
+export const useAgentStore = create<AgentState>((set, get) => ({
   ...createInitialAgentDataState(),
 
   setActiveAgents: (agents) => set({ activeAgents: agents }),
@@ -317,6 +348,22 @@ export const useAgentStore = create<AgentState>((set) => ({
 
   setCyoaChoices: (choices, chatId = null) => set({ cyoaChoices: choices, cyoaChoicesChatId: chatId }),
   clearCyoaChoices: () => set({ cyoaChoices: [], cyoaChoicesChatId: null }),
+  setMariChips: (chatId, chips) => set({ mariChips: chips, mariChipsChatId: chatId }),
+  clearMariChips: () => set({ mariChips: [], mariChipsChatId: null }),
+  setMariPlan: (chatId, steps) =>
+    set({ mariPlan: steps, mariPlanChatId: chatId, mariPlanCursor: 0, mariPlanAnswers: {} }),
+  recordMariPlanAnswer: (fieldKey, value) => {
+    const { mariPlan, mariPlanCursor, mariPlanAnswers } = get();
+    const nextAnswers = { ...mariPlanAnswers, [fieldKey]: value };
+    const nextCursor = mariPlanCursor + 1;
+    if (!mariPlan || nextCursor >= mariPlan.length) {
+      set({ mariPlanAnswers: nextAnswers });
+      return "complete";
+    }
+    set({ mariPlanAnswers: nextAnswers, mariPlanCursor: nextCursor });
+    return "advanced";
+  },
+  clearMariPlan: () => set({ mariPlan: null, mariPlanChatId: null, mariPlanCursor: 0, mariPlanAnswers: {} }),
 
   setYoutubePlay: ({ searchQuery, mood }) =>
     set((s) => ({ youtubePlay: { searchQuery, mood, nonce: (s.youtubePlay?.nonce ?? 0) + 1 } })),

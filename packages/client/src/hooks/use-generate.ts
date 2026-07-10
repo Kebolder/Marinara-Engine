@@ -27,6 +27,8 @@ import {
   type AgentCallDebugEvent,
   type CharacterCardFieldUpdate,
   type EditableCharacterCardField,
+  type MariGuidedPlanStep,
+  type MariSuggestionChip,
   type ThinkingTagPair,
 } from "@marinara-engine/shared";
 
@@ -977,6 +979,10 @@ export function useGenerate() {
   const addEchoMessage = useAgentStore((s) => s.addEchoMessage);
   const setCyoaChoices = useAgentStore((s) => s.setCyoaChoices);
   const clearCyoaChoices = useAgentStore((s) => s.clearCyoaChoices);
+  const setMariChips = useAgentStore((s) => s.setMariChips);
+  const clearMariChips = useAgentStore((s) => s.clearMariChips);
+  const setMariPlan = useAgentStore((s) => s.setMariPlan);
+  const clearMariPlan = useAgentStore((s) => s.clearMariPlan);
   const setYoutubePlay = useAgentStore((s) => s.setYoutubePlay);
   const setYoutubeVolume = useAgentStore((s) => s.setYoutubeVolume);
   const setLocalMusicPlay = useAgentStore((s) => s.setLocalMusicPlay);
@@ -1048,6 +1054,8 @@ export function useGenerate() {
         clearStreamBuffer(params.chatId);
         clearThoughtBubbles();
         clearCyoaChoices();
+        clearMariChips();
+        clearMariPlan();
         clearFailedAgentTypes(params.chatId);
         setRegenerateMessageId(params.regenerateMessageId ?? null);
       }
@@ -2349,6 +2357,14 @@ export function useGenerate() {
               } else if (actionData.action === "data_fetched") {
                 const fetchType = (actionData.fetchType as string) ?? "data";
                 toast(`Fetched ${fetchType}: ${actionData.name}`, { icon: "📋" });
+              } else if (actionData.action === "suggestions") {
+                const suggestions = Array.isArray(actionData.suggestions)
+                  ? (actionData.suggestions as MariSuggestionChip[])
+                  : [];
+                if (useUIStore.getState().professorMariSuggestionsEnabled) setMariChips(params.chatId, suggestions);
+              } else if (actionData.action === "plan") {
+                const plan = Array.isArray(actionData.plan) ? (actionData.plan as MariGuidedPlanStep[]) : [];
+                if (useUIStore.getState().professorMariSuggestionsEnabled && plan.length > 0) setMariPlan(params.chatId, plan);
               } else if (actionData.action === "navigate") {
                 const panel = actionData.panel as string;
                 const tab = actionData.tab as string | null;
@@ -2768,6 +2784,10 @@ export function useGenerate() {
       addEchoMessage,
       setCyoaChoices,
       clearCyoaChoices,
+      setMariChips,
+      clearMariChips,
+      setMariPlan,
+      clearMariPlan,
       setYoutubePlay,
       setYoutubeVolume,
       setLocalMusicPlay,

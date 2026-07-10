@@ -590,6 +590,8 @@ interface UIState {
   ttsLineVolume: number;
   /** When true, allow the rare Chibi Professor Mari scroll toast. */
   chibiProfessorMariEnabled: boolean;
+  /** When true, Professor Mari shows generated suggestion chips and guided-plan options. */
+  professorMariSuggestionsEnabled: boolean;
   /** When true, achievements appear on Home and announce unlocks. Backend tracking stays silent either way. */
   achievementsEnabled: boolean;
   /** When true, show the global Music Player surface. */
@@ -875,6 +877,7 @@ interface UIState {
   setSpeechToTextEnabled: (v: boolean) => void;
   setTTSLineVolume: (v: number) => void;
   setChibiProfessorMariEnabled: (v: boolean) => void;
+  setProfessorMariSuggestionsEnabled: (v: boolean) => void;
   setAchievementsEnabled: (v: boolean) => void;
   setMusicPlayerEnabled: (v: boolean) => void;
   setMusicPlayerSource: (v: MusicPlayerSource) => void;
@@ -1077,6 +1080,7 @@ export function pickSyncedSettings(state: UIState) {
     speechToTextEnabled: state.speechToTextEnabled,
     ttsLineVolume: state.ttsLineVolume,
     chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
+    professorMariSuggestionsEnabled: state.professorMariSuggestionsEnabled,
     achievementsEnabled: state.achievementsEnabled,
     musicPlayerEnabled: state.musicPlayerEnabled,
     musicPlayerSource: state.musicPlayerSource,
@@ -1255,6 +1259,7 @@ export const useUIStore = create<UIState>()(
       speechToTextEnabled: false,
       ttsLineVolume: 50,
       chibiProfessorMariEnabled: true,
+      professorMariSuggestionsEnabled: true,
       achievementsEnabled: true,
       musicPlayerEnabled: true,
       musicPlayerSource: "youtube" as MusicPlayerSource,
@@ -1840,6 +1845,7 @@ export const useUIStore = create<UIState>()(
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
       setTTSLineVolume: (v) => set({ ttsLineVolume: Math.max(0, Math.min(100, Math.round(v))) }),
       setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
+      setProfessorMariSuggestionsEnabled: (v) => set({ professorMariSuggestionsEnabled: v }),
       setAchievementsEnabled: (v) => set({ achievementsEnabled: v }),
       setMusicPlayerEnabled: (v) =>
         set((state) => ({
@@ -2046,7 +2052,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 70,
+      version: 71,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2551,8 +2557,12 @@ export const useUIStore = create<UIState>()(
         if (version <= 66 && persisted.customCursorEnabled === undefined) {
           persisted.customCursorEnabled = true;
         }
+        if (version <= 70 && persisted.professorMariSuggestionsEnabled === undefined) {
+          persisted.professorMariSuggestionsEnabled = true;
+        }
         persisted.appAccentRgbMode = persisted.appAccentRgbMode === true;
         persisted.customCursorEnabled = persisted.customCursorEnabled !== false;
+        persisted.professorMariSuggestionsEnabled = persisted.professorMariSuggestionsEnabled !== false;
         persisted.includeReasoningInExports = persisted.includeReasoningInExports === true;
         persisted.chatChromeTextColor = normalizeChatChromeTextColor(persisted.chatChromeTextColor);
         persisted.defaultRoleplayBackground = normalizeDefaultRoleplayBackground(persisted.defaultRoleplayBackground);
@@ -2663,6 +2673,7 @@ export const useUIStore = create<UIState>()(
         speechToTextEnabled: state.speechToTextEnabled,
         ttsLineVolume: state.ttsLineVolume,
         chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
+        professorMariSuggestionsEnabled: state.professorMariSuggestionsEnabled,
         achievementsEnabled: state.achievementsEnabled,
         musicPlayerEnabled: state.musicPlayerEnabled,
         musicPlayerSource: state.musicPlayerSource,

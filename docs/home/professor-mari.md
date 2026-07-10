@@ -25,8 +25,15 @@ Ask her for help with any of these:
 - Creating or editing a theme, an agent, or a prompt preset. A theme is a look for the app. An agent is a background AI helper. A preset is a saved bundle of prompt settings.
 - Generating or assigning images, such as avatars, sprites, and backgrounds. A sprite is a character image, like a portrait or a full body pose, shown during a chat.
 - Looking up public Fandom wiki pages to help you research a character or world.
+- Following quick-reply suggestion chips above the chat input, color-coded by entity type, through a multi-step creation or edit.
 
 She reads an item before she edits it, and she asks for missing details when your request is vague. For image tasks you need a working image generation connection set up first. She does not create one for you.
+
+## Guided suggestion chips
+
+On an empty Professor Mari chat, starter chips such as **Create a Character**, **Create a Lorebook**, and **Create a Persona** help begin common tasks. During a guided creation or edit, the chips change to match the next step. Clicking a chip fills the input draft; you can edit that draft before sending it.
+
+Guided flows ask one focused question at a time instead of presenting a long form all at once.
 
 ## She can also read and edit the app's own files
 
@@ -119,6 +126,7 @@ Professor Mari is a helper, not the full documentation. Keep these limits in min
 - She cannot promise her built in knowledge matches your exact app version. When something is version specific or recently changed, trust the guides and release notes first.
 - Creating new content is usually safe, since nothing gets overwritten. Editing existing content deserves more care.
 - For edits, name the exact item and the exact field you want changed. A request like "rewrite this whole character" is riskier than "make Luna's greeting shorter, keep her personality the same."
+- For multi-step creation, use the suggestion chips to answer one focused question at a time instead of trying to provide every field at once.
 - If she says she finished a task but the app does not show it, trust the app. Finish the task yourself from the matching panel.
 - If you reach Marinara from another device instead of the same computer, her editing actions need remote access set up. See the remote access guide.
 

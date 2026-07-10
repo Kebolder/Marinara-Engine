@@ -13,6 +13,7 @@ import {
   Languages,
   Loader2,
   FileText,
+  Sparkles,
   WandSparkles,
   Swords,
 } from "lucide-react";
@@ -20,12 +21,20 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
+import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, chatKeys } from "../../hooks/use-chats";
 import { characterKeys } from "../../hooks/use-characters";
-import { buildGuidedGenerationInstructionMessage, formatTextQuotes, type Message } from "@marinara-engine/shared";
+import {
+  buildGuidedGenerationInstructionMessage,
+  formatTextQuotes,
+  MARI_STARTER_CHIPS,
+  PROFESSOR_MARI_ID,
+  type MariSuggestionChip,
+  type Message,
+} from "@marinara-engine/shared";
 import {
   matchSlashCommand,
   shouldExecuteQuickPostAsCommand,
@@ -49,6 +58,7 @@ import { QuickSwitcherMobile } from "./QuickSwitcherMobile";
 import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import { getChatInputShellClass } from "./chat-input-styles";
+import { MariSuggestionChips } from "./MariSuggestionChips";
 
 interface Attachment {
   type: string; // MIME type
@@ -213,6 +223,10 @@ export const ChatInput = memo(function ChatInput({
   const attachmentsRef = useRef<Attachment[]>([]);
   const pendingAttachmentDraftsRef = useRef<Map<string, Attachment[]>>(new Map());
   const activeChatId = useChatStore((s) => s.activeChatId);
+  const mariChips = useAgentStore((s) => s.mariChips);
+  const mariChipsChatId = useAgentStore((s) => s.mariChipsChatId);
+  const clearMariChips = useAgentStore((s) => s.clearMariChips);
+  const professorMariSuggestionsEnabled = useUIStore((s) => s.professorMariSuggestionsEnabled);
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreamingGlobal = useChatStore((s) => s.isStreaming);
   const isStreaming = isStreamingGlobal && streamingChatId === activeChatId;
@@ -479,6 +493,69 @@ export const ChatInput = memo(function ChatInput({
     });
   }, [activeChatId, qc]);
   const messagesData = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(activeChatId ?? ""));
+  const isProfessorMariChat = activeChatCharacters?.some((character) => character.id === PROFESSOR_MARI_ID) ?? false;
+  const hasMessages = (messagesData?.pages ?? []).some((page) => page.length > 0);
+  const visibleMariChips = isProfessorMariChat && professorMariSuggestionsEnabled
+    ? mariChipsChatId === activeChatId && mariChips.length > 0
+      ? mariChips
+      : !hasMessages
+        ? MARI_STARTER_CHIPS
+        : []
+    : [];
+
+  const mariPlan = useAgentStore((s) => s.mariPlan);
+  const mariPlanChatId = useAgentStore((s) => s.mariPlanChatId);
+  const mariPlanCursor = useAgentStore((s) => s.mariPlanCursor);
+  const recordMariPlanAnswer = useAgentStore((s) => s.recordMariPlanAnswer);
+  const clearMariPlan = useAgentStore((s) => s.clearMariPlan);
+  const activeGuidedPlan = professorMariSuggestionsEnabled && mariPlanChatId === activeChatId ? mariPlan : null;
+  const guidedPlanStep = activeGuidedPlan ? (activeGuidedPlan[mariPlanCursor] ?? null) : null;
+  const chipRowChips = guidedPlanStep ? guidedPlanStep.chips : visibleMariChips;
+  const chipRowHint = guidedPlanStep
+    ? `${guidedPlanStep.question} Suggestions only; you can type your own answer.`
+    : chipRowChips.length > 0
+      ? "Suggestions only. Pick one, or type your own."
+      : null;
+
+  const handleMariChipSelect = useCallback(
+    (chip: MariSuggestionChip) => {
+      if (guidedPlanStep) {
+        const result = recordMariPlanAnswer(guidedPlanStep.fieldKey, chip.prompt);
+        if (result === "complete") {
+          const answers = useAgentStore.getState().mariPlanAnswers;
+          const summary = Object.entries(answers)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join("; ");
+          clearMariPlan();
+          const el = textareaRef.current;
+          if (el && activeChatId) {
+            const text = `Create it - ${summary}`;
+            el.value = text;
+            resizeChatInputTextarea(el);
+            syncInputState(text);
+            setInputDraft(activeChatId, text);
+            el.focus();
+          }
+        }
+        return;
+      }
+      const el = textareaRef.current;
+      if (!el || !activeChatId) return;
+      const current = el.value;
+      const next = current.trim() ? `${current.trimEnd()} ${chip.prompt}` : chip.prompt;
+      el.value = next;
+      resizeChatInputTextarea(el);
+      syncInputState(next);
+      setInputDraft(activeChatId, next);
+      el.focus();
+    },
+    [activeChatId, setInputDraft, syncInputState, guidedPlanStep, recordMariPlanAnswer, clearMariPlan],
+  );
+  useEffect(() => {
+    if (professorMariSuggestionsEnabled) return;
+    clearMariChips();
+    clearMariPlan();
+  }, [clearMariChips, clearMariPlan, professorMariSuggestionsEnabled]);
   const lastMessage = useMemo(() => {
     const firstPage = messagesData?.pages?.[0];
     return firstPage?.[firstPage.length - 1] ?? null;
@@ -1618,6 +1695,14 @@ export const ChatInput = memo(function ChatInput({
           )}
         </div>
       )}
+
+      {chipRowHint && (
+        <p className="mb-1 flex items-center gap-1.5 px-0.5 text-xs text-[var(--muted-foreground)]">
+          <Sparkles size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+          <span>{chipRowHint}</span>
+        </p>
+      )}
+      <MariSuggestionChips chips={chipRowChips} onSelect={handleMariChipSelect} disabled={isInputBusy} />
 
       {/* Main input container */}
       <div

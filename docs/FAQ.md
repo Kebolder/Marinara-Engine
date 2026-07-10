@@ -137,6 +137,8 @@ No. Updating Marinara keeps your characters, chats, and settings in place. It is
 
 Professor Mari is the built-in assistant on the Home screen. Open her with the **Ask Professor Mari** button. She can explain the app and help with setup. She can also create or edit your data when you ask in plain language: characters, personas, lorebooks, prompt presets (saved instruction templates), and new chats.
 
+She also shows quick-reply suggestion chips above the input to guide multi-step creation and edits without making you type every detail by hand.
+
 When she changes your data, a review card appears with **Keep** and **Restore** buttons, so you can undo anything you do not want. She is a helper, not a replacement for these guides when something is version-specific. For the full list of what she can do, see [Professor Mari](home/professor-mari.md).
 
 Note: on an ordinary remote address, Professor Mari's data-changing actions need both Basic Auth and an admin secret. Trusted or allowlisted network routes can use the bypasses described in [Remote Access](REMOTE_ACCESS.md).

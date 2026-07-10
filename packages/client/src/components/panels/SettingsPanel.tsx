@@ -2567,6 +2567,8 @@ function GeneralSettings() {
   const setSpeechToTextEnabled = useUIStore((s) => s.setSpeechToTextEnabled);
   const chibiProfessorMariEnabled = useUIStore((s) => s.chibiProfessorMariEnabled);
   const setChibiProfessorMariEnabled = useUIStore((s) => s.setChibiProfessorMariEnabled);
+  const professorMariSuggestionsEnabled = useUIStore((s) => s.professorMariSuggestionsEnabled);
+  const setProfessorMariSuggestionsEnabled = useUIStore((s) => s.setProfessorMariSuggestionsEnabled);
   const musicPlayerEnabled = useUIStore((s) => s.musicPlayerEnabled);
   const setMusicPlayerEnabled = useUIStore((s) => s.setMusicPlayerEnabled);
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
@@ -2638,6 +2640,13 @@ function GeneralSettings() {
             checked={chibiProfessorMariEnabled}
             onChange={setChibiProfessorMariEnabled}
             help="Allows the rare Chibi Professor Mari message to appear while scrolling. Turn this off if it gets in the way of settings or other workflows."
+          />
+          <ToggleSetting
+            anchorId={getSettingsControlAnchorId("professor-mari-suggestions")}
+            label="Professor Mari suggestions"
+            checked={professorMariSuggestionsEnabled}
+            onChange={setProfessorMariSuggestionsEnabled}
+            help="Shows Professor Mari's quick suggestion chips and guided option chips after her replies. Turning this off keeps normal chat input unchanged."
           />
         </div>
       </SettingsSection>
