@@ -777,7 +777,19 @@ function tryParseJsonPayload(raw: string): Record<string, unknown> | null {
     const parsed = JSON.parse(raw) as unknown;
     return isRecord(parsed) ? parsed : null;
   } catch {
-    return null;
+    // A single stray comma or smart-quote anywhere in the envelope (most often inside the
+    // optional `suggestions` array) would otherwise fail the entire { say, commands, stop }
+    // object, not just the chips - repair the common near-miss cases before giving up.
+    try {
+      const repaired = raw
+        .replace(/[‘’]/g, "'")
+        .replace(/[“”]/g, '"')
+        .replace(/,\s*([\]}])/g, "$1");
+      const parsed = JSON.parse(repaired) as unknown;
+      return isRecord(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 }
 

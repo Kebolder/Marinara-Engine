@@ -878,34 +878,85 @@
   align-items: center;
   overflow-x: auto;
   padding-bottom: 0.25rem;
+  mask-image: linear-gradient(to right, transparent 0, black 8px, black calc(100% - 8px), transparent 100%);
+}
+
+/*
+ * Suggestion chips intentionally do NOT reuse .mari-panel-gradient-button's solid-fill
+ * CTA treatment (that style is tuned for the handful of big panel-nav buttons in the
+ * sidebar/topbar). A row of 3-5 solid neon buttons above the chat input reads as loud
+ * UI chrome, not a quiet suggestion. Instead this mirrors the tinted-badge language
+ * Mari's own tool timeline and mode badge already use elsewhere on this screen
+ * (color-mix tint fill + colored border + soft glow) so chips read as chat-native.
+ * Color still comes from the shared --mari-panel-gradient-start token set by the
+ * .mari-panel-gradient--<entity> classes, so entity colors stay a single source of truth.
+ */
+.mari-suggestion-chip {
+  --chip-tint: var(--mari-panel-gradient-start, var(--marinara-app-accent-solid));
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.25rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--chip-tint) 32%, transparent);
+  background: color-mix(in srgb, var(--chip-tint) 14%, var(--card) 86%);
+  color: color-mix(in srgb, var(--chip-tint) 82%, var(--foreground) 18%);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  line-height: 1.1;
+  box-shadow: 0 0 0.5rem color-mix(in srgb, var(--chip-tint) 16%, transparent);
+  cursor: pointer;
+  animation: message-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+.mari-suggestion-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chip-tint) 24%, var(--card) 76%);
+  border-color: color-mix(in srgb, var(--chip-tint) 52%, transparent);
+  box-shadow: 0 0 0.75rem color-mix(in srgb, var(--chip-tint) 28%, transparent);
+  transform: translateY(-1px);
+}
+
+.mari-suggestion-chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.mari-suggestion-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .mari-suggestion-chips--compact {
   gap: 0.375rem;
 }
 
-.mari-suggestion-chips--compact .mari-panel-gradient-button {
-  min-height: 2rem;
-  padding: 0.375rem 0.5rem;
-  border-radius: 0.625rem;
+.mari-suggestion-chips--compact .mari-suggestion-chip {
+  min-height: 2.5rem;
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.75rem;
+}
+
+.mari-suggestion-chip--neutral {
+  --chip-tint: var(--muted-foreground);
 }
 
 .mari-suggestion-chip--danger {
-  --mari-panel-gradient-start: var(--destructive);
-  --mari-panel-gradient-end: color-mix(in srgb, var(--destructive) 76%, #111827 24%);
-  --mari-panel-gradient-text: #fff7f7;
+  --chip-tint: var(--destructive);
 }
 
 .mari-suggestion-chip--caution {
-  --mari-panel-gradient-start: #fbbf24;
-  --mari-panel-gradient-end: #f59e0b;
-  --mari-panel-gradient-text: #1f1300;
+  --chip-tint: #f59e0b;
 }
 
 .mari-suggestion-chip--success {
-  --mari-panel-gradient-start: #34d399;
-  --mari-panel-gradient-end: #10b981;
-  --mari-panel-gradient-text: #052e1c;
+  --chip-tint: #10b981;
 }
 
 .mari-panel-gradient--browser {
@@ -3019,6 +3070,10 @@ strong {
   }
 
   .mari-rgb-toggle-track {
+    animation: none;
+  }
+
+  .mari-suggestion-chip {
     animation: none;
   }
 }

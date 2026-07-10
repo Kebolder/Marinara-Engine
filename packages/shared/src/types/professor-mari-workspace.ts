@@ -79,16 +79,36 @@ function truncateMariChipText(value: string, maxLength: number): string {
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength).trimEnd() : trimmed;
 }
 
+const CHIP_LABEL_KEYS = ["label", "text", "title", "name", "option"];
+const CHIP_PROMPT_KEYS = ["prompt", "message", "value", "send", "query", "reply"];
+
+function firstStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return undefined;
+}
+
+/**
+ * Models frequently drift from the exact { label, prompt } contract (plain string arrays,
+ * a "text"/"title" key instead of "label", a missing "prompt" that should just reuse the
+ * label, etc). Strict validation would silently discard the whole chip in those cases, so
+ * this accepts the common near-miss shapes rather than requiring exact compliance.
+ */
 export function sanitizeMariSuggestionChips(raw: unknown, options: { maxChips?: number } = {}): MariSuggestionChip[] {
   if (!Array.isArray(raw)) return [];
   const maxChips = options.maxChips ?? 6;
   const chips: MariSuggestionChip[] = [];
   for (const entry of raw) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    if (typeof record.label !== "string" || typeof record.prompt !== "string") continue;
-    const label = truncateMariChipText(record.label, 40);
-    const prompt = truncateMariChipText(record.prompt, 400);
+    const record: Record<string, unknown> =
+      typeof entry === "string" ? { label: entry, prompt: entry } : entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as Record<string, unknown>) : {};
+    if (Object.keys(record).length === 0) continue;
+    const rawLabel = firstStringField(record, CHIP_LABEL_KEYS);
+    const rawPrompt = firstStringField(record, CHIP_PROMPT_KEYS) ?? rawLabel;
+    if (!rawLabel || !rawPrompt) continue;
+    const label = truncateMariChipText(rawLabel, 40);
+    const prompt = truncateMariChipText(rawPrompt, 400);
     if (!label || !prompt) continue;
     const chip: MariSuggestionChip = {
       id:

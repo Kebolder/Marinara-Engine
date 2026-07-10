@@ -1968,10 +1968,10 @@ export function HomeProfessorMariChat({
     };
   }, [floatingMode]);
 
-  const loadMessages = useCallback(async (id: string) => {
+  const loadMessages = useCallback(async (id: string, options: { clearSuggestions?: boolean } = {}) => {
     const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
     setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
-    setSuggestionChips([]);
+    if (options.clearSuggestions) setSuggestionChips([]);
   }, []);
 
   const loadChatHistory = useCallback(async () => {
@@ -2072,7 +2072,7 @@ export function HomeProfessorMariChat({
           setSelectedConnectionId(restoredConnectionId);
           rememberConnectionId(restoredConnectionId);
         }
-        return loadMessages(chat.id);
+        return loadMessages(chat.id, { clearSuggestions: true });
       })
       .catch((error) => {
         console.error("[Professor Mari] Failed to load home assistant", error);
@@ -2585,7 +2585,7 @@ export function HomeProfessorMariChat({
         setWorkspaceTimeline([]);
         useChatStore.getState().clearStreamBuffer(chat.id);
         useChatStore.getState().clearThinkingBuffer(chat.id);
-        await loadMessages(chat.id);
+        await loadMessages(chat.id, { clearSuggestions: true });
         await loadChatHistory();
       } catch (error) {
         console.error("[Professor Mari] Failed to open previous chat", error);
@@ -2628,7 +2628,7 @@ export function HomeProfessorMariChat({
         if (id === chatId) {
           const chat = await ensureProfessorMariChat(effectiveConnectionId);
           setChatId(chat.id);
-          await loadMessages(chat.id);
+          await loadMessages(chat.id, { clearSuggestions: true });
         }
         await loadChatHistory();
       } catch (error) {

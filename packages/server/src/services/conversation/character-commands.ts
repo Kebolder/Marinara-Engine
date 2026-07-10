@@ -610,6 +610,24 @@ function parseJsonValue(raw: string): unknown | null {
   }
 }
 
+/**
+ * Suggestion-chip payloads come from free-form model output, which commonly drifts from
+ * strict JSON (trailing commas, single-quoted strings, smart quotes from a "helpful"
+ * autocorrect). A single stray comma would otherwise silently drop the whole chip set with
+ * no visible symptom other than "Mari said she had suggestions but none appeared" - so this
+ * repairs the common near-miss cases before giving up.
+ */
+function parseLenientJsonValue(raw: string): unknown | null {
+  const direct = parseJsonValue(raw);
+  if (direct !== null) return direct;
+  const repaired = raw
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/,\s*([\]}])/g, "$1")
+    .replace(/'([^'\\]*)'/g, (_match, inner: string) => `"${inner.replace(/"/g, '\\"')}"`);
+  return parseJsonValue(repaired);
+}
+
 function findBracketJsonCommandBlocks(content: string, commandName: string): string[] {
   const blocks: string[] = [];
   const marker = `[${commandName}:`;
@@ -1281,12 +1299,12 @@ export function parseCharacterCommands(content: string): {
   }
 
   for (const match of content.matchAll(SUGGESTIONS_BLOCK_RE)) {
-    const suggestions = parseJsonValue(match[1] ?? "");
+    const suggestions = parseLenientJsonValue(match[1] ?? "");
     if (suggestions !== null) commands.push({ type: "suggestions", suggestions });
   }
 
   for (const suggestionsBlock of findBracketJsonCommandBlocks(content, "suggestions")) {
-    const suggestions = parseJsonValue(suggestionsBlock);
+    const suggestions = parseLenientJsonValue(suggestionsBlock);
     if (suggestions !== null) commands.push({ type: "suggestions", suggestions });
   }
 
