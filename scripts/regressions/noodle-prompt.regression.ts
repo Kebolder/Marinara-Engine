@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { canManageNoodleReply } from "../../packages/shared/src/utils/noodle-interactions.js";
 import {
   canGenerateNoodleActivityForAccountKind,
   formatNoodleTimelineForPrompt,
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
   noodlePersonaCommentPostIds,
+  NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
@@ -17,6 +19,44 @@ assert.match(NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION, /controlled exclusively by t
 assert.match(
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
   /Never generate posts, replies, likes, reposts, poll votes, or follows/u,
+);
+assert.equal(NOODLE_CREATIVE_FORMAT_INSTRUCTIONS.length, 2);
+assert.match(NOODLE_CREATIVE_FORMAT_INSTRUCTIONS[0], /create polls in their own posts and vote in polls/u);
+assert.match(NOODLE_CREATIVE_FORMAT_INSTRUCTIONS[0], /polls are optional, not a quota/u);
+assert.match(NOODLE_CREATIVE_FORMAT_INSTRUCTIONS[1], /Standard Unicode emojis are allowed in post and reply content/u);
+assert.match(NOODLE_CREATIVE_FORMAT_INSTRUCTIONS[1], /not every post or reply needs one/u);
+
+assert.equal(
+  canManageNoodleReply({
+    actorKind: "persona",
+    actorAccountId: "persona-account",
+    personaAccountId: "persona-account",
+  }),
+  true,
+);
+assert.equal(
+  canManageNoodleReply({
+    actorKind: "persona",
+    actorAccountId: "other-persona-account",
+    personaAccountId: "persona-account",
+  }),
+  false,
+);
+assert.equal(
+  canManageNoodleReply({
+    actorKind: "character",
+    actorAccountId: "character-account",
+    personaAccountId: "persona-account",
+  }),
+  true,
+);
+assert.equal(
+  canManageNoodleReply({
+    actorKind: "random_user",
+    actorAccountId: "random-account",
+    personaAccountId: "persona-account",
+  }),
+  false,
 );
 
 const threadedTimeline = formatNoodleTimelineForPrompt(
@@ -76,6 +116,8 @@ assert.deepEqual(
 );
 
 const activeAccountsInstruction = "- Use only the active accounts listed by entityId. Do not invent accounts.";
+const randomUserParodyInstruction =
+  "- A small minority of posts from random_user accounts may be obvious parody advertisements or absurd fake crypto scams. Usually generate none and never more than one per refresh. Keep every company, product, coin, ticker, price, and financial claim invented, visibly ridiculous, and non-actionable. Never imitate a real company or include real or usable links, wallet addresses, financial advice, or scam instructions.";
 const imageGenerationInstruction =
   "- When image generation is enabled, imagePrompt should be a concrete visual idea for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post.";
 const galleryAttachmentInstruction =
@@ -93,12 +135,12 @@ const instructions = (input: {
   });
 
 assert.deepEqual(instructions({}), []);
-assert.deepEqual(instructions({ allowRandomUsers: true }), [activeAccountsInstruction]);
+assert.deepEqual(instructions({ allowRandomUsers: true }), [activeAccountsInstruction, randomUserParodyInstruction]);
 assert.deepEqual(instructions({ enableImagePrompts: true }), [imageGenerationInstruction]);
 assert.deepEqual(instructions({ allowGalleryImageAttachments: true }), [galleryAttachmentInstruction]);
 assert.deepEqual(
   instructions({ allowRandomUsers: true, enableImagePrompts: true, allowGalleryImageAttachments: true }),
-  [activeAccountsInstruction, imageGenerationInstruction, galleryAttachmentInstruction],
+  [activeAccountsInstruction, randomUserParodyInstruction, imageGenerationInstruction, galleryAttachmentInstruction],
 );
 
 const cutoffAnchor = new Date("2026-07-10T12:00:00.000Z");

@@ -46,6 +46,7 @@ import {
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import {
+  canManageNoodleReply,
   findNoodleTextMentions,
   noodleTextMentionsHandle as textMentionsHandle,
   readNoodlePollFromMetadata,
@@ -112,6 +113,7 @@ const NOODLE_NOTIFICATIONS_READ_AT_KEY = "notificationsReadAt";
 const NOODLE_FOLLOWED_AT_BY_ACCOUNT_KEY = "followingAccountTimestamps";
 const NOODLE_INVITE_PAGE_SIZE = 50;
 const NOODLE_PERSONA_SWITCHER_PAGE_SIZE = 5;
+const NOODLE_MENTION_SUGGESTION_LIMIT = 8;
 const NOODLE_CARRYOVER_TARGETS: NoodleCarryoverTarget[] = ["conversation", "roleplay", "game"];
 const NOODLE_MEDIA_PICKER_TABS: ConversationMediaPickerTab[] = [
   { id: "emoji", label: "Emoji" },
@@ -270,6 +272,14 @@ function activeComposerMention(value: string, caret: number): ActiveComposerMent
   return { handle: query.toLowerCase(), query: query.toLowerCase(), start, end: caret };
 }
 
+function matchingMentionAccounts(accounts: NoodleAccount[], activeMention: ActiveComposerMention | null) {
+  if (!activeMention) return [];
+  return accounts
+    .filter((account) => account.handle.toLowerCase().startsWith(activeMention.query))
+    .sort((left, right) => left.handle.localeCompare(right.handle))
+    .slice(0, NOODLE_MENTION_SUGGESTION_LIMIT);
+}
+
 function characterName(character: RawCharacter) {
   const data = parseRecord(character.data);
   return readString(data.name).trim() || "Character";
@@ -374,6 +384,58 @@ function Avatar({
       )}
     >
       {initials(account.displayName)}
+    </div>
+  );
+}
+
+function NoodleMentionSuggestions({
+  activeMention,
+  activeIndex,
+  accounts,
+  listboxId,
+  onSelect,
+}: {
+  activeMention: ActiveComposerMention | null;
+  activeIndex: number;
+  accounts: NoodleAccount[];
+  listboxId: string;
+  onSelect: (account: NoodleAccount) => void;
+}) {
+  if (!activeMention) return null;
+  return (
+    <div
+      id={listboxId}
+      role="listbox"
+      aria-label="Tag a character"
+      className="relative z-40 mt-1 max-h-56 overflow-y-auto rounded-xl border border-[var(--noodle-divider)] bg-[var(--background)] p-1 shadow-xl shadow-black/25"
+    >
+      {accounts.length > 0 ? (
+        accounts.map((account, index) => (
+          <button
+            key={account.id}
+            id={`${listboxId}-option-${index}`}
+            type="button"
+            role="option"
+            aria-selected={index === activeIndex}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => onSelect(account)}
+            className={cn(
+              "flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors",
+              index === activeIndex ? "bg-[var(--noodle-blue)]/15" : "hover:bg-[var(--noodle-blue)]/10",
+            )}
+          >
+            <Avatar account={account} size="sm" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-semibold">{account.displayName}</span>
+              <span className="block truncate text-[0.68rem] text-[var(--noodle-blue)]">@{account.handle}</span>
+            </span>
+          </button>
+        ))
+      ) : (
+        <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">
+          No invited character matches @{activeMention.query}.
+        </p>
+      )}
     </div>
   );
 }
@@ -760,6 +822,7 @@ export function NoodleView() {
   const imageFileRef = useRef<HTMLInputElement | null>(null);
   const inlineComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const modalComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const replyImageFileRef = useRef<HTMLInputElement | null>(null);
   const avatarFileRef = useRef<HTMLInputElement | null>(null);
   const bannerFileRef = useRef<HTMLInputElement | null>(null);
@@ -824,6 +887,8 @@ export function NoodleView() {
   const [replyPostId, setReplyPostId] = useState<string | null>(null);
   const [replyParentInteractionId, setReplyParentInteractionId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const [activeReplyMention, setActiveReplyMention] = useState<ActiveComposerMention | null>(null);
+  const [activeReplyMentionIndex, setActiveReplyMentionIndex] = useState(0);
   const [replyImageUrl, setReplyImageUrl] = useState("");
   const [replyImageUrlDraft, setReplyImageUrlDraft] = useState("");
   const [activeReplyComposerTool, setActiveReplyComposerTool] = useState<ReplyComposerTool | null>(null);
@@ -1152,6 +1217,8 @@ export function NoodleView() {
     setReplyPostId(null);
     setReplyParentInteractionId(null);
     setReplyText("");
+    setActiveReplyMention(null);
+    setActiveReplyMentionIndex(0);
     setReplyImageUrl("");
     setReplyImageUrlDraft("");
     setActiveReplyComposerTool(null);
@@ -1165,6 +1232,8 @@ export function NoodleView() {
     setReplyPostId(postId);
     setReplyParentInteractionId(parentInteractionId);
     setReplyText("");
+    setActiveReplyMention(null);
+    setActiveReplyMentionIndex(0);
     setReplyImageUrl("");
     setReplyImageUrlDraft("");
     setActiveReplyComposerTool(null);
@@ -1297,15 +1366,12 @@ export function NoodleView() {
     [accounts, folderInvitedCharacterIds],
   );
   const mentionSuggestions = useMemo(() => {
-    if (!activeMention) return [];
-    const query = activeMention.query;
-    return mentionableCharacterAccounts
-      .filter(
-        (account) =>
-          !query || account.handle.toLowerCase().includes(query) || account.displayName.toLowerCase().includes(query),
-      )
-      .slice(0, 6);
+    return matchingMentionAccounts(mentionableCharacterAccounts, activeMention);
   }, [activeMention, mentionableCharacterAccounts]);
+  const replyMentionSuggestions = useMemo(
+    () => matchingMentionAccounts(mentionableCharacterAccounts, activeReplyMention),
+    [activeReplyMention, mentionableCharacterAccounts],
+  );
   const selectedFolderCharacterIds = useMemo(() => Array.from(folderInvitedCharacterIds), [folderInvitedCharacterIds]);
   const uninvitedSelectedFolderCharacterIds = useMemo(
     () => selectedFolderCharacterIds.filter((id) => characterAccountByEntity.get(id)?.invited !== true),
@@ -1710,43 +1776,61 @@ export function NoodleView() {
   };
 
   const renderComposerMentionSuggestions = (listboxId: string) => {
-    if (!activeMention) return null;
     return (
-      <div
-        id={listboxId}
-        role="listbox"
-        aria-label="Tag a character"
-        className="relative z-40 mt-1 max-h-56 overflow-y-auto rounded-xl border border-[var(--noodle-divider)] bg-[var(--background)] p-1 shadow-xl shadow-black/25"
-      >
-        {mentionSuggestions.length > 0 ? (
-          mentionSuggestions.map((account, index) => (
-            <button
-              key={account.id}
-              id={`${listboxId}-option-${index}`}
-              type="button"
-              role="option"
-              aria-selected={index === activeMentionIndex}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => selectComposerMention(account)}
-              className={cn(
-                "flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors",
-                index === activeMentionIndex ? "bg-[var(--noodle-blue)]/15" : "hover:bg-[var(--noodle-blue)]/10",
-              )}
-            >
-              <Avatar account={account} size="sm" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-semibold">{account.displayName}</span>
-                <span className="block truncate text-[0.68rem] text-[var(--noodle-blue)]">@{account.handle}</span>
-              </span>
-            </button>
-          ))
-        ) : (
-          <p className="px-3 py-2 text-xs text-[var(--muted-foreground)]">
-            No invited character matches @{activeMention.query}.
-          </p>
-        )}
-      </div>
+      <NoodleMentionSuggestions
+        activeMention={activeMention}
+        activeIndex={activeMentionIndex}
+        accounts={mentionSuggestions}
+        listboxId={listboxId}
+        onSelect={selectComposerMention}
+      />
     );
+  };
+
+  const handleReplyChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.target.value;
+    setReplyText(value);
+    setActiveReplyMention(activeComposerMention(value, event.target.selectionStart ?? value.length));
+    setActiveReplyMentionIndex(0);
+  };
+
+  const selectReplyMention = (account: NoodleAccount) => {
+    if (!activeReplyMention) return;
+    const insertedMention = `@${account.handle} `;
+    const nextReply =
+      replyText.slice(0, activeReplyMention.start) + insertedMention + replyText.slice(activeReplyMention.end);
+    const nextCaret = activeReplyMention.start + insertedMention.length;
+    setReplyText(nextReply);
+    setActiveReplyMention(null);
+    setActiveReplyMentionIndex(0);
+    window.requestAnimationFrame(() => {
+      replyComposerRef.current?.focus();
+      replyComposerRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  };
+
+  const handleReplyKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!activeReplyMention) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveReplyMention(null);
+      return;
+    }
+    if (replyMentionSuggestions.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveReplyMentionIndex(
+        (current) => (current + direction + replyMentionSuggestions.length) % replyMentionSuggestions.length,
+      );
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      const account = replyMentionSuggestions[Math.min(activeReplyMentionIndex, replyMentionSuggestions.length - 1)];
+      if (account) selectReplyMention(account);
+    }
   };
 
   const updateFollowedAccount = (account: NoodleAccount, followed: boolean) => {
@@ -2880,10 +2964,30 @@ export function NoodleView() {
           </p>
         )}
         <textarea
+          ref={replyComposerRef}
           value={replyText}
-          onChange={(event) => setReplyText(event.target.value)}
+          onChange={handleReplyChange}
+          onKeyDown={handleReplyKeyDown}
           className={cn(textareaClass, "min-h-16 resize-none bg-transparent")}
           placeholder="Leave a comment…"
+          aria-autocomplete="list"
+          aria-controls={activeReplyMention ? "noodle-reply-mention-list" : undefined}
+          aria-expanded={Boolean(activeReplyMention)}
+          aria-activedescendant={
+            activeReplyMention && replyMentionSuggestions.length > 0
+              ? `noodle-reply-mention-list-option-${Math.min(
+                  activeReplyMentionIndex,
+                  replyMentionSuggestions.length - 1,
+                )}`
+              : undefined
+          }
+        />
+        <NoodleMentionSuggestions
+          activeMention={activeReplyMention}
+          activeIndex={activeReplyMentionIndex}
+          accounts={replyMentionSuggestions}
+          listboxId="noodle-reply-mention-list"
+          onSelect={selectReplyMention}
         />
         {replyImageUrl && (
           <div className="relative mt-2 overflow-hidden rounded-xl border border-[var(--noodle-divider)]">
@@ -2961,7 +3065,10 @@ export function NoodleView() {
               >
                 {uploadGlobalImages.isPending ? "Uploading..." : "Upload From Device"}
               </button>
-              <div className="flex items-center gap-2 text-[0.625rem] font-semibold uppercase tracking-normal text-[var(--muted-foreground)]">
+              <div
+                data-component="NoodleView.ReplyImageDivider"
+                className="flex items-center gap-2 text-[0.625rem] font-semibold uppercase tracking-normal text-[var(--noodle-blue)]"
+              >
                 <span className="h-px flex-1 bg-[var(--noodle-divider)]" />
                 or
                 <span className="h-px flex-1 bg-[var(--noodle-divider)]" />
@@ -3204,7 +3311,14 @@ export function NoodleView() {
                   const likedReplyByPersona = personaAccount
                     ? replyLikes.some((interaction) => interaction.actorAccountId === personaAccount.id)
                     : false;
-                  const canManageReply = Boolean(personaAccount && reply.actorAccountId === personaAccount.id);
+                  const canManageReply = Boolean(
+                    personaAccount &&
+                      canManageNoodleReply({
+                        actorKind: actorAccount?.kind ?? reply.actorSnapshot?.kind,
+                        actorAccountId: reply.actorAccountId,
+                        personaAccountId: personaAccount.id,
+                      }),
+                  );
                   return (
                     <Fragment key={reply.id}>
                       <div

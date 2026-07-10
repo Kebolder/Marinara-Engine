@@ -7,6 +7,7 @@ import { basename, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
   createNoodlePoll,
+  canManageNoodleReply,
   extractNoodleMentionHandles,
   noodleAccountUpdateSchema,
   noodleBulkInviteSchema,
@@ -60,6 +61,7 @@ import {
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
   noodlePersonaCommentPostIds,
+  NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
@@ -653,6 +655,7 @@ async function buildRefreshPrompt(input: {
     "- Generated interactions may target existing posts included in this prompt or posts you create in this response.",
     "- To respond directly to an existing comment, create a reply interaction for its post and set parentInteractionId to that comment's exact replyId.",
     NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
+    ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
     "- For each interaction, set either targetTempId or targetPostId. The unused target field may be omitted or null.",
     "- pollOptionIndex is required only for votes and must be a zero-based integer. For other interactions, omit it or use null.",
     "- An exact @handle in post or reply text tags that active account. Preserve the @handle exactly when mentioning someone.",
@@ -1226,8 +1229,17 @@ export async function noodleRoutes(app: FastifyInstance) {
     await ensurePersonaAccounts(noodle, characters);
     const persona = await noodle.getAccountByEntity("persona", parsed.data.personaId);
     if (!persona) return reply.code(404).send({ error: "Noodle persona not found" });
-    if (interaction.type !== "reply" || interaction.actorAccountId !== persona.id) {
-      return reply.code(403).send({ error: "You can only edit comments from this persona." });
+    const interactionActor = await noodle.getAccountById(interaction.actorAccountId);
+    const actorKind = interactionActor?.kind ?? interaction.actorSnapshot?.kind;
+    if (
+      interaction.type !== "reply" ||
+      !canManageNoodleReply({
+        actorKind,
+        actorAccountId: interaction.actorAccountId,
+        personaAccountId: persona.id,
+      })
+    ) {
+      return reply.code(403).send({ error: "You can only edit comments from this persona or a character." });
     }
     const content = parsed.data.content === undefined ? interaction.content : parsed.data.content?.trim() || null;
     const imageUrl = parsed.data.imageUrl === undefined ? interaction.imageUrl : parsed.data.imageUrl?.trim() || null;
@@ -1248,8 +1260,17 @@ export async function noodleRoutes(app: FastifyInstance) {
     await ensurePersonaAccounts(noodle, characters);
     const persona = await noodle.getAccountByEntity("persona", parsed.data.personaId);
     if (!persona) return reply.code(404).send({ error: "Noodle persona not found" });
-    if (interaction.type !== "reply" || interaction.actorAccountId !== persona.id) {
-      return reply.code(403).send({ error: "You can only delete comments from this persona." });
+    const interactionActor = await noodle.getAccountById(interaction.actorAccountId);
+    const actorKind = interactionActor?.kind ?? interaction.actorSnapshot?.kind;
+    if (
+      interaction.type !== "reply" ||
+      !canManageNoodleReply({
+        actorKind,
+        actorAccountId: interaction.actorAccountId,
+        personaAccountId: persona.id,
+      })
+    ) {
+      return reply.code(403).send({ error: "You can only delete comments from this persona or a character." });
     }
     const deleted = await noodle.deleteInteractionById(interactionId);
     if (deleted.length === 0) return reply.code(404).send({ error: "Noodle comment not found" });

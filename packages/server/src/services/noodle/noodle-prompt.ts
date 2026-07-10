@@ -14,6 +14,10 @@ export const NOODLE_PAST_MEMORY_MAX_ITEMS = 3;
 export const NOODLE_PAST_MEMORY_INCLUSION_CHANCE = 0.5;
 export const NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION =
   "- The user persona is controlled exclusively by the user. Never generate posts, replies, likes, reposts, poll votes, or follows as a persona. Personas may only be mentioned or targeted by other accounts.";
+export const NOODLE_CREATIVE_FORMAT_INSTRUCTIONS = [
+  "- Characters and random users may create polls in their own posts and vote in polls. Occasionally use a poll when an audience question or set of choices fits naturally with the account and current activity; polls are optional, not a quota.",
+  "- Standard Unicode emojis are allowed in post and reply content. Use them naturally when they fit the account's voice or reaction; emojis are optional, and not every post or reply needs one.",
+] as const;
 
 type NoodleTimelineFeatureSettings = Pick<
   NoodleSettings,
@@ -153,7 +157,10 @@ export function sampleNoodlePastMemories<T>(
 export function noodleTimelineFeatureInstructions(settings: NoodleTimelineFeatureSettings): string[] {
   return [
     ...(settings.allowRandomUsers
-      ? ["- Use only the active accounts listed by entityId. Do not invent accounts."]
+      ? [
+          "- Use only the active accounts listed by entityId. Do not invent accounts.",
+          "- A small minority of posts from random_user accounts may be obvious parody advertisements or absurd fake crypto scams. Usually generate none and never more than one per refresh. Keep every company, product, coin, ticker, price, and financial claim invented, visibly ridiculous, and non-actionable. Never imitate a real company or include real or usable links, wallet addresses, financial advice, or scam instructions.",
+        ]
       : []),
     ...(settings.enableImagePrompts
       ? [
