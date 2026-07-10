@@ -10176,9 +10176,12 @@ export async function gameRoutes(app: FastifyInstance) {
         imgService: imgConn.imageService || (imgConn as any).imageGenerationSource || imgConn.model || "",
       };
       const storyboardReferenceImageLimit = resolveSceneIllustrationReferenceImageLimit(storyboardImageRequestContext);
-      const structuredCharacterPrompts = supportsSceneIllustrationStructuredCharacterPrompts(
+      const useNovelAiCharacterPrompts = meta.gameStoryboardUseNovelAiCharacterPrompts !== false;
+      const providerSupportsStructuredCharacterPrompts = supportsSceneIllustrationStructuredCharacterPrompts(
         storyboardImageRequestContext,
       );
+      const structuredCharacterPrompts =
+        useNovelAiCharacterPrompts && providerSupportsStructuredCharacterPrompts;
       const storyboardMaxVisibleCharacters = structuredCharacterPrompts
         ? Math.min(MAX_STORYBOARD_CHARACTER_PROMPTS, storyboardReferenceImageLimit)
         : storyboardReferenceImageLimit;
@@ -10234,6 +10237,12 @@ export async function gameRoutes(app: FastifyInstance) {
         structuredCharacterPrompts,
       });
       if (debugLogsEnabled) {
+        debugLog(
+          "[debug/game/storyboard-illustrator] nativeCharacterPrompts=%s settingEnabled=%s providerSupported=%s",
+          structuredCharacterPrompts,
+          useNovelAiCharacterPrompts,
+          providerSupportsStructuredCharacterPrompts,
+        );
         debugLog(
           "[debug/game/storyboard-illustrator] messages:\n%s",
           JSON.stringify(illustratorMessages.messages, null, 2),

@@ -216,6 +216,7 @@ For Game Mode storyboards:
 
 - Manual generation starts from **Gallery -> Create storyboard** and uses the latest completed GM narration.
 - Automatic storyboard illustrations default on when Visual Generation is enabled. Check **Chat Settings -> Agents -> Storyboards -> Automatic Storyboard Illustrations** if a chat does not create keyframe images. Enable **Automatic Storyboard Animations** too if you also want clips.
+- Official NovelAI V4/V4.5 storyboards default to native per-character captions. If a custom prompt works better with every character tag combined, turn off **Chat Settings -> Agents -> Storyboards -> Use NovelAI Character Prompts**.
 - Keyframe images need the Game Mode image-generation connection. Keyframe clips also need **Automatic Storyboard Animations** plus a Video Generation connection, selected in the Game setup wizard, in **Chat Settings -> Agents -> Scene Videos**, or marked as the default video connection in Settings.
 - If the floating viewer was closed, reopen it from the storyboard card in the Gallery.
 

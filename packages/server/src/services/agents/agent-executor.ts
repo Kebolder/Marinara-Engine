@@ -2225,17 +2225,17 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
   if (agentTypes.includes("illustrator") && gameImageStylePrompt) {
     parts.push(`<game_image_instructions>`);
     parts.push(
-      `This chat is in Game Mode. Gallery -> Illustrate should produce one polished visual novel/game scene CG for the current beat, not a selfie, comic page, manga panel, or background-only plate.`,
+      `This chat is in Game Mode. Follow the selected Illustrator prompt mode exactly: Background stays an environment-only plate, Illustration produces a scene CG, and Selfie, Comic Page, or manga modes keep their requested framing and text behavior.`,
     );
     parts.push(`Required visual style prompt: ${escapeXml(gameImageStylePrompt)}`);
     parts.push(
       `Carry this visual style into both the JSON "style" field and the generated "prompt". Do not replace it with a generic art style.`,
     );
     parts.push(
-      `Prefer a landscape/16:9 full-frame scene composition unless the latest assistant message clearly calls for another framing.`,
+      `When the selected prompt mode does not specify another aspect ratio, prefer a landscape/16:9 full-frame scene composition.`,
     );
     parts.push(
-      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the user's game image instructions explicitly request text.`,
+      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the selected prompt mode or the user's game image instructions explicitly request them.`,
     );
     parts.push(`</game_image_instructions>`);
   }

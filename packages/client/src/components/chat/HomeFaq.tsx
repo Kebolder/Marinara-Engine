@@ -378,7 +378,7 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
     answer:
       "Choose an Illustrator prompt mode from that chat's agent menu, or edit the agent prompt from the Agents tab.",
     bullets: [
-      "Illustration, Comic Page, Colored Manga, B&W Manga, Background, and Selfie modes all tune the prompt differently.",
+      "Background is the default mode. Illustration, Comic Page, Colored Manga, B&W Manga, and Selfie remain selectable per chat.",
       "Use the default style from Style Profiles in Advanced settings when you want a shared image style.",
     ],
   },

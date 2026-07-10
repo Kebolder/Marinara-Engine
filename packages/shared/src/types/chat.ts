@@ -517,6 +517,8 @@ export interface ChatMetadata {
   gameStoryboardPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** Send storyboard imagePrompt tags directly to the image provider instead of wrapping them with the global scene-illustration template. */
   gameStoryboardUseDirectScenePrompt?: boolean;
+  /** Use native NovelAI V4/V4.5 per-character captions for multi-character storyboard illustrations. Defaults to true. */
+  gameStoryboardUseNovelAiCharacterPrompts?: boolean;
   /** Last generated scene-video record ID for this game. */
   gameLastSceneVideoId?: string | null;
   /** Connection used for roleplay/gallery scene-video generation. */

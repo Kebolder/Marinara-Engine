@@ -190,6 +190,7 @@ import {
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
+  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE_ID,
   getChatModeCapabilities,
@@ -212,6 +213,7 @@ import {
   normalizeAgentPromptTemplateOptions,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
+  resolveDefaultAgentPromptTemplateId,
   resolveAgentPromptTemplate,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
@@ -1367,6 +1369,13 @@ export function ChatSettingsDrawer({
     },
     [agentConfigsByType],
   );
+  const getDefaultPromptTemplateIdForAgent = useCallback(
+    (agentId: string) => {
+      const cfg = agentConfigsByType.get(agentId);
+      return resolveDefaultAgentPromptTemplateId(mergeBuiltInAgentSettings(agentId, cfg?.settings));
+    },
+    [agentConfigsByType],
+  );
   // Build the available agent list: built-in + custom agents from DB
   // Mode capabilities decide which built-ins are exposed for each chat mode.
   // Custom agents are user-authored and can be attached to any chat mode.
@@ -1598,6 +1607,7 @@ export function ChatSettingsDrawer({
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled !== false;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
   const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
+  const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
   const gameStoryboardKeyframeCount = normalizeGameStoryboardKeyframeCount(metadata.gameStoryboardKeyframeCount);
   const gameStoryboardAnimationDurationConfigured = hasGameStoryboardAnimationDuration(
     metadata.gameStoryboardAnimationDurationSeconds,
@@ -2603,14 +2613,14 @@ export function ChatSettingsDrawer({
   const updateAgentPromptTemplateSelection = useCallback(
     (agentId: string, promptTemplateId: string) => {
       const next = { ...readLatestAgentPromptTemplateSelections() };
-      if (!promptTemplateId || promptTemplateId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
+      if (!promptTemplateId || promptTemplateId === getDefaultPromptTemplateIdForAgent(agentId)) {
         delete next[agentId];
       } else {
         next[agentId] = promptTemplateId;
       }
       updateMeta.mutate({ id: chat.id, agentPromptTemplateIds: next });
     },
-    [chat.id, readLatestAgentPromptTemplateSelections, updateMeta],
+    [chat.id, getDefaultPromptTemplateIdForAgent, readLatestAgentPromptTemplateSelections, updateMeta],
   );
 
   const handleLorebookKeeperBackfill = useCallback(async () => {
@@ -3485,7 +3495,9 @@ export function ChatSettingsDrawer({
                 </div>
                 <AgentPromptTemplateSelect
                   options={promptOptions}
-                  selectedId={agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                  selectedId={
+                    agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)
+                  }
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -7107,7 +7119,10 @@ export function ChatSettingsDrawer({
                       >
                         <AgentPromptTemplateSelect
                           options={getPromptOptionsForAgent("illustrator")}
-                          selectedId={agentPromptTemplateSelections["illustrator"] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                          selectedId={
+                            agentPromptTemplateSelections["illustrator"] ??
+                            getDefaultPromptTemplateIdForAgent("illustrator")
+                          }
                           onChange={(promptTemplateId) =>
                             updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
                           }
@@ -7664,6 +7679,17 @@ export function ChatSettingsDrawer({
                         })
                       }
                     />
+                    <AgentSettingsToggle
+                      label="Use NovelAI Character Prompts"
+                      description="For official NovelAI V4/V4.5 storyboards, send visible characters through native Add Character captions and positions. Turn off to keep every character in the shared legacy prompt."
+                      enabled={gameStoryboardUseNovelAiCharacterPrompts}
+                      onToggle={() =>
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardUseNovelAiCharacterPrompts: !gameStoryboardUseNovelAiCharacterPrompts,
+                        })
+                      }
+                    />
                     <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -7899,7 +7925,8 @@ export function ChatSettingsDrawer({
                                       <AgentPromptTemplateSelect
                                         options={getPromptOptionsForAgent(agent.id)}
                                         selectedId={
-                                          agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID
+                                          agentPromptTemplateSelections[agent.id] ??
+                                          getDefaultPromptTemplateIdForAgent(agent.id)
                                         }
                                         onChange={(promptTemplateId) =>
                                           updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
@@ -9466,6 +9493,14 @@ function GameStoryboardPromptLibrary({
             >
               <FilePlus2 size="0.6875rem" />
               Add Comic Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add NovelAI Copy
             </button>
             <button
               type="button"

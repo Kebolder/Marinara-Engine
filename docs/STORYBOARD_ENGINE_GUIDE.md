@@ -45,6 +45,7 @@ Automatic generation is controlled per chat:
 
 - **Automatic Storyboard Illustrations** creates still keyframe images after each completed GM turn. This is the lower-cost path.
 - **Automatic Storyboard Animations** adds MP4 clips for each keyframe. It requires storyboard illustrations plus a Video Generation connection. Turning animations on also enables illustrations; turning illustrations off disables animations.
+- **Use NovelAI Character Prompts** defaults on and uses official NovelAI V4/V4.5 native Add Character captions, negatives, and positions for multi-character keyframes. Turn it off to restore the legacy combined storyboard prompt.
 - **Illustration Prompt** controls manual storyboards and automatic storyboards that only create still keyframes. The default **Still Keyframes** preset avoids comic panels, speech bubbles, captions, and SFX text so the floating viewer does not reveal later beats before you read them.
 - **Animation Prompt** controls storyboards when **Automatic Storyboard Animations** is enabled. The default **Comic Page** preset allows panel flow, dialogue bubbles, captions, and SFX because the generated images become source frames for clips.
 - **Edit Storyboard Presets** lets you copy a built-in preset into a chat-local editable template. Built-ins are read-only; custom copies are stored on that chat and can be selected for either prompt slot.
@@ -56,7 +57,7 @@ Find these switches in either place:
 
 Use automatic illustrations when you want every turn to get a visual panel sequence. Add automatic animations only when you are comfortable with multiple video-generation calls per completed GM turn (currently this is expensive).
 
-Built-in storyboard prompt presets are **Still Keyframes**, **Comic Page**, **Colored Manga**, and **B&W Manga**. They are separate from Roleplay Illustrator prompt presets and from the global game prompt entries in Settings -> Generations -> Prompt Overrides.
+Built-in storyboard prompt presets are **Still Keyframes**, **NovelAI Keyframes**, **Comic Page**, **Colored Manga**, and **B&W Manga**. **NovelAI Keyframes** writes compact ASCII Danbooru tags and avoids prose wrappers inside `imagePrompt`; pair it with **Use Storyboard Prompt Directly** for the cleanest NovelAI request. These presets are separate from Roleplay Illustrator prompt presets and from the global game prompt entries in Settings -> Generations -> Prompt Overrides.
 
 Storyboard animations combine two prompt layers. The Storyboards card chooses how Marinara plans and renders the keyframe image. The Scene Videos card's **Game Video Prompt** chooses how Marinara animates that saved image into motion.
 

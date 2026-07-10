@@ -4,6 +4,7 @@ export const GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID = "still-keyframes"
 export const GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID = "comic-page-keyframes";
 export const GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID = "colored-manga-keyframes";
 export const GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID = "bw-manga-keyframes";
+export const GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID = "novelai-keyframes";
 export const GAME_STORYBOARD_KEYFRAME_COUNT_MIN = 1;
 export const GAME_STORYBOARD_KEYFRAME_COUNT_MAX = 6;
 export const GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT = 3;
@@ -30,6 +31,24 @@ export const GAME_STORYBOARD_STILL_PROMPT_TEMPLATE = [
   "For each keyframe, set sectionStartIndex and sectionEndIndex to the first and last covered section indices. Set anchorQuote to a short exact phrase from those sections, and anchorKind to the dominant section kind.",
   "Image prompts must be compact and concrete: visible characters, action, expression, pose, camera angle, composition, setting, lighting, mood, and key props.",
   "Do not add captions, dialogue lettering, UI, subtitles, logos, watermarks, speech bubbles, manga SFX text, animation directions, or video instructions.",
+  "Return strict JSON only with this shape:",
+  '{ "title": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "imagePrompt": string, "characters": string[] } ] }',
+].join("\n");
+
+export const GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE = [
+  "You are Marinara's NovelAI Game Mode Storyboard Illustrator.",
+  "Turn exactly one completed GM narration into a concise image-only anime storyboard for NovelAI V4/V4.5.",
+  "Create exactly ${keyframeCount} ordered keyframes unless the narration is too short to support that many; never create more than 6.",
+  "Every keyframe is a still ${aspectRatio} illustration prompt. Do not write animation, video, camera-motion, transition, or continuity-note fields.",
+  "Use only the GM narration as the story source. Do not include the user's CYOA/action, because that action causes the next turn.",
+  "Use the supplied turn_sections indices to anchor every keyframe to the story text. Prefer contiguous section ranges that cover the whole turn in order.",
+  "For each keyframe, set sectionStartIndex and sectionEndIndex to the first and last covered section indices. Set anchorQuote to a short exact phrase from those sections, and anchorKind to the dominant section kind.",
+  "Write imagePrompt as one compact ASCII-only comma-separated NovelAI/Danbooru tag list, never prose or labelled sections.",
+  "Begin with concrete subject counts, then visible character identity or appearance, clothing, action and interaction, expression, pose, camera framing, composition, setting, lighting, mood, and key props.",
+  "Use canonical character tags when known and concrete visual traits when a canonical tag is unavailable. Keep every named visible character synchronized with the characters array.",
+  "Preserve the narration's intended rating and visible action without censoring, intensifying, or inventing events. Prefer precise canonical tags over vague euphemisms.",
+  "Do not put the keyframe title, keyframe number, narrationBeat, commentary, Scene moment, Narrative purpose, Characters label, or any sentence inside imagePrompt.",
+  "Do not add captions, dialogue lettering, UI, subtitles, logos, watermarks, speech bubbles, manga SFX text, or borders.",
   "Return strict JSON only with this shape:",
   '{ "title": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "imagePrompt": string, "characters": string[] } ] }',
 ].join("\n");
@@ -95,6 +114,13 @@ export const GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES: AgentPromptTemplateOptio
     description:
       "Game Mode storyboard preset for normal viewing. Creates single-scene keyframes and avoids comic text and panels.",
     promptTemplate: GAME_STORYBOARD_STILL_PROMPT_TEMPLATE,
+  },
+  {
+    id: GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
+    name: "NovelAI Keyframes",
+    description:
+      "Game Mode storyboard preset with compact ASCII Danbooru tags tuned for NovelAI V4/V4.5 and native Add Character prompting.",
+    promptTemplate: GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
   },
   {
     id: GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,

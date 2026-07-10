@@ -7,15 +7,22 @@ import {
   compileImagePrompt,
   createRegexScriptSchema,
   createDefaultImageStyleProfileSettings,
+  getDefaultBuiltInAgentSettings,
   isPatternSafe,
   normalizeChatSummaryEntries,
   resolveRegexPatternLiteralMacros,
   resolveMacros,
+  resolveAgentPromptTemplate,
+  resolveDefaultAgentPromptTemplateId,
   testPrimaryKeys,
   testSecondaryKeys,
   type AgentContext,
   type ChatMLMessage,
+  DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
   DEFAULT_AGENT_PROMPTS,
+  GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
 } from "../../packages/shared/src/index.js";
 import {
   compactGameStateForAgentContext,
@@ -764,6 +771,65 @@ const cases: RegressionCase[] = [
       assert.doesNotMatch(illustrationPrompt, /"transitionHint"/);
       assert.equal(promptKeys.includes("game.storyboardIllustrationDirector"), true);
       assert.equal(promptKeys.includes("game.storyboardDirector"), false);
+    },
+  },
+  {
+    name: "NovelAI storyboard preset remains a compact tagged built-in",
+    run() {
+      const drawerSource = readFileSync(
+        new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/game.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const preset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
+      );
+
+      assert.equal(preset?.promptTemplate, GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE);
+      assert.match(preset?.promptTemplate ?? "", /ASCII-only comma-separated NovelAI\/Danbooru tag list/);
+      assert.match(preset?.promptTemplate ?? "", /never prose or labelled sections/);
+      assert.match(preset?.promptTemplate ?? "", /Do not put the keyframe title/);
+      assert.match(preset?.promptTemplate ?? "", /\$\{keyframeCount\}/);
+      assert.match(preset?.promptTemplate ?? "", /\$\{aspectRatio\}/);
+      assert.match(drawerSource, /label="Use NovelAI Character Prompts"/);
+      assert.match(drawerSource, /onAddTemplate\(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID\)/);
+      assert.match(drawerSource, /Add NovelAI Copy/);
+      assert.match(gameRouteSource, /meta\.gameStoryboardUseNovelAiCharacterPrompts !== false/);
+      assert.match(
+        gameRouteSource,
+        /useNovelAiCharacterPrompts\s*&&\s*providerSupportsStructuredCharacterPrompts/,
+      );
+    },
+  },
+  {
+    name: "Illustrator defaults to Background without overriding an explicit mode",
+    run() {
+      const executorSource = readFileSync(
+        new URL("../../packages/server/src/services/agents/agent-executor.ts", import.meta.url),
+        "utf8",
+      );
+      const settings = getDefaultBuiltInAgentSettings("illustrator");
+      const backgroundPrompt = resolveAgentPromptTemplate({
+        agentType: "illustrator",
+        promptTemplate: "BASE ILLUSTRATION PROMPT",
+        settings,
+      });
+      const explicitIllustrationPrompt = resolveAgentPromptTemplate({
+        agentType: "illustrator",
+        promptTemplate: "BASE ILLUSTRATION PROMPT",
+        settings,
+        selectedPromptTemplateId: DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
+      });
+
+      assert.equal(resolveDefaultAgentPromptTemplateId(settings), "background");
+      assert.match(backgroundPrompt, /background-only prompt/);
+      assert.equal(explicitIllustrationPrompt, "BASE ILLUSTRATION PROMPT");
+      assert.match(executorSource, /Follow the selected Illustrator prompt mode exactly/);
+      assert.match(executorSource, /Background stays an environment-only plate/);
+      assert.doesNotMatch(executorSource, /not a selfie, comic page, manga panel, or background-only plate/);
     },
   },
   {
