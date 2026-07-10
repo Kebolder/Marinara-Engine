@@ -26,6 +26,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed comma-separated lorebook activation-key input so pasted key lists are trimmed, split, and deduplicated into individual keys (#3422).
+- Fixed grouped Conversation reactions on mobile by keeping each speaker's reaction button visible and removing the ambiguous whole-block reaction target (#3424).
+- Fixed generated and uploaded Game assets being misclassified as native merely because they lived below a bundled-assets folder, restoring move and delete actions for user-owned files (#3425).
+- Fixed local git installs being unable to switch release channels from Settings unless general browser-applied updates were enabled; deliberate loopback channel switches now work while ordinary and remote update safety gates remain intact (#3426).
 - Completed Noodle's automatic timeline refresh scheduling: daily refresh times are now distributed across persisted local-day windows, survive restarts, collapse overdue slots into one catch-up refresh, retry safely after failures, and update an open Noodle timeline automatically.
 - Fixed PocketTTS voice refresh so built-in and custom voices returned by the provider `/v1/voices` endpoint are listed, including custom voices identified by URL/path fields (#3410).
 - Fixed Conversation Call live-mic input so Local Whisper/provider media submissions cannot queue unbounded speech segments and lock the call UI behind repeated "too many requests" failures (#3411).

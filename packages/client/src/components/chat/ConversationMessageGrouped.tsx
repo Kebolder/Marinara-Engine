@@ -77,7 +77,6 @@ export function ConversationMessageGrouped({
     onDelete,
     onShowGenerationReplay,
     onShowThinking,
-    onPickReaction,
     segmentReactions,
     resolveReactorName,
     onPickSegmentReaction,
@@ -86,15 +85,14 @@ export function ConversationMessageGrouped({
     isBubbleStyle,
   } = ctx;
 
-  // Per-segment add-reaction affordance: follows the hover-toolbar visibility
-  // discipline (hidden until the block is hovered / tapped on mobile).
+  // Per-segment add-reaction affordance: always visible on compact/mobile
+  // layouts, while desktop retains the existing hover/focus behavior.
   const segActionsVisible = showActions || forceShowActions;
-  const segAddTabIdx = segActionsVisible ? undefined : -1;
   const segAddButtonClass = cn(
     "shrink-0 self-center -my-0.5 transition-opacity",
     segActionsVisible
       ? "opacity-100"
-      : "pointer-events-none opacity-0 focus:pointer-events-auto focus:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100",
+      : "pointer-events-auto opacity-100 md:pointer-events-none md:opacity-0 md:focus:pointer-events-auto md:focus:opacity-100 md:group-hover:pointer-events-auto md:group-hover:opacity-100",
   );
 
   // Card CSS (character bubble themes) is scoped to [data-card-css] subtrees. The
@@ -115,6 +113,7 @@ export function ConversationMessageGrouped({
   return (
     <div
       ref={msgRef}
+      data-component="ConversationMessage.Grouped"
       className={cn(
         "relative px-4 py-0.5 transition-colors hover:bg-[var(--secondary)]/30",
         isBubbleStyle && "hover:bg-transparent",
@@ -182,7 +181,6 @@ export function ConversationMessageGrouped({
             !hideActions && onPickSegmentReaction && grp.speaker && segHasText ? (
               <ReactionAddButton
                 onPick={(emoji, imageUrl) => onPickSegmentReaction({ segment: i, speaker: grp.speaker }, emoji, imageUrl)}
-                tabIndex={segAddTabIdx}
                 className={segAddButtonClass}
               />
             ) : null;
@@ -442,7 +440,10 @@ export function ConversationMessageGrouped({
           onDelete={onDelete ? () => onDelete(message.id) : undefined}
           onShowGenerationReplay={onShowGenerationReplay}
           onShowThinking={onShowThinking}
-          onPickReaction={onPickReaction}
+          // A grouped block has one precise reaction affordance per speaker.
+          // Omitting the ambiguous whole-block picker prevents mobile taps from
+          // reacting to the final segment instead of the intended speaker.
+          onPickReaction={undefined}
         />
       )}
     </div>

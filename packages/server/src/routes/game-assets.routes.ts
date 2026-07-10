@@ -25,6 +25,7 @@ import { z } from "zod";
 import { pipeline } from "stream/promises";
 import { MUSIC_GENRES, MUSIC_INTENSITIES } from "@marinara-engine/shared";
 import { GAME_ASSETS_DIR, buildAssetManifest, getAssetManifest } from "../services/game/asset-manifest.service.js";
+import { folderContainsBundledGameAssets, isBundledGameAsset } from "../services/game/native-game-assets.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { assertInsideDir } from "../utils/security.js";
 
@@ -392,25 +393,6 @@ async function normalizeGeneratedBackgroundFile(category: string, subcategory: s
   atomicWriteBuffer(filePath, normalized);
 }
 
-function containsNativeMarker(dir: string): boolean {
-  if (existsSync(join(dir, ".native"))) return true;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (containsNativeMarker(join(dir, entry.name))) return true;
-  }
-  return false;
-}
-
-function isInsideNativeFolder(filePath: string): boolean {
-  let current = statSync(filePath).isDirectory() ? filePath : dirname(filePath);
-  while (current !== dirname(current)) {
-    if (existsSync(join(current, ".native"))) return true;
-    if (current === GAME_ASSETS_DIR) return false;
-    current = dirname(current);
-  }
-  return false;
-}
-
 // ════════════════════════════════════════════════
 // Tree helpers
 // ════════════════════════════════════════════════
@@ -460,7 +442,7 @@ function buildTree(dir: string, relPrefix: string, meta: Record<string, FolderMe
         type: "folder",
         children,
         description: meta[rel]?.description,
-        native: existsSync(join(full, ".native")),
+        native: folderContainsBundledGameAssets(full),
       });
     } else {
       const ext = extname(entry).toLowerCase();
@@ -471,6 +453,7 @@ function buildTree(dir: string, relPrefix: string, meta: Record<string, FolderMe
         ext,
         size: stat.size,
         modified: stat.mtime.toISOString(),
+        native: isBundledGameAsset(full),
       });
     }
   }
@@ -703,7 +686,7 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
     if (!existsSync(filePath)) {
       return reply.status(404).send({ error: "Asset not found" });
     }
-    if (isInsideNativeFolder(filePath)) {
+    if (isBundledGameAsset(filePath)) {
       return reply.status(403).send({ error: "Cannot delete native assets" });
     }
 
@@ -837,7 +820,7 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "Not a directory" });
     }
 
-    if (containsNativeMarker(target)) {
+    if (folderContainsBundledGameAssets(target)) {
       return reply.status(403).send({ error: "Cannot delete folders containing native assets" });
     }
 
@@ -932,7 +915,7 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
     if (!oldStat.isFile()) {
       return reply.status(400).send({ error: "Not a file" });
     }
-    if (isInsideNativeFolder(oldFull)) {
+    if (isBundledGameAsset(oldFull)) {
       return reply.status(403).send({ error: "Cannot move native assets" });
     }
 
@@ -1038,7 +1021,7 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
         failed.push({ path: filePath, error: "Not a file" });
         continue;
       }
-      if (isInsideNativeFolder(oldFull)) {
+      if (isBundledGameAsset(oldFull)) {
         failed.push({ path: filePath, error: "Cannot move native assets" });
         continue;
       }
@@ -1136,7 +1119,7 @@ export async function gameAssetsRoutes(app: FastifyInstance) {
         failed.push({ path: filePath, error: "Not a file" });
         continue;
       }
-      if (isInsideNativeFolder(full)) {
+      if (isBundledGameAsset(full)) {
         failed.push({ path: filePath, error: "Cannot delete native assets" });
         continue;
       }

@@ -21,7 +21,7 @@ import {
   type TrackerThoughtBubbleDisplay,
   type VisualTheme,
 } from "../../stores/ui.store";
-import { cn } from "../../lib/utils";
+import { cn, copyToClipboard } from "../../lib/utils";
 import { useExtensions, useCreateExtension, useDeleteExtension, useUpdateExtension } from "../../hooks/use-extensions";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -114,6 +114,7 @@ import {
   Film,
   Settings2,
   Bell,
+  Copy,
 } from "lucide-react";
 import { useClearAllData, useExpungeData, useUpdateChatMetadata, type ExpungeScope } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
@@ -6763,6 +6764,41 @@ function ImportButton({
   );
 }
 
+function ManualUpdateCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    const didCopy = await copyToClipboard(command);
+    setCopied(didCopy);
+    if (!didCopy) toast.error("Could not copy the update command.");
+  }, [command]);
+
+  return (
+    <div
+      data-component="SettingsPanel.ManualUpdateCommand"
+      className="min-w-0 rounded-md bg-[var(--background)]/70 p-2 ring-1 ring-[var(--border)]"
+    >
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+          Manual update
+        </span>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[0.625rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+          aria-label="Copy manual update command"
+        >
+          {copied ? <Check size="0.6875rem" /> : <Copy size="0.6875rem" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <code className="block max-w-full overflow-x-auto whitespace-pre rounded bg-[var(--background)] px-2 py-1.5 font-mono text-[0.625rem] leading-relaxed text-[var(--foreground)]">
+        {command}
+      </code>
+    </div>
+  );
+}
+
 function AdvancedSettings() {
   const showTimestamps = useUIStore((s) => s.showTimestamps);
   const setShowTimestamps = useUIStore((s) => s.setShowTimestamps);
@@ -7037,6 +7073,7 @@ function AdvancedSettings() {
     serverPlatform?: "windows" | "macos" | "linux" | "android-termux" | "unknown";
     clientPlatform?: "ios" | "android" | "desktop" | "unknown";
     applyAvailable?: boolean;
+    channelSwitch?: boolean;
     updatesApplyEnabled?: boolean;
     applyUnavailableReason?: "disabled" | "unsupported-install" | "container-install" | null;
     manualUpdateCommand?: string | null;
@@ -7292,12 +7329,14 @@ function AdvancedSettings() {
                   {applyUpdate.isPending ? (
                     <>
                       <Loader2 size="0.8125rem" className="animate-spin" />
-                      Updating…
+                      {updateCheck.data.channelSwitch ? "Switching…" : "Updating…"}
                     </>
                   ) : (
                     <>
                       <Download size="0.8125rem" />
-                      Apply Update
+                      {updateCheck.data.channelSwitch
+                        ? `Switch to ${updateCheck.data.channelLabel}`
+                        : "Apply Update"}
                     </>
                   )}
                 </button>
@@ -7344,12 +7383,7 @@ function AdvancedSettings() {
                     </span>
                   )}
                   {manualUpdateCommand && (
-                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Manual update:{" "}
-                      <code className="break-all rounded bg-[var(--background)] px-1 py-0.5">
-                        {manualUpdateCommand}
-                      </code>
-                    </span>
+                    <ManualUpdateCommand command={manualUpdateCommand} />
                   )}
                 </div>
               )}

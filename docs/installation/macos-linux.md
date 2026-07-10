@@ -118,7 +118,7 @@ When you launch Marinara Engine via `./start.sh` from a git checkout, the launch
 
 ### In-App Update Check
 
-Go to **Settings → Advanced → Updates** and click **Check for Updates** to see whether a new release exists. The in-app **Apply Update** button is disabled by default; to enable it, set `UPDATES_APPLY_ENABLED=true`, set `ADMIN_SECRET`, and save that same secret in **Settings → Advanced → Admin Access**. Otherwise, relaunch Marinara Engine from `./start.sh` to let the launcher update the app.
+Go to **Settings → Advanced → Updates** and click **Check for Updates** to see whether a new release exists. From a browser on the host, deliberately selecting a different release channel exposes a **Switch to…** action even when ordinary in-app updates are disabled. Same-channel **Apply Update** remains disabled by default; to enable it, set `UPDATES_APPLY_ENABLED=true`, set `ADMIN_SECRET`, and save that same secret in **Settings → Advanced → Admin Access**. Otherwise, relaunch Marinara Engine from `./start.sh` to let the launcher update the app.
 
 If you open Settings from an iPhone or iPad connected to this host, **Apply Update** still updates this macOS/Linux server. Remote apply also requires `UPDATES_ALLOW_REMOTE_APPLY=true`; otherwise, run `./start.sh` on the host.
 
