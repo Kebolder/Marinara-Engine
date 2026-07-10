@@ -7,6 +7,7 @@ import { useThemes } from "../../hooks/use-themes";
 import { useExtensions } from "../../hooks/use-extensions";
 import { sanitizeAppCss } from "../../lib/theme-css";
 import { useUIStore } from "../../stores/ui.store";
+import type { ExtensionStoragePatchInput, ExtensionStorageResponse } from "@marinara-engine/shared";
 
 type ExtensionGlobal = typeof globalThis & {
   __marinaraExtensionApis?: Map<string, unknown>;
@@ -128,6 +129,30 @@ function ExtensionScriptRunner({ ext }: { ext: InjectableExtension }) {
     };
 
     try {
+      const storageApiPath = `/extensions/${ext.id}/storage`;
+      const apiFetch = async (path: string, options?: RequestInit) => {
+        const normalized = path.startsWith("/") ? path : `/${path}`;
+        const url = new URL(`/api${normalized}`, window.location.origin);
+        const apiPath = url.pathname.replace(/^\/api(?=\/|$)/, "");
+        const isOwnStoragePath = apiPath === storageApiPath;
+        const denied =
+          !isOwnStoragePath &&
+          (apiPath === "/extensions" ||
+            apiPath.startsWith("/extensions/") ||
+            apiPath === "/admin" ||
+            apiPath.startsWith("/admin/"));
+        if (denied) {
+          const message = `apiFetch denied: extensions cannot reach ${apiPath}`;
+          console.warn(`[Extension:${ext.name}] ${message}`);
+          return Promise.reject(new Error(message));
+        }
+        const res = await fetch(`${url.pathname}${url.search}`, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        return res.json();
+      };
+
       // Extension API passed to JS extensions
       const extensionAPI = {
         extensionId: ext.id,
@@ -167,26 +192,17 @@ function ExtensionScriptRunner({ ext }: { ext: InjectableExtension }) {
         // privileged routes. The denylist runs on the *canonical* pathname
         // produced by the WHATWG URL parser, so `%2e%2e/admin` and other
         // dot-segment / encoded-traversal payloads can't sneak past.
-        apiFetch: async (path: string, options?: RequestInit) => {
-          const normalized = path.startsWith("/") ? path : `/${path}`;
-          const url = new URL(`/api${normalized}`, window.location.origin);
-          const apiPath = url.pathname.replace(/^\/api(?=\/|$)/, "");
-          const denied =
-            apiPath === "/extensions" ||
-            apiPath.startsWith("/extensions/") ||
-            apiPath === "/admin" ||
-            apiPath.startsWith("/admin/");
-          if (denied) {
-            const message = `apiFetch denied: extensions cannot reach ${apiPath}`;
-            console.warn(`[Extension:${ext.name}] ${message}`);
-            return Promise.reject(new Error(message));
-          }
-          const res = await fetch(`${url.pathname}${url.search}`, {
-            headers: { "Content-Type": "application/json" },
-            ...options,
-          });
-          return res.json();
-        },
+        apiFetch,
+
+        storage: Object.freeze({
+          get: () => apiFetch(storageApiPath) as Promise<ExtensionStorageResponse>,
+          patch: (patch: ExtensionStoragePatchInput) =>
+            apiFetch(storageApiPath, {
+              method: "PATCH",
+              body: JSON.stringify(patch),
+            }) as Promise<ExtensionStorageResponse>,
+          delete: () => apiFetch(storageApiPath, { method: "DELETE" }) as Promise<ExtensionStorageResponse>,
+        }),
 
         // addEventListener with auto-cleanup
         on: (target: EventTarget, event: string, handler: EventListenerOrEventListenerObject) => {
