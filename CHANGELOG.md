@@ -31,6 +31,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Expanded every standard emoji picker from a hand-curated subset to the complete Unicode Emoji 17.0 base catalog, including science emoji such as 🧪 plus the previously missing travel, activity, object, symbol, animal, and flag groups.
 - Fixed Quick Replies' **Post only** action saving recognized slash commands as ordinary messages; known commands now execute normally while unknown slash-prefixed text can still be posted.
 - Moved **Quick replies** from Advanced settings to **General -> Input & Editing**, and clarified that image prompt review is a global generation preference rather than a Game-only option.
 - Fixed manual Noodle timeline refreshes bypassing **Expose image prompts before sending**; generated Noodle images now present their final positive and negative prompts for editing before provider submission.

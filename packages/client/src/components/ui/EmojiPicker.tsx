@@ -4,9 +4,10 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "../../lib/utils";
+import { EMOJI_CATEGORIES, EMOJI_SEARCH_NAMES } from "../../lib/emoji-catalog.generated";
 
 /** Emoji → searchable keywords (lowercase). Only needs entries for emojis in CATEGORIES. */
-const EMOJI_NAMES: Record<string, string> = {
+const EMOJI_ALIASES: Record<string, string> = {
   "😀": "grinning face happy",
   "😃": "grinning big eyes happy",
   "😄": "grinning smiling happy",
@@ -436,9 +437,10 @@ const EMOJI_NAMES: Record<string, string> = {
   "💥": "collision boom bang",
   "💢": "anger symbol",
   "💨": "dash wind fast",
+  "🧪": "test tube lab laboratory science chemistry experiment",
 };
 
-const CATEGORIES = [
+const CURATED_CATEGORIES = [
   {
     label: "Smileys",
     icon: "😀",
@@ -1118,6 +1120,26 @@ const CATEGORIES = [
   },
 ] as const;
 
+const CURATED_CATEGORY_LABELS: Readonly<Record<string, readonly string[]>> = {
+  "Smileys & Emotion": ["Smileys", "Hearts"],
+  "People & Body": ["Gestures", "People"],
+  "Animals & Nature": ["Nature"],
+  "Food & Drink": ["Food"],
+  Objects: ["Objects"],
+  Symbols: ["Symbols"],
+};
+
+const CATEGORIES = EMOJI_CATEGORIES.map((category) => {
+  const curated = CURATED_CATEGORY_LABELS[category.label] ?? [];
+  const familiarEmoji = CURATED_CATEGORIES.filter((item) => curated.includes(item.label)).flatMap((item) => [
+    ...item.emojis,
+  ]);
+  return {
+    ...category,
+    emojis: Array.from(new Set([...familiarEmoji, ...category.emojis])),
+  };
+});
+
 interface EmojiPickerProps {
   open: boolean;
   onClose: () => void;
@@ -1274,8 +1296,8 @@ export function EmojiPicker({
         return CATEGORIES.map((cat) => ({
           ...cat,
           emojis: cat.emojis.filter((emoji) => {
-            const names = EMOJI_NAMES[emoji];
-            return names ? names.includes(q) : false;
+            const names = `${EMOJI_SEARCH_NAMES[emoji] ?? ""} ${EMOJI_ALIASES[emoji] ?? ""}`;
+            return emoji === q || names.includes(q);
           }),
         })).filter((cat) => cat.emojis.length > 0);
       })()
@@ -1290,6 +1312,7 @@ export function EmojiPicker({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search emojis..."
+          aria-label="Search emojis"
           className="w-full rounded-md bg-foreground/5 px-2.5 py-1.5 text-xs outline-none ring-1 ring-foreground/10 transition-shadow placeholder:text-foreground/35 focus:ring-foreground/20"
           autoFocus={!embedded}
         />
@@ -1302,6 +1325,8 @@ export function EmojiPicker({
             key={cat.label}
             type="button"
             onClick={() => setActiveCategory(i)}
+            aria-label={cat.label}
+            aria-pressed={activeCategory === i}
             className={cn(
               "rounded-md p-1.5 text-sm transition-colors",
               activeCategory === i
@@ -1317,6 +1342,8 @@ export function EmojiPicker({
           <button
             type="button"
             onClick={() => setActiveCategory("custom")}
+            aria-label={customTab.label ?? "Custom emojis"}
+            aria-pressed={activeCategory === "custom"}
             className={cn(
               "ml-auto flex items-center rounded-md p-1.5 text-sm transition-colors",
               activeCategory === "custom"
@@ -1348,6 +1375,8 @@ export function EmojiPicker({
                       key={emoji}
                       type="button"
                       onClick={() => handleSelect(emoji)}
+                      aria-label={EMOJI_SEARCH_NAMES[emoji] ?? EMOJI_ALIASES[emoji] ?? emoji}
+                      title={EMOJI_SEARCH_NAMES[emoji] ?? EMOJI_ALIASES[emoji] ?? emoji}
                       className="rounded-md p-1 text-xl transition-transform hover:scale-125 hover:bg-foreground/10 active:scale-100"
                     >
                       {emoji}
