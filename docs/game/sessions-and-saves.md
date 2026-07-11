@@ -15,9 +15,23 @@ The **Session** panel is where you end sessions, start new ones, and read your h
 1. Start or open a Game Mode chat so the game surface is showing.
 2. In the top toolbar, click the **Session** button (the feather icon).
 3. The panel opens. The header shows **Session** with the current number and status.
-4. The panel has two tabs: **Session History** and **Journal**. Stay on **Session History** for everything in this guide.
+4. The panel has two tabs: **Session History** and **Journal**. Stay on **Session History** for session controls and setup sharing.
 
 The panel header also has a **Game tutorial** button that reopens the guided tour.
+
+## Sharing the setup that created a game
+
+Game Mode keeps an immutable snapshot of the setup used to create each new campaign. This lets you play first, decide that the combination works well, and share it afterward without manually recording every field before starting.
+
+1. Open the Game Mode campaign you want to share.
+2. Click the **Session** button (the feather icon) in the top toolbar.
+3. Stay on **Session History**, then expand **Initial Game Setup**.
+4. Review the saved adventure, cast, model, prompt, effective generation parameter, visual, storyboard, and world-tool settings.
+5. Click **Copy setup** to put the text on your clipboard, or **Download .txt** to save a shareable text file.
+
+The copied text includes long player preferences and custom GM instructions. Read it before posting it publicly if those fields contain private material. Connection credentials, server URLs, API keys, and local database IDs are never included. Character cards, personas, lorebooks, models, and provider accounts are named for reference but are not bundled, so another player must have or select their own local equivalents.
+
+Campaigns created before setup snapshots were added cannot recover preferences that were never stored, so **Initial Game Setup** appears only when a trustworthy creation snapshot is available.
 
 ## Ending a session
 

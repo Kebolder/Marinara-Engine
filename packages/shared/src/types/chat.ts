@@ -482,6 +482,8 @@ export interface ChatMetadata {
   gameCombatState?: import("./game.js").GameCombatStateSnapshot | null;
   /** User's initial game setup preferences */
   gameSetupConfig?: import("./game.js").GameSetupConfig | null;
+  /** Immutable creation-time setup retained for viewing and sharing after the campaign changes. */
+  gameInitialSetup?: import("./game.js").GameInitialSetupSnapshot | null;
   /** Generated game blueprint, including campaign plan and initial HUD widgets. */
   gameBlueprint?: Record<string, unknown> | null;
   /** Runtime HUD widget state shown in Game Mode. */

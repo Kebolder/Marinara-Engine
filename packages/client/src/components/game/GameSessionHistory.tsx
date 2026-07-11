@@ -18,10 +18,12 @@ import {
   X,
   RefreshCw,
   Play,
+  SlidersHorizontal,
 } from "lucide-react";
-import type { GameMap, GameNpc, PartyArc, SessionSummary } from "@marinara-engine/shared";
+import type { GameInitialSetupSnapshot, GameMap, GameNpc, PartyArc, SessionSummary } from "@marinara-engine/shared";
 import { toast } from "sonner";
 import { AnimatedText } from "./AnimatedText";
+import { GameSetupSummary } from "./GameSetupSummary";
 
 function normalizeText(value: unknown, fallback = ""): string {
   if (typeof value === "string") {
@@ -199,6 +201,8 @@ interface GameSessionHistoryProps {
   onRegenerateLorebook?: (sessionNumber: number) => Promise<void> | void;
   onUpdatePlotArcs?: (sessionNumber: number) => Promise<void> | void;
   onReplaySession?: (sessionNumber: number) => void;
+  initialSetupGameName?: string;
+  initialSetupSnapshot?: GameInitialSetupSnapshot | null;
   currentSessionActionLabel?: string;
   currentSessionActionIcon?: ReactNode;
   currentSessionActionDisabled?: boolean;
@@ -225,6 +229,8 @@ export function GameSessionHistory({
   onRegenerateLorebook,
   onUpdatePlotArcs,
   onReplaySession,
+  initialSetupGameName = "Game",
+  initialSetupSnapshot = null,
   currentSessionActionLabel,
   currentSessionActionIcon,
   currentSessionActionDisabled = false,
@@ -236,6 +242,7 @@ export function GameSessionHistory({
   const [editingSession, setEditingSession] = useState<number | null>(null);
   const [draft, setDraft] = useState<SessionSummaryDraft | null>(null);
   const [spoilersVisible, setSpoilersVisible] = useState(false);
+  const [initialSetupVisible, setInitialSetupVisible] = useState(false);
   const [editingSecrets, setEditingSecrets] = useState(false);
   const [secretDraft, setSecretDraft] = useState<CurrentSessionSecretDraft | null>(() =>
     currentSecrets ? buildCurrentSecretsDraft(currentSecrets) : null,
@@ -584,6 +591,35 @@ export function GameSessionHistory({
               </div>
             )}
           </div>
+
+          {initialSetupSnapshot && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--card)]">
+              <button
+                type="button"
+                onClick={() => setInitialSetupVisible((visible) => !visible)}
+                aria-expanded={initialSetupVisible}
+                className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--accent)]"
+              >
+                {initialSetupVisible ? (
+                  <ChevronDown size={14} className="shrink-0 text-[var(--muted-foreground)]" />
+                ) : (
+                  <ChevronRight size={14} className="shrink-0 text-[var(--muted-foreground)]" />
+                )}
+                <SlidersHorizontal size={14} className="shrink-0 text-[var(--primary)]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-[var(--foreground)]">Initial Game Setup</span>
+                  <span className="block text-xs text-[var(--muted-foreground)]">
+                    Review, copy, or share the settings that created this campaign.
+                  </span>
+                </span>
+              </button>
+              {initialSetupVisible && (
+                <div className="border-t border-[var(--border)]">
+                  <GameSetupSummary gameName={initialSetupGameName} snapshot={initialSetupSnapshot} embedded />
+                </div>
+              )}
+            </div>
+          )}
 
           {sorted.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-12 text-[var(--muted-foreground)]">

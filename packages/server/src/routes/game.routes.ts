@@ -134,6 +134,7 @@ import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import { isDebugAgentsEnabled } from "../config/runtime-config.js";
 import type {
   GameActiveState,
+  GameInitialSetupConnectionSnapshot,
   GameSetupConfig,
   GameMap,
   GameNpc,
@@ -1583,6 +1584,15 @@ const gameSetupConfigSchema = z.object({
 const createGameSchema = z.object({
   name: z.string().min(1).max(200),
   setupConfig: gameSetupConfigSchema,
+  preferences: z.string().max(5000).default(""),
+  shareLabels: z
+    .object({
+      characterNames: z.record(z.string(), z.string().max(500)).optional(),
+      lorebookNames: z.record(z.string(), z.string().max(500)).optional(),
+      promptPresetNames: z.record(z.string(), z.string().max(500)).optional(),
+      personaName: z.string().max(500).nullable().optional(),
+    })
+    .optional(),
   connectionId: z.string().optional(),
   characterConnectionId: z.string().optional(),
   promptPresetId: z.string().optional(),
@@ -2609,6 +2619,35 @@ async function resolveConnection(
 }
 
 type StoredGenerationParameters = Partial<GenerationParameters>;
+
+type InitialSetupConnectionRow = {
+  name?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  imageGenerationSource?: unknown;
+  imageService?: unknown;
+  videoGenerationSource?: unknown;
+  videoService?: unknown;
+};
+
+function snapshotInitialSetupConnection(
+  connection: InitialSetupConnectionRow | null | undefined,
+): GameInitialSetupConnectionSnapshot | null {
+  if (!connection || typeof connection.name !== "string" || !connection.name.trim()) return null;
+  const firstString = (...values: unknown[]) =>
+    values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? null;
+  return {
+    name: connection.name.trim(),
+    provider: firstString(connection.provider),
+    model: firstString(connection.model),
+    service: firstString(
+      connection.imageService,
+      connection.videoService,
+      connection.imageGenerationSource,
+      connection.videoGenerationSource,
+    ),
+  };
+}
 
 function parseStoredGenerationParameters(raw: unknown): StoredGenerationParameters | null {
   let parsed = raw;
@@ -5815,7 +5854,8 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/create", async (req) => {
     logger.info("[game/create] Received request");
     const parsedCreateGameInput = createGameSchema.parse(req.body);
-    const { name, connectionId, characterConnectionId, promptPresetId, chatId } = parsedCreateGameInput;
+    const { name, connectionId, characterConnectionId, promptPresetId, chatId, preferences, shareLabels } =
+      parsedCreateGameInput;
     const selectedPromptPresetId = promptPresetId || parsedCreateGameInput.setupConfig.promptPresetId || null;
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
@@ -5852,10 +5892,10 @@ export async function gameRoutes(app: FastifyInstance) {
       gameSpecialInstructions,
     };
     const chats = createChatsStorage(app.db);
+    const connectionStorage = createConnectionsStorage(app.db);
     let defaultGenerationParameters: StoredGenerationParameters | null = null;
     if (connectionId && connectionId !== "random") {
-      const connStorage = createConnectionsStorage(app.db);
-      const conn = await connStorage.getById(connectionId);
+      const conn = await connectionStorage.getById(connectionId);
       defaultGenerationParameters = parseStoredGenerationParameters(conn?.defaultParameters);
     }
 
@@ -5898,6 +5938,18 @@ export async function gameRoutes(app: FastifyInstance) {
       sessionMeta.chatParameters,
       setupConfig.generationParameters,
     );
+    const snapshotConnection = async (id: string | null | undefined) => {
+      if (!id) return null;
+      if (id === "random") return { name: "Random connection pool", provider: "random" };
+      if (id === "local") return { name: "Local scene helper", provider: "local" };
+      return snapshotInitialSetupConnection(await connectionStorage.getById(id));
+    };
+    const [gmConnection, sceneConnection, imageConnection, videoConnection] = await Promise.all([
+      snapshotConnection(connectionId || sessionChat.connectionId),
+      snapshotConnection(setupConfig.sceneConnectionId),
+      snapshotConnection(setupConfig.imageConnectionId),
+      snapshotConnection(setupConfig.videoConnectionId),
+    ]);
     await chats.updateMetadata(sessionChat.id, {
       ...sessionMeta,
       gameId,
@@ -5923,6 +5975,19 @@ export async function gameRoutes(app: FastifyInstance) {
       gameRecentMusic: [],
       gameRecentSpotifyTracks: [],
       gameSetupConfig: setupConfig,
+      gameInitialSetup: {
+        config: setupConfig,
+        effectiveGenerationParameters: gameChatParameters,
+        preferences: preferences.trim() || null,
+        connections: {
+          gm: gmConnection,
+          scene: sceneConnection,
+          image: imageConnection,
+          video: videoConnection,
+        },
+        labels: shareLabels,
+        createdAt: new Date().toISOString(),
+      },
       gameSystemPrompt,
       gameSpecialInstructions,
       gameCharacterConnectionId: null,

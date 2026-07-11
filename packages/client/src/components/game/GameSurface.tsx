@@ -115,6 +115,7 @@ import type {
   DiceRollResult,
   EncounterInitResponse,
   EncounterSettings,
+  GameInitialSetupSnapshot,
   HudWidget,
   SceneSpotifyTrackCandidate,
   SceneSpotifyTrackSelection,
@@ -140,7 +141,6 @@ import { GameMapPanel, MobileMapButton } from "./GameMap";
 import { GamePartyBar } from "./GamePartyBar";
 import { GameCharacterSheet } from "@/components/game/GameCharacterSheet";
 import type { GameCharacterSheetGameCard } from "@/components/game/GameCharacterSheet";
-import { GameSetupWizard } from "./GameSetupWizard";
 import { GameDiceResult } from "./GameDiceResult";
 import { GameSkillCheckResult } from "./GameSkillCheckResult";
 import { GameElementReaction } from "./GameElementReaction";
@@ -1346,6 +1346,11 @@ const SpriteOverlay = lazy(async () => {
 const GameSessionHistory = lazy(async () => {
   const module = await import("./GameSessionHistory");
   return { default: module.GameSessionHistory };
+});
+
+const GameSetupWizard = lazy(async () => {
+  const module = await import("./GameSetupWizard");
+  return { default: module.GameSetupWizard };
 });
 
 const GameJournal = lazy(async () => {
@@ -9369,60 +9374,70 @@ function GameSurfaceComponent({
   if (shouldShowSetupWizard) {
     return (
       <>
-        <GameSetupWizard
-          onComplete={(config, preferences, conns, wizardGameName) => {
-            if (needsCreation) {
-              // Create game structure first, then run setup
-              createGame.mutate(
-                {
-                  name: wizardGameName || chat?.name || "New Game",
-                  setupConfig: config,
-                  chatId: activeChatId,
-                  connectionId: conns.gmConnectionId,
-                  promptPresetId: config.promptPresetId ?? undefined,
-                },
-                {
-                  onSuccess: (res) => {
-                    gameSetup.mutate(
-                      {
-                        chatId: res.sessionChat.id,
-                        connectionId: conns.gmConnectionId,
-                        preferences,
-                        promptPresetId: config.promptPresetId ?? null,
-                      },
-                      { onError: handleJsonRepairError },
-                    );
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-[var(--background)]/90">
+              <Loader2 size={20} className="animate-spin text-[var(--primary)]" />
+            </div>
+          }
+        >
+          <GameSetupWizard
+            onComplete={(config, preferences, conns, wizardGameName) => {
+              if (needsCreation) {
+                // Create game structure first, then run setup
+                createGame.mutate(
+                  {
+                    name: wizardGameName || chat?.name || "New Game",
+                    setupConfig: config,
+                    preferences,
+                    shareLabels: conns.shareLabels,
+                    chatId: activeChatId,
+                    connectionId: conns.gmConnectionId,
+                    promptPresetId: config.promptPresetId ?? undefined,
                   },
-                },
-              );
-            } else {
-              gameSetup.mutate(
-                {
-                  chatId: activeChatId,
-                  connectionId: conns.gmConnectionId,
-                  preferences,
-                  promptPresetId: config.promptPresetId ?? null,
-                },
-                { onError: handleJsonRepairError },
-              );
-            }
-          }}
-          onCancel={() => {
-            useGameModeStore.getState().setSetupActive(false);
-            if (canAutoDeleteEmptySetupChat) {
-              deleteChat.mutate(activeChatId, {
-                onSuccess: () => useChatStore.getState().setActiveChatId(null),
-              });
-              return;
-            }
-            setDismissedSetupWizardChatId(activeChatId);
-            if (needsCreation || sessionStatus === "setup") {
-              toast.info("Game setup dismissed. The campaign was kept.");
-            }
-          }}
-          isLoading={createGame.isPending || gameSetup.isPending}
-          characters={characters}
-        />
+                  {
+                    onSuccess: (res) => {
+                      gameSetup.mutate(
+                        {
+                          chatId: res.sessionChat.id,
+                          connectionId: conns.gmConnectionId,
+                          preferences,
+                          promptPresetId: config.promptPresetId ?? null,
+                        },
+                        { onError: handleJsonRepairError },
+                      );
+                    },
+                  },
+                );
+              } else {
+                gameSetup.mutate(
+                  {
+                    chatId: activeChatId,
+                    connectionId: conns.gmConnectionId,
+                    preferences,
+                    promptPresetId: config.promptPresetId ?? null,
+                  },
+                  { onError: handleJsonRepairError },
+                );
+              }
+            }}
+            onCancel={() => {
+              useGameModeStore.getState().setSetupActive(false);
+              if (canAutoDeleteEmptySetupChat) {
+                deleteChat.mutate(activeChatId, {
+                  onSuccess: () => useChatStore.getState().setActiveChatId(null),
+                });
+                return;
+              }
+              setDismissedSetupWizardChatId(activeChatId);
+              if (needsCreation || sessionStatus === "setup") {
+                toast.info("Game setup dismissed. The campaign was kept.");
+              }
+            }}
+            isLoading={createGame.isPending || gameSetup.isPending}
+            characters={characters}
+          />
+        </Suspense>
         <GameJsonRepairModal
           request={jsonRepairRequest}
           onClose={() => setJsonRepairRequest(null)}
@@ -9748,6 +9763,10 @@ function GameSurfaceComponent({
                 currentSessionActionDisabled={sessionActionDisabled}
                 onCurrentSessionAction={handleSessionAction}
                 onReplaySession={handleReplaySession}
+                initialSetupGameName={chat.name}
+                initialSetupSnapshot={
+                  (chatMeta.gameInitialSetup as GameInitialSetupSnapshot | null | undefined) ?? null
+                }
                 onClose={() => setSessionPanelOpen(false)}
                 embedded
               />

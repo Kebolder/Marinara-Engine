@@ -229,6 +229,40 @@ export interface GameSetupConfig {
   gameSpecialInstructions?: string | null;
 }
 
+/** Safe, immutable connection details retained for sharing a game's original setup. */
+export interface GameInitialSetupConnectionSnapshot {
+  name: string;
+  provider?: string | null;
+  model?: string | null;
+  service?: string | null;
+}
+
+/** Creation-time display names for local resources referenced by the setup. */
+export interface GameInitialSetupLabels {
+  characterNames?: Record<string, string>;
+  lorebookNames?: Record<string, string>;
+  promptPresetNames?: Record<string, string>;
+  personaName?: string | null;
+}
+
+/** Immutable copy of the choices and effective parameters used when a game was first created. */
+export interface GameInitialSetupSnapshot {
+  config: GameSetupConfig;
+  /** Effective values after connection defaults and setup overrides were merged. */
+  effectiveGenerationParameters?: Partial<GenerationParameters> | null;
+  /** Free-text preferences are sent separately during setup, so retain them beside the config. */
+  preferences?: string | null;
+  /** Safe display details only. API keys, URLs, and local connection IDs are never retained here. */
+  connections?: {
+    gm?: GameInitialSetupConnectionSnapshot | null;
+    scene?: GameInitialSetupConnectionSnapshot | null;
+    image?: GameInitialSetupConnectionSnapshot | null;
+    video?: GameInitialSetupConnectionSnapshot | null;
+  };
+  labels?: GameInitialSetupLabels;
+  createdAt: string;
+}
+
 // ── Dice ──
 
 /** Result of a dice roll. */
