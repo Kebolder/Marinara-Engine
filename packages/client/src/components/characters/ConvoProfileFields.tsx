@@ -291,7 +291,7 @@ export function ConvoProfileFields({
           Convo Behavior
           <HelpTooltip
             wide
-            text="A Conversation-mode-only instruction for how this person behaves in chat, plus where it goes in the prompt. Never sent in Roleplay, Visual Novel, or Game mode."
+            text="A Conversation-mode-only instruction for how this person behaves in chat, plus where it goes in the prompt. Never sent in Roleplay or Game mode."
           />
         </span>
         <MacroTextarea

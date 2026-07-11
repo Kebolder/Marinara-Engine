@@ -429,6 +429,15 @@ function NoodleCustomEmojiText({
   );
 }
 
+function insertAtSelection(value: string, insertion: string, start: number, end: number) {
+  const boundedStart = Math.max(0, Math.min(start, value.length));
+  const boundedEnd = Math.max(boundedStart, Math.min(end, value.length));
+  return {
+    value: value.slice(0, boundedStart) + insertion + value.slice(boundedEnd),
+    caret: boundedStart + insertion.length,
+  };
+}
+
 function NoodleMentionSuggestions({
   activeMention,
   activeIndex,
@@ -1178,10 +1187,21 @@ export function NoodleView() {
   };
 
   const appendToComposer = (text: string) => {
-    setComposer((current) => {
-      const trimmed = current.trimEnd();
-      if (!trimmed) return text;
-      return `${trimmed}${trimmed.endsWith("\n") ? "" : " "}${text}`;
+    const textarea = composeOpen ? modalComposerRef.current : inlineComposerRef.current;
+    const source = textarea?.value ?? composer;
+    const inserted = insertAtSelection(
+      source,
+      text,
+      textarea?.selectionStart ?? source.length,
+      textarea?.selectionEnd ?? textarea?.selectionStart ?? source.length,
+    );
+    setComposer(inserted.value);
+    setActiveMention(null);
+    setActiveMentionIndex(0);
+    window.requestAnimationFrame(() => {
+      const activeTextarea = composeOpen ? modalComposerRef.current : inlineComposerRef.current;
+      activeTextarea?.focus();
+      activeTextarea?.setSelectionRange(inserted.caret, inserted.caret);
     });
   };
 
@@ -1218,10 +1238,20 @@ export function NoodleView() {
   };
 
   const appendToReply = (text: string) => {
-    setReplyText((current) => {
-      const trimmed = current.trimEnd();
-      if (!trimmed) return text;
-      return `${trimmed}${trimmed.endsWith("\n") ? "" : " "}${text}`;
+    const textarea = replyComposerRef.current;
+    const source = textarea?.value ?? replyText;
+    const inserted = insertAtSelection(
+      source,
+      text,
+      textarea?.selectionStart ?? source.length,
+      textarea?.selectionEnd ?? textarea?.selectionStart ?? source.length,
+    );
+    setReplyText(inserted.value);
+    setActiveReplyMention(null);
+    setActiveReplyMentionIndex(0);
+    window.requestAnimationFrame(() => {
+      replyComposerRef.current?.focus();
+      replyComposerRef.current?.setSelectionRange(inserted.caret, inserted.caret);
     });
   };
 

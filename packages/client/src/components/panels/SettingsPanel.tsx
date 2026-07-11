@@ -981,7 +981,7 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     id: "game-dialogue-display",
     sectionId: "game-presentation",
     label: "Game Dialogue Display",
-    description: "Choose classic VN box or segment history display.",
+    description: "Choose a classic dialogue box or segment history display.",
     aliases: ["game", "vn", "history"],
     kind: "Button group",
   },
@@ -1283,13 +1283,13 @@ const ROLEPLAY_AVATAR_STYLE_OPTIONS: Array<{ id: RoleplayAvatarStyle; label: str
 const GAME_DIALOGUE_DISPLAY_OPTIONS: Array<{ id: GameDialogueDisplayMode; label: string; desc: string }> = [
   {
     id: "classic",
-    label: "Classic VN",
-    desc: "One active segment in the VN box, with logs available from the Logs button.",
+    label: "Classic Dialogue Box",
+    desc: "One active segment in the dialogue box, with logs available from the Logs button.",
   },
   {
     id: "stacked",
-    label: "History Above VN",
-    desc: "Shows prior segments above the VN box and keeps the full session scrollable there.",
+    label: "History Above Dialogue Box",
+    desc: "Shows prior segments above the dialogue box and keeps the full session scrollable there.",
   },
 ];
 
@@ -4440,7 +4440,7 @@ function AppearanceSettings() {
             <div className="flex items-center gap-1.5">
               <ScrollText size="0.75rem" className="text-[var(--muted-foreground)]" />
               <span className="text-xs font-medium">Game Dialogue Display</span>
-              <HelpTooltip text="Choose whether Game mode uses the classic VN box or shows a scrollable segment history directly above it." />
+              <HelpTooltip text="Choose whether Game mode uses a classic dialogue box or shows a scrollable segment history directly above it." />
             </div>
             <div
               id={getSettingsControlAnchorId("game-dialogue-display")}

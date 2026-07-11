@@ -2084,7 +2084,7 @@ export function ConnectionEditor() {
             <FieldGroup
               label="Prompt Preset Override"
               icon={<FileText size="0.875rem" className="mari-chrome-accent-icon mari-accent-animated" />}
-              help="Optional. When roleplay or visual novel chats use this connection, Marinara assembles this prompt preset instead of the chat's selected prompt preset. Conversation and game mode keep their built-in prompt flows."
+              help="Optional. When roleplay chats use this connection, Marinara assembles this prompt preset instead of the chat's selected prompt preset. Conversation and game mode keep their built-in prompt flows."
             >
               <select
                 value={localPromptPresetId}

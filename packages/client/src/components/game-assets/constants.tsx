@@ -31,6 +31,6 @@ export const DEFAULT_DESCRIPTIONS: Record<string, string> = {
   music: "Background music for game states: exploration, dialogue, combat, travel/rest",
   sfx: "Sound effects for UI, combat, and exploration events",
   ambient: "Environmental background audio: nature, urban, interior",
-  sprites: "Character and object sprites for visual novel / game modes",
+  sprites: "Character and object sprites for roleplay and game modes",
   backgrounds: "Scene backgrounds for roleplay and game modes",
 };

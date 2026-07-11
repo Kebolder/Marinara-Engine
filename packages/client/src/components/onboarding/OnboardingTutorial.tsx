@@ -139,7 +139,7 @@ const STEPS: TourStep[] = [
   {
     target: "chat-mode-game",
     title: "Game Mode",
-    body: "Game mode turns the chat into a visual novel RPG-style adventure with an AI Game Master. Sit back and enjoy the game, having party members, goals, maps, dice rolls, session history, journals, combat, and custom HUD widgets.",
+    body: "Game mode turns the chat into a cinematic RPG-style adventure with an AI Game Master. Sit back and enjoy the game, having party members, goals, maps, dice rolls, session history, journals, combat, and custom HUD widgets.",
     side: "right",
     chatMode: "game",
     sprite: { src: "/sprites/mari/Mari_point_middle_left.png" },

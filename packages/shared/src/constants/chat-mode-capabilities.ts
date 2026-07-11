@@ -155,7 +155,7 @@ export const CHAT_MODE_CAPABILITIES: Record<ChatMode, ChatModeCapabilities> = {
   },
   visual_novel: {
     mode: "visual_novel",
-    label: "Visual Novel",
+    label: "Roleplay (Legacy)",
     participantModel: "chat-participants",
     defaultAgentIds: VISUAL_NOVEL_DEFAULT_AGENT_IDS,
     agentPolicy: {

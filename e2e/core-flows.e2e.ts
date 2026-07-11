@@ -782,6 +782,106 @@ test("Noodle post and reply composers autocomplete character handles", async ({ 
   }
 });
 
+test("Noodle desktop composers insert emojis at the active cursor", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("mobile"), "Desktop cursor placement is covered in the desktop shell.");
+
+  const errors = collectUnexpectedErrors(page);
+  let createdPersonaId: string | null = null;
+  let postId: string | null = null;
+
+  try {
+    const activePersonaResponse = await page.request.get("/api/characters/personas/active");
+    const activePersona = activePersonaResponse.ok()
+      ? ((await activePersonaResponse.json()) as { id?: string } | null)
+      : null;
+    if (!activePersona?.id) {
+      const personaResponse = await page.request.post("/api/characters/personas", {
+        data: { name: "Noodle Cursor Tester", description: "Temporary browser regression persona." },
+      });
+      expect(personaResponse.ok()).toBe(true);
+      const createdPersona = (await personaResponse.json()) as { id: string };
+      createdPersonaId = createdPersona.id;
+      const activateResponse = await page.request.put(`/api/characters/personas/${createdPersona.id}/activate`);
+      expect(activateResponse.ok()).toBe(true);
+    }
+
+    const bootstrapResponse = await page.request.get("/api/noodle");
+    expect(bootstrapResponse.ok()).toBe(true);
+    const bootstrap = (await bootstrapResponse.json()) as {
+      accounts: Array<{ entityId: string; kind: string; invited: boolean }>;
+    };
+    const characterAccount = bootstrap.accounts.find(
+      (account) => account.kind === "character" && account.invited,
+    );
+    expect(characterAccount).toBeDefined();
+
+    const postResponse = await page.request.post("/api/noodle/posts", {
+      data: {
+        authorKind: "character",
+        authorEntityId: characterAccount!.entityId,
+        content: `Emoji cursor regression ${Date.now()}`,
+      },
+    });
+    expect(postResponse.ok()).toBe(true);
+    const post = (await postResponse.json()) as { id: string };
+    postId = post.id;
+
+    await page.goto("/");
+    await page.locator('[data-tour="noodle-tab"]').click();
+
+    const noodle = page.locator('[data-component="NoodleView"]');
+    const inlineComposer = noodle.locator('[data-component="NoodleView.InlineComposer"]');
+    const postTextarea = inlineComposer.getByPlaceholder("What's simmering?");
+    await postTextarea.fill("Alpha Omega");
+    await postTextarea.evaluate((element: HTMLTextAreaElement) => {
+      element.focus();
+      element.setSelectionRange(6, 6);
+    });
+    await inlineComposer.getByTitle("Emoji, GIFs and stickers").click();
+    await page.getByRole("textbox", { name: "Search emojis" }).fill("test tube");
+    await page.getByRole("button", { name: /test tube/i }).click();
+    await expect(postTextarea).toHaveValue("Alpha 🧪Omega");
+    await expect
+      .poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart))
+      .toBe(8);
+    await expect
+      .poll(() => postTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd))
+      .toBe(8);
+    await inlineComposer.getByTitle("Emoji, GIFs and stickers").click();
+
+    const activePost = noodle.locator(`[data-noodle-post-id="${post.id}"]`);
+    await activePost.getByTitle("Reply").first().click();
+    const replyComposer = activePost.locator('[data-component="NoodleView.ReplyComposer"]');
+    const replyTextarea = replyComposer.getByPlaceholder("Leave a comment…");
+    await replyTextarea.fill("Reply here");
+    await replyTextarea.evaluate((element: HTMLTextAreaElement) => {
+      element.focus();
+      element.setSelectionRange(6, 10);
+    });
+    await replyComposer.getByTitle("Emoji, GIFs and stickers").click();
+    await page.getByRole("textbox", { name: "Search emojis" }).fill("test tube");
+    await page.getByRole("button", { name: /test tube/i }).click();
+    await expect(replyTextarea).toHaveValue("Reply 🧪");
+    await expect
+      .poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionStart))
+      .toBe(8);
+    await expect
+      .poll(() => replyTextarea.evaluate((element: HTMLTextAreaElement) => element.selectionEnd))
+      .toBe(8);
+
+    expect(errors).toEqual([]);
+  } finally {
+    if (postId) {
+      await page.request.delete(`/api/noodle/posts/${postId}`, { timeout: 5_000 }).catch(() => undefined);
+    }
+    if (createdPersonaId) {
+      await page.request
+        .delete(`/api/characters/personas/${createdPersonaId}`, { timeout: 5_000 })
+        .catch(() => undefined);
+    }
+  }
+});
+
 test("Noodle reply notifications focus the actionable timeline reply", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("mobile"), "Reply notification focus is covered on mobile.");
 
