@@ -7,7 +7,8 @@
 // This provider deliberately runs Grok in one-shot, no-tool mode: Marinara owns
 // the prompt pipeline, command parsing, and tool execution.
 import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BaseLLMProvider, type ChatMessage, type ChatOptions, type LLMUsage } from "../base-provider.js";
 import { isDebugAgentsEnabled } from "../../../config/runtime-config.js";
@@ -19,7 +20,12 @@ const GROK_ERROR_PREVIEW_CHARS = 2000;
 const GROK_MODELS_TIMEOUT_MS = 30 * 1000;
 const GROK_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const GROK_TOKENS_PER_CHAR = 4;
-const GROK_CLI_DEFAULT_CONTEXT_TOKENS = 32_000;
+// 128k is a conservative floor for current Grok models; the per-connection
+// "max context" setting overrides it upward. The old 32k default matched the
+// inline `-p` argv ceiling (Linux caps a single exec argument at 128 KiB;
+// ~32k tokens at 4 chars/token) — prompts now travel via --prompt-file, so
+// that limit no longer applies.
+const GROK_CLI_DEFAULT_CONTEXT_TOKENS = 128_000;
 const GROK_CLI_MAX_TURNS = 8;
 const GROK_CLI_SAFE_HEADLESS_MODEL_ID = "grok-composer-2.5-fast";
 const GROK_CLI_SYSTEM_PROMPT =
@@ -65,8 +71,9 @@ function normalizeGrokCliModelForFlag(model: string): string {
 
 function normalizeGrokCliContextWindow(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return GROK_CLI_DEFAULT_CONTEXT_TOKENS;
-  const context = Math.floor(value);
-  return Math.min(context, GROK_CLI_DEFAULT_CONTEXT_TOKENS);
+  // No upper clamp: --prompt-file delivery removed the argv-size reason for
+  // one, so the configured per-connection max context flows through as-is.
+  return Math.floor(value);
 }
 
 function titleCaseModelId(id: string): string {
@@ -318,10 +325,19 @@ export class GrokSubscriptionProvider extends BaseLLMProvider {
     const cliModel = normalizeGrokCliModelForFlag(options.model);
 
     const debugOverrideEnabled = options.debugMode === true || isDebugAgentsEnabled();
+    // The prompt goes via --prompt-file rather than an inline `-p` argv string:
+    // OS argv limits (128 KiB per exec argument on Linux, ~32 KiB command lines
+    // on Windows) kill the spawn once transcripts grow — reachable even under
+    // the old 32k-token clamp, since it estimated chars while the OS counts
+    // bytes (multibyte-heavy chats). Unique filename because parallel agent and
+    // chat requests share the scratch dir; removed after the CLI exits.
+    await mkdir(GROK_SCRATCH_DIR, { recursive: true });
+    const promptFile = join(GROK_SCRATCH_DIR, `prompt-${randomUUID()}.txt`);
+    await writeFile(promptFile, prompt, "utf8");
     const args = [
       "--no-auto-update",
-      "-p",
-      prompt,
+      "--prompt-file",
+      promptFile,
       "--output-format",
       "plain",
       "--system-prompt-override",
@@ -348,11 +364,16 @@ export class GrokSubscriptionProvider extends BaseLLMProvider {
     logDebugOverride(debugOverrideEnabled, "[debug/grok-subscription] final prompt:\n%s", prompt);
 
     try {
-      const result = await runGrokCliCommand(args, {
-        timeoutMs: GROK_REQUEST_TIMEOUT_MS,
-        signal: options.signal,
-        timeoutLabel: "request",
-      });
+      let result: GrokCliCommandResult;
+      try {
+        result = await runGrokCliCommand(args, {
+          timeoutMs: GROK_REQUEST_TIMEOUT_MS,
+          signal: options.signal,
+          timeoutLabel: "request",
+        });
+      } finally {
+        await rm(promptFile, { force: true }).catch(() => {});
+      }
 
       if (result.code !== 0) {
         const detail = compactGrokError(

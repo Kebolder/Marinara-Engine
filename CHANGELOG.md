@@ -36,6 +36,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Grok CLI subscription requests failing to spawn (`E2BIG` / "Argument list too long") on long or multibyte-heavy transcripts by delivering the prompt via `--prompt-file` instead of a single inline `-p` argument; with the OS argv limit gone, the provider's 32k context ceiling is lifted — the default is now 128k and the per-connection Max Context Window applies unclamped.
 - Fixed desktop Noodle emoji, custom emoji, and sticker insertions always appending to the end of post and reply drafts instead of replacing the active selection at the caret.
 - Fixed example dialogue `<START>` sentinels being escaped as `&lt;START&gt;` in XML-wrapped prompts while continuing to escape arbitrary imported markup (#3441).
 - Fixed Conversation **About Me** and Noodle avatars ignoring saved crop settings, and restored custom emoji rendering in Noodle profile bios (#3443).
