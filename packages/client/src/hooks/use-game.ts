@@ -21,6 +21,7 @@ import { useUIStore } from "../stores/ui.store";
 import type {
   GameActiveState,
   GameMap,
+  GameInitialSetupLabels,
   GameSetupConfig,
   GameNpc,
   DiceRollResult,
@@ -174,6 +175,8 @@ export function useCreateGame() {
     mutationFn: (data: {
       name: string;
       setupConfig: GameSetupConfig;
+      preferences?: string;
+      shareLabels?: GameInitialSetupLabels;
       connectionId?: string;
       characterConnectionId?: string;
       promptPresetId?: string;

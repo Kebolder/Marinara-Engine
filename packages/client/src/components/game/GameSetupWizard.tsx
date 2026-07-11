@@ -36,6 +36,7 @@ import {
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   type CharacterGroup,
+  type GameInitialSetupLabels,
   type GameSetupConfig,
   type GameGmMode,
 } from "@marinara-engine/shared";
@@ -73,7 +74,7 @@ interface GameSetupWizardProps {
   onComplete: (
     config: GameSetupConfig,
     preferences: string,
-    connections: { gmConnectionId?: string },
+    connections: { gmConnectionId?: string; shareLabels?: GameInitialSetupLabels },
     gameName?: string,
   ) => void;
   onCancel: () => void;
@@ -844,6 +845,24 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
       preferences,
       {
         gmConnectionId: gmConnectionId ?? undefined,
+        shareLabels: {
+          characterNames: Object.fromEntries(
+            characters
+              .filter((character) =>
+                [...partyCharacterIds, ...(gmCharacterId ? [gmCharacterId] : [])].includes(character.id),
+              )
+              .map((character) => [character.id, character.name]),
+          ),
+          lorebookNames: Object.fromEntries(
+            lorebooks
+              .filter((lorebook) => activeLorebookIds.includes(lorebook.id))
+              .map((lorebook) => [lorebook.id, lorebook.name]),
+          ),
+          promptPresetNames: selectedPromptPreset
+            ? { [selectedPromptPreset.id]: selectedPromptPreset.name }
+            : undefined,
+          personaName: personas.find((persona) => persona.id === personaId)?.name ?? null,
+        },
       },
       gameName.trim() || undefined,
     );
