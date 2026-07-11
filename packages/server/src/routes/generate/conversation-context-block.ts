@@ -57,7 +57,7 @@ export function buildConversationCurrentContextBlock(args: {
     dnd: "do not disturb",
   };
   const shouldIncludeUserStatus = args.userStatus !== "invisible";
-  const userStatusLabel = userStatusLabels[args.userStatus ?? "active"] ?? "active";
+  const userStatusLabel = userStatusLabels[args.userStatus ?? "active"] ?? "online";
   const userActivity = args.userActivity?.replace(/\s+/g, " ").trim().slice(0, 120) ?? "";
   const userStatusLine = userActivity ? `${userStatusLabel} - ${userActivity}` : userStatusLabel;
 
