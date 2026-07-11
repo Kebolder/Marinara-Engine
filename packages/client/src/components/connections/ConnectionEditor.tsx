@@ -1991,7 +1991,7 @@ export function ConnectionEditor() {
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 {isGrokSubscriptionProvider
-                  ? "Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. Larger saved values are kept in settings, but requests are capped conservatively."
+                  ? "Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. A value you set here is used as-is — raise it gradually, and lower it if requests start failing with \"max turns reached\"."
                   : "This is auto-set when selecting a model from the list. Override manually if needed."}
               </p>
             </FieldGroup>

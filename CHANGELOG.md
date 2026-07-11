@@ -36,6 +36,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Grok CLI subscription requests failing to spawn (`E2BIG` / "Argument list too long") on long or multibyte-heavy transcripts by delivering the prompt via `--prompt-file` instead of a single inline `-p` argument; with the transport limit gone, an explicitly configured Max Context Window is now honored instead of being silently capped at 32k (the conservative 32k default is unchanged).
 - Fixed Text to Speech source switching discarding the previous provider's encrypted API key, endpoint, model, voice assignments, and provider parameters; each source now restores its own saved profile when selected again (#3467).
 - Fixed desktop Noodle emoji, custom emoji, and sticker insertions always appending to the end of post and reply drafts instead of replacing the active selection at the caret.
 - Fixed example dialogue `<START>` sentinels being escaped as `&lt;START&gt;` in XML-wrapped prompts while continuing to escape arbitrary imported markup (#3441).
