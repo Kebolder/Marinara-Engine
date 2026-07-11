@@ -10,7 +10,7 @@ import { basename, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { flushDB } from "../../db/connection.js";
-import { FILE_BACKED_TABLES } from "../../db/file-backed-store.js";
+import { CASCADES, FILE_BACKED_TABLES } from "../../db/file-backed-store.js";
 import * as schema from "../../db/schema/index.js";
 import { getFileStorageDir, getMonorepoRoot, isCustomToolScriptEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
@@ -261,38 +261,14 @@ async function readPackageVersion(cwd: string): Promise<string | null> {
   }
 }
 
-const CASCADES: Array<{ parent: string; child: string; parentKey: string; childKey: string }> = [
-  { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "agent_runs", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "agent_memory", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_state_snapshots", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_turn_storyboards", parentKey: "id", childKey: "chatId" },
-  {
-    parent: "game_turn_storyboards",
-    child: "game_turn_storyboard_keyframes",
-    parentKey: "id",
-    childKey: "storyboardId",
-  },
-  { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
-  { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
-  { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },
-  { parent: "personas", child: "persona_images", parentKey: "id", childKey: "personaId" },
-  { parent: "personas", child: "persona_card_versions", parentKey: "id", childKey: "personaId" },
-  { parent: "lorebooks", child: "lorebook_character_links", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_persona_links", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_folders", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_entries", parentKey: "id", childKey: "lorebookId" },
-  { parent: "prompt_presets", child: "prompt_groups", parentKey: "id", childKey: "presetId" },
-  { parent: "prompt_presets", child: "prompt_sections", parentKey: "id", childKey: "presetId" },
-  { parent: "prompt_presets", child: "choice_blocks", parentKey: "id", childKey: "presetId" },
-  { parent: "agent_configs", child: "agent_runs", parentKey: "id", childKey: "agentConfigId" },
-  { parent: "agent_configs", child: "agent_memory", parentKey: "id", childKey: "agentConfigId" },
-];
+// The parent→child delete graph is imported from db/file-backed-store.ts (the
+// single source of truth) so cascade deletes and the dangling-reference
+// validator never drift from the real relations again.
 
+// Columns stored as JSON text. Ground truth is the drizzle schema in
+// db/schema/* — these are plain text() columns whose JSON-ness only exists in
+// their doc comments, so this map cannot be derived automatically. Keep it in
+// sync with the schema when columns change.
 const JSON_COLUMNS: Record<string, readonly string[]> = {
   characters: ["data"],
   character_card_versions: ["data"],
@@ -318,33 +294,32 @@ const JSON_COLUMNS: Record<string, readonly string[]> = {
     "schedule",
     "embedding",
   ],
-  prompt_presets: ["tags"],
-  prompt_sections: ["enabledModes"],
-  choice_blocks: ["choices"],
-  chat_presets: ["parameters", "tags"],
-  api_connections: ["defaultParameters"],
+  prompt_presets: ["sectionOrder", "groupOrder", "variableGroups", "variableValues", "parameters", "defaultChoices"],
+  prompt_sections: ["markerConfig"],
+  choice_blocks: ["options"],
+  chat_presets: ["settings"],
+  // comfyuiWorkflow must be valid JSON by contract: image-generation.ts throws
+  // "Invalid ComfyUI workflow JSON" on parse failure (placeholders live inside
+  // string values). treatAsLocalEndpoint is a boolean-as-text, not JSON.
+  api_connections: ["defaultParameters", "comfyuiWorkflow"],
   agent_configs: ["settings"],
   agent_runs: ["resultData"],
   agent_memory: ["value"],
   custom_tools: ["parametersSchema"],
   game_state_snapshots: [
     "presentCharacters",
+    "recentEvents",
     "playerStats",
-    "partyState",
-    "npcState",
-    "relationships",
-    "quests",
-    "worldState",
-    "flags",
-    "metadata",
+    "personaStats",
+    "manualOverrides",
+    "fieldLocks",
   ],
-  game_checkpoints: ["snapshot", "metadata"],
-  regex_scripts: ["rules", "tags"],
-  chat_images: ["metadata"],
-  character_images: ["metadata"],
-  assets: ["metadata"],
-  custom_themes: ["metadata"],
-  installed_extensions: ["manifest", "settings"],
+  // game_checkpoints has no JSON columns (snapshotId is a plain FK; there is
+  // no snapshot/metadata column — see db/schema/checkpoints.ts). The same goes
+  // for chat_images, character_images, assets, custom_themes, and
+  // installed_extensions, whose former entries named columns that do not exist.
+  game_engine_state: ["state"],
+  regex_scripts: ["trimStrings", "placement", "targetCharacterIds"],
 };
 
 function symbolValue<T>(target: object, symbolName: string): T | undefined {

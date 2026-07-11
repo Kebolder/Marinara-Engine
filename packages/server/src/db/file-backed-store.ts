@@ -214,7 +214,10 @@ const TABLES_REVERSE = [...FILE_BACKED_TABLES].reverse();
 const isWindows = process.platform === "win32";
 const warnedFlushFailures = new Set<string>();
 
-const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
+// Parent→child delete graph. Exported as the single source of truth: the Mari
+// DB CLI (services/mari-db) consumes it for cascade deletes and its
+// dangling-reference validator, so every new relation added here reaches both.
+export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
   { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
