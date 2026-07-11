@@ -50,6 +50,10 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import {
+  compactVideoPromptText,
+  getSceneVideoPromptLimits,
+} from "../../packages/server/src/services/video/prompt-context.js";
 import { resolveGameGmPromptTemplate } from "../../packages/server/src/services/generation/game-gm-prompt-runtime.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
@@ -895,6 +899,18 @@ const cases: RegressionCase[] = [
         new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
         "utf8",
       );
+      const gameSurfaceSource = readFileSync(
+        new URL("../../packages/client/src/components/game/GameSurface.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameNarrationSource = readFileSync(
+        new URL("../../packages/client/src/components/game/GameNarration.tsx", import.meta.url),
+        "utf8",
+      );
+      const backgroundControlsSource = readFileSync(
+        new URL("../../packages/client/src/components/game/StoryboardBackgroundControls.tsx", import.meta.url),
+        "utf8",
+      );
       const illustrationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
         (template) => template.id === "comic-page-keyframes",
       );
@@ -908,10 +924,15 @@ const cases: RegressionCase[] = [
       assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE);
       assert.match(animationPreset?.promptTemplate ?? "", /Each keyframe becomes one \$\{durationSeconds\}-second/);
       assert.match(animationPreset?.promptTemplate ?? "", /2 panels for 6-7 seconds/);
+      assert.match(animationPreset?.promptTemplate ?? "", /third panel is allowed in a 6-7 second clip only/);
       assert.match(animationPreset?.promptTemplate ?? "", /2-3 panels for 8-10 seconds/);
       assert.match(animationPreset?.promptTemplate ?? "", /Never show a consequence before its cause/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Omit speech bubbles, captions, and SFX lettering by default/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Reserve the final 0.4-0.7 seconds/);
       assert.match(animationPreset?.promptTemplate ?? "", /Do not ask the video model to animate every panel at once/);
       assert.doesNotMatch(animationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
+      assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /no more than 0.35 seconds/);
+      assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /reveal a later consequence before its cause/);
       assert.match(
         drawerSource,
         /onAddTemplate\(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID\)/,
@@ -919,6 +940,34 @@ const cases: RegressionCase[] = [
       assert.match(drawerSource, /Add Comic Animation Copy/);
       assert.match(drawerSource, /onAddTemplate\(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID\)/);
       assert.match(drawerSource, /Add Comic Video Copy/);
+      const backgroundViewerStart = gameSurfaceSource.indexOf("const renderStoryboardBackgroundVisual");
+      const backgroundViewerEnd = gameSurfaceSource.indexOf("const renderGameAssetsPanel", backgroundViewerStart);
+      const backgroundViewerSource = gameSurfaceSource.slice(backgroundViewerStart, backgroundViewerEnd);
+      assert.match(backgroundControlsSource, /Replay background animation/);
+      assert.match(gameSurfaceSource, /storyboardBackgroundAnimationPlaying/);
+      assert.match(gameSurfaceSource, /frame\.sectionEndIndex !== segmentIndex/);
+      assert.match(gameSurfaceSource, /onSegmentDisplayComplete=\{handleStoryboardNarrationBeatComplete\}/);
+      assert.match(gameNarrationSource, /onSegmentDisplayComplete\(sourceSegmentIndex\)/);
+      assert.match(backgroundViewerSource, /onEnded=\{\(\) => setStoryboardViewerPlaying\(false\)\}/);
+      assert.doesNotMatch(backgroundViewerSource, /\bloop\b/);
+    },
+  },
+  {
+    name: "Gemini Omni video prompts preserve complete storyboard direction",
+    run() {
+      const direction = [
+        "0.0-2.0s: Establish the hall and move toward the relic.",
+        "2.0-4.0s: The sealing spike lands and the conduits extinguish.",
+        "4.0-6.0s: Pull back through falling parchment and hold on Vaela's final expression.",
+        "continuity ".repeat(100),
+      ].join(" ");
+      const omniLimits = getSceneVideoPromptLimits(false, true);
+      const defaultLimits = getSceneVideoPromptLimits(false);
+      const xaiLimits = getSceneVideoPromptLimits(true, true);
+
+      assert.equal(compactVideoPromptText(direction, omniLimits.narrationSummary), direction.trim());
+      assert.ok(compactVideoPromptText(direction, defaultLimits.narrationSummary).endsWith("..."));
+      assert.equal(xaiLimits.finalPrompt, 3800);
     },
   },
   {
@@ -1086,7 +1135,7 @@ const cases: RegressionCase[] = [
       assert.match(comicReferencePrompt, /comic or manga page reference/);
       assert.match(comicReferencePrompt, /ordered temporal beats rather than simultaneous subjects/);
       assert.match(comicReferencePrompt, /Do not merge panels, collapse gutters/);
-      assert.match(comicReferencePrompt, /Preserve deliberate comic lettering/);
+      assert.match(comicReferencePrompt, /Preserve any deliberate comic lettering only while it remains visible/);
       assert.equal(
         GAME_VIDEO_PROMPT_TEMPLATE,
         [

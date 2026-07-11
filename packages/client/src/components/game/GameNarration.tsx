@@ -362,6 +362,8 @@ interface GameNarrationProps {
   onActiveSpeakerChange?: (speaker: { name: string; avatarUrl: string; expression?: string } | null) => void;
   /** Called when the user enters a new narration segment (for segment-tied effects). Index is 0-based. */
   onSegmentEnter?: (segmentIndex: number) => void;
+  /** Called after a narration segment finishes displaying and its automatic voice playback completes. */
+  onSegmentDisplayComplete?: (segmentIndex: number) => void;
   /** Render prop: shown inside the narration box once the player has read all segments */
   inputSlot?: ReactNode;
   /** When true, the latest user message is shown as an animated narration/dialogue segment before the AI turn */
@@ -924,6 +926,7 @@ export function GameNarration({
   speakerAvatarMap,
   onActiveSpeakerChange,
   onSegmentEnter,
+  onSegmentDisplayComplete,
   inputSlot,
   showUserMessages,
   partyDialogue,
@@ -3013,6 +3016,29 @@ export function GameNarration({
 
     return false;
   })();
+
+  const completedSegmentNotificationRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!onSegmentDisplayComplete || !active || !doneTyping) return;
+    if (isStreaming || scenePreparing || directionsActive || gameVoicePlaybackBlocked || autoPlayVoiceBlocked) return;
+    if (active.sourceMessageId !== latestAssistant?.id) return;
+    const sourceSegmentIndex = active.sourceSegmentIndex;
+    if (sourceSegmentIndex == null || sourceSegmentIndex < 0) return;
+    const notificationKey = `${active.sourceMessageId}:${sourceSegmentIndex}`;
+    if (completedSegmentNotificationRef.current.has(notificationKey)) return;
+    completedSegmentNotificationRef.current.add(notificationKey);
+    onSegmentDisplayComplete(sourceSegmentIndex);
+  }, [
+    active,
+    autoPlayVoiceBlocked,
+    directionsActive,
+    doneTyping,
+    gameVoicePlaybackBlocked,
+    isStreaming,
+    latestAssistant?.id,
+    onSegmentDisplayComplete,
+    scenePreparing,
+  ]);
 
   useEffect(() => {
     lastAutoPlayedVoiceKeyRef.current = null;

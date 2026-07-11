@@ -754,6 +754,7 @@ export async function galleryRoutes(app: FastifyInstance) {
         ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
         : rawServiceHint;
     const isXaiVideo = source === "xai" || serviceHint === "xai";
+    const isGeminiOmniVideo = source === "gemini_omni" || serviceHint === "gemini_omni";
     const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
     const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
     const isSeedanceVideo = source === "seedance" || serviceHint === "seedance";
@@ -810,7 +811,7 @@ export async function galleryRoutes(app: FastifyInstance) {
       : isSeedanceVideo
         ? videoDefaults.seedance.resolution
         : undefined;
-    const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
+    const promptLimits = getSceneVideoPromptLimits(isXaiVideo, isGeminiOmniVideo);
 
     const messages = await chats.listMessages(input.chatId);
     const characterNames = await collectChatSceneCharacterNames(chat);

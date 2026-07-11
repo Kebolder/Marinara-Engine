@@ -28,6 +28,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 ### Changed
 
 - Added a separate **Comic Page Animation** storyboard prompt with clip-duration panel budgets, causal panel order, continuity guidance, and timed motion direction while preserving the original **Comic Page** illustration prompt.
+- Refined comic storyboard animations from output review: Gemini Omni now receives complete untruncated prompt components, six-second pages may use a simple third beat without overcrowding, animation pages minimize lettering and repeated cast members, full-page establishes cannot reveal later consequences early, and clips reserve a final hold.
+- Changed storyboard videos to play once and hold on their final frame instead of looping. Background mode now holds the source frame while its covered narration and voice line finish, pauses progression to play the animation once, starts each clip muted, and exposes replay, play/pause, and mute controls in the desktop and mobile game toolbar.
 - Removed the obsolete Visual Novel coming-soon tab and grouped legacy/imported Visual Novel chats under Roleplay while preserving their schema, importer, and achievement compatibility; Game dialogue layout labels now use Dialogue Box wording.
 - Updated Noodle timeline guidance so characters may naturally be rude, petty, confrontational, revive grudges, form rivalries, and stir up interpersonal drama when it fits their established personalities and relationships.
 - Restyled Noodle around the Klusek blue logo asset, replacing the always-visible settings column with a profile-triggered drawer and a more Twitter-like central feed.

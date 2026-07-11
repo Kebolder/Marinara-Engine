@@ -87,6 +87,8 @@ All of these live in the **Storyboards** card. Open **Chat Settings**, go to **A
 
 **Animation Clip Duration** is a number of seconds. It is greyed out unless **Automatic Storyboard Animations** is on. Until you set a value, it uses the 6-second default and shows a **Storyboard default** pill. Once you set your own value, a **Use storyboard default** button appears to clear it. Some video providers may clamp your value to a lower maximum, so the exact length is not promised.
 
+In **Background** viewer mode, the source frame stays visible while the covered narration is read. After the last covered narration segment and its automatic voice line finish, narration progression pauses, the animation plays once, and the final frame remains visible. The game toolbar provides replay, play/pause, and mute controls on desktop and mobile; every new background clip starts muted. Floating storyboard videos also play once and can be replayed instead of looping indefinitely.
+
 **Storyboard Video Prompt** is separate from the general **Game Video Prompt** in the **Scene Videos** card. Leave it on the inherited choice to reuse the general prompt, or select **Anime Game Video** for keyframe clips without changing manual Gallery or Game Assets videos.
 
 Select **Comic Page Animation** for the duration-aware comic source pages, then choose **Comic Page Video** to interpret those panels as ordered visual reference beats for one clip. The original **Comic Page** remains available for ordinary illustrations. The separate video choice leaves the inherited **Game Video Prompt** plus manual Gallery and Game Assets videos unchanged.
@@ -114,7 +116,7 @@ There are seven built-in presets. They are for Game Mode storyboards only. They 
 
 The **Anime Episode Director** pairs with **Anime Game Video** and **Use Storyboard Prompt Directly** when you want the generated still to be the exact first frame of a continuous clip. The director keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
 
-The **Comic Page Animation** preset uses the animation clip duration to control page density. It targets 2 panels for a 6-7 second clip, 2-3 panels for 8-10 seconds, and no more than 4 panels for longer storyboard clips. Panels follow cause and effect in reading order. Pair it with **Comic Page Video** when you want the video model to establish the page and then move through its panels without interpreting every panel as a simultaneous scene.
+The **Comic Page Animation** preset uses the animation clip duration to control page density. It defaults to 2 panels for a 6-7 second clip, allowing a third only for three simple beats with about 2 seconds each; it uses 2-3 panels for 8-10 seconds and no more than 4 for longer clips. Animation pages prioritize visual timing over comic lettering, keep each panel focused, and reserve a short ending hold. Panels follow cause and effect in reading order. **Comic Page Video** normally enters panel 1 immediately; it permits only a very brief full-page establish when doing so cannot reveal a later consequence early.
 
 The **NovelAI Keyframes** preset writes compact Danbooru tags. Danbooru tags are short comma-separated keyword tags that some anime image models expect. Choosing an animation, comic, or manga preset does not turn animations on by itself. You still need **Automatic Storyboard Animations** and a video connection for clips.
 
