@@ -23,9 +23,7 @@ A **Source** is the service that makes the audio. The four choices are:
 - **PocketTTS**: a free voice server you run on your own computer.
 - **xAI Voice**: xAI's voice service.
 
-The default Source is **OpenAI-compatible**.
-
-Important: changing the **Source** resets the Base URL, API Key, Model, and all your voice picks back to that source's defaults. There is no confirmation prompt, so switch sources before you spend time assigning voices.
+The default Source is **OpenAI-compatible**. Marinara keeps a separate saved profile for each Source, including its encrypted API key, endpoint, model, voices, and provider parameters. Switching Sources restores that Source's previous setup; a Source you have not configured yet starts with its defaults.
 
 ## Step 2: Enter the Base URL, API Key, and Model
 

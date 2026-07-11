@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { TTS_API_KEY_MASK, ttsConfigSchema } from "../../packages/shared/src/types/tts.js";
-import {
-  maskTTSConfigForResponse,
-  prepareTTSConfigForStorage,
-} from "../../packages/server/src/routes/tts.routes.ts";
+import { maskTTSConfigForResponse, prepareTTSConfigForStorage } from "../../packages/server/src/routes/tts.routes.ts";
 
 const encryptForTest = (value: string) => (value ? `encrypted:${value}` : "");
 
@@ -30,11 +27,7 @@ const switchToElevenLabs = ttsConfigSchema.parse({
   voice: "eleven-voice-id",
   speed: 1.1,
 });
-const storedElevenLabs = prepareTTSConfigForStorage(
-  switchToElevenLabs,
-  legacyOpenAiConfig,
-  encryptForTest,
-);
+const storedElevenLabs = prepareTTSConfigForStorage(switchToElevenLabs, legacyOpenAiConfig, encryptForTest);
 
 assert.equal(storedElevenLabs.apiKey, "encrypted:eleven-secret");
 assert.equal(storedElevenLabs.sourceProfiles.openai?.apiKey, "encrypted:openai-secret");
@@ -42,8 +35,24 @@ assert.equal(storedElevenLabs.sourceProfiles.openai?.model, "custom-speech-model
 assert.equal(storedElevenLabs.sourceProfiles.elevenlabs?.voice, "eleven-voice-id");
 
 const maskedElevenLabs = maskTTSConfigForResponse(storedElevenLabs);
+assert.equal(maskedElevenLabs.apiKey, TTS_API_KEY_MASK);
+assert.equal(maskedElevenLabs.sourceProfiles.openai?.apiKey, TTS_API_KEY_MASK);
+assert.equal(maskedElevenLabs.sourceProfiles.elevenlabs?.apiKey, TTS_API_KEY_MASK);
 const savedOpenAiProfile = maskedElevenLabs.sourceProfiles.openai;
 assert.ok(savedOpenAiProfile);
+
+const switchToNewPocketTts = ttsConfigSchema.parse({
+  ...maskedElevenLabs,
+  source: "pockettts",
+  baseUrl: "http://localhost:8000",
+  apiKey: "",
+  model: "pocket-tts",
+  voice: "alba",
+});
+const storedPocketTts = prepareTTSConfigForStorage(switchToNewPocketTts, storedElevenLabs, encryptForTest);
+assert.equal(storedPocketTts.apiKey, "");
+assert.equal(storedPocketTts.sourceProfiles.openai?.apiKey, "encrypted:openai-secret");
+assert.equal(storedPocketTts.sourceProfiles.elevenlabs?.apiKey, "encrypted:eleven-secret");
 
 const switchBackToOpenAi = ttsConfigSchema.parse({
   ...maskedElevenLabs,

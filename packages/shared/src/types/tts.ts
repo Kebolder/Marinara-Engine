@@ -103,7 +103,7 @@ export const ELEVENLABS_TTS_LANGUAGE_OPTIONS = [
   { code: "cy", label: "Welsh" },
 ] as const;
 
-export const ttsConfigSchema = z.object({
+const ttsConfigBaseSchema = z.object({
   enabled: z.boolean().default(false),
   source: ttsSourceSchema.default("openai"),
   baseUrl: z.string().default("https://api.openai.com/v1"),
@@ -152,7 +152,61 @@ export const ttsConfigSchema = z.object({
   callSoundboardEnabled: z.boolean().default(true),
 });
 
+export const ttsSourceProfileSchema = ttsConfigBaseSchema.pick({
+  baseUrl: true,
+  apiKey: true,
+  voice: true,
+  model: true,
+  speed: true,
+  elevenLabsStability: true,
+  elevenLabsLanguageCode: true,
+  voiceMode: true,
+  voiceAssignments: true,
+  narratorVoiceEnabled: true,
+  narratorVoice: true,
+  npcDefaultVoicesEnabled: true,
+  npcDefaultMaleVoices: true,
+  npcDefaultFemaleVoices: true,
+  audioFormat: true,
+});
+export type TTSSourceProfile = z.infer<typeof ttsSourceProfileSchema>;
+
+export const ttsSourceProfilesSchema = z
+  .object({
+    openai: ttsSourceProfileSchema.optional(),
+    elevenlabs: ttsSourceProfileSchema.optional(),
+    pockettts: ttsSourceProfileSchema.optional(),
+    xai: ttsSourceProfileSchema.optional(),
+  })
+  .default({});
+export type TTSSourceProfiles = z.infer<typeof ttsSourceProfilesSchema>;
+
+export const ttsConfigSchema = ttsConfigBaseSchema.extend({
+  /** Encrypted-at-rest provider fields retained independently for each TTS source. */
+  sourceProfiles: ttsSourceProfilesSchema,
+});
+
 export type TTSConfig = z.infer<typeof ttsConfigSchema>;
+
+export function ttsSourceProfileFromConfig(config: TTSConfig): TTSSourceProfile {
+  return {
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    voice: config.voice,
+    model: config.model,
+    speed: config.speed,
+    elevenLabsStability: config.elevenLabsStability,
+    elevenLabsLanguageCode: config.elevenLabsLanguageCode,
+    voiceMode: config.voiceMode,
+    voiceAssignments: config.voiceAssignments,
+    narratorVoiceEnabled: config.narratorVoiceEnabled,
+    narratorVoice: config.narratorVoice,
+    npcDefaultVoicesEnabled: config.npcDefaultVoicesEnabled,
+    npcDefaultMaleVoices: config.npcDefaultMaleVoices,
+    npcDefaultFemaleVoices: config.npcDefaultFemaleVoices,
+    audioFormat: config.audioFormat,
+  };
+}
 
 export const TTS_SETTINGS_KEY = "tts";
 export const TTS_API_KEY_MASK = "••••••";

@@ -31,12 +31,14 @@ import { parseCharacterDisplayData } from "../../../lib/character-display";
 import type {
   TTSConfig,
   TTSSource,
+  TTSSourceProfile,
+  TTSSourceProfiles,
   TTSVoiceAssignment,
   TTSVoiceMode,
   TTSAudioFormat,
   TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
-import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "@marinara-engine/shared";
+import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK, ttsSourceProfileFromConfig } from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
 
@@ -97,6 +99,27 @@ const TTS_SOURCE_OPTIONS: Array<{ value: TTSSource; label: string }> = [
   { value: "pockettts", label: "PocketTTS" },
   { value: "xai", label: "xAI Voice" },
 ];
+
+function defaultSourceProfile(source: TTSSource): TTSSourceProfile {
+  const defaults = TTS_SOURCE_DEFAULTS[source];
+  return {
+    baseUrl: defaults.baseUrl,
+    apiKey: "",
+    voice: defaults.voice,
+    model: defaults.model,
+    speed: 1,
+    elevenLabsStability: 0.5,
+    elevenLabsLanguageCode: "",
+    voiceMode: "single",
+    voiceAssignments: [],
+    narratorVoiceEnabled: false,
+    narratorVoice: defaults.voice,
+    npcDefaultVoicesEnabled: false,
+    npcDefaultMaleVoices: [],
+    npcDefaultFemaleVoices: [],
+    audioFormat: "mp3",
+  };
+}
 
 const ELEVENLABS_TTS_MODELS = [
   "eleven_v3",
@@ -411,6 +434,7 @@ export function TTSConfigCard() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourceProfilesRef = useRef<TTSSourceProfiles>({});
   const [ttsState, setTTSState] = useState(ttsService.getState());
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [ttsCacheSummary, setTtsCacheSummary] = useState({ count: 0, bytes: 0 });
@@ -460,6 +484,7 @@ export function TTSConfigCard() {
     setCallCharacterVideoEnabled(savedConfig.callCharacterVideoEnabled ?? false);
     setCallAutomaticVideoClipsEnabled(savedConfig.callAutomaticVideoClipsEnabled ?? false);
     setCallCustomVideoClipsEnabled(savedConfig.callCustomVideoClipsEnabled ?? false);
+    sourceProfilesRef.current = savedConfig.sourceProfiles ?? {};
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -534,6 +559,7 @@ export function TTSConfigCard() {
     callCustomVideoClipsEnabled,
     // Soundboard is intentionally always-on for Conversation Calls. Saving this card also migrates old false values.
     callSoundboardEnabled: true,
+    sourceProfiles: sourceProfilesRef.current,
     ...overrides,
   });
 
@@ -568,36 +594,35 @@ export function TTSConfigCard() {
   };
 
   const handleSourceChange = (nextSource: TTSSource) => {
-    const defaults = TTS_SOURCE_DEFAULTS[nextSource];
-    const nextApiKey = apiKey === TTS_API_KEY_MASK ? "" : apiKey;
+    if (nextSource === source) return;
+    const currentProfile = ttsSourceProfileFromConfig(buildPayload());
+    const sourceProfiles: TTSSourceProfiles = {
+      ...sourceProfilesRef.current,
+      [source]: currentProfile,
+    };
+    const nextProfile = sourceProfiles[nextSource] ?? defaultSourceProfile(nextSource);
+    sourceProfilesRef.current = sourceProfiles;
 
     setSource(nextSource);
-    setBaseUrl(defaults.baseUrl);
-    setApiKey(nextApiKey);
-    setModel(defaults.model);
-    setVoice(defaults.voice);
-    setVoiceMode("single");
-    setVoiceAssignments([]);
-    setNarratorVoiceEnabled(false);
-    setNarratorVoice(defaults.voice);
-    setNpcDefaultVoicesEnabled(false);
-    setNpcDefaultMaleVoices([]);
-    setNpcDefaultFemaleVoices([]);
-    setElevenLabsLanguageCode("");
+    setBaseUrl(nextProfile.baseUrl);
+    setApiKey(nextProfile.apiKey);
+    setModel(nextProfile.model);
+    setVoice(nextProfile.voice);
+    setVoiceMode(nextProfile.voiceMode);
+    setVoiceAssignments(nextProfile.voiceAssignments);
+    setNarratorVoiceEnabled(nextProfile.narratorVoiceEnabled);
+    setNarratorVoice(nextProfile.narratorVoice);
+    setNpcDefaultVoicesEnabled(nextProfile.npcDefaultVoicesEnabled);
+    setNpcDefaultMaleVoices(nextProfile.npcDefaultMaleVoices);
+    setNpcDefaultFemaleVoices(nextProfile.npcDefaultFemaleVoices);
+    setSpeed(nextProfile.speed);
+    setElevenLabsStability(nextProfile.elevenLabsStability);
+    setElevenLabsLanguageCode(nextProfile.elevenLabsLanguageCode);
+    setAudioFormat(nextProfile.audioFormat);
     mark({
       source: nextSource,
-      baseUrl: defaults.baseUrl,
-      apiKey: nextApiKey,
-      model: defaults.model,
-      voice: defaults.voice,
-      voiceMode: "single",
-      voiceAssignments: [],
-      narratorVoiceEnabled: false,
-      narratorVoice: defaults.voice,
-      npcDefaultVoicesEnabled: false,
-      npcDefaultMaleVoices: [],
-      npcDefaultFemaleVoices: [],
-      elevenLabsLanguageCode: "",
+      ...nextProfile,
+      sourceProfiles,
     });
   };
 
