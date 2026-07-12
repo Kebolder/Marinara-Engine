@@ -213,12 +213,9 @@ export function DocsViewerModal({
   // changing — when a newly-selected doc's fetch resolves, or when a refetch
   // returns changed content. Reconciling against mutated DOM would patch
   // detached text nodes (stale text) or crash on insertBefore. Keying the
-  // content container by the rendered tree's identity closes that gap.
-  const renderedVersionRef = useRef(0);
-  const renderedKey = useMemo(() => {
-    void rendered;
-    return ++renderedVersionRef.current;
-  }, [rendered]);
+  // content container by the document revision closes that gap without
+  // mutating render-time refs or relying on React's memo cache semantics.
+  const renderedKey = doc ? `${doc.path}:${doc.updatedAt}` : "no-doc";
 
   // Highlight every occurrence of the live search term in the rendered doc by
   // wrapping matches in <mark> elements (docs-viewer only — the markdown
@@ -443,7 +440,7 @@ export function DocsViewerModal({
                     <button
                       key={result.path}
                       type="button"
-                      onClick={() => selectDoc(result.path, trimmedQuery)}
+                      onClick={() => selectDoc(result.path, highlightTerm)}
                       className={cn(
                         "flex w-full flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
                         selected === result.path
@@ -454,7 +451,7 @@ export function DocsViewerModal({
                       <span className="flex items-center gap-2">
                         <FileText size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
                         <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]">
-                          {highlightTermNodes(result.title, trimmedQuery)}
+                          {highlightTermNodes(result.title, highlightTerm)}
                         </span>
                         <span className="shrink-0 rounded-full border border-[var(--border)]/60 bg-black/5 px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/80 dark:bg-white/6">
                           {result.matches}
@@ -465,7 +462,7 @@ export function DocsViewerModal({
                           key={`${result.path}-${snippet.line}`}
                           className="block truncate pl-6 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/80"
                         >
-                          {highlightTermNodes(snippet.text, trimmedQuery)}
+                          {highlightTermNodes(snippet.text, highlightTerm)}
                         </span>
                       ))}
                     </button>
