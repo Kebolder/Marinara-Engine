@@ -10,7 +10,7 @@ This is the canonical contributor guide for Marinara Engine. Use it with `README
 | Backend  | Fastify 5, file-backed storage, temporary SQL compatibility    |
 | PWA      | vite-plugin-pwa, Web App Manifest                              |
 | Shared   | TypeScript 5, Zod                                              |
-| Build    | Vite 6, pnpm workspaces                                        |
+| Build    | Vite 7, pnpm workspaces                                        |
 
 ## Development Setup
 

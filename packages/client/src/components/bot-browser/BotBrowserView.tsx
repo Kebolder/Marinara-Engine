@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────
 // View: Browser (full-page, replaces chat area)
-// Multi-provider: ChubAI, JannyAI, CharacterTavern, Pygmalion, Wyvern
+// Multi-provider: ChubAI, JannyAI, CharacterTavern, Pygmalion, Wyvern, DataCat
 // With login modals for Pygmalion & CharacterTavern NSFW, PNG download for all providers
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
@@ -105,7 +105,7 @@ interface ProviderConfig {
   hasTokenFilters: boolean;
   extraToggles: { key: string; label: string; icon: string }[];
   nsfwAvailable: boolean;
-  /** "login" = show login modal, "wyvern" = show sort hint, true/false = normal */
+  /** "free" = NSFW toggle enabled; "login" = toggle enabled once logged in; "wyvern" = toggle rendered disabled (only sourceId "wyvern" pairs this with a sort-hint toast on click — other "wyvern"-mode providers, e.g. DataCat, get no toast) */
   nsfwMode: "free" | "login" | "wyvern";
   search: (params: SearchParams) => Promise<{ cards: BrowseCard[]; totalCount: number }>;
   fetchDetail: (card: BrowseCard) => Promise<CardDetail | null>;

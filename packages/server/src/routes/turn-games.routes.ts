@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Routes: Turn-Games (UNO and future turn-based games)
+// Routes: Turn-Games (UNO, Chess, Poker, Eight Ball, and future turn-based games)
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";

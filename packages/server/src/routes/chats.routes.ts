@@ -2261,7 +2261,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             idleDuration: promptIdleDuration,
           });
 
-          // ── Strip <speaker> tags from chat history to save tokens (roleplay only) ──
+          // ── Strip <speaker> tags from chat history to save tokens (non-conversation modes; game already returned above, so effectively roleplay plus legacy visual_novel chats) ──
           const isGroupChat = characterIds.length > 1;
           if (isGroupChat && chatMode !== "conversation") {
             const speakerCloseRegex = /<\/speaker>/g;

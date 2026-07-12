@@ -5,7 +5,7 @@
 // - Party members (left/bottom) vs. Enemies (right/top)
 // - HP/MP bars with animated depletion
 // - Turn order timeline
-// - Action menu (Attack, Skill, Defend, Item, Flee)
+// - Action menu (Attack, Skill, Special, Defend, Item, Flee)
 // - Floating damage numbers
 // - Status effect icons
 // - Victory / defeat overlays

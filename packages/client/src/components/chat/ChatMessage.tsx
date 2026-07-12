@@ -799,7 +799,7 @@ function renderContent(
     .replace(new RegExp(ATTR_NL_PLACEHOLDER, "g"), "\n");
 
   // Convert markdown images to <img> before sanitization so DOMPurify validates them.
-  // Keep tags minimal (no class/loading) — styling is via .mari-message-content img in CSS
+  // Keep tags minimal (no class, only loading/decoding attrs) — styling is via .mari-message-content img in CSS
   // to avoid the dialogue-bolding regex mangling attribute quotes.
   const withImages = normalizeCardAssetImageSyntax(withBreaks).replace(MD_IMAGE_HTML_RE, (_m, alt: string, url: string) => {
     const src = escapeHtmlAttr(resolveCardAssetUrl(url));
@@ -1631,7 +1631,7 @@ export const ChatMessage = memo(function ChatMessage({
       return raw || fallbackPalette[i % fallbackPalette.length]!;
     });
   }, [isMergedGroup, characterMap, chatCharacterIds]);
-  // Cycle index for merged group avatars/names — driven by a ref + RAF to avoid re-renders
+  // Cycle index for merged group avatars/names — driven by a ref + 2s setInterval to avoid re-renders
   const cycleIndexRef = useRef(0);
   const cycleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mergedNameRef = useRef<HTMLSpanElement>(null);

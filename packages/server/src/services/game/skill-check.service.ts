@@ -33,7 +33,7 @@ export interface SkillCheckResult {
   dc: number;
   /** The raw d20 roll(s) — 2 if advantage/disadvantage, 1 otherwise. */
   rolls: number[];
-  /** Which roll was used (index into rolls). */
+  /** The die value that was used (1-20), not an index into rolls. */
   usedRoll: number;
   /** Total modifier applied (skill + attribute). */
   modifier: number;

@@ -512,7 +512,7 @@ export class AnthropicProvider extends BaseLLMProvider {
         // can safely capture and render in View Thoughts.
         applyAdaptiveThinkingConfig(body, options, outputMaxTokens);
       } else {
-        // Opus 4.6 / Sonnet 4.6: prefer adaptive thinking (budget_tokens deprecated).
+        // Opus/Sonnet 4.5 and 4.6: prefer adaptive thinking (budget_tokens deprecated).
         const supportsAdaptive = /claude-(opus|sonnet)-4-[56]/.test(modelLower);
         if (supportsAdaptive) {
           applyAdaptiveThinkingConfig(body, options, outputMaxTokens);

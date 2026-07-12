@@ -2,8 +2,8 @@
 // Service: Party Morale System
 //
 // Tracks and adjusts party-wide morale based on
-// game events. Morale affects dice rolls, NPC
-// interactions, and narrative flavoring.
+// game events. Morale affects NPC interactions and
+// narrative flavoring (no dice effect is currently wired).
 // ──────────────────────────────────────────────
 
 export type MoraleTier = "inspired" | "high" | "steady" | "low" | "broken";

@@ -1,13 +1,14 @@
 // ──────────────────────────────────────────────
 // Deterministic seeded RNG
 // ──────────────────────────────────────────────
-// All 8-ball randomness (break scatter, shot success rolls, miss/scratch
-// geometry jitter) flows through here so every shot is reproducible from
-// (seed, shotCounter). The cursor is `state.shotCounter`, incremented on every
-// applyMove, so rewinding to shot N and replaying from the same seed resolves
-// the identical outcome for that shot — this is what lets message edits /
-// regenerations rewind the game correctly. Intentionally independent of
-// dice.service.ts (which uses unseeded Math.random).
+// Post-v2 physics rewrite, `deterministicRng` is used ONLY for bot aim
+// jitter (see engine.ts's `convertMenuToAim`) — shot outcomes come from the
+// physics simulation, not a roll. It's still keyed on (seed, shotCounter) so
+// that jitter is reproducible: the cursor is `state.shotCounter`, incremented
+// on every applyMove, so rewinding to shot N and replaying from the same seed
+// resolves the identical jitter for that shot — this is what lets message
+// edits / regenerations rewind the game correctly. Intentionally independent
+// of dice.service.ts (which uses unseeded Math.random).
 //
 // This is a copy of poker/rng.ts (uno/rng.ts is the 2nd copy) — the 3rd
 // instance of this exact seeded-PRNG pattern. Kept as a copy rather than a

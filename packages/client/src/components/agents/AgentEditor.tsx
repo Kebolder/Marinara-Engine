@@ -898,7 +898,7 @@ export function AgentEditor() {
     };
   }, [isMusicAgent, dbConfig?.id]);
 
-  // Fetch YouTube key-configured status when viewing Music DJ or a legacy YouTube agent.
+  // Fetch YouTube key-configured status when viewing Music DJ (Spotify); the legacy YouTube-agent path is unreachable.
   useEffect(() => {
     if (!showsYoutubeSettings || !dbConfig?.id) {
       setYoutubeConfigured(false);

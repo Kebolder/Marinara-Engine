@@ -3166,7 +3166,7 @@ export function useGenerate() {
 
 /**
  * Format agent result data into a human-readable thought bubble string.
- * Returns null if the result shouldn't generate a bubble.
+ * Every branch returns a string describing the outcome (failure, no-op, or completion).
  */
 function formatRetryAgentActivityBubble(
   result: {

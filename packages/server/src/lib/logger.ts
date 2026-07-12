@@ -5,8 +5,10 @@
 // instead of using `console.log/warn/error` directly. This ensures
 // LOG_LEVEL actually controls what gets printed.
 //
-// The Fastify app reuses this same instance so request-scoped child
-// loggers (req.log / reply.log) inherit the same level and transport.
+// Fastify builds its own separate pino instance from a {level, transport}
+// object (see app.ts) rather than importing this singleton, so
+// req.log / reply.log do NOT track runtime LOG_LEVEL changes applied here
+// by the env-watcher hot-reload.
 // ──────────────────────────────────────────────
 import pino from "pino";
 import { getLogLevel, getNodeEnv } from "../config/runtime-config.js";

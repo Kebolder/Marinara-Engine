@@ -29,8 +29,9 @@ import { logger } from "../../lib/logger.js";
 import { assertInsideDir, normalizeLoopbackUrl, safeFetch, validateOutboundUrl } from "../../utils/security.js";
 
 // sharp is an optional native module (no prebuilds on some platforms like Termux).
-// Lazy-load so the server boots even when sharp is missing; the only callers that
-// need it (Draw Things img2img init resize) fall back to passing the original.
+// Lazy-load so the server boots even when sharp is missing. The Draw Things img2img
+// init resize falls back to passing the original; NovelAI director reference prep
+// (prepareNovelAiDirectorReferenceImages) hard-throws when sharp is unavailable.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SharpFn = any;
 let _sharp: SharpFn | null = null;

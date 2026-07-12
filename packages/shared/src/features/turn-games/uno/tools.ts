@@ -77,7 +77,8 @@ export const jumpInToolManifest = {
   },
 } satisfies ToolDefinition;
 
-/** All UNO tools. The engine filters this set per-turn via `toolManifests`/legality. */
+/** All UNO tools, returned unfiltered by `toolManifests`. Legality isn't enforced by
+ * shrinking this list — it's enforced by `applyMove` rejecting illegal calls after the fact. */
 export const UNO_TOOL_MANIFESTS: readonly ToolDefinition[] = [
   playCardToolManifest,
   drawCardToolManifest,

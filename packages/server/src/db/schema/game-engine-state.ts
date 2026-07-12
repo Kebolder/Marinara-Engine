@@ -2,9 +2,10 @@
 // Schema: Turn-Game Engine State Snapshots
 // ──────────────────────────────────────────────
 // Per-(message, swipe) snapshots of a deterministic turn-game's full state
-// (UNO and future games). Mirrors game_state_snapshots so regenerate / branch /
-// undo rewind the game correctly. The `state` column holds the engine's own
-// JSON blob; `game_type` + `schema_version` make it self-describing.
+// (UNO, Chess, Poker, Eight Ball, and future games). Mirrors
+// game_state_snapshots so regenerate / branch / undo rewind the game
+// correctly. The `state` column holds the engine's own JSON blob;
+// `game_type` + `schema_version` make it self-describing.
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 
 export const gameEngineState = sqliteTable("game_engine_state", {

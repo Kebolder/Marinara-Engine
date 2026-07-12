@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Persona Editor — Full-page detail view
 // Replaces the chat area when editing a persona.
-// Sections: Metadata, Card, Lorebook, Sprites, Colors, Stats
+// Sections: Metadata, Card, Convo, Lorebook, Sprites, Gallery, Colors, Stats
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";

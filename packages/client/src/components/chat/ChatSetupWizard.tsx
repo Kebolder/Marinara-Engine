@@ -1866,8 +1866,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }, [chat.personaId, chatCharIds, charName, charTitle, characters, personas]);
 
   // Track whether the user has manually edited the chat name.
-  // The roleplay wizard doesn't expose a name field, so this stays false
-  // and we always auto-rename based on character selection.
+  // The Connection step's Name input flips this to true onBlur when the
+  // user changes it, which suppresses auto-rename on character selection.
   const [userEditedName, setUserEditedName] = useState(false);
 
   // Build an auto-generated chat name from character IDs

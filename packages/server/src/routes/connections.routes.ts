@@ -1045,9 +1045,10 @@ export async function connectionsRoutes(app: FastifyInstance) {
   //    billed against. The Claude Agent SDK can silently route a request to a
   //    smaller model (fast mode, post-rate-limit `cooldown` state, account-tier
   //    gating) without surfacing the swap to the caller. We send a tiny prompt
-  //    through the SDK with fast mode forced off, then return the model(s) the
-  //    SDK reports in `modelUsage` plus its `fast_mode_state` so the UI can
-  //    show "you asked for X, the SDK billed Y." ──
+  //    through the SDK with the connection's own fast-mode setting (not
+  //    forced off), then return the model(s) the SDK reports in `modelUsage`
+  //    plus its `fast_mode_state` so the UI can show "you asked for X, the
+  //    SDK billed Y." ──
   app.post<{ Params: { id: string } }>("/:id/diagnose-claude-subscription", async (req, reply) => {
     const conn = await storage.getWithKey(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
