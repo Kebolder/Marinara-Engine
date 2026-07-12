@@ -53,10 +53,12 @@ import type {
   QuestProgress,
   CustomTrackerField,
   Message,
+  TrackerHiddenFields,
 } from "@marinara-engine/shared";
 import {
   inventoryItemTrackerLockPrefix,
   normalizeTrackerFieldLocksForState,
+  normalizeTrackerHiddenFields,
   removeTrackerFieldLockPrefix,
   toggleTrackerFieldLock,
 } from "@marinara-engine/shared";
@@ -188,6 +190,7 @@ export function RoleplayHUD({
       },
       personaStats: [],
       fieldLocks: null,
+      hiddenTrackerFields: null,
     };
     discardPendingGameStatePatch(chatId);
     const prev = useGameStateStore.getState().current;
@@ -222,7 +225,19 @@ export function RoleplayHUD({
   const activeQuests = playerStats?.activeQuests ?? [];
   const customTrackerFields = playerStats?.customTrackerFields ?? [];
   const fieldLocks = gameState ? normalizeTrackerFieldLocksForState(gameState.fieldLocks, gameState) : null;
+  const hiddenTrackerFields = gameState ? normalizeTrackerHiddenFields(gameState.hiddenTrackerFields) : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId, fieldLocks, patchField });
+  const updateHiddenTrackerFields = useCallback(
+    (updater: (hiddenFields: TrackerHiddenFields | null | undefined) => TrackerHiddenFields) => {
+      const latestState = useGameStateStore.getState().current;
+      const base =
+        latestState?.chatId === chatId
+          ? normalizeTrackerHiddenFields(latestState.hiddenTrackerFields)
+          : hiddenTrackerFields;
+      patchField("hiddenTrackerFields", updater(base));
+    },
+    [chatId, hiddenTrackerFields, patchField],
+  );
   const updateInventoryItems = useCallback(
     (items: InventoryItem[]) => patchPlayerStats("inventory", items),
     [patchPlayerStats],
@@ -253,10 +268,12 @@ export function RoleplayHUD({
   return (
     <TrackerLockProvider
       fieldLocks={fieldLocks}
+      hiddenTrackerFields={hiddenTrackerFields}
       lockMode={lockMode}
       onSetLockMode={setLockMode}
       onToggleFieldLock={toggleFieldLock}
       onUpdateFieldLocks={updateFieldLocks}
+      onUpdateHiddenFields={updateHiddenTrackerFields}
     >
       <div
         className={cn(

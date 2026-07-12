@@ -1,4 +1,4 @@
-import { Lock, PanelLeft, PanelRight, Plus, Trash2, Unlock } from "lucide-react";
+import { EyeOff, Lock, PanelLeft, PanelRight, Plus, Trash2, Unlock } from "lucide-react";
 import { TrackerPanelIcon } from "../../../components/ui/TrackerPanelIcon";
 import { TrackerSizeTierIcon } from "../../../components/ui/TrackerSizeTierIcon";
 import type { TrackerPanelSide, TrackerPanelSizeProfile } from "../../../stores/ui.store";
@@ -16,8 +16,10 @@ export function TrackerSidebarHeader({
   sizeProfile,
   addMode,
   deleteMode,
+  hideMode,
   onSetAddMode,
   onSetDeleteMode,
+  onSetHideMode,
   onSetSide,
   onSetSizeProfile,
   onClose,
@@ -26,8 +28,10 @@ export function TrackerSidebarHeader({
   sizeProfile: TrackerPanelSizeProfile;
   addMode: boolean;
   deleteMode: boolean;
+  hideMode: boolean;
   onSetAddMode: (enabled: boolean) => void;
   onSetDeleteMode: (enabled: boolean) => void;
+  onSetHideMode: (enabled: boolean) => void;
   onSetSide: (side: TrackerPanelSide) => void;
   onSetSizeProfile: (profile: TrackerPanelSizeProfile) => void;
   onClose: () => void;
@@ -59,6 +63,7 @@ export function TrackerSidebarHeader({
           onSetAddMode(nextAddMode);
           if (nextAddMode) {
             onSetDeleteMode(false);
+            onSetHideMode(false);
             onSetLockMode?.(false);
           }
         }}
@@ -82,6 +87,7 @@ export function TrackerSidebarHeader({
           if (nextLockMode) {
             onSetAddMode(false);
             onSetDeleteMode(false);
+            onSetHideMode(false);
           }
         }}
         title={lockMode ? "Exit lock mode" : "Enter lock mode"}
@@ -103,6 +109,7 @@ export function TrackerSidebarHeader({
           onSetDeleteMode(nextDeleteMode);
           if (nextDeleteMode) {
             onSetAddMode(false);
+            onSetHideMode(false);
             onSetLockMode?.(false);
           }
         }}
@@ -117,6 +124,29 @@ export function TrackerSidebarHeader({
         )}
       >
         <Trash2 size="0.75rem" />
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const nextHideMode = !hideMode;
+          onSetHideMode(nextHideMode);
+          if (nextHideMode) {
+            onSetAddMode(false);
+            onSetDeleteMode(false);
+            onSetLockMode?.(false);
+          }
+        }}
+        title={hideMode ? "Exit hide mode" : "Enter hide mode"}
+        aria-label={hideMode ? "Exit tracker hide mode" : "Enter tracker hide mode"}
+        aria-pressed={hideMode}
+        className={cn(
+          "flex h-6 w-6 items-center justify-center rounded-sm transition-all ring-1 active:scale-90",
+          hideMode
+            ? "bg-[var(--foreground)]/12 text-[var(--foreground)] ring-[var(--foreground)]/24"
+            : "text-[var(--muted-foreground)]/55 ring-transparent hover:bg-[var(--accent)] hover:text-[var(--muted-foreground)] hover:ring-[var(--border)]",
+        )}
+      >
+        <EyeOff size="0.75rem" />
       </button>
       <button
         type="button"

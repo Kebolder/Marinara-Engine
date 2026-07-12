@@ -140,13 +140,21 @@ function ThoughtBubble({
   onSave,
   tailSide = "left",
   lockKey,
+  hidden = false,
+  hideMode = false,
+  onToggleHidden,
 }: {
   value: string | null | undefined;
   onSave?: (value: string) => void;
   tailSide?: "left" | "right";
   lockKey?: string;
+  hidden?: boolean;
+  hideMode?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const lock = useTrackerFieldLock(lockKey);
+  const hiddenToggleActive = hideMode && !!onToggleHidden;
+  if (hidden && !hideMode) return null;
   const tailOnLeft = tailSide === "left";
   const thoughtText = visibleText(value, "Thoughts").replace(/\s+/g, " ");
   const thoughtBubbleSize = getThoughtBubbleSize(thoughtText);
@@ -212,7 +220,25 @@ function ThoughtBubble({
             compactThoughtBubble && "flex min-h-6 w-fit max-w-full items-center justify-center",
           )}
         >
-          {onSave ? (
+          {hiddenToggleActive ? (
+            <button
+              type="button"
+              onClick={onToggleHidden}
+              title={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-label={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-pressed={hidden}
+              className={cn(
+                "px-0 py-0 text-left font-medium italic text-[color-mix(in_srgb,var(--foreground)_86%,transparent)] transition-colors hover:bg-[var(--foreground)]/8",
+                compactThoughtBubble && "w-fit max-w-full",
+                thoughtTextFit.editMinHeightClassName,
+              )}
+              style={thoughtTextStyle}
+            >
+              <span className={cn("break-words", thoughtTextFit.previewClassName)}>
+                {hidden ? "Hidden" : thoughtText}
+              </span>
+            </button>
+          ) : onSave ? (
             <InlineEdit
               value={value ?? ""}
               onSave={onSave}
@@ -259,6 +285,9 @@ export function InlineThoughtBubble({
   tailSide = "right",
   variant = "default",
   lockKey,
+  hidden = false,
+  hideMode = false,
+  onToggleHidden,
 }: {
   value: string | null | undefined;
   onSave?: (value: string) => void;
@@ -268,13 +297,18 @@ export function InlineThoughtBubble({
   tailSide?: "left" | "right";
   variant?: "default" | "featured";
   lockKey?: string;
+  hidden?: boolean;
+  hideMode?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const lock = useTrackerFieldLock(lockKey);
+  const hiddenToggleActive = hideMode && !!onToggleHidden;
+  const reducedMotion = useReducedMotion();
+  if (hidden && !hideMode) return null;
   const tailOnLeft = tailSide === "left";
   const thoughtText = visibleText(value, "Thoughts").replace(/\s+/g, " ");
   const thoughtTextFit = getThoughtTextFit(thoughtText, getThoughtBubbleSize(thoughtText));
   const isFeaturedVariant = variant === "featured";
-  const reducedMotion = useReducedMotion();
   const previewLineCount = isFeaturedVariant ? (thoughtText.length <= 70 ? 2 : 3) : thoughtTextFit.previewLineCount;
   const thoughtTextStyle: CSSProperties = {
     fontSize: isFeaturedVariant ? "clamp(0.65625rem, calc(0.56rem + 0.85cqw), 0.75rem)" : thoughtTextFit.fontSize,
@@ -332,7 +366,26 @@ export function InlineThoughtBubble({
           )}
         />
         <div className="relative z-[1] min-w-0">
-          {onSave ? (
+          {hiddenToggleActive ? (
+            <button
+              type="button"
+              onClick={onToggleHidden}
+              title={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-label={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-pressed={hidden}
+              className={cn(
+                "w-full px-0 py-0 text-left font-medium italic text-[color-mix(in_srgb,var(--foreground)_86%,transparent)] transition-colors hover:bg-[var(--foreground)]/8",
+                isFeaturedVariant &&
+                  "text-[color:var(--tracker-profile-text)] hover:bg-[color-mix(in_srgb,var(--tracker-profile-accent-solid)_10%,transparent)]",
+                editMinHeightClassName,
+              )}
+              style={thoughtTextStyle}
+            >
+              <span className={cn("break-words", getThoughtPreviewClampClass(previewLineCount))}>
+                {hidden ? "Hidden" : thoughtText}
+              </span>
+            </button>
+          ) : onSave ? (
             <InlineEdit
               value={value ?? ""}
               onSave={onSave}
@@ -376,6 +429,9 @@ export function ExternalThoughtBubble({
   panelSide,
   bubbleRef,
   lockKey,
+  hidden = false,
+  hideMode = false,
+  onToggleHidden,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   value: string | null | undefined;
@@ -383,6 +439,9 @@ export function ExternalThoughtBubble({
   panelSide: TrackerPanelSide;
   bubbleRef?: RefObject<HTMLDivElement | null>;
   lockKey?: string;
+  hidden?: boolean;
+  hideMode?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const reducedMotion = useReducedMotion();
   const [position, setPosition] = useState<{
@@ -481,6 +540,9 @@ export function ExternalThoughtBubble({
         onSave={onSave}
         tailSide={position.outsideSide === "left" ? "right" : "left"}
         lockKey={lockKey}
+        hidden={hidden}
+        hideMode={hideMode}
+        onToggleHidden={onToggleHidden}
       />
     </motion.div>,
     document.body,

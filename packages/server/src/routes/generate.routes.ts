@@ -6825,6 +6825,7 @@ export async function generateRoutes(app: FastifyInstance) {
                       currentGameStateForLocks?.fieldLocks,
                       currentGameStateForLocks,
                     ),
+                    hiddenTrackerFields: currentGameStateForLocks?.hiddenTrackerFields,
                   },
                   null, // manual overrides are one-shot — never carry forward
                 );

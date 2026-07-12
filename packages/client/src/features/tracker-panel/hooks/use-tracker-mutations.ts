@@ -6,10 +6,12 @@ import type {
   PlayerStats,
   PresentCharacter,
   QuestProgress,
+  TrackerHiddenFields,
 } from "@marinara-engine/shared";
 import {
   characterTrackerLockPrefix,
   inventoryItemTrackerLockPrefix,
+  normalizeTrackerHiddenFields,
   removeTrackerCharacterLocks,
   removeTrackerFieldLockPrefix,
   removeTrackerQuestLocks,
@@ -131,6 +133,15 @@ export function useTrackerMutations({
   const avatarUploadSerialRef = useRef(0);
   const avatarUploadTokenByCharacterRef = useRef(new Map<string, number>());
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId: activeChatId, patchField });
+  const updateHiddenTrackerFields = useCallback(
+    (updater: (hiddenFields: TrackerHiddenFields | null | undefined) => TrackerHiddenFields) => {
+      const current = activeChatId ? useGameStateStore.getState().current : null;
+      const base =
+        current?.chatId === activeChatId ? normalizeTrackerHiddenFields(current.hiddenTrackerFields) : undefined;
+      patchField("hiddenTrackerFields", updater(base));
+    },
+    [activeChatId, patchField],
+  );
 
   const readCurrentGameState = useCallback(() => {
     if (!activeChatId) return null;
@@ -252,12 +263,19 @@ export function useTrackerMutations({
             characterTrackerLockPrefix(nextCharacter, targetIndex),
           ),
         );
+        updateHiddenTrackerFields((hiddenFields) =>
+          renameTrackerFieldLockPrefix(
+            hiddenFields,
+            characterTrackerLockPrefix(previous, targetIndex),
+            characterTrackerLockPrefix(nextCharacter, targetIndex),
+          ),
+        );
       }
       const next = [...liveCharacters];
       next[targetIndex] = nextCharacter;
       patchField("presentCharacters", next);
     },
-    [patchField, presentCharacters, readPresentCharacters, updateFieldLocks],
+    [patchField, presentCharacters, readPresentCharacters, updateFieldLocks, updateHiddenTrackerFields],
   );
 
   const removeCharacter = useCallback(
@@ -271,13 +289,21 @@ export function useTrackerMutations({
       if (removed) {
         removeFeaturedCharacterCard(getCharacterFeatureKey(removed, targetIndex));
         updateFieldLocks((locks) => removeTrackerCharacterLocks(locks, removed, targetIndex));
+        updateHiddenTrackerFields((hiddenFields) => removeTrackerCharacterLocks(hiddenFields, removed, targetIndex));
       }
       patchField(
         "presentCharacters",
         liveCharacters.filter((_, characterIndex) => characterIndex !== targetIndex),
       );
     },
-    [patchField, presentCharacters, readPresentCharacters, removeFeaturedCharacterCard, updateFieldLocks],
+    [
+      patchField,
+      presentCharacters,
+      readPresentCharacters,
+      removeFeaturedCharacterCard,
+      updateFieldLocks,
+      updateHiddenTrackerFields,
+    ],
   );
 
   const addCharacter = useCallback(() => {

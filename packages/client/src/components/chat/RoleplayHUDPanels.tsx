@@ -53,6 +53,7 @@ import {
   customTrackerLockKey,
   inventoryItemTrackerLockPrefix,
   inventoryTrackerLockKey,
+  isTrackerFieldHidden,
   isTrackerFieldLocked,
   personaStatTrackerLockPrefix,
   personaStatTrackerLockKey,
@@ -199,6 +200,11 @@ function useHudFieldLockResolver() {
   );
 }
 
+function useHudFieldHiddenResolver() {
+  const { hiddenTrackerFields } = useTrackerLockContext();
+  return useCallback((key: string) => isTrackerFieldHidden(hiddenTrackerFields, key), [hiddenTrackerFields]);
+}
+
 export function CombinedPlayerPanel({
   showPersona,
   showCharacters,
@@ -221,7 +227,7 @@ export function CombinedPlayerPanel({
   onRerunSingleTracker,
   isTrackerRetryBusy,
 }: CombinedPlayerPanelProps) {
-  const { onUpdateFieldLocks } = useTrackerLockContext();
+  const { onUpdateFieldLocks, onUpdateHiddenFields } = useTrackerLockContext();
   const updateBar = (idx: number, field: "value" | "max" | "name", val: number | string) => {
     const previous = personaStats[idx];
     const next = [...personaStats];
@@ -256,7 +262,10 @@ export function CombinedPlayerPanel({
   };
   const removeCharacter = (idx: number) => {
     const removed = characters[idx];
-    if (removed) onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+    if (removed) {
+      onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+      onUpdateHiddenFields?.((hiddenFields) => removeTrackerCharacterLocks(hiddenFields, removed, idx));
+    }
     onUpdateCharacters(characters.filter((_, i) => i !== idx));
   };
   const updateCharacter = (idx: number, updated: PresentCharacter) => {
@@ -265,6 +274,13 @@ export function CombinedPlayerPanel({
       onUpdateFieldLocks?.((locks) =>
         renameTrackerFieldLockPrefix(
           locks,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
+      onUpdateHiddenFields?.((hiddenFields) =>
+        renameTrackerFieldLockPrefix(
+          hiddenFields,
           characterTrackerLockPrefix(previous, idx),
           characterTrackerLockPrefix(updated, idx),
         ),
@@ -352,6 +368,7 @@ export function CombinedPlayerPanel({
     onUpdateCustomTracker(next);
   };
   const lockFor = useHudFieldLockResolver();
+  const hiddenFor = useHudFieldHiddenResolver();
   const personaStatusLock = lockFor(personaStatusTrackerLockKey());
 
   return (
@@ -446,6 +463,11 @@ export function CombinedPlayerPanel({
                 const appearanceLock = lockFor(characterTrackerLockKey(char, idx, "appearance"));
                 const outfitLock = lockFor(characterTrackerLockKey(char, idx, "outfit"));
                 const thoughtsLock = lockFor(characterTrackerLockKey(char, idx, "thoughts"));
+                const showMood = !hiddenFor(characterTrackerLockKey(char, idx, "mood"));
+                const showAppearance = !hiddenFor(characterTrackerLockKey(char, idx, "appearance"));
+                const showOutfit = !hiddenFor(characterTrackerLockKey(char, idx, "outfit"));
+                const showThoughts = !hiddenFor(characterTrackerLockKey(char, idx, "thoughts"));
+                const hasVisibleDefaultFields = showMood || showAppearance || showOutfit || showThoughts;
                 return (
                   <div key={char.characterId ?? idx} className="rounded-lg bg-[var(--muted)]/20 p-2 space-y-1">
                   <div className="group/field flex items-center gap-1.5">
@@ -472,36 +494,46 @@ export function CombinedPlayerPanel({
                       <X size="0.625rem" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
-                    <LabeledEdit
-                      label="Mood"
-                      value={char.mood}
-                      onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
-                      locked={moodLock.locked}
-                      onToggleLock={moodLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Look"
-                      value={char.appearance ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
-                      locked={appearanceLock.locked}
-                      onToggleLock={appearanceLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Outfit"
-                      value={char.outfit ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
-                      locked={outfitLock.locked}
-                      onToggleLock={outfitLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Thinks"
-                      value={char.thoughts ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
-                      locked={thoughtsLock.locked}
-                      onToggleLock={thoughtsLock.onToggle}
-                    />
-                  </div>
+                  {hasVisibleDefaultFields && (
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
+                      {showMood && (
+                        <LabeledEdit
+                          label="Mood"
+                          value={char.mood}
+                          onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
+                          locked={moodLock.locked}
+                          onToggleLock={moodLock.onToggle}
+                        />
+                      )}
+                      {showAppearance && (
+                        <LabeledEdit
+                          label="Look"
+                          value={char.appearance ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
+                          locked={appearanceLock.locked}
+                          onToggleLock={appearanceLock.onToggle}
+                        />
+                      )}
+                      {showOutfit && (
+                        <LabeledEdit
+                          label="Outfit"
+                          value={char.outfit ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
+                          locked={outfitLock.locked}
+                          onToggleLock={outfitLock.onToggle}
+                        />
+                      )}
+                      {showThoughts && (
+                        <LabeledEdit
+                          label="Thinks"
+                          value={char.thoughts ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
+                          locked={thoughtsLock.locked}
+                          onToggleLock={thoughtsLock.onToggle}
+                        />
+                      )}
+                    </div>
+                  )}
                   {Array.isArray(char.stats) && char.stats.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                       {char.stats.map((stat, statIndex) => {
@@ -803,7 +835,7 @@ export function CharactersPanel({
   onRerunSingleTracker,
   isTrackerRetryBusy,
 }: CharactersPanelProps) {
-  const { onUpdateFieldLocks } = useTrackerLockContext();
+  const { onUpdateFieldLocks, onUpdateHiddenFields } = useTrackerLockContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadIdx, setUploadIdx] = useState<number | null>(null);
 
@@ -874,7 +906,10 @@ export function CharactersPanel({
 
   const removeCharacter = (idx: number) => {
     const removed = characters[idx];
-    if (removed) onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+    if (removed) {
+      onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+      onUpdateHiddenFields?.((hiddenFields) => removeTrackerCharacterLocks(hiddenFields, removed, idx));
+    }
     onUpdate(characters.filter((_, i) => i !== idx));
   };
 
@@ -888,12 +923,20 @@ export function CharactersPanel({
           characterTrackerLockPrefix(updated, idx),
         ),
       );
+      onUpdateHiddenFields?.((hiddenFields) =>
+        renameTrackerFieldLockPrefix(
+          hiddenFields,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
     }
     const next = [...characters];
     next[idx] = updated;
     onUpdate(next);
   };
   const lockFor = useHudFieldLockResolver();
+  const hiddenFor = useHudFieldHiddenResolver();
 
   return (
     <>
@@ -941,6 +984,11 @@ export function CharactersPanel({
           const appearanceLock = lockFor(characterTrackerLockKey(char, idx, "appearance"));
           const outfitLock = lockFor(characterTrackerLockKey(char, idx, "outfit"));
           const thoughtsLock = lockFor(characterTrackerLockKey(char, idx, "thoughts"));
+          const showMood = !hiddenFor(characterTrackerLockKey(char, idx, "mood"));
+          const showAppearance = !hiddenFor(characterTrackerLockKey(char, idx, "appearance"));
+          const showOutfit = !hiddenFor(characterTrackerLockKey(char, idx, "outfit"));
+          const showThoughts = !hiddenFor(characterTrackerLockKey(char, idx, "thoughts"));
+          const hasVisibleDefaultFields = showMood || showAppearance || showOutfit || showThoughts;
           return (
             <div key={char.characterId ?? idx} className="rounded-lg bg-[var(--muted)]/20 p-2 space-y-1">
             <div className="group/field flex items-center gap-1.5">
@@ -992,36 +1040,46 @@ export function CharactersPanel({
                 <X size="0.625rem" />
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
-              <LabeledEdit
-                label="Mood"
-                value={char.mood}
-                onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
-                locked={moodLock.locked}
-                onToggleLock={moodLock.onToggle}
-              />
-              <LabeledEdit
-                label="Look"
-                value={char.appearance ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
-                locked={appearanceLock.locked}
-                onToggleLock={appearanceLock.onToggle}
-              />
-              <LabeledEdit
-                label="Outfit"
-                value={char.outfit ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
-                locked={outfitLock.locked}
-                onToggleLock={outfitLock.onToggle}
-              />
-              <LabeledEdit
-                label="Thinks"
-                value={char.thoughts ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
-                locked={thoughtsLock.locked}
-                onToggleLock={thoughtsLock.onToggle}
-              />
-            </div>
+            {hasVisibleDefaultFields && (
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
+                {showMood && (
+                  <LabeledEdit
+                    label="Mood"
+                    value={char.mood}
+                    onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
+                    locked={moodLock.locked}
+                    onToggleLock={moodLock.onToggle}
+                  />
+                )}
+                {showAppearance && (
+                  <LabeledEdit
+                    label="Look"
+                    value={char.appearance ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
+                    locked={appearanceLock.locked}
+                    onToggleLock={appearanceLock.onToggle}
+                  />
+                )}
+                {showOutfit && (
+                  <LabeledEdit
+                    label="Outfit"
+                    value={char.outfit ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
+                    locked={outfitLock.locked}
+                    onToggleLock={outfitLock.onToggle}
+                  />
+                )}
+                {showThoughts && (
+                  <LabeledEdit
+                    label="Thinks"
+                    value={char.thoughts ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
+                    locked={thoughtsLock.locked}
+                    onToggleLock={thoughtsLock.onToggle}
+                  />
+                )}
+              </div>
+            )}
             {Array.isArray(char.stats) && char.stats.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                 {char.stats.map((stat, statIndex) => {

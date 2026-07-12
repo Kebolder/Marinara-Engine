@@ -12,7 +12,8 @@ export type GameStatePatchField =
   | "presentCharacters"
   | "playerStats"
   | "personaStats"
-  | "fieldLocks";
+  | "fieldLocks"
+  | "hiddenTrackerFields";
 
 type GameStatePatch = Partial<Record<GameStatePatchField, unknown>>;
 type GameStatePatchTarget = {
@@ -69,6 +70,7 @@ function createEmptyGameState(chatId: string): GameState {
     playerStats: null,
     personaStats: null,
     fieldLocks: null,
+    hiddenTrackerFields: null,
     createdAt: "",
   };
 }
