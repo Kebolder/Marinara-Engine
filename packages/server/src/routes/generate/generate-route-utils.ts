@@ -11,6 +11,7 @@ import {
   normalizeWorldCustomFields,
   normalizeThinkingTagPairs,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   resolveMacros,
   unwrapConversationInstructions,
   wrapConversationInstructions,
@@ -1460,6 +1461,7 @@ export function parseJsonField<T>(value: unknown, fallback: T): T {
 export function parseGameStateRow(row: Record<string, unknown>): GameState {
   const manualOverrides = parseJsonField<Record<string, string> | null>(row.manualOverrides, null);
   const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
+  const hiddenTrackerFields = parseTrackerHiddenFields(row.hiddenTrackerFields);
   return {
     id: row.id as string,
     chatId: row.chatId as string,
@@ -1477,6 +1479,7 @@ export function parseGameStateRow(row: Record<string, unknown>): GameState {
     personaStats: parseJsonField<any[] | null>(row.personaStats, null),
     manualOverrides,
     fieldLocks,
+    hiddenTrackerFields,
     createdAt: row.createdAt as string,
   };
 }

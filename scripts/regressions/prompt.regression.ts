@@ -7,6 +7,7 @@ import {
   COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE,
   COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   applyTrackerFieldLocksToGameStatePatch,
+  characterTrackerLockKey,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
   compileChatSummaryEntries,
@@ -1408,8 +1409,21 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
   {
     name: "agent current game state hides quest progress from non-quest agents",
     run() {
+      const hiddenMoodKey = characterTrackerLockKey(
+        { characterId: "mira", name: "Mira" },
+        0,
+        "mood",
+      );
       const gameState = {
         date: "Day 1",
+        presentCharacters: [
+          {
+            characterId: "mira",
+            name: "Mira",
+            mood: "Uneasy",
+            outfit: "Travel cloak",
+          },
+        ],
         playerStats: {
           status: "Recognized by the northern clerk",
           inventory: [{ name: "glass earring", description: "A dangerous token", quantity: 1, location: "on_person" }],
@@ -1426,17 +1440,25 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         fieldLocks: {
           "quests.id:The%20Man%20Called%20Maukie.name": true,
           "playerStats.status": true,
+          [hiddenMoodKey]: true,
         },
+        hiddenTrackerFields: { [hiddenMoodKey]: true },
       };
 
       const backgroundState = compactGameStateForAgentContext(gameState, ["background"]) as {
         playerStats: Record<string, unknown>;
         fieldLocks: Record<string, unknown>;
+        presentCharacters: Array<Record<string, unknown>>;
+        hiddenTrackerFields?: Record<string, unknown>;
       };
       assert.equal("activeQuests" in backgroundState.playerStats, false);
       assert.equal(backgroundState.playerStats.status, "Recognized by the northern clerk");
       assert.equal(backgroundState.fieldLocks["quests.id:The%20Man%20Called%20Maukie.name"], undefined);
       assert.equal(backgroundState.fieldLocks["playerStats.status"], true);
+      assert.equal(backgroundState.fieldLocks[hiddenMoodKey], undefined);
+      assert.equal("mood" in backgroundState.presentCharacters[0]!, false);
+      assert.equal(backgroundState.presentCharacters[0]?.outfit, "Travel cloak");
+      assert.equal("hiddenTrackerFields" in backgroundState, false);
 
       const questState = compactGameStateForAgentContext(gameState, ["quest"]) as {
         playerStats: { activeQuests?: Array<{ name?: string }> };

@@ -49,6 +49,7 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed,
   deleteMode,
   addMode,
+  hideMode,
 }: {
   activeChatId: string;
   activePersona: Persona | null;
@@ -76,6 +77,7 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed: (section: TrackerPanelSection) => void;
   deleteMode: boolean;
   addMode: boolean;
+  hideMode: boolean;
 }) {
   const updateAgent = useUpdateAgent();
   const { featuredCharacterCards, removeFeaturedCharacterCard, toggleFeaturedCharacterCard } =
@@ -243,6 +245,7 @@ export function TrackerSectionList({
             onToggleFeatured={toggleFeaturedCharacterCard}
             deleteMode={deleteMode}
             addMode={addMode}
+            hideMode={hideMode}
             collapsed={isPanelCollapsed("characters")}
             onToggleCollapsed={() => toggleTrackerPanelSectionCollapsed("characters")}
           />

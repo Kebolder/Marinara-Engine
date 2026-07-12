@@ -1,6 +1,13 @@
 import { type ReactNode } from "react";
 import { Eye, HeartPulse, Shirt } from "lucide-react";
-import { characterTrackerLockKey, type CharacterStat, type PresentCharacter } from "@marinara-engine/shared";
+import {
+  characterTrackerLockKey,
+  isTrackerFieldHidden,
+  normalizeTrackerFieldLocks,
+  normalizeTrackerHiddenFields,
+  type CharacterStat,
+  type PresentCharacter,
+} from "@marinara-engine/shared";
 import type { TrackerPanelSizeProfile } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
 import type { TrackerStatDensity } from "../../tracker-panel.types";
@@ -8,7 +15,7 @@ import { visibleText } from "../../lib/tracker-display";
 import { InlineEdit } from "../controls/InlineControls";
 import { StatList } from "../controls/StatList";
 import { TRACKER_PROFILE_FIELD_TILE_CLASS } from "../controls/TrackerProfileChrome";
-import { useTrackerFieldLock } from "../TrackerLockContext";
+import { useTrackerFieldLock, useTrackerLockContext } from "../TrackerLockContext";
 
 const FEATURED_FIELD_LIST_CLASS =
   "relative z-[1] grid h-full min-h-0 grid-cols-1 gap-0.5 overflow-hidden px-1 py-0.5";
@@ -58,6 +65,9 @@ function FeaturedFieldTile({
   sizeProfile,
   tone,
   lockKey,
+  hidden = false,
+  hideMode = false,
+  onToggleHidden,
 }: {
   icon: ReactNode;
   accessibleLabel: string;
@@ -68,14 +78,25 @@ function FeaturedFieldTile({
   sizeProfile: TrackerPanelSizeProfile;
   tone: FeaturedFieldTone;
   lockKey?: string;
+  hidden?: boolean;
+  hideMode?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const lock = useTrackerFieldLock(lockKey);
+  const hiddenToggleActive = hideMode && !!onToggleHidden;
+  if (hidden && !hideMode) return null;
   const displayValue = visibleText(value, placeholder);
   const textClass = FEATURED_FIELD_TEXT_CLASS_BY_PROFILE[sizeProfile];
   const previewLines = FEATURED_FIELD_PREVIEW_LINES_BY_PROFILE[sizeProfile];
 
   return (
-    <div className={cn(TRACKER_PROFILE_FIELD_TILE_CLASS, FEATURED_FIELD_TILE_CLASS_BY_PROFILE[sizeProfile])}>
+    <div
+      className={cn(
+        TRACKER_PROFILE_FIELD_TILE_CLASS,
+        FEATURED_FIELD_TILE_CLASS_BY_PROFILE[sizeProfile],
+        hidden && "opacity-60 grayscale",
+      )}
+    >
       <span
         className={cn(FEATURED_FIELD_ICON_CLASS, FEATURED_FIELD_ICON_TONE_CLASS[tone])}
         aria-label={accessibleLabel}
@@ -83,7 +104,29 @@ function FeaturedFieldTile({
       >
         {icon}
       </span>
-      {onSave ? (
+      {hiddenToggleActive ? (
+        <button
+          type="button"
+          onClick={onToggleHidden}
+          title={hidden ? `Show ${accessibleLabel.toLowerCase()}` : `Hide ${accessibleLabel.toLowerCase()}`}
+          aria-label={hidden ? `Show ${accessibleLabel.toLowerCase()}` : `Hide ${accessibleLabel.toLowerCase()}`}
+          aria-pressed={hidden}
+          className={cn(
+            "w-full min-w-0 self-center rounded px-0 py-0 text-left transition-colors hover:bg-[var(--accent)]/25",
+            readable ? textClass : "h-4 text-[0.625rem] leading-4",
+            hidden ? "italic text-[color-mix(in_srgb,var(--tracker-profile-muted-text)_62%,transparent)]" : "text-[color:var(--tracker-profile-text)]",
+          )}
+        >
+          <span
+            className={cn(
+              readable ? "break-words [align-content:start]" : "block truncate text-[0.625rem]",
+              readable && FEATURED_FIELD_PREVIEW_CLASS_BY_PROFILE[sizeProfile],
+            )}
+          >
+            {hidden ? "Hidden" : displayValue}
+          </span>
+        </button>
+      ) : onSave ? (
         <InlineEdit
           value={value ?? ""}
           onSave={onSave}
@@ -127,6 +170,27 @@ export function FeaturedFieldList({
   sizeProfile: TrackerPanelSizeProfile;
   characterIndex: number;
 }) {
+  const { hiddenTrackerFields, hideMode, onUpdateFieldLocks, onUpdateHiddenFields } = useTrackerLockContext();
+  const fieldKey = (field: FeaturedCharacterFieldKey) => characterTrackerLockKey(character, characterIndex, field);
+  const fieldHidden = (field: FeaturedCharacterFieldKey) => isTrackerFieldHidden(hiddenTrackerFields, fieldKey(field));
+  const toggleFieldHidden = (field: FeaturedCharacterFieldKey) => {
+    if (!onUpdate) return;
+    const key = fieldKey(field);
+    const nextHidden = !isTrackerFieldHidden(hiddenTrackerFields, key);
+    onUpdateHiddenFields?.((hiddenFields) => {
+      const next = normalizeTrackerHiddenFields(hiddenFields);
+      if (nextHidden) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+    onUpdateFieldLocks?.((locks) => {
+      const next = normalizeTrackerFieldLocks(locks);
+      if (nextHidden) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+    if (nextHidden) onUpdate({ ...character, [field]: field === "mood" ? "" : null });
+  };
   const fields = [
     {
       accessibleLabel: "Mood",
@@ -134,7 +198,8 @@ export function FeaturedFieldList({
       key: "mood",
       onSave: onUpdate ? (mood: string) => onUpdate({ ...character, mood }) : undefined,
       placeholder: "Mood",
-      show: !!(character.mood || onUpdate),
+      hidden: fieldHidden("mood"),
+      show: !!(character.mood || onUpdate) && (!fieldHidden("mood") || hideMode),
       tone: "mood" as const,
       value: character.mood,
     },
@@ -144,7 +209,8 @@ export function FeaturedFieldList({
       key: "appearance",
       onSave: onUpdate ? (appearance: string) => onUpdate({ ...character, appearance: appearance || null }) : undefined,
       placeholder: "Appearance",
-      show: !!(character.appearance || onUpdate),
+      hidden: fieldHidden("appearance"),
+      show: !!(character.appearance || onUpdate) && (!fieldHidden("appearance") || hideMode),
       tone: "appearance" as const,
       value: character.appearance,
     },
@@ -154,7 +220,8 @@ export function FeaturedFieldList({
       key: "outfit",
       onSave: onUpdate ? (outfit: string) => onUpdate({ ...character, outfit: outfit || null }) : undefined,
       placeholder: "Outfit",
-      show: !!(character.outfit || onUpdate),
+      hidden: fieldHidden("outfit"),
+      show: !!(character.outfit || onUpdate) && (!fieldHidden("outfit") || hideMode),
       tone: "outfit" as const,
       value: character.outfit,
     },
@@ -176,6 +243,9 @@ export function FeaturedFieldList({
           sizeProfile={fieldSizeProfile}
           tone={field.tone}
           lockKey={characterTrackerLockKey(character, characterIndex, field.key as FeaturedCharacterFieldKey)}
+          hidden={field.hidden}
+          hideMode={hideMode}
+          onToggleHidden={onUpdate ? () => toggleFieldHidden(field.key as FeaturedCharacterFieldKey) : undefined}
         />
       ))}
     </div>

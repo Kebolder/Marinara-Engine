@@ -4,7 +4,10 @@ import {
   characterCustomFieldTrackerLockKey,
   characterStatTrackerLockKey,
   characterTrackerLockKey,
+  isTrackerFieldHidden,
   isTrackerFieldLocked,
+  normalizeTrackerFieldLocks,
+  normalizeTrackerHiddenFields,
   removeTrackerFieldLockPrefix,
   renameTrackerFieldLockPrefix,
   type PresentCharacter,
@@ -80,6 +83,8 @@ const CHARACTER_CUSTOM_FIELD_LIST_CLASS =
 const CHARACTER_CUSTOM_FIELD_ROW_CLASS =
   "grid min-w-0 grid-cols-[minmax(2.05rem,0.42fr)_minmax(0,1fr)] items-center gap-0.5 @min-[176px]:grid-cols-[minmax(2.35rem,0.42fr)_minmax(0,1fr)] @min-[176px]:gap-1";
 
+type HideableCharacterField = "mood" | "appearance" | "outfit" | "thoughts";
+
 function CompactCharacterNameplate({ children }: { children: ReactNode }) {
   return (
     <div className={CHARACTER_NAMEPLATE_CLASS}>
@@ -93,12 +98,20 @@ function CompactThoughtBubble({
   value,
   onSave,
   lockKey,
+  hidden = false,
+  hideMode = false,
+  onToggleHidden,
 }: {
   value: string | null | undefined;
   onSave?: (value: string) => void;
   lockKey?: string;
+  hidden?: boolean;
+  hideMode?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const lock = useTrackerFieldLock(lockKey);
+  const hiddenToggleActive = hideMode && !!onToggleHidden;
+  if (hidden && !hideMode) return null;
   const thoughtText = visibleText(value, "Thoughts").replace(/\s+/g, " ");
 
   return (
@@ -106,7 +119,18 @@ function CompactThoughtBubble({
       <div className="relative z-[2] max-h-[2.95rem] min-h-5 w-full min-w-0 overflow-hidden rounded-[1.05rem] border border-[color-mix(in_srgb,var(--tracker-profile-dialogue-border)_24%,transparent)] bg-[linear-gradient(150deg,color-mix(in_srgb,var(--tracker-profile-surface-solid)_78%,var(--tracker-profile-display-solid)_12%)_0%,color-mix(in_srgb,var(--tracker-profile-surface-solid)_72%,var(--tracker-profile-accent-solid)_10%)_54%,color-mix(in_srgb,var(--background)_34%,var(--tracker-profile-surface-solid)_66%)_100%)] px-2.5 pb-px pt-0.5 text-[var(--tracker-profile-text)] shadow-[0_3px_8px_color-mix(in_srgb,var(--background)_22%,transparent),0_0_6px_color-mix(in_srgb,var(--tracker-profile-accent-solid)_7%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_4%,transparent)]">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_18%,color-mix(in_srgb,var(--foreground)_7%,transparent),transparent_34%),radial-gradient(circle_at_88%_92%,color-mix(in_srgb,var(--tracker-profile-accent-solid)_9%,transparent),transparent_46%),linear-gradient(180deg,transparent_52%,color-mix(in_srgb,var(--background)_18%,transparent)_100%)]" />
         <div className="relative z-[1] flex w-full max-w-full items-center">
-          {onSave ? (
+          {hiddenToggleActive ? (
+            <button
+              type="button"
+              onClick={onToggleHidden}
+              title={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-label={hidden ? "Show thoughts" : "Hide thoughts"}
+              aria-pressed={hidden}
+              className="min-h-4 w-full min-w-0 rounded px-0 py-0 text-left text-[0.59375rem] font-medium italic leading-[1.05] text-[color-mix(in_srgb,var(--tracker-profile-text)_72%,transparent)] transition-colors hover:bg-[var(--tracker-profile-accent-solid)]/10"
+            >
+              <span className="line-clamp-3 break-words tracking-[0]">{hidden ? "Hidden" : thoughtText}</span>
+            </button>
+          ) : onSave ? (
             <InlineEdit
               value={value ?? ""}
               onSave={onSave}
@@ -145,6 +169,7 @@ export function CharacterTrackerCard({
   characterIndex = 0,
   deleteMode = false,
   addMode = false,
+  hideMode = false,
   featured = false,
   onToggleFeatured,
   onUploadAvatar,
@@ -165,11 +190,13 @@ export function CharacterTrackerCard({
   characterIndex?: number;
   deleteMode?: boolean;
   addMode?: boolean;
+  hideMode?: boolean;
   featured?: boolean;
   onToggleFeatured?: () => void;
   onUploadAvatar?: () => void;
 }) {
-  const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
+  const { fieldLocks, hiddenTrackerFields, lockMode, onToggleFieldLock, onUpdateFieldLocks, onUpdateHiddenFields } =
+    useTrackerLockContext();
   if (featured) {
     return (
       <FeaturedCharacterTrackerCard
@@ -189,6 +216,7 @@ export function CharacterTrackerCard({
         characterIndex={characterIndex}
         deleteMode={deleteMode}
         addMode={addMode}
+        hideMode={hideMode}
         onToggleFeatured={onToggleFeatured}
         onUploadAvatar={onUploadAvatar}
       />
@@ -201,10 +229,35 @@ export function CharacterTrackerCard({
   const avatarMedia = characterPicture ?? character.avatarPath ?? null;
   const compactAvatarUpload = characterPicture ? undefined : onUploadAvatar;
   const hasEditableCustomFieldAdd = !!onUpdate && addMode;
-  const showAppearance = !!(character.appearance || onUpdate);
-  const showOutfit = !!(character.outfit || onUpdate);
-  const showMood = !!(character.mood || onUpdate);
-  const showThoughts = !!(character.thoughts || onUpdate);
+  const characterFieldKey = (field: HideableCharacterField) => characterTrackerLockKey(character, characterIndex, field);
+  const fieldHidden = (field: HideableCharacterField) =>
+    isTrackerFieldHidden(hiddenTrackerFields, characterFieldKey(field));
+  const toggleCharacterFieldHidden = (field: HideableCharacterField) => {
+    if (!onUpdate) return;
+    const key = characterFieldKey(field);
+    const nextHidden = !isTrackerFieldHidden(hiddenTrackerFields, key);
+    onUpdateHiddenFields?.((hiddenFields) => {
+      const next = normalizeTrackerHiddenFields(hiddenFields);
+      if (nextHidden) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+    onUpdateFieldLocks?.((locks) => {
+      const next = normalizeTrackerFieldLocks(locks);
+      if (nextHidden) next[key] = true;
+      else delete next[key];
+      return next;
+    });
+    if (nextHidden) onUpdate({ ...character, [field]: field === "mood" ? "" : null });
+  };
+  const moodHidden = fieldHidden("mood");
+  const appearanceHidden = fieldHidden("appearance");
+  const outfitHidden = fieldHidden("outfit");
+  const thoughtsHidden = fieldHidden("thoughts");
+  const showAppearance = !!(character.appearance || onUpdate) && (!appearanceHidden || hideMode);
+  const showOutfit = !!(character.outfit || onUpdate) && (!outfitHidden || hideMode);
+  const showMood = !!(character.mood || onUpdate) && (!moodHidden || hideMode);
+  const showThoughts = !!(character.thoughts || onUpdate) && (!thoughtsHidden || hideMode);
   const hasDetailRows = showMood || showAppearance || showOutfit;
   const hasDenseContent = characterStats.length > 0 || customFields.length > 0 || hasEditableCustomFieldAdd;
   const readableDetailRows = hasDenseContent;
@@ -348,6 +401,9 @@ export function CharacterTrackerCard({
               value={character.thoughts}
               onSave={onUpdate ? (thoughts) => onUpdate({ ...character, thoughts: thoughts || null }) : undefined}
               lockKey={characterTrackerLockKey(character, characterIndex, "thoughts")}
+              hidden={thoughtsHidden}
+              hideMode={hideMode}
+              onToggleHidden={onUpdate ? () => toggleCharacterFieldHidden("thoughts") : undefined}
             />
           )}
           {!showThoughts && <div className={CHARACTER_HEADER_FILLER_CLASS} />}
@@ -367,6 +423,9 @@ export function CharacterTrackerCard({
               readable={readableDetailRows}
               valueClassName={onUpdate ? COMPACT_CHARACTER_MOOD_EDIT_CLASS : COMPACT_CHARACTER_MOOD_STATIC_CLASS}
               lockKey={characterTrackerLockKey(character, characterIndex, "mood")}
+              hidden={moodHidden}
+              hideMode={hideMode}
+              onToggleHidden={onUpdate ? () => toggleCharacterFieldHidden("mood") : undefined}
             />
           )}
           {showAppearance && (
@@ -379,6 +438,9 @@ export function CharacterTrackerCard({
               tone="appearance"
               readable={readableDetailRows}
               lockKey={characterTrackerLockKey(character, characterIndex, "appearance")}
+              hidden={appearanceHidden}
+              hideMode={hideMode}
+              onToggleHidden={onUpdate ? () => toggleCharacterFieldHidden("appearance") : undefined}
             />
           )}
           {showOutfit && (
@@ -391,6 +453,9 @@ export function CharacterTrackerCard({
               tone="outfit"
               readable={readableDetailRows}
               lockKey={characterTrackerLockKey(character, characterIndex, "outfit")}
+              hidden={outfitHidden}
+              hideMode={hideMode}
+              onToggleHidden={onUpdate ? () => toggleCharacterFieldHidden("outfit") : undefined}
             />
           )}
         </div>

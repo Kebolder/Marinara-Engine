@@ -4,6 +4,7 @@
 
 /** Complete game state snapshot, linked to a message. */
 export type TrackerFieldLocks = Record<string, boolean>;
+export type TrackerHiddenFields = Record<string, boolean>;
 
 export interface GameState {
   id: string;
@@ -42,6 +43,9 @@ export interface GameState {
 
   /** JSON object of tracker field lock keys → enabled. Carried forward across agent snapshots. */
   fieldLocks?: TrackerFieldLocks | null;
+
+  /** JSON object of tracker field keys hidden from the UI. */
+  hiddenTrackerFields?: TrackerHiddenFields | null;
 
   createdAt: string;
 }

@@ -4,7 +4,10 @@ import {
   characterCustomFieldTrackerLockKey,
   characterStatTrackerLockKey,
   characterTrackerLockKey,
+  isTrackerFieldHidden,
   isTrackerFieldLocked,
+  normalizeTrackerFieldLocks,
+  normalizeTrackerHiddenFields,
   removeTrackerFieldLockPrefix,
   renameTrackerFieldLockPrefix,
   type PresentCharacter,
@@ -93,6 +96,7 @@ export function FeaturedCharacterTrackerCard({
   characterIndex = 0,
   deleteMode,
   addMode,
+  hideMode,
   onToggleFeatured,
   onUploadAvatar,
 }: {
@@ -112,10 +116,12 @@ export function FeaturedCharacterTrackerCard({
   characterIndex?: number;
   deleteMode: boolean;
   addMode: boolean;
+  hideMode: boolean;
   onToggleFeatured?: () => void;
   onUploadAvatar?: () => void;
 }) {
-  const { fieldLocks, lockMode, onToggleFieldLock, onUpdateFieldLocks } = useTrackerLockContext();
+  const { fieldLocks, hiddenTrackerFields, lockMode, onToggleFieldLock, onUpdateFieldLocks, onUpdateHiddenFields } =
+    useTrackerLockContext();
   const thoughtAnchorRef = useRef<HTMLDivElement | null>(null);
   const thoughtBubbleRef = useRef<HTMLDivElement | null>(null);
   const thoughtControlRef = useRef<HTMLButtonElement | null>(null);
@@ -136,7 +142,26 @@ export function FeaturedCharacterTrackerCard({
   const characterStatsOverflowPortrait =
     trackerStatStackHeight(characterStats.length, "tight", hasEditableStatAdd) > featuredStatColumnHeightRem;
   const hasDeleteAction = !!onRemove && deleteMode;
-  const hasThoughtsControl = !!(character.thoughts || onUpdate);
+  const thoughtsKey = characterTrackerLockKey(character, characterIndex, "thoughts");
+  const thoughtsHidden = isTrackerFieldHidden(hiddenTrackerFields, thoughtsKey);
+  const toggleThoughtsHidden = () => {
+    if (!onUpdate) return;
+    const nextHidden = !isTrackerFieldHidden(hiddenTrackerFields, thoughtsKey);
+    onUpdateHiddenFields?.((hiddenFields) => {
+      const next = normalizeTrackerHiddenFields(hiddenFields);
+      if (nextHidden) next[thoughtsKey] = true;
+      else delete next[thoughtsKey];
+      return next;
+    });
+    onUpdateFieldLocks?.((locks) => {
+      const next = normalizeTrackerFieldLocks(locks);
+      if (nextHidden) next[thoughtsKey] = true;
+      else delete next[thoughtsKey];
+      return next;
+    });
+    if (nextHidden) onUpdate({ ...character, thoughts: null });
+  };
+  const hasThoughtsControl = !!(character.thoughts || onUpdate) && (!thoughtsHidden || hideMode);
   const hasFeaturedFields = !!(character.mood || character.appearance || character.outfit || onUpdate);
   const hasCharacterStatBlock = characterStats.length > 0 || (onUpdate && addMode);
   const useFeaturedStatColumns = characterStats.length >= 2;
@@ -335,6 +360,9 @@ export function FeaturedCharacterTrackerCard({
               tailSide={featuredPortraitSide}
               variant="featured"
               lockKey={characterTrackerLockKey(character, characterIndex, "thoughts")}
+              hidden={thoughtsHidden}
+              hideMode={hideMode}
+              onToggleHidden={onUpdate ? toggleThoughtsHidden : undefined}
             />
           )}
           <div className={FEATURED_DETAILS_FIELDS_CLASS}>
@@ -374,6 +402,9 @@ export function FeaturedCharacterTrackerCard({
           onSave={onUpdate ? (thoughts) => onUpdate({ ...character, thoughts: thoughts || null }) : undefined}
           panelSide={trackerPanelSide}
           lockKey={characterTrackerLockKey(character, characterIndex, "thoughts")}
+          hidden={thoughtsHidden}
+          hideMode={hideMode}
+          onToggleHidden={onUpdate ? toggleThoughtsHidden : undefined}
         />
       )}
 

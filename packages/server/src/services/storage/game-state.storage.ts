@@ -10,10 +10,14 @@ import {
   normalizeWorldCustomFields,
   normalizeTrackerFieldLocks,
   normalizeTrackerFieldLocksForState,
+  normalizeTrackerHiddenFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   trackerFieldLocksAreEmpty,
+  trackerHiddenFieldsAreEmpty,
   type GameState,
   type TrackerFieldLocks,
+  type TrackerHiddenFields,
 } from "@marinara-engine/shared";
 
 export type GameStateVisibleAnchor = { messageId: string; swipeIndex: number };
@@ -33,6 +37,7 @@ type GameStateUpdateFields = Partial<
     | "playerStats"
     | "personaStats"
     | "fieldLocks"
+    | "hiddenTrackerFields"
   >
 >;
 
@@ -52,6 +57,7 @@ type LockMigrationStateSource = {
   playerStats?: unknown;
   personaStats?: unknown;
   fieldLocks?: unknown;
+  hiddenTrackerFields?: unknown;
   createdAt?: unknown;
 };
 
@@ -87,6 +93,11 @@ function serializeFieldLocks(fieldLocks: TrackerFieldLocks | null | undefined) {
   return trackerFieldLocksAreEmpty(normalized) ? null : JSON.stringify(normalized);
 }
 
+function serializeHiddenTrackerFields(hiddenFields: TrackerHiddenFields | null | undefined) {
+  const normalized = normalizeTrackerHiddenFields(hiddenFields);
+  return trackerHiddenFieldsAreEmpty(normalized) ? null : JSON.stringify(normalized);
+}
+
 function parseSnapshotJson<T>(value: unknown, fallback: T): T {
   if (typeof value === "string") {
     try {
@@ -115,6 +126,7 @@ function buildLockMigrationState(row: LockMigrationStateSource): GameState {
     playerStats: parseSnapshotJson(row.playerStats, null),
     personaStats: parseSnapshotJson(row.personaStats, null),
     fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
+    hiddenTrackerFields: parseTrackerHiddenFields(row.hiddenTrackerFields),
     createdAt: typeof row.createdAt === "string" ? row.createdAt : now(),
   };
 }
@@ -323,6 +335,7 @@ export function createGameStateStorage(db: DB) {
         personaStats: state.personaStats ? JSON.stringify(state.personaStats) : null,
         manualOverrides: serializeManualOverrides(manualOverrides),
         fieldLocks: serializeFieldLocks(state.fieldLocks),
+        hiddenTrackerFields: serializeHiddenTrackerFields(state.hiddenTrackerFields),
         committed: state.committed ? 1 : 0,
         createdAt: now(),
       });
@@ -405,6 +418,7 @@ export function createGameStateStorage(db: DB) {
             : latest.personaStats
           : null,
         fieldLocks: parseTrackerFieldLocks(latest?.fieldLocks),
+        hiddenTrackerFields: parseTrackerHiddenFields(latest?.hiddenTrackerFields),
       };
       baseState.fieldLocks = normalizeTrackerFieldLocksForState(
         baseState.fieldLocks,
@@ -427,6 +441,9 @@ export function createGameStateStorage(db: DB) {
           fields.fieldLocks,
           buildLockMigrationState(baseState),
         );
+      }
+      if (fields.hiddenTrackerFields !== undefined) {
+        baseState.hiddenTrackerFields = normalizeTrackerHiddenFields(fields.hiddenTrackerFields);
       }
 
       const manualOverrides = manual
@@ -458,6 +475,8 @@ export function createGameStateStorage(db: DB) {
         updates.playerStats = fields.playerStats ? JSON.stringify(fields.playerStats) : null;
       if (fields.personaStats !== undefined)
         updates.personaStats = fields.personaStats ? JSON.stringify(fields.personaStats) : null;
+      if (fields.hiddenTrackerFields !== undefined)
+        updates.hiddenTrackerFields = serializeHiddenTrackerFields(fields.hiddenTrackerFields);
 
       if (manual) {
         const storedOverrides = parseStoredManualOverrides(row.manualOverrides) ?? {};

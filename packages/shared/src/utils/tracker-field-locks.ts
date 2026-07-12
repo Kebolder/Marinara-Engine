@@ -7,6 +7,7 @@ import type {
   PresentCharacter,
   QuestProgress,
   TrackerFieldLocks,
+  TrackerHiddenFields,
   WorldCustomField,
 } from "../types/game-state.js";
 import {
@@ -84,6 +85,16 @@ export function normalizeTrackerFieldLocks(value: unknown): TrackerFieldLocks {
   return locks;
 }
 
+export function normalizeTrackerHiddenFields(value: unknown): TrackerHiddenFields {
+  if (!isRecord(value)) return {};
+  const hiddenFields: TrackerHiddenFields = {};
+  for (const [key, enabled] of Object.entries(value)) {
+    if (!key || enabled !== true) continue;
+    hiddenFields[key] = true;
+  }
+  return hiddenFields;
+}
+
 export function parseTrackerFieldLocks(value: unknown): TrackerFieldLocks {
   if (typeof value === "string") {
     try {
@@ -95,8 +106,23 @@ export function parseTrackerFieldLocks(value: unknown): TrackerFieldLocks {
   return normalizeTrackerFieldLocks(value);
 }
 
+export function parseTrackerHiddenFields(value: unknown): TrackerHiddenFields {
+  if (typeof value === "string") {
+    try {
+      return normalizeTrackerHiddenFields(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
+  return normalizeTrackerHiddenFields(value);
+}
+
 export function trackerFieldLocksAreEmpty(locks: TrackerFieldLocks | null | undefined) {
   return !locks || !Object.values(locks).some(Boolean);
+}
+
+export function trackerHiddenFieldsAreEmpty(hiddenFields: TrackerHiddenFields | null | undefined) {
+  return !hiddenFields || !Object.values(hiddenFields).some(Boolean);
 }
 
 export function trackerFieldLocksAreEqual(
@@ -114,8 +140,22 @@ export function isTrackerFieldLocked(locks: TrackerFieldLocks | null | undefined
   return locks?.[key] === true;
 }
 
+export function isTrackerFieldHidden(hiddenFields: TrackerHiddenFields | null | undefined, key: string) {
+  return hiddenFields?.[key] === true;
+}
+
 export function toggleTrackerFieldLock(locks: TrackerFieldLocks | null | undefined, key: string) {
   const next = normalizeTrackerFieldLocks(locks);
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = true;
+  }
+  return next;
+}
+
+export function toggleTrackerFieldHidden(hiddenFields: TrackerHiddenFields | null | undefined, key: string) {
+  const next = normalizeTrackerHiddenFields(hiddenFields);
   if (next[key]) {
     delete next[key];
   } else {

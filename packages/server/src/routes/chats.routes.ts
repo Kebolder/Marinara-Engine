@@ -23,7 +23,9 @@ import {
   coerceGameStateTextValue,
   normalizeWorldCustomFields,
   normalizeTrackerFieldLocks,
+  normalizeTrackerHiddenFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   normalizeTextForMatch,
   formatRpgStatsForPrompt,
   localAuthProviderBaseUrl,
@@ -1761,6 +1763,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       ? (JSON.parse(row.manualOverrides as string) as Record<string, string>)
       : null;
     const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
+    const hiddenTrackerFields = parseTrackerHiddenFields(row.hiddenTrackerFields);
     const worldCustomFields = normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, []));
 
     // ── Enrich present characters with avatar paths ──
@@ -1834,6 +1837,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       personaStats,
       manualOverrides: storedManualOverrides,
       fieldLocks,
+      hiddenTrackerFields,
       createdAt: row.createdAt,
     };
   });
@@ -1863,6 +1867,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       playerStats: any;
       personaStats: any[];
       fieldLocks: Record<string, boolean> | null;
+      hiddenTrackerFields: Record<string, boolean> | null;
     }> = {};
     if (body.date !== undefined) fields.date = coerceGameStateTextValue(body.date);
     if (body.time !== undefined) fields.time = coerceGameStateTextValue(body.time);
@@ -1875,6 +1880,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (body.playerStats !== undefined) fields.playerStats = body.playerStats;
     if (body.personaStats !== undefined) fields.personaStats = body.personaStats as any[];
     if (body.fieldLocks !== undefined) fields.fieldLocks = normalizeTrackerFieldLocks(body.fieldLocks);
+    if (body.hiddenTrackerFields !== undefined)
+      fields.hiddenTrackerFields = normalizeTrackerHiddenFields(body.hiddenTrackerFields);
     // Target the same snapshot the GET endpoint returns — the one for the last
     // assistant message's active swipe — so edits persist to the row the user
     // actually sees. Falls back to updateLatest when no messages exist yet.
@@ -1939,6 +1946,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           playerStats: (fields.playerStats as any) ?? null,
           personaStats: (fields.personaStats as any) ?? null,
           fieldLocks: normalizeTrackerFieldLocks(fields.fieldLocks),
+          hiddenTrackerFields: normalizeTrackerHiddenFields(fields.hiddenTrackerFields),
         },
         Object.keys(manualOverrides).length > 0 ? manualOverrides : null,
       );
@@ -3291,6 +3299,7 @@ export async function chatsRoutes(app: FastifyInstance) {
               playerStats: parseSnapshotJson(snapshot.playerStats, null),
               personaStats: parseSnapshotJson(snapshot.personaStats, null),
               fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
+              hiddenTrackerFields: parseTrackerHiddenFields(snapshot.hiddenTrackerFields),
               committed: (snapshot.committed as any) === 1,
             } as any,
             overrides,

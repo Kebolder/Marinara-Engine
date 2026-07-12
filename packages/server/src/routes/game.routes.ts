@@ -120,6 +120,7 @@ import {
   applyTrackerFieldLocksToGameStatePatch,
   normalizeWorldCustomFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   normalizeRpgStatPools,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
@@ -6651,6 +6652,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const previousRecentEvents = parseJsonField<string[]>(previousState?.recentEvents, []);
       const previousPlayerStats = parseJsonField<Record<string, unknown> | null>(previousState?.playerStats, null);
       const previousPersonaStats = parseJsonField<any[] | null>(previousState?.personaStats, null);
+      const previousHiddenTrackerFields = parseTrackerHiddenFields(previousState?.hiddenTrackerFields);
       const carriedInventory = mergeGameInventoryItems(
         normalizeGameInventoryItems(prevMeta.gameInventory),
         inventoryFromPlayerStats(previousPlayerStats),
@@ -6774,6 +6776,7 @@ export async function gameRoutes(app: FastifyInstance) {
             recentEvents: previousRecentEvents,
             playerStats: previousPlayerStats as any,
             personaStats: previousPersonaStats as any,
+            hiddenTrackerFields: previousHiddenTrackerFields,
             committed: true,
           });
         } catch (err) {
@@ -11627,6 +11630,7 @@ export async function gameRoutes(app: FastifyInstance) {
         playerStats: parseJsonField(snapshot.playerStats, null),
         personaStats: parseJsonField(snapshot.personaStats, null),
         fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
+        hiddenTrackerFields: parseTrackerHiddenFields(snapshot.hiddenTrackerFields),
         committed: true,
       },
       manualOverrides,

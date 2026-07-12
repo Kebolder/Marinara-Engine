@@ -10,13 +10,18 @@ import type {
   AgentResultType,
   AgentCallDebugEvent,
   MacroContext,
+  PresentCharacter,
+  TrackerHiddenFields,
   WrapFormat,
 } from "@marinara-engine/shared";
 import {
+  characterTrackerLockKey,
   compactQuestProgressForContext,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
+  isTrackerFieldHidden,
   MIN_AGENT_MAX_TOKENS,
+  normalizeTrackerHiddenFields,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
   normalizeRpgStatPools,
@@ -291,21 +296,70 @@ function omitQuestFieldLocksForContext(fieldLocks: unknown): unknown {
   return changed ? Object.fromEntries(nextEntries) : fieldLocks;
 }
 
+const HIDEABLE_CHARACTER_TRACKER_FIELDS = ["mood", "appearance", "outfit", "thoughts"] as const;
+
+function compactPresentCharactersForHiddenFields(
+  presentCharacters: unknown,
+  hiddenFields: TrackerHiddenFields,
+): unknown {
+  if (!Array.isArray(presentCharacters) || Object.keys(hiddenFields).length === 0) return presentCharacters;
+
+  let changed = false;
+  const compacted = presentCharacters.map((character, index) => {
+    if (!isRecord(character)) return character;
+    let next: Record<string, unknown> | null = null;
+
+    for (const field of HIDEABLE_CHARACTER_TRACKER_FIELDS) {
+      const key = characterTrackerLockKey(character as Pick<PresentCharacter, "characterId" | "name">, index, field);
+      if (field in character && isTrackerFieldHidden(hiddenFields, key)) {
+        next ??= { ...character };
+        delete next[field];
+        changed = true;
+      }
+    }
+
+    return next ?? character;
+  });
+
+  return changed ? compacted : presentCharacters;
+}
+
+function omitHiddenFieldLocksForContext(fieldLocks: unknown, hiddenFields: TrackerHiddenFields): unknown {
+  if (!isRecord(fieldLocks) || Object.keys(hiddenFields).length === 0) return fieldLocks;
+
+  let changed = false;
+  const nextEntries = Object.entries(fieldLocks).filter(([key]) => {
+    const keep = !isTrackerFieldHidden(hiddenFields, key);
+    if (!keep) changed = true;
+    return keep;
+  });
+
+  return changed ? Object.fromEntries(nextEntries) : fieldLocks;
+}
+
 export function compactGameStateForAgentContext(gameState: unknown, agentTypes: string[]): unknown {
   if (!isRecord(gameState)) {
     return gameState;
   }
 
+  const hiddenFields = normalizeTrackerHiddenFields(gameState.hiddenTrackerFields);
+  const presentCharacters = compactPresentCharactersForHiddenFields(gameState.presentCharacters, hiddenFields);
   const playerStats = compactQuestPlayerStatsForContext(gameState.playerStats, agentTypes);
-  const fieldLocks = shouldIncludeQuestContext(agentTypes)
-    ? gameState.fieldLocks
-    : omitQuestFieldLocksForContext(gameState.fieldLocks);
+  const visibleFieldLocks = omitHiddenFieldLocksForContext(gameState.fieldLocks, hiddenFields);
+  const fieldLocks = shouldIncludeQuestContext(agentTypes) ? visibleFieldLocks : omitQuestFieldLocksForContext(visibleFieldLocks);
 
-  if (playerStats === gameState.playerStats && fieldLocks === gameState.fieldLocks) {
+  if (
+    presentCharacters === gameState.presentCharacters &&
+    playerStats === gameState.playerStats &&
+    fieldLocks === gameState.fieldLocks &&
+    gameState.hiddenTrackerFields === undefined
+  ) {
     return gameState;
   }
 
   const next = { ...gameState };
+  delete next.hiddenTrackerFields;
+  if (presentCharacters !== gameState.presentCharacters) next.presentCharacters = presentCharacters;
   if (playerStats !== gameState.playerStats) next.playerStats = playerStats;
   if (fieldLocks !== gameState.fieldLocks) next.fieldLocks = fieldLocks;
   return next;
@@ -1913,7 +1967,7 @@ function buildCommittedTrackerStateContext(
   contextAgentTypes: string[],
   options: { includeMessageIds?: boolean },
 ): string | null {
-  const gs = msg.gameState;
+  const gs = msg.gameState ? (compactGameStateForAgentContext(msg.gameState, contextAgentTypes) as typeof msg.gameState) : null;
   if (!gs) return null;
 
   const trackerSummary: Record<string, unknown> = {};

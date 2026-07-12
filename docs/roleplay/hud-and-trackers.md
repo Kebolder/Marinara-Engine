@@ -74,6 +74,7 @@ The controls in the panel header also let you customize tracker structure:
 - Click **+** to enter add mode. The World section gains **Add world field**, and each present-character card gains **Add custom field**. Field names remain visible in normal mode so their values are always understandable.
 - Click the trash icon to enter delete mode, then remove custom world or character fields. Removing a field also removes its saved field locks.
 - Click the lock icon to enter lock mode. Custom field values follow the same lock behavior as built-in tracker values.
+- Click the crossed-out eye icon to enter hide mode, then choose **Mood**, **Look**, **Outfit**, or **Thoughts** on a character card. Hidden fields disappear from the Tracker Panel and Roleplay HUD, are cleared, and stay locked so tracker agents do not refill them. Enter hide mode again to show a hidden field as an empty field.
 
 Custom field names define the structure and remain stable across tracker runs. Tracker agents update their values when the story changes them, while omitted agent output does not erase fields you created.
 
