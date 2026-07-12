@@ -122,6 +122,8 @@ interface ChatState {
   streamBuffers: Map<string, string>;
   /** Chat IDs whose live stream has been replaced by the saved message while agents continue. */
   committedStreamChatIds: Set<string>;
+  /** Persisted assistant row currently represented by each chat's live streaming row. */
+  streamedMessageIds: Map<string, string>;
   thinkingBuffer: string;
   /** Per-chat live thinking text for active generations. */
   thinkingBuffers: Map<string, string>;
@@ -189,6 +191,7 @@ interface ChatState {
   updateLastMessage: (content: string) => void;
   setStreaming: (streaming: boolean, chatId?: string) => void;
   setStreamCommitted: (chatId: string, committed: boolean) => void;
+  setStreamedMessageId: (chatId: string, messageId: string | null) => void;
   setMariPhase: (chatId: string, phase: "thinking" | "updating" | "idle") => void;
   setAbortController: (chatId: string, controller: AbortController | null) => void;
   stopGeneration: (chatId?: string) => void;
@@ -273,6 +276,7 @@ export const useChatStore = create<ChatState>()(
     streamBuffer: "",
     streamBuffers: new Map(),
     committedStreamChatIds: new Set(),
+    streamedMessageIds: new Map(),
     thinkingBuffer: "",
     thinkingBuffers: new Map(),
     abortControllers: new Map(),
@@ -324,6 +328,7 @@ export const useChatStore = create<ChatState>()(
       set({
         activeChatId: id,
         swipeIndex: new Map(),
+        ...(id !== prev && { generationPhase: null }),
         ...(!id && { activeChat: null }),
         ...(activeCall ? { conversationCallExpanded: id === activeCall.session.chatId } : {}),
       });
@@ -385,12 +390,15 @@ export const useChatStore = create<ChatState>()(
     setStreaming: (streaming, chatId) =>
       set((state) => {
         const committed = new Set(state.committedStreamChatIds);
+        const streamedMessageIds = new Map(state.streamedMessageIds);
         const targetChatId = chatId ?? state.streamingChatId;
         if (targetChatId) committed.delete(targetChatId);
+        if (targetChatId) streamedMessageIds.delete(targetChatId);
         return {
           isStreaming: streaming,
           streamingChatId: streaming ? (chatId ?? null) : null,
           committedStreamChatIds: committed,
+          streamedMessageIds,
           ...(!streaming ? { generationPhase: null } : {}),
         };
       }),
@@ -400,6 +408,13 @@ export const useChatStore = create<ChatState>()(
         if (committed) next.add(chatId);
         else next.delete(chatId);
         return { committedStreamChatIds: next };
+      }),
+    setStreamedMessageId: (chatId, messageId) =>
+      set((state) => {
+        const next = new Map(state.streamedMessageIds);
+        if (messageId) next.set(chatId, messageId);
+        else next.delete(chatId);
+        return { streamedMessageIds: next };
       }),
     setMariPhase: (chatId, phase) =>
       set((state) => {
@@ -818,6 +833,7 @@ export const useChatStore = create<ChatState>()(
         streamBuffer: "",
         streamBuffers: new Map(),
         committedStreamChatIds: new Set(),
+        streamedMessageIds: new Map(),
         thinkingBuffer: "",
         thinkingBuffers: new Map(),
         abortControllers: new Map(),

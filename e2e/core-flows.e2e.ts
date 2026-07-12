@@ -135,6 +135,260 @@ test("provider concurrency errors appear in generation toasts", async ({ page },
   }
 });
 
+test("Roleplay rewrite streaming follows the rendered message height", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Roleplay rewrite scrolling is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "Rewrite Scroll Follow Smoke",
+      mode: "roleplay",
+      characterIds: [],
+      connectionId: "rewrite-scroll-test-connection",
+    },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      const messageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+        data: {
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `Earlier transcript ${index + 1}. ${"Context keeps this message tall. ".repeat(12)}`,
+        },
+      });
+      expect(messageResponse.ok()).toBeTruthy();
+    }
+
+    const originalText = "The short original response.";
+    const rewrittenText = Array.from(
+      { length: 120 },
+      (_, index) => `Rewritten line ${index + 1} keeps unfolding beneath the visible transcript boundary.`,
+    ).join("\n");
+    const savedMessage = {
+      id: "__rewrite_scroll_saved__",
+      chatId: chat.id,
+      role: "assistant",
+      characterId: null,
+      content: originalText,
+      activeSwipeIndex: 0,
+      extra: { postProcessingPending: { agentType: "prose-guardian" } },
+      createdAt: new Date().toISOString(),
+    };
+
+    await page.route("**/api/generate", async (route) => {
+      const events = [
+        { type: "token", data: originalText },
+        { type: "message_saved", data: savedMessage },
+        {
+          type: "text_rewrite",
+          data: {
+            editedText: rewrittenText,
+            rewriteApplied: true,
+            originalText,
+            agentType: "prose-guardian",
+          },
+        },
+        { type: "done", data: {} },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+    await page.addInitScript((chatId) => {
+      const persisted = JSON.parse(localStorage.getItem("marinara-engine-ui") ?? '{"state":{},"version":65}') as {
+        state: Record<string, unknown>;
+        version: number;
+      };
+      persisted.state.enableStreaming = true;
+      persisted.state.streamingSpeed = 90;
+      localStorage.setItem("marinara-engine-ui", JSON.stringify(persisted));
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+
+    const scroller = page.locator("[data-chat-scroll]");
+    await expect(scroller).toBeVisible();
+    await scroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect
+      .poll(() =>
+        scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
+      )
+      .toBeLessThan(12);
+
+    await page.locator("textarea.mari-chat-input-textarea").fill("Rewrite and stream this response");
+    await page.locator("button.mari-chat-send-btn").click();
+    await expect(page.locator('[data-message-id="__streaming__"]')).toBeVisible();
+    const initialScrollTop = await scroller.evaluate((element) => element.scrollTop);
+
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollTop), { timeout: 15_000 })
+      .toBeGreaterThan(initialScrollTop + 80);
+    await expect
+      .poll(() =>
+        scroller.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight),
+      )
+      .toBeLessThan(40);
+
+    await page.locator("button.mari-chat-send-btn").click();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("editing the preceding Roleplay message keeps one live stream row", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Roleplay edit-during-stream regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "Edit During Stream Smoke",
+      mode: "roleplay",
+      characterIds: [],
+      connectionId: "edit-during-stream-test-connection",
+    },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const responseText = Array.from(
+      { length: 80 },
+      (_, index) => `Streaming line ${index + 1} remains owned by one presentation row.`,
+    ).join("\n");
+    const savedMessage = {
+      id: "__edit_during_stream_saved__",
+      chatId: chat.id,
+      role: "assistant",
+      characterId: null,
+      content: responseText,
+      activeSwipeIndex: 0,
+      extra: {},
+      createdAt: new Date().toISOString(),
+    };
+
+    await page.route("**/api/generate", async (route) => {
+      const events = [
+        { type: "token", data: responseText },
+        { type: "message_saved", data: savedMessage },
+        { type: "agent_start", data: { phase: "post_generation" } },
+        {
+          type: "agent_result",
+          data: {
+            agentType: "world-state",
+            agentName: "World State",
+            resultType: "game_state_update",
+            data: {},
+            success: true,
+            error: null,
+            durationMs: 10,
+          },
+        },
+        { type: "done", data: {} },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+    await page.addInitScript((chatId) => {
+      const persisted = JSON.parse(localStorage.getItem("marinara-engine-ui") ?? '{"state":{},"version":65}') as {
+        state: Record<string, unknown>;
+        version: number;
+      };
+      persisted.state.enableStreaming = true;
+      persisted.state.streamingSpeed = 55;
+      localStorage.setItem("marinara-engine-ui", JSON.stringify(persisted));
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+
+    await page.locator("textarea.mari-chat-input-textarea").fill("Please answer while I edit this message.");
+    await page.locator("button.mari-chat-send-btn").click();
+
+    const liveStream = page.locator('[data-message-id="__streaming__"]');
+    const visibleAssistantRows = page.locator('[data-message-role="assistant"]');
+    await expect(liveStream).toHaveCount(1);
+    await expect(visibleAssistantRows).toHaveCount(1);
+    const userMessage = page.locator('[data-message-role="user"]').last();
+    await userMessage.hover();
+    await userMessage.getByTitle("Edit").click();
+    await expect(userMessage.locator("textarea")).toBeVisible();
+    await expect(liveStream).toHaveCount(1);
+    await expect(visibleAssistantRows).toHaveCount(1);
+
+    await userMessage.getByLabel("Cancel edit").click();
+    await expect(userMessage.locator("textarea")).toHaveCount(0);
+    await expect(liveStream).toHaveCount(1);
+    await expect(visibleAssistantRows).toHaveCount(1);
+
+    await page.locator("button.mari-chat-send-btn").click();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("Roleplay side panels use compositor-only desktop transitions", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Desktop panel animation regression.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: { name: "Roleplay Panel Performance Smoke", mode: "roleplay", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    for (let index = 0; index < 48; index += 1) {
+      const messageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+        data: {
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: `**Transcript ${index + 1}.** ${"A long roleplay paragraph exercises responsive line wrapping. ".repeat(18)}`,
+        },
+      });
+      expect(messageResponse.ok()).toBeTruthy();
+    }
+
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+    const charactersButton = page.getByTitle("Characters");
+    await expect(charactersButton).toBeVisible();
+
+    // Exercise the panel over a dense transcript, including its lazy first open.
+    await charactersButton.click();
+    await expect(page.locator('[data-component="RightPanel"]')).toBeVisible();
+    const rightPanel = page.locator('[data-component="RightPanelDesktop"]');
+    const leftPanel = page.locator('[data-component="ChatSidebarPanel"]');
+    await expect(rightPanel).toHaveCSS("animation-name", "mari-shell-panel-enter-right");
+    await rightPanel.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
+    await page.getByRole("button", { name: "Close panel" }).click();
+    await expect(rightPanel).toHaveCSS("width", "0px");
+
+    await page.locator('[data-tour="sidebar-toggle"]').click();
+    await expect(leftPanel).not.toHaveCSS("width", "0px");
+    await expect(leftPanel).toHaveCSS("animation-name", "mari-shell-panel-enter-left");
+    await leftPanel.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
+    await page.locator('[data-tour="sidebar-toggle"]').click();
+    await expect(leftPanel).toHaveCSS("width", "0px");
+
+    for (const panel of [rightPanel, leftPanel]) {
+      const transitionProperties = await panel.evaluate((element) => getComputedStyle(element).transitionProperty);
+      expect(transitionProperties.split(",").map((property) => property.trim())).not.toContain("width");
+    }
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
 test("rewrite shield switches repeatedly between original and rewritten message versions", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Rewrite version toolbar regression is covered on desktop.");
 

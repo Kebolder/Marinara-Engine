@@ -176,14 +176,13 @@ function appendImageCaptionBlocksToContent(content: string, blocks: string[]): s
   return `${content}${content.trim() ? "\n\n" : ""}${blocks.join("\n\n")}`;
 }
 
-async function generateImageCaptionForAttachment(
-  attachment: PromptAttachment,
+export async function generateImageCaptionForDataUrl(
+  filename: string,
   imageDataUrl: string,
   imageCaptioning: ImageCaptioningRuntime,
   signal: AbortSignal,
 ): Promise<string | null> {
   if (!imageCaptioning.provider || !imageCaptioning.connection) return null;
-  const filename = getAttachmentFilename(attachment);
   try {
     const result = await imageCaptioning.provider.chatComplete(
       [
@@ -251,7 +250,12 @@ export async function resolvePromptAttachmentInputs(args: {
       let caption = readCachedImageCaption(attachment, imageCaptioning);
       let updatedAttachment: PromptAttachment | null = null;
       if (!caption) {
-        caption = await generateImageCaptionForAttachment(attachment, imageDataUrl, imageCaptioning, signal);
+        caption = await generateImageCaptionForDataUrl(
+          getAttachmentFilename(attachment),
+          imageDataUrl,
+          imageCaptioning,
+          signal,
+        );
         if (caption) {
           updatedAttachment = {
             ...attachment,

@@ -9,6 +9,14 @@
 import { normalizeTextForMatch } from "./text-matching.js";
 
 const ENCODED_SPEAKER_TAG_RE = /&(?:lt|#0*60|#x0*3c);([^<>]*?\bspeaker\b[^<>]*?)&(?:gt|#0*62|#x0*3e);/gi;
+export const CLOCK_TOKEN_SOURCE = String.raw`\d{1,2}[:.]\d{2}(?:\s*(?:am|pm))?`;
+export const FULL_DATE_TOKEN_SOURCE = String.raw`\d{1,2}\.\d{1,2}\.\d{2,4}`;
+export const DATE_TIME_TOKEN_SOURCE = String.raw`\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\s+${CLOCK_TOKEN_SOURCE}`;
+const CONVERSATION_TIMESTAMP_TOKEN_SOURCE = String.raw`\[(?:${DATE_TIME_TOKEN_SOURCE}|${CLOCK_TOKEN_SOURCE}|${FULL_DATE_TOKEN_SOURCE})\]`;
+const LEADING_CONVERSATION_TIMESTAMPS_RE = new RegExp(
+  String.raw`^([^\S\n]*(?:${CONVERSATION_TIMESTAMP_TOKEN_SOURCE})\s*)+`,
+  "gm",
+);
 
 function decodeSpeakerTagAttributeEntities(value: string): string {
   return value
@@ -28,7 +36,8 @@ export function decodeEncodedSpeakerTags(value: string): string {
 }
 
 /**
- * Strip leaked line-leading `[HH:MM]` / `[DD.MM.YYYY]` timestamp tokens — the
+ * Strip leaked line-leading `[HH:MM]`, `[DD.MM.YYYY]`, or combined
+ * `[DD.MM HH:MM]` / `[DD.MM.YYYY HH:MM]` timestamp tokens — the
  * display shape the conversation client renders and segments. The server strips
  * the same way before resolving reaction segment indexes, so both sides parse
  * identical content. Only line-leading tokens go; interior text is untouched
@@ -40,10 +49,7 @@ export function stripLeadingMessageTimestamps(text: string): string {
   // \s): with \s* every line start inside a long blank run re-scanned the rest
   // of the run before failing, going quadratic (~1s per call at 40KB of
   // newlines). Same-line whitespace fails in O(1) at non-timestamp lines.
-  return text
-    .replace(/^([^\S\n]*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
-    .replace(/^([^\S\n]*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
-    .trim();
+  return text.replace(LEADING_CONVERSATION_TIMESTAMPS_RE, "").trim();
 }
 
 /** One parsed speaker turn: the speaker's name (null = narration) + its text. */

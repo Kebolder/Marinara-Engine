@@ -2993,6 +2993,40 @@ export function NoodleView() {
           </Section>
 
           <Section
+            title="Image Understanding"
+            help="Lets a vision-capable connection describe timeline images for the Noodle writer, including text-only models."
+          >
+            <div className="space-y-3">
+              <ToggleSetting
+                label="Image captioning"
+                help="Converts timeline images into concise descriptions before refresh generation, so text-only models can understand what was posted."
+                checked={settings.imageCaptioningEnabled}
+                disabled={updateSettings.isPending || connections.length === 0}
+                onChange={(checked) => saveSettings({ imageCaptioningEnabled: checked })}
+              />
+              {settings.imageCaptioningEnabled && (
+                <label className="block space-y-1.5">
+                  <FieldLabel help="Choose a vision-capable text connection. Default uses the Noodle generation connection; select another connection when that model cannot see images.">
+                    Captioning connection
+                  </FieldLabel>
+                  <select
+                    value={settings.imageCaptioningConnectionId ?? ""}
+                    onChange={(event) => saveSettings({ imageCaptioningConnectionId: event.target.value || null })}
+                    className={fieldClass}
+                  >
+                    <option value="">Use Noodle generation connection</option>
+                    {connections.map((connection) => (
+                      <option key={String(connection.id)} value={String(connection.id)}>
+                        {String(connection.name ?? connection.model ?? "Connection")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          </Section>
+
+          <Section
             title="Carryover"
             help="Controls whether recent Noodle activity is appended to chat, roleplay, or game context."
           >

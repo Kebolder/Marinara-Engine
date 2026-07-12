@@ -38,6 +38,8 @@ export interface NoodleSettings {
   imageGenerationUseAvatarReferences: boolean;
   imageGenerationIncludeDescriptions: boolean;
   allowGalleryImageAttachments: boolean;
+  imageCaptioningEnabled: boolean;
+  imageCaptioningConnectionId: string | null;
   allowRandomUsers: boolean;
   invitedCharacterGroupIds: string[];
   carryoverMode: NoodleCarryoverMode;

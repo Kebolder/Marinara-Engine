@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { noodleRefreshSchema } from "../../packages/shared/src/schemas/noodle.schema.js";
+import { DEFAULT_NOODLE_SETTINGS, noodleRefreshSchema } from "../../packages/shared/src/schemas/noodle.schema.js";
 import { canManageNoodleReply } from "../../packages/shared/src/utils/noodle-interactions.js";
+import type { NoodleAccount, NoodleInteraction, NoodlePost } from "../../packages/shared/src/types/noodle.js";
 import {
   canGenerateNoodleActivityForAccountKind,
   formatNoodleTimelineForPrompt,
@@ -12,14 +13,187 @@ import {
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
 } from "../../packages/server/src/services/noodle/noodle-prompt.js";
+import { chooseNoodleParticipantAccounts } from "../../packages/server/src/services/noodle/noodle-participant-selection.js";
+import { canCreateGeneratedNoodleInteraction } from "../../packages/server/src/services/noodle/noodle-interaction-policy.js";
+import { collectNoodlePriorityAccountIds } from "../../packages/server/src/routes/noodle.routes.js";
+
+const makeAccount = (id: string): NoodleAccount => ({
+  id,
+  kind: "character",
+  entityId: `entity-${id}`,
+  handle: id,
+  displayName: id.toUpperCase(),
+  bio: "",
+  avatarUrl: null,
+  avatarCrop: null,
+  invited: true,
+  settings: {},
+  createdAt: "2026-07-10T10:00:00.000Z",
+  updatedAt: "2026-07-10T10:00:00.000Z",
+});
+
+const participantSettings = {
+  ...DEFAULT_NOODLE_SETTINGS,
+  participantSelectionMode: "exact" as const,
+  participantMin: 2,
+  participantMax: 2,
+};
+const participantAccounts = [makeAccount("alpha"), makeAccount("beta"), makeAccount("gamma")];
+const selectionPersona: NoodleAccount = {
+  ...makeAccount("persona-account"),
+  kind: "persona",
+  entityId: "persona-entity",
+  handle: "mari",
+};
+assert.deepEqual(
+  [
+    ...collectNoodlePriorityAccountIds({
+      accounts: [...participantAccounts, selectionPersona],
+      personaAccount: selectionPersona,
+      posts: [
+        {
+          id: "alpha-post",
+          authorAccountId: "alpha",
+          content: "Alpha posted.",
+          imageUrl: null,
+          imagePrompt: null,
+          parentPostId: null,
+          quotePostId: null,
+          source: "generated",
+          metadata: {},
+          authorSnapshot: null,
+          createdAt: "2026-07-10T10:00:00.000Z",
+          updatedAt: "2026-07-10T10:00:00.000Z",
+        },
+        {
+          id: "persona-post",
+          authorAccountId: selectionPersona.id,
+          content: "@beta what do you think?",
+          imageUrl: null,
+          imagePrompt: null,
+          parentPostId: null,
+          quotePostId: null,
+          source: "manual",
+          metadata: {},
+          authorSnapshot: null,
+          createdAt: "2026-07-10T10:01:00.000Z",
+          updatedAt: "2026-07-10T10:01:00.000Z",
+        },
+      ],
+      interactions: [
+        {
+          id: "persona-alpha-reply",
+          postId: "alpha-post",
+          parentInteractionId: null,
+          actorAccountId: selectionPersona.id,
+          type: "reply",
+          content: "Tell me more.",
+          imageUrl: null,
+          actorSnapshot: null,
+          createdAt: "2026-07-10T10:02:00.000Z",
+        },
+      ],
+    }),
+  ].sort(),
+  ["alpha", "beta"],
+);
+assert.deepEqual(
+  chooseNoodleParticipantAccounts({
+    accounts: participantAccounts,
+    settings: participantSettings,
+    selectedGroupCharacterIds: new Set(),
+    recentlyActiveAccountIds: new Set(["alpha"]),
+    random: () => 0,
+  }).map((account) => account.id),
+  ["gamma", "beta"],
+);
+assert.deepEqual(
+  chooseNoodleParticipantAccounts({
+    accounts: participantAccounts,
+    settings: participantSettings,
+    selectedGroupCharacterIds: new Set(),
+    recentlyActiveAccountIds: new Set(["alpha"]),
+    priorityAccountIds: new Set(["alpha"]),
+    random: () => 0,
+  }).map((account) => account.id),
+  ["alpha", "gamma"],
+);
+
+const repeatActor = makeAccount("repeat_actor");
+const repeatPost: NoodlePost = {
+  id: "repeat-post",
+  authorAccountId: "post-author",
+  content: "An ordinary post.",
+  imageUrl: null,
+  imagePrompt: null,
+  parentPostId: null,
+  quotePostId: null,
+  source: "generated",
+  metadata: {},
+  authorSnapshot: null,
+  createdAt: "2026-07-10T10:00:00.000Z",
+  updatedAt: "2026-07-10T10:00:00.000Z",
+};
+const actorReply: NoodleInteraction = {
+  id: "actor-reply",
+  postId: repeatPost.id,
+  parentInteractionId: null,
+  actorAccountId: repeatActor.id,
+  type: "reply",
+  content: "First reply.",
+  imageUrl: null,
+  actorSnapshot: null,
+  createdAt: "2026-07-10T10:01:00.000Z",
+};
+const directResponse: NoodleInteraction = {
+  ...actorReply,
+  id: "direct-response",
+  actorAccountId: "persona-account",
+  parentInteractionId: actorReply.id,
+  content: "What do you mean?",
+  createdAt: "2026-07-10T10:02:00.000Z",
+};
+assert.equal(
+  canCreateGeneratedNoodleInteraction({
+    actor: repeatActor,
+    targetPost: repeatPost,
+    parentInteraction: null,
+    existingInteractions: [actorReply],
+  }),
+  false,
+);
+assert.equal(
+  canCreateGeneratedNoodleInteraction({
+    actor: repeatActor,
+    targetPost: repeatPost,
+    parentInteraction: actorReply,
+    existingInteractions: [actorReply],
+  }),
+  false,
+);
+assert.equal(
+  canCreateGeneratedNoodleInteraction({
+    actor: repeatActor,
+    targetPost: repeatPost,
+    parentInteraction: directResponse,
+    existingInteractions: [actorReply, directResponse],
+  }),
+  true,
+);
+assert.equal(
+  canCreateGeneratedNoodleInteraction({
+    actor: repeatActor,
+    targetPost: { ...repeatPost, content: "Come back, @repeat_actor." },
+    parentInteraction: null,
+    existingInteractions: [actorReply],
+  }),
+  true,
+);
 
 assert.equal(canGenerateNoodleActivityForAccountKind("persona"), false);
 assert.equal(canGenerateNoodleActivityForAccountKind("character"), true);
 assert.equal(canGenerateNoodleActivityForAccountKind("random_user"), true);
-assert.equal(
-  noodleRefreshSchema.parse({ reviewImagePromptsBeforeSend: true }).reviewImagePromptsBeforeSend,
-  true,
-);
+assert.equal(noodleRefreshSchema.parse({ reviewImagePromptsBeforeSend: true }).reviewImagePromptsBeforeSend, true);
 assert.match(NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION, /controlled exclusively by the user/u);
 assert.match(
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,

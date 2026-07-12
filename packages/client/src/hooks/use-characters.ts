@@ -1035,9 +1035,11 @@ export function useUpdatePersona() {
   return useMutation({
     mutationFn: ({
       id,
+      keepalive,
       ...data
     }: {
       id: string;
+      keepalive?: boolean;
       name?: string;
       comment?: string;
       creator?: string;
@@ -1060,7 +1062,7 @@ export function useUpdatePersona() {
       aboutMe?: string;
       convoBehavior?: string;
       avatarCrop?: string;
-    }) => api.patch(`/characters/personas/${id}`, data),
+    }) => api.patch(`/characters/personas/${id}`, data, keepalive ? { keepalive: true } : undefined),
     onSuccess: (updatedPersona, variables) => {
       const updatedId = (updatedPersona as { id?: string } | null)?.id ?? variables.id;
       qc.setQueryData<unknown[] | undefined>(characterKeys.personas, (old) => {

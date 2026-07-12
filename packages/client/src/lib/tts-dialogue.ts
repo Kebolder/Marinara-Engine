@@ -245,8 +245,17 @@ const VN_TTS_LINE_PREFIX_RE =
 const VN_TTS_METADATA_TAG_RE =
   /\[(?:main|side|extra|action|thought|whisper(?::[^\]\r\n]+)?|neutral|happy|sad|angry|surprised|scared|disgusted|thinking|laughing|crying|blushing|smirk|embarrassed|determined|confused|sleepy|custom)\]/gi;
 
+function stripTTSMarkup(value: string, preserveSpeakerTags = false): string {
+  const withoutNonSpeechBlocks = value
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(style|script|template|code|pre|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
+
+  if (!preserveSpeakerTags) return withoutNonSpeechBlocks.replace(/<[^>]+>/g, " ");
+  return withoutNonSpeechBlocks.replace(/<(?!\/?speaker(?:=|\s|>))[^>]+>/gi, " ");
+}
+
 export function cleanTTSInputText(value: string): string {
-  return value
+  return stripTTSMarkup(value)
     .replace(VN_TTS_LINE_PREFIX_RE, "")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/~~~[\s\S]*?~~~/g, " ")
@@ -265,8 +274,8 @@ export function cleanTTSInputText(value: string): string {
     .replace(/\{(shake|shout|whisper|glow|pulse|wave|flicker|drip|bounce|tremble|glitch|expand):([^}]+)\}/gi, "$2")
     .replace(/\[[a-z_]+:[^\]]*\]/gi, "")
     .replace(VN_TTS_METADATA_TAG_RE, " ")
-    .replace(/<[^>]+>/g, "")
     .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
     .trim();
 }
 
@@ -412,11 +421,15 @@ export function extractDialogueUtterances(
   config: Pick<TTSConfig, "dialogueScope" | "dialogueCharacterName">,
   fallbackSpeaker?: string | null,
 ): TTSUtterance[] {
+  // Remove ordinary HTML before looking for quoted dialogue. Otherwise quote
+  // marks inside style/class attributes are mistaken for spoken lines.
+  const speechText = stripTTSMarkup(text, true);
   const utterances: TTSUtterance[] = [];
-  utterances.push(...extractSpeakerTaggedUtterances(text, config, fallbackSpeaker, false));
+  utterances.push(...extractSpeakerTaggedUtterances(speechText, config, fallbackSpeaker, false));
+  const untaggedSpeechText = speechText.replace(/<speaker="[^"]*">[\s\S]*?<\/speaker>/gi, " ");
 
   const vnLineRe = /^\s*(?:Dialogue\s*)?\[([^\]]+)\]\s*(?:\[([^\]]+)\])?\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
-  for (const rawLine of text.split(/\r?\n/)) {
+  for (const rawLine of untaggedSpeechText.split(/\r?\n/)) {
     const line = rawLine.trim();
     const match = line.match(vnLineRe);
     if (!match) continue;
@@ -437,7 +450,7 @@ export function extractDialogueUtterances(
 
   const quoteRe = new RegExp(DIALOGUE_QUOTE_CAPTURE_GROUP_PATTERN_SOURCE, "g");
   let quoteMatch: RegExpExecArray | null;
-  while ((quoteMatch = quoteRe.exec(text)) !== null) {
+  while ((quoteMatch = quoteRe.exec(untaggedSpeechText)) !== null) {
     const spoken = cleanTTSInputText(
       quoteMatch.slice(1).find((group) => typeof group === "string" && group.length > 0) ?? "",
     );

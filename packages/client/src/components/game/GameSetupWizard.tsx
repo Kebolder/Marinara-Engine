@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Wand2,
   ArrowRight,
@@ -379,7 +379,9 @@ function normalizeGameLanguage(language: string): string {
 }
 
 export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }: GameSetupWizardProps) {
+  const prefersReducedMotion = useReducedMotion();
   const [step, setStep] = useState(0);
+  const [generationElapsedSeconds, setGenerationElapsedSeconds] = useState(0);
   const [gameName, setGameName] = useState("");
   const [genres, setGenres] = useState<string[]>(["Fantasy"]);
   const [customGenre, setCustomGenre] = useState("");
@@ -457,6 +459,18 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   useEffect(() => {
     useSidecarStore.getState().fetchStatus();
   }, []);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setGenerationElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const updateElapsed = () => setGenerationElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1_000);
+    return () => window.clearInterval(interval);
+  }, [isLoading]);
 
   // Once status loads, sync the local toggle with the persisted config
   useEffect(() => {
@@ -2376,6 +2390,33 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
             </div>
 
             <div className="shrink-0 border-t border-[var(--border)]/70 px-5 py-3">
+              {isLoading && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between gap-3 text-[0.6875rem]">
+                    <span className="font-medium text-[var(--foreground)]" role="status" aria-live="polite">
+                      Hold on tight, the game is being generated right now!
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 tabular-nums text-[var(--muted-foreground)]">
+                      {generationElapsedSeconds}s
+                    </span>
+                  </div>
+                  <div
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--muted)]/60"
+                    role="progressbar"
+                    aria-label="Generating game world"
+                  >
+                    <motion.div
+                      className="h-full w-2/5 rounded-full bg-[var(--primary)]"
+                      animate={prefersReducedMotion ? { x: 0 } : { x: ["-110%", "260%"] }}
+                      transition={
+                        prefersReducedMotion
+                          ? undefined
+                          : { duration: 1.35, ease: [0.16, 1, 0.3, 1], repeat: Infinity }
+                      }
+                    />
+                  </div>
+                </div>
+              )}
               <div className="mb-3 flex items-center justify-center gap-1.5">
                 {steps.map((item, i) => (
                   <button

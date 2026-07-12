@@ -844,6 +844,18 @@ export function createNoodleStorage(db: DB) {
       return mapRefreshRun(rows[0]!);
     },
 
+    async listRefreshRuns(options: { limit?: number; status?: NoodleRefreshRun["status"] } = {}) {
+      const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 5)));
+      const baseQuery = db.select().from(noodleRefreshRuns);
+      const rows = options.status
+        ? await baseQuery
+            .where(eq(noodleRefreshRuns.status, options.status))
+            .orderBy(desc(noodleRefreshRuns.createdAt))
+            .limit(limit)
+        : await baseQuery.orderBy(desc(noodleRefreshRuns.createdAt)).limit(limit);
+      return rows.map(mapRefreshRun);
+    },
+
     async finishRefreshRun(
       id: string,
       patch: { status: "completed" | "failed"; result?: string | null; error?: string | null },

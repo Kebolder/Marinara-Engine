@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { Chat, Message } from "../../packages/shared/src/types/chat.js";
+import { stripLeadingMessageTimestamps } from "../../packages/shared/src/utils/speaker-segments.js";
 import type { Lorebook } from "../../packages/shared/src/types/lorebook.js";
 import {
   createLorebookSchema,
@@ -11,6 +12,8 @@ import { appendLorebookActivationKeys } from "../../packages/client/src/lib/lore
 import { arePresetChoiceSelectionsComplete } from "../../packages/client/src/lib/preset-choice-selection.js";
 import { shouldExecuteQuickPostAsCommand } from "../../packages/client/src/lib/slash-commands.js";
 import { getAvatarCropStyle } from "../../packages/client/src/lib/utils.js";
+import { getApiErrorMessage } from "../../packages/client/src/lib/api-client.js";
+import { DEFAULT_GENERATION_PARAMS } from "../../packages/shared/src/constants/defaults.js";
 import { mergeNoodleCustomEmojiMap } from "../../packages/client/src/hooks/use-noodle-custom-emojis.js";
 import {
   isBundledGameAssetFolderPath,
@@ -19,6 +22,10 @@ import {
 import { isGitUpdateApplyAllowed } from "../../packages/server/src/services/updates/update-apply-policy.js";
 import { parseNoodleAvatarCrop } from "../../packages/server/src/services/storage/noodle.storage.js";
 import { sanitizeExampleDialoguePromptLeaf } from "../../packages/server/src/services/prompt/prompt-escaping.js";
+import {
+  stripConversationPromptTimestamps,
+  stripConversationResponseEnvelope,
+} from "../../packages/server/src/services/conversation/transcript-sanitize.js";
 import { resolveInitialGameGmConnectionId } from "../../packages/server/src/services/game/initial-game-setup.js";
 import {
   buildGameSessionReplayTurns,
@@ -34,6 +41,37 @@ import {
 assert.equal(resolveInitialGameGmConnectionId(undefined, "chat-connection"), "chat-connection");
 assert.equal(resolveInitialGameGmConnectionId("explicit-connection", "chat-connection"), "explicit-connection");
 assert.equal(resolveInitialGameGmConnectionId(undefined, null), null);
+assert.equal(DEFAULT_GENERATION_PARAMS.reasoningEffort, "maximum");
+assert.equal(
+  getApiErrorMessage(
+    { formErrors: [], fieldErrors: { handle: ["Handle must contain at most 40 characters."] } },
+    "Invalid profile",
+  ),
+  "Handle must contain at most 40 characters.",
+);
+assert.equal(
+  getApiErrorMessage({ code: "USER_NOT_FOUND", requestId: "abc-123" }, "Request failed"),
+  "Request failed",
+);
+
+assert.equal(stripLeadingMessageTimestamps("[11.07 15:53] Character: Hello!"), "Character: Hello!");
+assert.equal(stripLeadingMessageTimestamps("[11.07.2026 15:53] Character: Hello!"), "Character: Hello!");
+assert.equal(stripConversationPromptTimestamps("[11.07 15:53] Character: Hello!"), "Character: Hello!");
+assert.equal(
+  stripConversationResponseEnvelope("[11.07 15:53] Character: Hello!", { speakerName: "Character" }),
+  "Hello!",
+);
+assert.equal(
+  stripConversationResponseEnvelope("[11.07 15:53] Character: Hello!", {
+    speakerName: "Character",
+    preserveSpeakerPrefix: true,
+  }),
+  "Character: Hello!",
+);
+assert.equal(
+  stripLeadingMessageTimestamps("We meet at [11.07 15:53] by the station."),
+  "We meet at [11.07 15:53] by the station.",
+);
 
 assert.equal(parsePureTemperatureValue("15°C"), 15);
 assert.equal(parsePureTemperatureValue("59 Fahrenheit"), 15);

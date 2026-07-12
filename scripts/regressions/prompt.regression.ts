@@ -103,7 +103,11 @@ import {
 } from "../../packages/server/src/services/prompt-overrides/index.js";
 import { buildElevenLabsTextInput } from "../../packages/server/src/routes/tts.routes.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
-import { cleanTTSInputText, resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
+import {
+  cleanTTSInputText,
+  extractDialogueUtterances,
+  resolveTTSVoiceForSpeaker,
+} from "../../packages/client/src/lib/tts-dialogue.js";
 
 type RegressionCase = {
   name: string;
@@ -501,6 +505,33 @@ const cases: RegressionCase[] = [
       assert.match(cleaned, /Reserved\. Tomorrow afternoon\./);
       assert.match(cleaned, /Your ribs require rest\./);
       assert.match(cleaned, /A bold strategy\./);
+    },
+  },
+  {
+    name: "TTS dialogue extraction ignores HTML and CSS attributes",
+    run() {
+      const htmlCard = `<div style="max-width:340px;font-family:Georgia,'Times New Roman',serif;color:#3a2f1e;"><div class="label">read a hundred times</div><div>Your name is <span style="font-weight:bold">Maukie</span>.</div></div>`;
+      const utterances = extractDialogueUtterances(
+        `${htmlCard}\nDottore said, "Stay behind me."`,
+        { dialogueScope: "all", dialogueCharacterName: "" },
+        "Dottore",
+      );
+
+      assert.deepEqual(utterances, [{ text: "Stay behind me.", speaker: "Dottore" }]);
+      const cleaned = cleanTTSInputText(`<style>.note { color: red; }</style>${htmlCard}`);
+      assert.equal(cleaned.includes("max-width"), false);
+      assert.equal(cleaned.includes("font-family"), false);
+      assert.equal(cleaned.includes("color: red"), false);
+      assert.match(cleaned, /Your name is Maukie\./);
+
+      assert.deepEqual(
+        extractDialogueUtterances(
+          '<div class="frame"></div><speaker="Dottore">"Do not move."</speaker>',
+          { dialogueScope: "all", dialogueCharacterName: "" },
+          "Narrator",
+        ),
+        [{ text: "Do not move.", speaker: "Dottore" }],
+      );
     },
   },
   {

@@ -2,11 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { HeartPulse, Package, Sparkles } from "lucide-react";
 import type { CharacterStat, InventoryItem, Persona } from "@marinara-engine/shared";
-import {
-  isTrackerFieldLocked,
-  personaStatTrackerLockKey,
-  personaStatusTrackerLockKey,
-} from "@marinara-engine/shared";
+import { isTrackerFieldLocked, personaStatTrackerLockKey, personaStatusTrackerLockKey } from "@marinara-engine/shared";
 import type { TrackerPanelSide, TrackerPanelSizeProfile } from "../../../../stores/ui.store";
 import {
   characterKeys,
@@ -144,7 +140,9 @@ export function PersonaInventoryPanel({
   const personaPortraitSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const personaPortraitPendingSaveRef = useRef<PersonaPortraitPendingSave | null>(null);
   const updatePersonaMutateRef = useRef(updatePersona.mutate);
-  const flushPersonaPortraitPendingSaveRef = useRef<(pendingSave: PersonaPortraitPendingSave) => void>(() => {});
+  const flushPersonaPortraitPendingSaveRef = useRef<
+    (pendingSave: PersonaPortraitPendingSave, keepalive?: boolean) => void
+  >(() => {});
   const [personaPortraitFocusOverride, setPersonaPortraitFocusOverride] = useState<{
     personaId: string;
     x: number;
@@ -172,7 +170,7 @@ export function PersonaInventoryPanel({
     personaPortraitFocusOverride && personaPortraitFocusOverride.personaId === persona?.id
       ? personaPortraitFocusOverride
       : personaSavedPortraitFocus;
-  const flushPersonaPortraitPendingSave = (pendingSave: PersonaPortraitPendingSave) => {
+  const flushPersonaPortraitPendingSave = (pendingSave: PersonaPortraitPendingSave, keepalive = false) => {
     const cachedPersonas = queryClient.getQueryData<unknown[] | undefined>(characterKeys.personas);
     const cachedPersona = Array.isArray(cachedPersonas)
       ? cachedPersonas.find((candidate) => isRecord(candidate) && candidate.id === pendingSave.id)
@@ -194,7 +192,7 @@ export function PersonaInventoryPanel({
       portraitZoom: pendingSave.portraitZoom,
     });
 
-    updatePersonaMutateRef.current({ id: pendingSave.id, trackerCardColors });
+    updatePersonaMutateRef.current({ id: pendingSave.id, trackerCardColors, keepalive });
   };
   flushPersonaPortraitPendingSaveRef.current = flushPersonaPortraitPendingSave;
   const updatePersonaPortraitFocus =
@@ -298,6 +296,20 @@ export function PersonaInventoryPanel({
   useEffect(() => {
     updatePersonaMutateRef.current = updatePersona.mutate;
   }, [updatePersona.mutate]);
+
+  useEffect(() => {
+    const flushOnPageHide = () => {
+      if (personaPortraitSaveTimeoutRef.current) {
+        clearTimeout(personaPortraitSaveTimeoutRef.current);
+        personaPortraitSaveTimeoutRef.current = null;
+      }
+      const pendingSave = personaPortraitPendingSaveRef.current;
+      personaPortraitPendingSaveRef.current = null;
+      if (pendingSave) flushPersonaPortraitPendingSaveRef.current(pendingSave, true);
+    };
+    window.addEventListener("pagehide", flushOnPageHide);
+    return () => window.removeEventListener("pagehide", flushOnPageHide);
+  }, []);
 
   useEffect(
     () => () => {

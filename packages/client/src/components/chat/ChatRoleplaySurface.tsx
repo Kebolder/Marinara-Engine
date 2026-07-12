@@ -13,6 +13,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type RefObject,
 } from "react";
+import { isMessageShadowedByLiveStream } from "../../lib/generation-stream-policy";
 import {
   type ChatSummaryEntry,
   type MarkerConfig,
@@ -1250,6 +1251,7 @@ export function ChatRoleplaySurface({
 }: RoleplaySurfaceProps) {
   useRenderTimer("rp-surface"); // [#3104 diagnostic]
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(activeChatId));
+  const streamedMessageId = useChatStore((s) => s.streamedMessageIds.get(activeChatId) ?? null);
   const hasDraftInput = useChatStore((s) => s.currentInput.trim().length > 0);
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const linkedChatName = chat?.connectedChatId
@@ -1845,6 +1847,16 @@ export function ChatRoleplaySurface({
 
                 {visibleMessages?.map((msg, i) => {
                   if (isHiddenFromUser(msg)) return null;
+                  if (
+                    isMessageShadowedByLiveStream({
+                      hasLiveStream,
+                      regenerateMessageId,
+                      streamedMessageId,
+                      messageId: msg.id,
+                    })
+                  ) {
+                    return null;
+                  }
                   const sourceIndex = transcriptWindow.startIndex + i;
                   const messageDepth = (messages?.length ?? 0) - 1 - sourceIndex;
                   const messageOrderIndex = loadedMessageOffset + sourceIndex;

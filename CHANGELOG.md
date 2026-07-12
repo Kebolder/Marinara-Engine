@@ -6,6 +6,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added visible Game setup progress with an elapsed timer and indeterminate progress bar while the Game Master builds the initial world, plus live phase labels during the first turn (#3495).
+- Added optional Noodle image captioning with a selectable vision connection so text-only timeline models can understand images attached to posts and replies (#3505).
 - Added an **Initial Game Setup** section to Game Mode Session History so players can review, copy, or download a `.txt` file containing the complete setup that created a successful campaign, including preferences, prompt choices, visual/storyboard options, safe model descriptors, and effective generation parameters without credentials or local IDs.
 - Added native multimodal Noodle timeline context: refresh models can now inspect images attached to recent posts and comments, with deterministic post/reply labels, bounded image inputs, and an automatic text-only fallback for models that reject vision content.
 - Added per-turn **Peek Prompt** actions to Game Mode Logs and **History Above Dialogue Box**, opening the exact cached prompt that was actually sent for that historical GM turn.
@@ -31,6 +33,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
+- Changed random and exact Noodle participant selection to prioritize directly involved accounts, then accounts absent from the previous refresh, while retaining recently active accounts as a fallback when the pool is small (#3505).
 - Changed post-processing orchestration so Prose Guardian, Continuity Checker, and Immersive HTML share a dedicated rewrite call that is isolated from tracker batches, and hid the legacy About Me Keeper from the manually addable Agents library.
 - Changed Noodle's generated-image quota from a daily cap to **Images/refresh**, applied independently to every manual and automatic timeline refresh while preserving each user's saved limit.
 - Added a separate **Comic Page Animation** storyboard prompt with clip-duration panel budgets, causal panel order, continuity guidance, and timed motion direction while preserving the original **Comic Page** illustration prompt.
@@ -46,8 +49,15 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Conversation and other non-assembled generation paths silently disabling reasoning when the UI showed the default **Maximum** effort; shared and server runtime defaults now agree while an explicit disabled value remains respected (#3498).
+- Fixed Noodle accounts repeatedly interacting with the same post or replying to their own comments without new involvement, while still allowing a return after an explicit tag or direct reply; also fixed profile validation errors rendering as `[object Object]` (#3505).
+- Fixed pending persona portrait focus and zoom changes being lost when a tab was refreshed or closed before the debounce completed by flushing the save on `pagehide` with a keepalive request (#3506).
+- Fixed Conversation replies leaking combined date-and-time and speaker prefixes such as `[11.07 15:53] Character: Hello!`; single and individual replies now store and display only `Hello!`, while merged group speaker boundaries remain intact.
 - Fixed Lorebook Overview sections briefly rearranging after Save by handing the editor the authoritative PATCH response before clearing its dirty state; Professor Mari-created lorebooks now normalize categories and advanced numeric settings so later manual edits, including Global changes, can be saved.
-- Fixed Roleplay streaming collapsing into the completed response when post-processing agents started or the browser tab lost visibility; the live buffer now remains authoritative through agent work, background tabs pause instead of flushing, held rewrites stream their final rewritten response before the durable message takes over, bottom-follow scrolling stays synchronized with the rewrite typewriter, and rewritten messages retain a persistent shield toggle for comparing the original and edited versions.
+- Fixed Roleplay streaming collapsing into the completed response when post-processing agents started, final response cleanup changed an already-painted prefix, the provider closed immediately after tracker work, or the browser tab lost visibility; authoritative cleanup now preserves typewriter progress, the live buffer remains authoritative through agent work, background tabs pause instead of flushing, held rewrites stream their final rewritten response before the durable message takes over, bottom-follow scrolling tracks the rewrite's committed DOM growth, and rewritten messages retain a persistent shield toggle for comparing the original and edited versions.
+- Fixed editing the preceding user message during Roleplay generation temporarily rendering the saved assistant response beside its live streaming presentation.
+- Fixed Text to Speech treating quotes inside generated HTML attributes and CSS as dialogue; markup is now removed before dialogue extraction, non-speech code/style blocks are discarded, and explicit speaker tags continue to route proper dialogue to the correct voice.
+- Fixed desktop sidebars stuttering over dense Roleplay transcripts by replacing continuous width animation with compositor-only transform and opacity motion, retaining panel content between visits, and performing each center-layout resize only once.
 
 - Fixed Noodle setting controls reverting to an earlier snapshot by serializing saves, keeping the edited value optimistic while the request completes, and returning the value re-read from persistent storage.
 - Preserved stored votes on older Noodle polls when manual or automatic refresh hydration briefly returns an incomplete interaction snapshot.

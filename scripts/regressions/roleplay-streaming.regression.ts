@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { shouldKeepStreamLiveThroughPostProcessing } from "../../packages/client/src/lib/generation-stream-policy.js";
+import {
+  isMessageShadowedByLiveStream,
+  reconcileTypewriterReplacement,
+  shouldKeepStreamLiveThroughPostProcessing,
+} from "../../packages/client/src/lib/generation-stream-policy.js";
 import { resolveMessageRewriteVersions } from "../../packages/client/src/lib/message-rewrite-versions.js";
 import { getAgentBatchLane, type ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { mergePairedBuiltInRewriteAgents } from "../../packages/server/src/services/generation/prose-guardian-settings.js";
@@ -25,6 +29,70 @@ assert.equal(
     isContinuation: false,
   }),
   false,
+);
+
+assert.deepEqual(
+  reconcileTypewriterReplacement("The response is al", "The response is already complete."),
+  {
+    visibleText: "The response is al",
+    pendingText: "ready complete.",
+  },
+  "ordinary finalization should keep the unrevealed response in the typewriter queue",
+);
+assert.deepEqual(
+  reconcileTypewriterReplacement("\nThe response is al", "The response is already complete."),
+  {
+    visibleText: "The response is alr",
+    pendingText: "eady complete.",
+  },
+  "leading-whitespace cleanup must not dump the complete response when tracker work starts",
+);
+assert.deepEqual(
+  reconcileTypewriterReplacement("Dottore: The response", "The response is already complete."),
+  {
+    visibleText: "The response is alrea",
+    pendingText: "dy complete.",
+  },
+  "speaker-prefix cleanup should preserve reveal progress while adopting authoritative text",
+);
+assert.deepEqual(
+  reconcileTypewriterReplacement("Original", "Rewritten response", true),
+  {
+    visibleText: "",
+    pendingText: "Rewritten response",
+  },
+  "explicit rewrites should still retype from the beginning",
+);
+
+assert.equal(
+  isMessageShadowedByLiveStream({
+    hasLiveStream: true,
+    regenerateMessageId: null,
+    streamedMessageId: "saved-assistant",
+    messageId: "saved-assistant",
+  }),
+  true,
+  "the durable copy of an active presentation stream should not render beside it",
+);
+assert.equal(
+  isMessageShadowedByLiveStream({
+    hasLiveStream: true,
+    regenerateMessageId: null,
+    streamedMessageId: "current-group-reply",
+    messageId: "previous-group-reply",
+  }),
+  false,
+  "earlier group replies must remain visible while the next reply streams",
+);
+assert.equal(
+  isMessageShadowedByLiveStream({
+    hasLiveStream: true,
+    regenerateMessageId: "saved-assistant",
+    streamedMessageId: "saved-assistant",
+    messageId: "saved-assistant",
+  }),
+  false,
+  "regeneration owns the existing row in place and must not hide it",
 );
 
 const makeAgent = (type: string, resultType: string): ResolvedAgent =>

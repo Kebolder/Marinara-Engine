@@ -56,6 +56,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function findNestedApiErrorMessage(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = findNestedApiErrorMessage(item);
+      if (message) return message;
+    }
+  } else if (isRecord(value)) {
+    for (const nested of Object.values(value)) {
+      const message = findNestedApiErrorMessage(nested);
+      if (message) return message;
+    }
+  }
+  return "";
+}
+
+export function getApiErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = getApiErrorMessage(item, "");
+      if (message) return message;
+    }
+    return fallback;
+  }
+  if (isRecord(value)) {
+    for (const key of ["message", "formErrors", "fieldErrors", "issues"] as const) {
+      if (!(key in value)) continue;
+      const message = findNestedApiErrorMessage(value[key]);
+      if (message) return message;
+    }
+  }
+  return fallback;
+}
+
 function getSseDataPayload(line: string): string | null {
   const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
   if (!normalized.startsWith("data:")) return null;
@@ -138,7 +173,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, body.error ?? res.statusText, body);
+    throw new ApiError(res.status, getApiErrorMessage(body.error, res.statusText), body);
   }
 
   // 204 No Content
@@ -440,7 +475,7 @@ export const api = {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
-      throw new ApiError(res.status, body.error ?? res.statusText, body);
+      throw new ApiError(res.status, getApiErrorMessage(body.error, res.statusText), body);
     }
 
     return res.json() as Promise<T>;
