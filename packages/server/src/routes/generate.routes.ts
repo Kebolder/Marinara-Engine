@@ -24,6 +24,7 @@ import {
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
   normalizeAgentPromptTemplateSelectionMap,
+  normalizeManualTrackerAgentTypes,
   normalizeThinkingTagPairs,
   applyTrackerFieldLocksToGameStatePatch,
   normalizeWorldCustomFields,
@@ -3630,12 +3631,15 @@ export async function generateRoutes(app: FastifyInstance) {
           (a) => !textRewriteAgentIds.has(a.id) && a.type !== "lorebook-keeper",
         );
 
-        // When manualTrackers is enabled, strip tracker-category agents from the
-        // automatic pipeline — the user will trigger them manually via retry-agents.
+        // Manual tracker agents are stripped from the automatic pipeline — the
+        // user will trigger them manually via retry-agents.
         const manualTrackers = chatMeta.manualTrackers === true;
-        if (manualTrackers) {
+        const manualTrackerAgentTypes = normalizeManualTrackerAgentTypes(chatMeta.manualTrackerAgentTypes);
+        if (manualTrackers || Object.keys(manualTrackerAgentTypes).length > 0) {
           const trackerIds = new Set(BUILT_IN_AGENTS.filter((a) => a.category === "tracker").map((a) => a.id));
-          pipelineAgents = pipelineAgents.filter((a) => !trackerIds.has(a.type));
+          pipelineAgents = pipelineAgents.filter(
+            (a) => !trackerIds.has(a.type) || (!manualTrackers && manualTrackerAgentTypes[a.type] !== true),
+          );
         }
 
         // Echo Chamber should only fire on fresh user messages, not swipes/regenerates/continues.
