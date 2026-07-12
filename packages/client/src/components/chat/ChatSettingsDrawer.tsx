@@ -215,6 +215,7 @@ import {
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
+  normalizeManualTrackerAgentTypes,
   normalizeAgentPromptTemplateOptions,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
@@ -1430,6 +1431,36 @@ export function ChatSettingsDrawer({
   const visibleActiveAgentIds = useMemo(
     () => activeAgentIds.filter((agentId) => availableAgents.some((agent) => agent.id === agentId)),
     [activeAgentIds, availableAgents],
+  );
+  const activeTrackerAgents = useMemo(
+    () =>
+      availableAgents.filter(
+        (agent) => agent.category === "tracker" && activeAgentIds.includes(agent.id) && !agent.runtimeDisabled,
+      ),
+    [activeAgentIds, availableAgents],
+  );
+  const manualTrackerAgentTypes = useMemo(
+    () => normalizeManualTrackerAgentTypes(metadata.manualTrackerAgentTypes),
+    [metadata.manualTrackerAgentTypes],
+  );
+  const activeManualTrackerTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const agent of activeTrackerAgents) {
+      if (metadata.manualTrackers === true || manualTrackerAgentTypes[agent.id] === true) set.add(agent.id);
+    }
+    return set;
+  }, [activeTrackerAgents, manualTrackerAgentTypes, metadata.manualTrackers]);
+  const toggleManualTrackerAgent = useCallback(
+    (agentId: string) => {
+      const next = { ...manualTrackerAgentTypes };
+      if (next[agentId] === true) {
+        delete next[agentId];
+      } else {
+        next[agentId] = true;
+      }
+      updateMeta.mutate({ id: chat.id, manualTrackerAgentTypes: next });
+    },
+    [chat.id, manualTrackerAgentTypes, updateMeta],
   );
   const agentSuiteAgents = useMemo(
     () =>
@@ -6231,6 +6262,67 @@ export function ChatSettingsDrawer({
                       />
                     </div>
                   </button>
+                )}
+                {metadata.enableAgents && isRoleplayMode && activeTrackerAgents.length > 0 && (
+                  <div className="space-y-1.5 rounded-lg bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]">
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                        Individual tracker schedule
+                      </span>
+                      {metadata.manualTrackers === true && (
+                        <span className="text-[0.5625rem] text-[var(--primary)]">All manual</span>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      {activeTrackerAgents.map((agent) => {
+                        const manuallyTriggered = activeManualTrackerTypes.has(agent.id);
+                        const globallyManual = metadata.manualTrackers === true;
+                        return (
+                          <button
+                            key={agent.id}
+                            type="button"
+                            onClick={() => toggleManualTrackerAgent(agent.id)}
+                            disabled={globallyManual}
+                            aria-pressed={manuallyTriggered}
+                            className={cn(
+                              "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                              manuallyTriggered
+                                ? "bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/25"
+                                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                              globallyManual && "cursor-not-allowed opacity-70",
+                            )}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              {renderRoleplayAgentMenuIcon(agent.id, "chip")}
+                              <span className="min-w-0">
+                                <span className="block truncate text-[0.625rem] font-medium">{agent.name}</span>
+                                <span className="block truncate text-[0.5625rem] text-[var(--muted-foreground)]">
+                                  {globallyManual
+                                    ? "Controlled by Manual Trackers"
+                                    : manuallyTriggered
+                                      ? "Runs only from HUD controls"
+                                      : "Runs automatically"}
+                                </span>
+                              </span>
+                            </span>
+                            <span
+                              className={cn(
+                                "h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
+                                manuallyTriggered ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "block h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                                  manuallyTriggered && "translate-x-3",
+                                )}
+                              />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
                 <button
                   onClick={() => setShowAgentSuiteModal(true)}

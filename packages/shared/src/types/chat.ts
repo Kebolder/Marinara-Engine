@@ -349,6 +349,8 @@ export interface ChatMetadata {
   proseGuardianHoldForRewrite?: boolean;
   /** When true, tracker agents only run when the user manually triggers them (not after every generation) */
   manualTrackers?: boolean;
+  /** Per-agent manual tracker mode overrides (agent type → manual). */
+  manualTrackerAgentTypes?: Record<string, boolean>;
   /** Whether to recall memories from this chat during generation. Default: true for conversation/scenes, false for roleplay. */
   enableMemoryRecall?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
@@ -809,4 +811,14 @@ export interface ConversationNote {
   content: string;
   anchorMessageId: string;
   createdAt: string;
+}
+
+export function normalizeManualTrackerAgentTypes(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const manualTypes: Record<string, boolean> = {};
+  for (const [agentType, enabled] of Object.entries(value as Record<string, unknown>)) {
+    const key = agentType.trim();
+    if (key && enabled === true) manualTypes[key] = true;
+  }
+  return manualTypes;
 }

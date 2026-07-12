@@ -61,6 +61,7 @@ import {
   BUILT_IN_AGENTS,
   PROFESSOR_MARI_ID,
   buildGuidedGenerationInstructionMessage,
+  normalizeManualTrackerAgentTypes,
   type AchievementEvent,
   type GeneratedSceneVideo,
   type SpritePlacement,
@@ -1500,6 +1501,19 @@ export function ChatArea() {
     for (const id of activeAgentIds) set.add(id);
     return set;
   }, [chatMeta.enableAgents, chatMeta.activeAgentIds]);
+  const manualTrackerAgentTypes = useMemo(
+    () => normalizeManualTrackerAgentTypes(chatMeta.manualTrackerAgentTypes),
+    [chatMeta.manualTrackerAgentTypes],
+  );
+  const manualTrackerTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const type of enabledAgentTypes) {
+      if (!BUILT_IN_TRACKER_AGENT_ID_SET.has(type)) continue;
+      if (chatMeta.manualTrackers === true || manualTrackerAgentTypes[type] === true) set.add(type);
+    }
+    return set;
+  }, [chatMeta.manualTrackers, enabledAgentTypes, manualTrackerAgentTypes]);
+  const hasManualTrackerAgents = manualTrackerTypes.size > 0;
 
   const combatAgentEnabled = enabledAgentTypes.has("combat");
   const expressionAgentEnabled = enabledAgentTypes.has("expression");
@@ -1801,12 +1815,16 @@ export function ChatArea() {
 
   const handleRerunTrackers = useCallback(async () => {
     if (!activeChatId || isStreaming || agentProcessing) return;
-    const types = Array.from(enabledAgentTypes).filter(
-      (type) => BUILT_IN_TRACKER_AGENT_ID_SET.has(type) || !BUILT_IN_AGENT_ID_SET.has(type),
-    );
+    const manualTypes = Array.from(manualTrackerTypes);
+    const types =
+      manualTypes.length > 0
+        ? manualTypes
+        : Array.from(enabledAgentTypes).filter(
+            (type) => BUILT_IN_TRACKER_AGENT_ID_SET.has(type) || !BUILT_IN_AGENT_ID_SET.has(type),
+          );
     if (types.length === 0) return;
     await retryAgents(activeChatId, types);
-  }, [activeChatId, isStreaming, agentProcessing, enabledAgentTypes, retryAgents]);
+  }, [activeChatId, isStreaming, agentProcessing, enabledAgentTypes, manualTrackerTypes, retryAgents]);
 
   const handleRerunSingleTracker = useCallback(
     async (agentType: string) => {
@@ -3018,6 +3036,7 @@ export function ChatArea() {
           fullBodySpriteOpacity={fullBodySpriteOpacity}
           spriteArrangeMode={spriteArrangeMode}
           enabledAgentTypes={enabledAgentTypes}
+          manualTrackersActive={hasManualTrackerAgents}
           chatCharIds={chatCharIds}
           characterMap={characterMap}
           characterNames={characterNames}

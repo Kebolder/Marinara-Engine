@@ -1055,6 +1055,7 @@ type RoleplaySurfaceProps = {
   fullBodySpriteOpacity: number;
   spriteArrangeMode: boolean;
   enabledAgentTypes: Set<string>;
+  manualTrackersActive: boolean;
   chatCharIds: string[];
   characterMap: CharacterMap;
   characterNames: string[];
@@ -1167,6 +1168,7 @@ export function ChatRoleplaySurface({
   fullBodySpriteOpacity,
   spriteArrangeMode,
   enabledAgentTypes,
+  manualTrackersActive,
   chatCharIds,
   characterMap,
   characterNames,
@@ -1539,7 +1541,7 @@ export function ChatRoleplaySurface({
                         onRetryFailedAgents={onRetryFailedAgents}
                         onRerunSingleTracker={onRerunSingleTracker}
                         enabledAgentTypes={enabledAgentTypes}
-                        manualTrackers={!!chatMeta.manualTrackers}
+                        manualTrackers={manualTrackersActive}
                         injectionSourceMessages={messages}
                       />
                     </Suspense>
@@ -1642,7 +1644,7 @@ export function ChatRoleplaySurface({
                           onRetryFailedAgents={onRetryFailedAgents}
                           onRerunSingleTracker={onRerunSingleTracker}
                           enabledAgentTypes={enabledAgentTypes}
-                          manualTrackers={!!chatMeta.manualTrackers}
+                          manualTrackers={manualTrackersActive}
                           mobileCompact
                           injectionSourceMessages={messages}
                         />
