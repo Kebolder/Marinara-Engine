@@ -2359,6 +2359,7 @@ function GameSurfaceComponent({
   const messagesPerPage = useUIStore((s) => s.messagesPerPage);
   const quoteFormat = useUIStore((s) => s.quoteFormat);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
+  const generationPhase = useChatStore((s) => s.generationPhase);
   const gameSnapshot = useGameStateStore((s) => (s.current?.chatId === activeChatId ? s.current : null));
   const chatCharacterIds = useMemo(
     () => getChatCharacterIds(chat.characterIds).filter((id) => id !== PROFESSOR_MARI_ID),
@@ -9550,13 +9551,14 @@ function GameSurfaceComponent({
                         <div className="flex items-center gap-3 text-sm text-[var(--muted-foreground)] dark:text-white/60">
                           <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--muted)]/40 border-t-[var(--foreground)]/70 dark:border-white/20 dark:border-t-white/70" />
                           <span>
-                            {hasEverHadPlayableContent && !sceneProcessed
-                              ? "Preparing the scene..."
-                              : hasEverHadPlayableContent && pendingAssetGeneration && !assetGenerationFailed
-                                ? "Generating images..."
-                                : hasEverHadPlayableContent && isStreaming
-                                  ? "The GM is narrating..."
-                                  : "The adventure begins..."}
+                            {generationPhase ??
+                              (hasEverHadPlayableContent && !sceneProcessed
+                                ? "Preparing the scene..."
+                                : hasEverHadPlayableContent && pendingAssetGeneration && !assetGenerationFailed
+                                  ? "Generating images..."
+                                  : hasEverHadPlayableContent && isStreaming
+                                    ? "The GM is narrating..."
+                                    : "The adventure begins...")}
                           </span>
                         </div>
                       )}

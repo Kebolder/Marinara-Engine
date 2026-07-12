@@ -27,6 +27,8 @@ export const DEFAULT_NOODLE_SETTINGS = {
   imageGenerationUseAvatarReferences: true,
   imageGenerationIncludeDescriptions: true,
   allowGalleryImageAttachments: false,
+  imageCaptioningEnabled: false,
+  imageCaptioningConnectionId: null,
   allowRandomUsers: false,
   invitedCharacterGroupIds: [],
   carryoverMode: "off",
@@ -64,6 +66,12 @@ export const noodleSettingsSchema = z.object({
   imageGenerationUseAvatarReferences: z.boolean().default(DEFAULT_NOODLE_SETTINGS.imageGenerationUseAvatarReferences),
   imageGenerationIncludeDescriptions: z.boolean().default(DEFAULT_NOODLE_SETTINGS.imageGenerationIncludeDescriptions),
   allowGalleryImageAttachments: z.boolean().default(DEFAULT_NOODLE_SETTINGS.allowGalleryImageAttachments),
+  imageCaptioningEnabled: z.boolean().default(DEFAULT_NOODLE_SETTINGS.imageCaptioningEnabled),
+  imageCaptioningConnectionId: z
+    .string()
+    .min(1)
+    .nullable()
+    .default(DEFAULT_NOODLE_SETTINGS.imageCaptioningConnectionId),
   allowRandomUsers: z.boolean().default(DEFAULT_NOODLE_SETTINGS.allowRandomUsers),
   invitedCharacterGroupIds: z
     .array(z.string().min(1))
@@ -79,7 +87,12 @@ export const noodleSettingsSchema = z.object({
 export const noodleSettingsUpdateSchema = noodleSettingsSchema.partial();
 
 export const noodleAccountUpdateSchema = z.object({
-  handle: z.string().min(1).max(40).optional(),
+  handle: z
+    .string()
+    .trim()
+    .min(1, "Enter a Noodle handle.")
+    .max(40, "Handle must contain at most 40 characters.")
+    .optional(),
   displayName: z.string().min(1).max(120).optional(),
   bio: z.string().max(500).optional(),
   avatarUrl: z.string().max(2000).nullable().optional(),

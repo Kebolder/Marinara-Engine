@@ -2414,6 +2414,20 @@ export function ChatArea() {
     return unsub;
   }, [scheduleStreamScrollToBottom]);
 
+  // The stream-buffer subscription runs before React necessarily commits the
+  // corresponding text. Observe the rendered transcript as well so long
+  // typewriter rewrites follow the actual growing DOM instead of scrolling to
+  // the previous frame's height. The normal near-bottom/user-scroll guards in
+  // scheduleStreamScrollToBottom still let readers disengage auto-follow.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!isStreaming || !el || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver(() => scheduleStreamScrollToBottom());
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [isStreaming, scheduleStreamScrollToBottom]);
+
   // Preserve scroll position when older messages are prepended
   const pageCount = msgData?.pages.length ?? 0;
   useLayoutEffect(() => {

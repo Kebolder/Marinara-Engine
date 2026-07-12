@@ -29,7 +29,7 @@ export const DEFAULT_GENERATION_PARAMS: GenerationParameters = {
   maxContext: 128000,
   frequencyPenalty: 0,
   presencePenalty: 0,
-  reasoningEffort: null,
+  reasoningEffort: "maximum",
   verbosity: null,
   serviceTier: null,
   assistantPrefill: "",

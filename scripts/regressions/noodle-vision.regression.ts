@@ -56,6 +56,16 @@ const textOnlyTimeline = formatNoodleTimelineForPrompt([post], [reply]);
 assert.match(textOnlyTimeline, /image prompt: A fallback textual description/);
 assert.match(textOnlyTimeline, /\[image not attached\]/);
 
+const captionedTimeline = formatNoodleTimelineForPrompt([post], [reply], {
+  imageCaptions: new Map([
+    [noodlePostImageKey(post.id), "A blue laboratory flask on a desk."],
+    [noodleReplyImageKey(reply.id), "A handwritten note saying hello."],
+  ]),
+});
+assert.match(captionedTimeline, /image description: A blue laboratory flask on a desk\./);
+assert.match(captionedTimeline, /image description: A handwritten note saying hello\./);
+assert.doesNotMatch(captionedTimeline, /image prompt:/);
+
 const overLimitCandidates = Array.from({ length: NOODLE_VISION_MAX_IMAGES + 2 }, (_, index) => ({
   ...candidates[0]!,
   key: `limit-image-${index}`,
@@ -63,7 +73,10 @@ const overLimitCandidates = Array.from({ length: NOODLE_VISION_MAX_IMAGES + 2 },
 }));
 assert.equal((await prepareNoodleVisionAttachments(overLimitCandidates)).length, NOODLE_VISION_MAX_IMAGES);
 
-assert.match(resolveNoodleImagePath("/api/global-gallery/file/noodle.png") ?? "", /gallery[/\\]global[/\\]noodle\.png$/);
+assert.match(
+  resolveNoodleImagePath("/api/global-gallery/file/noodle.png") ?? "",
+  /gallery[/\\]global[/\\]noodle\.png$/,
+);
 assert.match(
   resolveNoodleImagePath("/api/characters/character-id/gallery/file/post.png") ?? "",
   /gallery[/\\]characters[/\\]character-id[/\\]post\.png$/,
@@ -76,9 +89,8 @@ assert.equal(isUnsupportedNoodleVisionInputError(new Error("Expected message con
 assert.equal(isUnsupportedNoodleVisionInputError(new Error("Provider rate limit exceeded")), false);
 
 assert.equal(normalizeNoodleSettings({ maxImagePromptsPerDay: 7 }).maxImagesPerRefresh, 7);
-assert.equal(
-  normalizeNoodleSettings({ maxImagePromptsPerDay: 7, maxImagesPerRefresh: 4 }).maxImagesPerRefresh,
-  4,
-);
+assert.equal(normalizeNoodleSettings({ maxImagePromptsPerDay: 7, maxImagesPerRefresh: 4 }).maxImagesPerRefresh, 4);
+assert.equal(normalizeNoodleSettings({}).imageCaptioningEnabled, false);
+assert.equal(normalizeNoodleSettings({ imageCaptioningEnabled: true }).imageCaptioningEnabled, true);
 
 process.stdout.write("Noodle vision regression passed.\n");

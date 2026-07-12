@@ -144,6 +144,7 @@ export function formatNoodleTimelineForPrompt(
     includeTimestamp?: boolean;
     priorityActorAccountId?: string;
     attachedImageKeys?: ReadonlySet<string>;
+    imageCaptions?: ReadonlyMap<string, string>;
   } = {},
 ) {
   if (posts.length === 0) return options.emptyMessage ?? "No recent Noodle posts.";
@@ -171,27 +172,33 @@ export function formatNoodleTimelineForPrompt(
         const parent = reply.parentInteractionId ? ` parentReplyId=${reply.parentInteractionId}` : "";
         const imageKey = noodleReplyImageKey(reply.id);
         const imageAttached = options.attachedImageKeys?.has(imageKey) === true;
+        const imageCaption = options.imageCaptions?.get(imageKey)?.trim();
         const replyBody =
           reply.content || (imageAttached ? "[image]" : reply.imageUrl ? "[image reply]" : "[empty reply]");
         return `  - replyId=${reply.id}${parent} by ${replyAuthor}${replyHandle} at ${reply.createdAt}: ${replyBody}${
           imageAttached
             ? ` [attached image: ${imageKey}]`
-            : reply.imageUrl && reply.content
-              ? " [image not attached]"
-              : ""
+            : imageCaption
+              ? ` [image description: ${imageCaption}]`
+              : reply.imageUrl && reply.content
+                ? " [image not attached]"
+                : ""
         }`;
       });
       const postImageKey = noodlePostImageKey(post.id);
       const postImageAttached = options.attachedImageKeys?.has(postImageKey) === true;
+      const postImageCaption = options.imageCaptions?.get(postImageKey)?.trim();
       return [
         `- ${post.id} by ${author}${timestamp}: ${post.content}${pollSummary}${
           postImageAttached
             ? ` [attached image: ${postImageKey}]`
-            : post.imagePrompt
-              ? ` [image prompt: ${post.imagePrompt}]`
-              : post.imageUrl
-                ? " [image not attached]"
-                : ""
+            : postImageCaption
+              ? ` [image description: ${postImageCaption}]`
+              : post.imagePrompt
+                ? ` [image prompt: ${post.imagePrompt}]`
+                : post.imageUrl
+                  ? " [image not attached]"
+                  : ""
         }`,
         ...replyLines,
       ].join("\n");

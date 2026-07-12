@@ -2871,6 +2871,43 @@ strong {
   right: 0;
 }
 
+.mari-shell-panel-enter-left {
+  animation: mari-shell-panel-enter-left 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.mari-shell-panel-enter-right {
+  animation: mari-shell-panel-enter-right 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes mari-shell-panel-enter-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-1.125rem, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes mari-shell-panel-enter-right {
+  from {
+    opacity: 0;
+    transform: translate3d(1.125rem, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mari-shell-panel-enter-left,
+  .mari-shell-panel-enter-right {
+    animation: none;
+  }
+}
+
 /* Firefox on Windows can rasterize text inside large blurred/translucent layout layers,
    which shows up most clearly on high-DPI displays. Fall back to opaque shell chrome there. */
 @supports (-moz-appearance: none) {

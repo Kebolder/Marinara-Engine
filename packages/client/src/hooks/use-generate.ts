@@ -9,7 +9,10 @@ import { api, ApiError } from "../lib/api-client";
 import { formatAgentFailuresToast, toAgentFailure, type AgentFailure } from "../lib/agent-failures";
 import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { formatGenerationParameterError } from "../lib/generation-parameter-errors";
-import { shouldKeepStreamLiveThroughPostProcessing } from "../lib/generation-stream-policy";
+import {
+  reconcileTypewriterReplacement,
+  shouldKeepStreamLiveThroughPostProcessing,
+} from "../lib/generation-stream-policy";
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { startSceneWithPromptPreferences } from "../lib/scene-generation";
 import { agentKeys } from "./use-agents";
@@ -962,6 +965,7 @@ export function useGenerate() {
   const setMariPhase = useChatStore((s) => s.setMariPhase);
   const setStreamBuffer = useChatStore((s) => s.setStreamBuffer);
   const setStreamCommitted = useChatStore((s) => s.setStreamCommitted);
+  const setStreamedMessageId = useChatStore((s) => s.setStreamedMessageId);
   const clearStreamBuffer = useChatStore((s) => s.clearStreamBuffer);
   const appendThinkingBuffer = useChatStore((s) => s.appendThinkingBuffer);
   const clearThinkingBuffer = useChatStore((s) => s.clearThinkingBuffer);
@@ -1284,18 +1288,9 @@ export function useGenerate() {
           return;
         }
 
-        if (options.retype) {
-          fullBuffer = "";
-          pendingText = nextContent;
-        } else if (nextContent.startsWith(fullBuffer)) {
-          pendingText = nextContent.slice(fullBuffer.length);
-        } else {
-          // Final cleanup can remove a speaker prefix, hidden command, or
-          // thinking block near the start. Re-animating from the common prefix
-          // makes the roleplay stream visibly jump backward and retype.
-          fullBuffer = nextContent;
-          pendingText = "";
-        }
+        const reconciled = reconcileTypewriterReplacement(fullBuffer, nextContent, options.retype === true);
+        fullBuffer = reconciled.visibleText;
+        pendingText = reconciled.pendingText;
 
         if (pendingText) {
           startTypewriter();
@@ -1805,6 +1800,11 @@ export function useGenerate() {
                 thinkingStreamFilter.reset();
                 setStreamBuffer("", params.chatId);
                 clearThinkingBuffer(params.chatId);
+                // Reveal the previous member's durable row only after its live
+                // presentation buffers are fully cleared.
+                setStreamedMessageId(params.chatId, null);
+              } else {
+                setStreamedMessageId(params.chatId, null);
               }
 
               if (streamingEnabled) setStreamCommitted(params.chatId, false);
@@ -2007,6 +2007,9 @@ export function useGenerate() {
               }
               await qc.cancelQueries({ queryKey: chatKeys.messages(params.chatId), exact: true });
               persistedMessages.set(savedMessage.id, savedMessage);
+              if (savedMessage.role === "assistant" && keepStreamLiveThroughPostProcessing) {
+                setStreamedMessageId(params.chatId, savedMessage.id);
+              }
               gameStatePatchAnchor = {
                 messageId: savedMessage.id,
                 swipeIndex:
@@ -2501,6 +2504,17 @@ export function useGenerate() {
         // Stream has terminated (done, error, abort, or unexpected throw) —
         // guarantee the Mari indicator clears even if the end SSE never arrived.
         clearMariPhaseForThisChat();
+        // A provider can close the SSE immediately after its final agent event.
+        // If this generation still owns the visible Roleplay stream, drain the
+        // queued typewriter before cleanup exposes the already-saved full row.
+        // Error and abort paths flush/cancel explicitly and therefore skip this.
+        const ownsVisibleTypewriter =
+          !abortController.signal.aborted &&
+          isActiveChat() &&
+          useChatStore.getState().streamingChatId === params.chatId;
+        if (ownsVisibleTypewriter && (pendingText.length > 0 || typingActive)) {
+          await waitForTypewriterDrain();
+        }
         // Cancel any pending animation frame to prevent leaks
         cancelAnimationFrame(rafId);
         if (canInspectPageFocus) {
@@ -2661,6 +2675,7 @@ export function useGenerate() {
             clearStreamBuffer(params.chatId);
           }
           setProcessing(false, params.chatId);
+          setStreamedMessageId(params.chatId, null);
           if (isActiveChat()) {
             setRegenerateMessageId(null);
             setStreamingCharacterId(null);
@@ -2746,6 +2761,7 @@ export function useGenerate() {
       setMariPhase,
       setStreamBuffer,
       setStreamCommitted,
+      setStreamedMessageId,
       clearStreamBuffer,
       appendThinkingBuffer,
       clearThinkingBuffer,

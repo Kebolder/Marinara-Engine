@@ -96,6 +96,7 @@ const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
 const TRACKER_PANEL_DESKTOP_EXIT_MS = 240;
 const TRACKER_PANEL_DESKTOP_EASE = [0.16, 1, 0.3, 1] as const;
 const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
+const DESKTOP_SHELL_PANEL_EXIT_MS = 160;
 const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
@@ -176,6 +177,21 @@ function MountOnceWhenOpened({
 
 function SidePanelFallback() {
   return <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>;
+}
+
+function useExitPresence(open: boolean, exitMs: number) {
+  const [present, setPresent] = useState(open);
+
+  useEffect(() => {
+    if (open) {
+      setPresent(true);
+      return;
+    }
+    const timeout = window.setTimeout(() => setPresent(false), exitMs);
+    return () => window.clearTimeout(timeout);
+  }, [exitMs, open]);
+
+  return open || present;
 }
 
 export function AppShell() {
@@ -273,14 +289,26 @@ export function AppShell() {
     };
   }, []);
 
-  const desktopReservedSidebarWidth = sidebarOpen ? liveSidebarWidth : 0;
-  const desktopReservedRightPanelWidth = rightPanelOpen ? liveRightPanelWidth : 0;
+  const shellOverlayMode = isMobile;
+  const desktopSidebarPresent = useExitPresence(sidebarOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
+  const desktopRightPanelPresent = useExitPresence(rightPanelOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
+  const [rightPanelEverOpened, setRightPanelEverOpened] = useState(rightPanelOpen);
+  useEffect(() => {
+    if (rightPanelOpen) setRightPanelEverOpened(true);
+  }, [rightPanelOpen]);
+
+  const layoutSidebarOpen = shellOverlayMode ? sidebarOpen : desktopSidebarPresent;
+  const layoutRightPanelOpen = shellOverlayMode ? rightPanelOpen : desktopRightPanelPresent;
+  const desktopReservedSidebarWidth = layoutSidebarOpen ? liveSidebarWidth : 0;
+  const desktopReservedRightPanelWidth = layoutRightPanelOpen ? liveRightPanelWidth : 0;
   const desktopCenterWidth = Math.max(0, viewportWidth - desktopReservedSidebarWidth - desktopReservedRightPanelWidth);
   const centerSqueezedByPanels =
-    !isMobile && (sidebarOpen || rightPanelOpen) && viewportWidth > 0 && desktopCenterWidth < CENTER_COMPACT_WIDTH;
-  const shellOverlayMode = isMobile;
-  const chatUiInsetLeft = !shellOverlayMode && sidebarOpen ? Math.round(liveSidebarWidth) : 0;
-  const chatUiInsetRight = !shellOverlayMode && rightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
+    !isMobile &&
+    (layoutSidebarOpen || layoutRightPanelOpen) &&
+    viewportWidth > 0 &&
+    desktopCenterWidth < CENTER_COMPACT_WIDTH;
+  const chatUiInsetLeft = !shellOverlayMode && layoutSidebarOpen ? Math.round(liveSidebarWidth) : 0;
+  const chatUiInsetRight = !shellOverlayMode && layoutRightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -832,9 +860,19 @@ export function AppShell() {
         data-tour="sidebar"
         data-component="ChatSidebarPanel"
         aria-label="Chat list"
+        aria-hidden={!sidebarOpen}
+        inert={!sidebarOpen}
         className={cn(
-          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
-          sidebarDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
+          shellOverlayMode && "backdrop-blur-xl",
+          sidebarDragWidth == null &&
+            (shellOverlayMode
+              ? "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              : "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]"),
+          !shellOverlayMode &&
+            (sidebarOpen
+              ? "mari-shell-panel-enter-left translate-x-0 opacity-100"
+              : "pointer-events-none -translate-x-3 opacity-0"),
           sidebarOpen && !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right md:relative",
           shellOverlayMode &&
             cn(
@@ -843,7 +881,9 @@ export function AppShell() {
             ),
           !sidebarOpen && shellOverlayMode && "!w-0",
         )}
-        style={{ width: sidebarOpen ? (shellOverlayMode ? "100vw" : liveSidebarWidth) : 0 }}
+        style={{
+          width: shellOverlayMode ? (sidebarOpen ? "100vw" : 0) : desktopSidebarPresent ? liveSidebarWidth : 0,
+        }}
       >
         <div className="h-full" style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}>
           <ChatSidebar />
@@ -1004,19 +1044,25 @@ export function AppShell() {
         <aside
           data-component="RightPanelDesktop"
           aria-label="Settings and tools panel"
+          aria-hidden={!rightPanelOpen}
+          inert={!rightPanelOpen}
           className={cn(
-            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
-            rightPanelDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
+            rightPanelDragWidth == null &&
+              "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]",
+            rightPanelOpen
+              ? "mari-shell-panel-enter-right translate-x-0 opacity-100"
+              : "pointer-events-none translate-x-3 opacity-0",
             rightPanelOpen && "mari-shell-panel-edge mari-shell-panel-edge--left relative",
           )}
           style={
             {
-              width: rightPanelOpen ? liveRightPanelWidth : 0,
+              width: desktopRightPanelPresent ? liveRightPanelWidth : 0,
               "--mari-right-panel-width": `${liveRightPanelWidth}px`,
             } as CSSProperties
           }
         >
-          {rightPanelOpen && (
+          {(rightPanelOpen || rightPanelEverOpened) && (
             <div className="h-full" style={{ width: liveRightPanelWidth }}>
               <Suspense fallback={<SidePanelFallback />}>
                 <RightPanel />
