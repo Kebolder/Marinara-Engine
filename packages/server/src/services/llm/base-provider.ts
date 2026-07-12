@@ -701,10 +701,6 @@ export abstract class BaseLLMProvider {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
     };
-    if (this.baseUrl.includes("openrouter.ai")) {
-      headers["HTTP-Referer"] = "https://github.com/Pasta-Devs/Marinara-Engine";
-      headers["X-Title"] = "Marinara Engine";
-    }
     const res = await llmFetch(`${this.baseUrl}/embeddings`, {
       method: "POST",
       headers,

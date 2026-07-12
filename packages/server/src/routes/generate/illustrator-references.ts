@@ -60,6 +60,35 @@ const NAME_STOPWORDS = new Set(["the", "a", "an", "il", "la", "le", "de", "van",
 export const ILLUSTRATOR_TEXT_NEGATIVE_PROMPT =
   "dialogue boxes, speech bubbles, word balloons, captions, narration boxes, text boxes, manga sound effect text, SFX lettering, readable text, letters, subtitles, watermark, logo, signature";
 
+export const ILLUSTRATOR_NON_TEXT_ARTIFACT_NEGATIVE_PROMPT = "watermark, logo, signature";
+
+const ILLUSTRATOR_RENDERED_TEXT_REQUEST_PATTERNS = [
+  /\b(?:caption|sfx|sound effect|speech bubble|dialogue bubble|word balloon)s?\s*(?:\([^\n)]{1,80}\))?\s*:/iu,
+  /\b(?:include|add|show|draw|render|display|feature|place|contain|use|keep|preserve)\b[^\n.!?]{0,100}\b(?:dialogue boxes?|speech bubbles?|word balloons?|captions?|narration boxes?|text boxes?|sfx lettering|sound effect text|readable text|comic lettering|manga lettering)\b/iu,
+  /\b(?:expressive|readable|clear|clean|hand[- ]?lettered|stylized)(?:\s+(?:readable|comic|manga))*\s+(?:lettering|dialogue boxes?|speech bubbles?|word balloons?|captions?|sfx)\b/iu,
+  /\b(?:short\s+)?readable text plan\b/iu,
+  /\b(?:sign|poster|screen|label|title)\s+(?:reading|reads|saying)\b/iu,
+];
+
+export function illustratorPromptRequestsRenderedText(prompt: string): boolean {
+  return ILLUSTRATOR_RENDERED_TEXT_REQUEST_PATTERNS.some((pattern) => pattern.test(prompt));
+}
+
+/**
+ * Preserve the default ban on accidental image text for ordinary illustrations,
+ * but do not contradict comic pages or other prompts that explicitly request
+ * lettering. User- and agent-authored negative prompts remain intact.
+ */
+export function mergeIllustratorNegativePrompt(
+  prompt: string,
+  negativePrompt?: string | null,
+): string {
+  const builtInNegativePrompt = illustratorPromptRequestsRenderedText(prompt)
+    ? ILLUSTRATOR_NON_TEXT_ARTIFACT_NEGATIVE_PROMPT
+    : ILLUSTRATOR_TEXT_NEGATIVE_PROMPT;
+  return [negativePrompt?.trim(), builtInNegativePrompt].filter(Boolean).join(", ");
+}
+
 function parseRecord(value: unknown): Record<string, unknown> {
   if (!value) return {};
   if (typeof value === "string") {

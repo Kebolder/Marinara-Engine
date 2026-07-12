@@ -81,6 +81,11 @@ import { ttsService } from "../../lib/tts-service";
 import { useTTSConfig } from "../../hooks/use-tts";
 import { achievementKeys, trackAchievementEvent } from "../../hooks/use-achievements";
 import { buildTTSVoiceRequests, normalizeTTSCharacterName, withTTSVoiceRequestCacheKeys } from "../../lib/tts-dialogue";
+import {
+  findLatestTTSAutoplayMessage,
+  getTTSAutoplayRevision,
+  shouldAutoplayGeneratedTTS,
+} from "../../lib/tts-autoplay";
 import { CHAT_SCROLL_TO_BOTTOM_EVENT, type ChatScrollToBottomDetail } from "../../lib/chat-scroll-events";
 import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { CHAT_TOOLBAR_ACTION_EVENT, readChatToolbarFloatingPanelAnchor } from "./ChatToolbarControls";
@@ -2329,6 +2334,20 @@ export function ChatArea() {
   const chatModeRef = useRef(chatMode);
   chatModeRef.current = chatMode;
   const prevIsStreamingRef = useRef(false);
+  const ttsGenerationRef = useRef<{
+    chatId: string;
+    beforeRevision: string | null;
+    failed: boolean;
+  } | null>(null);
+  useEffect(() => {
+    const handleGenerationError = (event: Event) => {
+      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
+      const generation = ttsGenerationRef.current;
+      if (chatId && generation?.chatId === chatId) generation.failed = true;
+    };
+    window.addEventListener("marinara:generation-error", handleGenerationError);
+    return () => window.removeEventListener("marinara:generation-error", handleGenerationError);
+  }, []);
   const resolveTTSCharacterId = useCallback(
     (speaker?: string | null) => {
       const normalizedSpeaker = normalizeTTSCharacterName(speaker);
@@ -2343,7 +2362,22 @@ export function ChatArea() {
   useEffect(() => {
     const wasStreaming = prevIsStreamingRef.current;
     prevIsStreamingRef.current = isStreaming;
+    if (!wasStreaming && isStreaming) {
+      const msgs = messagesRef.current ?? [];
+      ttsGenerationRef.current = activeChatId
+        ? {
+            chatId: activeChatId,
+            beforeRevision: getTTSAutoplayRevision(findLatestTTSAutoplayMessage(msgs)),
+            failed: false,
+          }
+        : null;
+      return;
+    }
     if (!wasStreaming || isStreaming) return; // only fire on true → false transition
+
+    const generation = ttsGenerationRef.current;
+    ttsGenerationRef.current = null;
+    if (!activeChatId || generation?.chatId !== activeChatId) return;
 
     const cfg = ttsConfigRef.current;
     if (!cfg?.enabled) return;
@@ -2354,15 +2388,16 @@ export function ChatArea() {
     if (!shouldAutoplay) return;
 
     const msgs = messagesRef.current ?? [];
-    let lastMsg: (typeof msgs)[number] | undefined;
-    for (let index = msgs.length - 1; index >= 0; index -= 1) {
-      const candidate = msgs[index];
-      if (candidate.role === "assistant" || candidate.role === "narrator") {
-        lastMsg = candidate;
-        break;
-      }
-    }
-    if (!lastMsg?.content) return;
+    const lastMsg = findLatestTTSAutoplayMessage(msgs);
+    if (
+      !lastMsg ||
+      !shouldAutoplayGeneratedTTS({
+        beforeRevision: generation.beforeRevision,
+        message: lastMsg,
+        generationFailed: generation.failed,
+      })
+    )
+      return;
 
     const fallbackSpeaker =
       lastMsg.role === "narrator"
@@ -2383,7 +2418,7 @@ export function ChatArea() {
       progressive: cfg.progressivePlayback,
       volume: ttsLineVolume / 100,
     });
-  }, [characterMap, isStreaming, resolveTTSCharacterId, ttsLineVolume]);
+  }, [activeChatId, characterMap, isStreaming, resolveTTSCharacterId, ttsLineVolume]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;
   const newestMsgSwipeIndex = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.activeSwipeIndex;

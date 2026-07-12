@@ -120,6 +120,10 @@ import {
   extractDialogueUtterances,
   resolveTTSVoiceForSpeaker,
 } from "../../packages/client/src/lib/tts-dialogue.js";
+import {
+  illustratorPromptRequestsRenderedText,
+  mergeIllustratorNegativePrompt,
+} from "../../packages/server/src/routes/generate/illustrator-references.js";
 
 type RegressionCase = {
   name: string;
@@ -1032,6 +1036,49 @@ const cases: RegressionCase[] = [
       assert.match(gameSurfaceSource, /setStoryboardViewerPlayingVideoId\(activeStoryboardKeyframe\.video\.id\)/);
       assert.match(backgroundViewerSource, /onEnded=\{\(\) =>/);
       assert.doesNotMatch(backgroundViewerSource, /\bloop\b/);
+    },
+  },
+  {
+    name: "Roleplay Illustrator keeps requested comic lettering out of the built-in negative prompt",
+    run() {
+      const generateRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const retryRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate/retry-agents-route.ts", import.meta.url),
+        "utf8",
+      );
+      for (const source of [generateRouteSource, retryRouteSource]) {
+        assert.match(
+          source,
+          /mergeIllustratorNegativePrompt\(\s*compiledPrompt\.prompt,\s*compiledPrompt\.negativePrompt/,
+        );
+        assert.doesNotMatch(source, /ILLUSTRATOR_TEXT_NEGATIVE_PROMPT/);
+      }
+
+      const comicPrompt = [
+        "colored comic page, five panels, cinematic nighttime thriller flow",
+        "Caption: 'The drone tows them deeper into the reeds.'",
+        "Speech bubble (Maukie, whisper): 'Stay with me.'",
+        "SFX: 'SNAP'",
+        "Expressive lettering and clean readable speech bubbles.",
+      ].join(" ");
+      assert.equal(illustratorPromptRequestsRenderedText(comicPrompt), true);
+      const comicNegative = mergeIllustratorNegativePrompt(comicPrompt, "unreadable text, broken lettering");
+      assert.equal(comicNegative, "unreadable text, broken lettering, watermark, logo, signature");
+      assert.doesNotMatch(comicNegative, /dialogue boxes|word balloons|captions|SFX lettering|subtitles/iu);
+
+      const ordinaryPrompt = "cinematic lakeside portrait, cold moonlight, reeds, detailed faces";
+      assert.equal(illustratorPromptRequestsRenderedText(ordinaryPrompt), false);
+      assert.match(mergeIllustratorNegativePrompt(ordinaryPrompt), /speech bubbles/iu);
+      assert.match(mergeIllustratorNegativePrompt(ordinaryPrompt), /SFX lettering/iu);
+
+      assert.equal(
+        illustratorPromptRequestsRenderedText("Avoid captions, speech bubbles, subtitles, logos, and watermarks."),
+        false,
+      );
+      assert.equal(illustratorPromptRequestsRenderedText('shopfront sign reading "OPEN ALL NIGHT"'), true);
     },
   },
   {

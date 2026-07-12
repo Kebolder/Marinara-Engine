@@ -5,6 +5,11 @@ import {
   shouldKeepStreamLiveThroughPostProcessing,
 } from "../../packages/client/src/lib/generation-stream-policy.js";
 import { resolveMessageRewriteVersions } from "../../packages/client/src/lib/message-rewrite-versions.js";
+import {
+  findLatestTTSAutoplayMessage,
+  getTTSAutoplayRevision,
+  shouldAutoplayGeneratedTTS,
+} from "../../packages/client/src/lib/tts-autoplay.js";
 import { getAgentBatchLane, type ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { mergePairedBuiltInRewriteAgents } from "../../packages/server/src/services/generation/prose-guardian-settings.js";
 import { aboutMeKeeperAgentManifest } from "../../packages/shared/src/features/agents/about-me-keeper/manifest.js";
@@ -175,5 +180,57 @@ const restoredRewrite = resolveMessageRewriteVersions(
 );
 assert.equal(restoredRewrite.showingOriginal, false);
 assert.equal(restoredRewrite.alternateText, "The original reply.");
+
+const previousTTSMessage = {
+  id: "assistant-1",
+  role: "assistant",
+  content: "The previous successful reply.",
+  activeSwipeIndex: 0,
+};
+const previousTTSRevision = getTTSAutoplayRevision(previousTTSMessage);
+assert.equal(
+  shouldAutoplayGeneratedTTS({
+    beforeRevision: previousTTSRevision,
+    message: previousTTSMessage,
+    generationFailed: false,
+  }),
+  false,
+  "ending a generation without a new assistant revision must not replay the previous audio",
+);
+assert.equal(
+  shouldAutoplayGeneratedTTS({
+    beforeRevision: previousTTSRevision,
+    message: { ...previousTTSMessage, content: "A partial reply before failure." },
+    generationFailed: true,
+  }),
+  false,
+  "a failed generation must not autoplay even if partial assistant text was persisted",
+);
+assert.equal(
+  shouldAutoplayGeneratedTTS({
+    beforeRevision: previousTTSRevision,
+    message: { id: "assistant-2", role: "assistant", content: "A successful new reply.", activeSwipeIndex: 0 },
+    generationFailed: false,
+  }),
+  true,
+  "a successful new assistant message should still autoplay",
+);
+assert.equal(
+  shouldAutoplayGeneratedTTS({
+    beforeRevision: previousTTSRevision,
+    message: { ...previousTTSMessage, activeSwipeIndex: 1 },
+    generationFailed: false,
+  }),
+  true,
+  "a successful regenerated swipe should still autoplay even when its text happens to match",
+);
+assert.equal(
+  findLatestTTSAutoplayMessage([
+    previousTTSMessage,
+    { id: "user-2", role: "user", content: "Try again.", activeSwipeIndex: 0 },
+  ])?.id,
+  previousTTSMessage.id,
+  "the generation baseline should ignore the user's newest input",
+);
 
 process.stdout.write("Roleplay streaming regression passed.\n");

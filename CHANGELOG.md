@@ -4,6 +4,20 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+## [2.2.1]
+
+### Changed
+
+- Added consistent Marinara Engine app attribution to every OpenRouter request path, including text, embeddings, image generation, model discovery, and video generation.
+
+- Bumped release metadata to v2.2.1 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Android `versionName` is `2.2.1` with `versionCode 33`.
+
+### Fixed
+
+- Fixed Roleplay Illustrator comic and manga prompts being contradicted by an unconditional negative prompt that banned speech bubbles, captions, readable lettering, and SFX. Text suppression now remains enabled for ordinary illustrations but yields to explicit lettering requests in the final compiled prompt.
+- Fixed Roleplay Text to Speech replaying the previous assistant message whenever a new output generation failed. Autoplay now requires a successful generation with a genuinely new assistant-message revision, and failed partial outputs are never queued for automatic playback.
+
 ## [2.2.0]
 
 ### Added

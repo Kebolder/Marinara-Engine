@@ -117,8 +117,8 @@ import {
   type DirectMessageCommand,
 } from "../services/conversation/character-commands.js";
 import {
-  ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
   isNovelAiImageConnection,
+  mergeIllustratorNegativePrompt,
   resolveIllustratorCharacterReferences,
 } from "./generate/illustrator-references.js";
 import {
@@ -7632,11 +7632,7 @@ export async function generateRoutes(app: FastifyInstance) {
                       if (imagePositivePrompt) {
                         fullPrompt = `${fullPrompt}, ${imagePositivePrompt}`;
                       }
-                      const finalNegativePrompt = [
-                        negativePrompt,
-                        savedNegativePrompt,
-                        ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
-                      ]
+                      const requestedNegativePrompt = [negativePrompt, savedNegativePrompt]
                         .filter(Boolean)
                         .join(", ");
 
@@ -7701,17 +7697,21 @@ export async function generateRoutes(app: FastifyInstance) {
                       const compiledPrompt = compileImagePrompt({
                         kind: "illustration",
                         prompt: fullPrompt,
-                        negativePrompt: finalNegativePrompt || undefined,
+                        negativePrompt: requestedNegativePrompt || undefined,
                         styleProfiles: imageSettings.styleProfiles,
                         styleProfileId,
                         imageDefaults,
                         generatedStyle: style,
                       });
                       fullPrompt = compiledPrompt.prompt;
+                      const finalNegativePrompt = mergeIllustratorNegativePrompt(
+                        compiledPrompt.prompt,
+                        compiledPrompt.negativePrompt,
+                      );
 
                       const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
                         prompt: compiledPrompt.prompt,
-                        negativePrompt: compiledPrompt.negativePrompt || undefined,
+                        negativePrompt: finalNegativePrompt || undefined,
                         model: imgModel,
                         width: imgWidth,
                         height: imgHeight,

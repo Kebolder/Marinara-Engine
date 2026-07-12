@@ -510,7 +510,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
   }
 
-  /** Build standard request headers, adding OpenRouter app tracking when applicable. */
+  /** Build standard request headers. OpenRouter attribution is enforced by safeFetch. */
   private buildHeaders(): Record<string, string> {
     const apiKey = this.apiKey.trim();
     const h: Record<string, string> = {
@@ -521,10 +521,6 @@ export class OpenAIProvider extends BaseLLMProvider {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       ...(this.extraHeaders ?? {}),
     };
-    if (!this.isGenericCustomProvider() && this.baseUrl.includes("openrouter.ai")) {
-      h["HTTP-Referer"] = "https://github.com/Pasta-Devs/Marinara-Engine";
-      h["X-Title"] = "Marinara Engine";
-    }
     return h;
   }
 
