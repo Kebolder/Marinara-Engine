@@ -513,7 +513,6 @@ const cases: RegressionCase[] = [
       const htmlCard = `<div style="max-width:340px;font-family:Georgia,'Times New Roman',serif;color:#3a2f1e;"><div class="label">read a hundred times</div><div>Your name is <span style="font-weight:bold">Maukie</span>.</div></div>`;
       const utterances = extractDialogueUtterances(
         `${htmlCard}\nDottore said, "Stay behind me."`,
-        { dialogueScope: "all", dialogueCharacterName: "" },
         "Dottore",
       );
 
@@ -527,7 +526,6 @@ const cases: RegressionCase[] = [
       assert.deepEqual(
         extractDialogueUtterances(
           '<div class="frame"></div><speaker="Dottore">"Do not move."</speaker>',
-          { dialogueScope: "all", dialogueCharacterName: "" },
           "Narrator",
         ),
         [{ text: "Do not move.", speaker: "Dottore" }],
