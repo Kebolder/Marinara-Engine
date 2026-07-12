@@ -113,8 +113,8 @@ import {
   validateSpriteExpressionEntries,
 } from "./expression-agent-utils.js";
 import {
-  ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
   isNovelAiImageConnection,
+  mergeIllustratorNegativePrompt,
   resolveIllustratorCharacterReferences,
 } from "./illustrator-references.js";
 import {
@@ -2945,7 +2945,7 @@ async function applyRetryResultEffects(args: {
               imagePrompt,
               imagePositivePrompt,
             });
-            const finalNegativePrompt = [negativePrompt, savedNegativePrompt, ILLUSTRATOR_TEXT_NEGATIVE_PROMPT]
+            const requestedNegativePrompt = [negativePrompt, savedNegativePrompt]
               .filter(Boolean)
               .join(", ");
 
@@ -3010,16 +3010,20 @@ async function applyRetryResultEffects(args: {
             const compiledPrompt = compileImagePrompt({
               kind: "illustration",
               prompt: fullPrompt,
-              negativePrompt: finalNegativePrompt || undefined,
+              negativePrompt: requestedNegativePrompt || undefined,
               styleProfiles: imageSettings.styleProfiles,
               styleProfileId,
               imageDefaults,
               generatedStyle: style,
             });
+            const finalNegativePrompt = mergeIllustratorNegativePrompt(
+              compiledPrompt.prompt,
+              compiledPrompt.negativePrompt,
+            );
 
             const imageResult = await generateImage(imgModel, imgBaseUrl, imgApiKey, imgServiceHint, {
               prompt: compiledPrompt.prompt,
-              negativePrompt: compiledPrompt.negativePrompt || undefined,
+              negativePrompt: finalNegativePrompt || undefined,
               model: imgModel,
               width: imgWidth,
               height: imgHeight,
