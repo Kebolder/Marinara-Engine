@@ -209,6 +209,8 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
       reply.header("Expires", "0");
       return reply.sendFile("index.html", clientDist);
     });
+  } else {
+    app.log.warn("Client build not found at %s; serving API only. Run `pnpm build` to build the frontend.", clientDist);
   }
 
   // ── Health Check ──
