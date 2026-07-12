@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // DocsViewerModal: Browse the guides shipped in docs/
 // ──────────────────────────────────────────────
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, BookOpen, FileText, Search, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { cn } from "../../lib/utils";
@@ -78,6 +78,39 @@ function prepareDocMarkdown(raw: string, docPath: string): string {
     );
 }
 
+// Upper bound on injected search marks per doc: a 2-char needle ("in", "to")
+// can match hundreds of times, and unbounded wrapping bloats the DOM and makes
+// the cleanup normalize() pass expensive. 500 covers every shipped guide.
+const MAX_SEARCH_MARKS = 500;
+
+/**
+ * Split `text` into plain segments and <mark>ed matches of `term`.
+ * Mirrors the server's docs-search semantics exactly: literal, case-insensitive,
+ * whole-query substring via toLowerCase()+indexOf — never a regex, so metachars
+ * (`c++`, `a|b`) match literally and highlights agree with the match counts.
+ */
+function highlightTermNodes(text: string, term: string): ReactNode[] {
+  if (term.length < 2) return [text];
+  const needle = term.toLowerCase();
+  const lower = text.toLowerCase();
+  const out: ReactNode[] = [];
+  let last = 0;
+  let idx = lower.indexOf(needle);
+  let key = 0;
+  while (idx !== -1) {
+    if (idx > last) out.push(text.slice(last, idx));
+    out.push(
+      <mark key={key++} className="docs-search-mark">
+        {text.slice(idx, idx + needle.length)}
+      </mark>,
+    );
+    last = idx + needle.length;
+    idx = lower.indexOf(needle, last);
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 // Session memory so reopening the viewer resumes where the user left off
 // (people bounce in and out while referencing macros, CSS, etc.).
 const PLACE_KEY = "marinara-docs-viewer-place";
@@ -141,6 +174,9 @@ export function DocsViewerModal({
   const trimmedQuery = debouncedQuery.trim();
   const searching = trimmedQuery.length >= 2;
   const { data: search, isFetching: searchFetching } = useDocsSearch(trimmedQuery);
+  // Live highlight target: the active (debounced) query while a search is on,
+  // capped at 200 chars to mirror the server's needle truncation.
+  const highlightTerm = searching ? trimmedQuery.slice(0, 200) : "";
 
   const groups: { dir: string; docs: DocSummary[] }[] = [];
   for (const entry of index?.docs ?? []) {
@@ -165,6 +201,84 @@ export function DocsViewerModal({
     setPendingScrollTerm(scrollTerm);
   };
 
+  // Highlight every occurrence of the live search term in the rendered doc by
+  // wrapping matches in <mark> elements (docs-viewer only — the markdown
+  // renderer is shared with chat, so like the Copy buttons below we augment
+  // the committed DOM instead). Mutating the memoized tree is safe for the
+  // same reason the Copy buttons are: `rendered`'s identity only changes with
+  // `doc`, which only changes with `selected`, which keys the container — so
+  // React never reconciles a mutated subtree, it remounts it. Declared BEFORE
+  // the scroll effect so marks exist when it looks for them in the same commit.
+  useEffect(() => {
+    if (!scrollEl || !rendered || highlightTerm.length < 2) return;
+    const needle = highlightTerm.toLowerCase();
+    const created: HTMLElement[] = [];
+
+    // Phase 1: walk read-only and collect matching text nodes — mutating
+    // while walking would invalidate the TreeWalker.
+    const walker = document.createTreeWalker(scrollEl, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        // Never wrap our own injected chrome (Copy buttons) or existing marks.
+        if (parent.closest(".docs-copy-button") || parent.closest("mark.docs-search-mark")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return (node.textContent ?? "").toLowerCase().includes(needle)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    });
+    const targets: Text[] = [];
+    let walked: Node | null;
+    let budget = MAX_SEARCH_MARKS;
+    while (budget > 0 && (walked = walker.nextNode())) {
+      targets.push(walked as Text);
+      const lower = (walked.textContent ?? "").toLowerCase();
+      for (let i = lower.indexOf(needle); i !== -1; i = lower.indexOf(needle, i + needle.length)) budget--;
+    }
+
+    // Phase 2: split each collected text node around its matches. Matched
+    // slices come from the original text, preserving the doc's casing.
+    const parentsToNormalize = new Set<Node>();
+    for (const textNode of targets) {
+      const text = textNode.textContent ?? "";
+      const lower = text.toLowerCase();
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      let idx = lower.indexOf(needle);
+      while (idx !== -1 && created.length < MAX_SEARCH_MARKS) {
+        if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+        const mark = document.createElement("mark");
+        mark.className = "docs-search-mark";
+        mark.appendChild(document.createTextNode(text.slice(idx, idx + needle.length)));
+        frag.appendChild(mark);
+        created.push(mark);
+        last = idx + needle.length;
+        idx = lower.indexOf(needle, last);
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      const parent = textNode.parentNode;
+      if (parent) {
+        parent.replaceChild(frag, textNode);
+        parentsToNormalize.add(parent);
+      }
+    }
+
+    // Cleanup unwraps exactly the marks this run created (never a fresh query,
+    // so re-runs can't touch another run's marks), then merges the split text
+    // nodes back so the scroll/copy effects see the original DOM shape. Both
+    // steps are harmless if React already detached the tree (doc switch).
+    return () => {
+      for (const mark of created) {
+        const parent = mark.parentNode;
+        if (!parent) continue;
+        parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark);
+      }
+      for (const parent of parentsToNormalize) parent.normalize();
+    };
+  }, [scrollEl, rendered, highlightTerm]);
+
   // Restore the saved reading position on reopen, or jump to the first
   // occurrence of the search term after opening a doc from search results.
   useEffect(() => {
@@ -175,13 +289,21 @@ export function DocsViewerModal({
       return;
     }
     if (!pendingScrollTerm) return;
-    const term = pendingScrollTerm.toLowerCase();
-    const walker = document.createTreeWalker(scrollEl, NodeFilter.SHOW_TEXT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      if (node.textContent?.toLowerCase().includes(term)) {
-        (node.parentElement ?? scrollEl).scrollIntoView({ block: "center" });
-        break;
+    // Prefer the first injected highlight (exists whenever the live term
+    // matches); fall back to a raw text walk for terms the highlighter
+    // couldn't wrap (e.g. a stale pendingScrollTerm after the query changed).
+    const firstMark = scrollEl.querySelector<HTMLElement>("mark.docs-search-mark");
+    if (firstMark) {
+      firstMark.scrollIntoView({ block: "center" });
+    } else {
+      const term = pendingScrollTerm.toLowerCase();
+      const walker = document.createTreeWalker(scrollEl, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        if (node.textContent?.toLowerCase().includes(term)) {
+          (node.parentElement ?? scrollEl).scrollIntoView({ block: "center" });
+          break;
+        }
       }
     }
     setPendingScrollTerm(null);
@@ -307,7 +429,7 @@ export function DocsViewerModal({
                       <span className="flex items-center gap-2">
                         <FileText size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
                         <span className="min-w-0 flex-1 truncate text-xs font-medium text-[var(--foreground)]">
-                          {result.title}
+                          {highlightTermNodes(result.title, trimmedQuery)}
                         </span>
                         <span className="shrink-0 rounded-full border border-[var(--border)]/60 bg-black/5 px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)]/80 dark:bg-white/6">
                           {result.matches}
@@ -318,7 +440,7 @@ export function DocsViewerModal({
                           key={`${result.path}-${snippet.line}`}
                           className="block truncate pl-6 text-[0.625rem] leading-snug text-[var(--muted-foreground)]/80"
                         >
-                          {snippet.text}
+                          {highlightTermNodes(snippet.text, trimmedQuery)}
                         </span>
                       ))}
                     </button>

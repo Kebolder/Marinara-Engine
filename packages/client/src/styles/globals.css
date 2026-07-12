@@ -2654,6 +2654,18 @@ strong {
   color: #facc15;
 }
 
+/* Docs-viewer search-match highlight (injected marks + sidebar snippets).
+   Primary-tinted so it reads in both themes and stays visually distinct from
+   the markdown ==highlight== yellow above. Only the docs viewer emits this
+   class, so it can't leak into chat despite the shared .mari-message-content. */
+.docs-search-mark {
+  background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  color: var(--foreground);
+  border-radius: 2px;
+  padding: 0 0.1em;
+  font-weight: 500;
+}
+
 /* Task lists */
 .mari-message-content .mari-md-task-list {
   list-style: none;
