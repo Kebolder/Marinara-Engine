@@ -1698,6 +1698,59 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
+  // Get game state for a specific message + swipe (does not fall back to latest)
+  app.get<{
+    Params: { chatId: string; messageId: string };
+    Querystring: { swipeIndex?: string | number };
+  }>("/:chatId/messages/:messageId/game-state", async (req, reply) => {
+    const message = await storage.getMessage(req.params.messageId);
+    if (!message || message.chatId !== req.params.chatId) {
+      return reply.status(404).send({ error: "Message not found" });
+    }
+
+    const rawSwipeIndex = req.query.swipeIndex;
+    if (typeof rawSwipeIndex === "string" && rawSwipeIndex.trim().length === 0) {
+      return reply.status(400).send({ error: "swipeIndex must be a non-negative integer" });
+    }
+    const swipeIndex =
+      rawSwipeIndex === undefined
+        ? typeof message.activeSwipeIndex === "number"
+          ? message.activeSwipeIndex
+          : 0
+        : typeof rawSwipeIndex === "number"
+          ? rawSwipeIndex
+          : Number(rawSwipeIndex);
+    if (!Number.isInteger(swipeIndex) || swipeIndex < 0) {
+      return reply.status(400).send({ error: "swipeIndex must be a non-negative integer" });
+    }
+
+    const gameStateStore = createGameStateStorage(app.db);
+    const row = await gameStateStore.getByChatAndMessage(req.params.chatId, req.params.messageId, swipeIndex);
+    if (!row) return reply.send(null);
+
+    return {
+      id: row.id,
+      chatId: row.chatId,
+      messageId: row.messageId,
+      swipeIndex: row.swipeIndex,
+      date: row.date,
+      time: row.time,
+      location: row.location,
+      weather: row.weather,
+      temperature: row.temperature,
+      worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, [])),
+      presentCharacters: parseSnapshotJson(row.presentCharacters, []),
+      recentEvents: parseSnapshotJson(row.recentEvents, []),
+      playerStats: parseSnapshotJson(row.playerStats, null),
+      personaStats: parseSnapshotJson(row.personaStats, null),
+      manualOverrides: parseSnapshotJson(row.manualOverrides, null),
+      fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
+      hiddenTrackerFields: parseTrackerHiddenFields(row.hiddenTrackerFields),
+      committed: (row.committed as any) === 1,
+      createdAt: row.createdAt,
+    };
+  });
+
   // Get latest game state for a chat (respects the active swipe of the last assistant message)
   app.get<{ Params: { id: string } }>("/:id/game-state", async (req, reply) => {
     const { createGameStateStorage } = await import("../services/storage/game-state.storage.js");
