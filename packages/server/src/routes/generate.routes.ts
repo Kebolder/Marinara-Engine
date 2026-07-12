@@ -432,7 +432,7 @@ import {
   isBuiltInTextRewriteAgentType,
   mergePairedBuiltInRewriteAgents,
   PROSE_GUARDIAN_PENDING_MESSAGE,
-  shouldHoldForProseGuardianRewrite,
+  shouldHoldForTextRewrite,
 } from "../services/generation/prose-guardian-settings.js";
 import {
   agentWriteApprovalRequired,
@@ -3622,7 +3622,7 @@ export async function generateRoutes(app: FastifyInstance) {
         );
         const textRewriteRunAgents = mergePairedBuiltInRewriteAgents(textRewriteAgents);
         const textRewritePendingState = getTextRewritePendingState(textRewriteAgents);
-        const holdForProseGuardianRewrite = shouldHoldForProseGuardianRewrite(textRewriteAgents);
+        const holdForTextRewrite = shouldHoldForTextRewrite(textRewriteAgents);
         const textRewriteAgentIds = new Set(textRewriteAgents.map((a) => a.id));
         const lorebookKeeperAgent = resolvedAgents.find((a) => a.type === "lorebook-keeper") ?? null;
         let pipelineAgents = resolvedAgents.filter(
@@ -4291,7 +4291,7 @@ export async function generateRoutes(app: FastifyInstance) {
             const chunk = text.slice(i, i + TOKEN_CHUNK_SIZE);
             fullResponse += chunk;
             tokenChunksSinceYield += 1;
-            if (!holdForProseGuardianRewrite) {
+            if (!holdForTextRewrite) {
               trySendSseEvent(reply, { type: "token", data: chunk });
             }
             if (tokenChunksSinceYield % TOKEN_CHUNK_YIELD_EVERY === 0) {
@@ -4825,7 +4825,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 return;
               }
               fullResponse += chunk;
-              if (holdForProseGuardianRewrite) {
+              if (holdForTextRewrite) {
                 return;
               }
               await sendTokenTextChunked(chunk);
@@ -5160,7 +5160,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 // Break large chunks (e.g. Gemini non-streaming) into small pieces
                 // so the client sees progressive streaming.
                 const val = result.value;
-                if (holdForProseGuardianRewrite) {
+                if (holdForTextRewrite) {
                   result = await gen.next();
                   continue;
                 }
@@ -5204,7 +5204,7 @@ export async function generateRoutes(app: FastifyInstance) {
               fullThinking = fullThinking ? fullThinking + "\n\n" + inlineThinking.thinking : inlineThinking.thinking;
             }
             fullResponse = inlineThinking.content;
-            if (!holdForProseGuardianRewrite) {
+            if (!holdForTextRewrite) {
               reply.raw.write(`data: ${JSON.stringify({ type: "content_replace", data: fullResponse })}\n\n`);
             }
           }
@@ -5477,7 +5477,7 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           if (contentReplaced) {
-            if (!holdForProseGuardianRewrite) {
+            if (!holdForTextRewrite) {
               reply.raw.write(`data: ${JSON.stringify({ type: "content_replace", data: fullResponse })}\n\n`);
             }
           }
@@ -5626,7 +5626,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 : await chats.updateMessageExtra(savedMsg.id, extraUpdate);
 
             const savedMessagePayload =
-              holdForProseGuardianRewrite && !input.impersonate
+              holdForTextRewrite && !input.impersonate
                 ? {
                     ...(refreshedMsg ?? savedMsg),
                     content: textRewritePendingState?.message ?? PROSE_GUARDIAN_PENDING_MESSAGE,
@@ -7903,7 +7903,7 @@ export async function generateRoutes(app: FastifyInstance) {
               }
             }
 
-            if (holdForProseGuardianRewrite && !textRewriteApplied && !abortController.signal.aborted) {
+            if (holdForTextRewrite && !textRewriteApplied && !abortController.signal.aborted) {
               reply.raw.write(
                 `data: ${JSON.stringify({
                   type: "text_rewrite",

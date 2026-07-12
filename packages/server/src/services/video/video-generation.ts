@@ -1019,10 +1019,10 @@ async function seedanceReferenceImageUrl(
         // Fall through to the setup error below.
       }
     }
-    const uploaded = await maybeUploadSeedanceReferenceImage(image, label, publicUpload, signal);
-    if (uploaded) return uploaded;
   }
 
+  // Single upload fallback for both the raw-URL and no-URL paths (previously
+  // the raw-URL path attempted the identical upload twice).
   const uploaded = await maybeUploadSeedanceReferenceImage(image, label, publicUpload, signal);
   if (uploaded) return uploaded;
 

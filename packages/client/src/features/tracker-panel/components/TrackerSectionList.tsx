@@ -18,7 +18,7 @@ import type { TrackerPanelSection, TrackerSpriteLookup } from "../tracker-panel.
 import { SectionIconButton } from "./controls/SectionControls";
 import { CharacterTrackerPanel } from "./sections/CharacterTrackerPanel";
 import { CustomTrackerPanel } from "./sections/CustomTrackerPanel";
-import { PersonaInventoryPanel } from "./sections/PersonaTrackerPanel";
+import { PersonaInventoryPanel } from "./sections/PersonaInventoryPanel";
 import { QuestTrackerPanel } from "./sections/quest-tracker/QuestTrackerPanel";
 import { WorldStatePanel } from "./sections/WorldStatePanel";
 

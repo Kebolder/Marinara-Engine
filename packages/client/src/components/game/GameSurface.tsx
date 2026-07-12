@@ -11000,7 +11000,7 @@ function GameSurfaceComponent({
                             onOpenInventory={() => setInventoryOpen(true)}
                             onCustomInstruction={handleCombatCustomInstruction}
                             onSpriteSuggestionChange={setCombatSpriteSuggestion}
-                            _isStreaming={isStreaming}
+                            isStreaming={isStreaming}
                             narration="Battle starts."
                             combatDialogue={combatDialogueLines}
                             combatDialogueCues={combatDialogueCues}

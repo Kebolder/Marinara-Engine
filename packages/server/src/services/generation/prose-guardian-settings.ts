@@ -105,9 +105,6 @@ export function getTextRewritePendingState(agents: ResolvedAgent[]): { agentType
   return { agentType: "prose-guardian", message: PROSE_GUARDIAN_PENDING_MESSAGE };
 }
 
-export function shouldHoldForProseGuardianRewrite(agents: ResolvedAgent[]): boolean {
-  return shouldHoldForTextRewrite(agents);
-}
 
 function readPositiveNumber(value: unknown): number | null {
   const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;

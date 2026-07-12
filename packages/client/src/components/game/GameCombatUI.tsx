@@ -438,7 +438,7 @@ interface GameCombatUIProps {
   /** Suggested sprite focus for the full-body overlay. */
   onSpriteSuggestionChange?: (suggestion: { name: string; pose: string } | null) => void;
   /** Whether we're waiting for a GM response. */
-  _isStreaming?: boolean;
+  isStreaming?: boolean;
 }
 
 // ── Constants ──
@@ -649,7 +649,7 @@ export function GameCombatUI({
   gameVoiceVolume = 1,
   combatControlsSlot,
   onSpriteSuggestionChange,
-  _isStreaming,
+  isStreaming,
 }: GameCombatUIProps) {
   useRenderTimer("game-combat"); // [#3104 diagnostic]
   // Combat state
@@ -1543,7 +1543,7 @@ export function GameCombatUI({
 
   useEffect(() => {
     if (!customInstructionPending) return;
-    if (_isStreaming) {
+    if (isStreaming) {
       setCustomInstructionSawStreaming(true);
       return;
     }
@@ -1553,7 +1553,7 @@ export function GameCombatUI({
     setSelectedAction(null);
     setSelectedItemName(null);
     setPhase("player-turn");
-  }, [_isStreaming, customInstructionPending, customInstructionSawStreaming]);
+  }, [isStreaming, customInstructionPending, customInstructionSawStreaming]);
 
   const handleItemSelect = useCallback(
     (itemName: string) => {
