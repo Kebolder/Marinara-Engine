@@ -6,6 +6,7 @@ import { Agent } from "undici";
 import { isLoopbackIp, isPrivateNetworkIp } from "../middleware/ip-allowlist.js";
 import { logger } from "../lib/logger.js";
 import { CSRF_HEADER, CSRF_HEADER_VALUE } from "@marinara-engine/shared";
+import { requestHeadersWithOpenRouterAttribution } from "./openrouter-attribution.js";
 
 export { CSRF_HEADER, CSRF_HEADER_VALUE };
 
@@ -582,7 +583,10 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions = {
 
   for (let i = 0; i <= redirects; i += 1) {
     const internalDispatcher = dispatcher ? undefined : current.dispatcher;
-    const requestHeaders = decodeCompressedResponse ? requestHeadersWithIdentityEncoding(currentHeaders) : currentHeaders;
+    const attributedHeaders = requestHeadersWithOpenRouterAttribution(current.url, currentHeaders);
+    const requestHeaders = decodeCompressedResponse
+      ? requestHeadersWithIdentityEncoding(attributedHeaders)
+      : attributedHeaders;
     const response = await fetch(current.url, {
       ...currentInit,
       ...(requestHeaders ? { headers: requestHeaders } : {}),

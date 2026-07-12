@@ -9,6 +9,12 @@ import {
   noodleResponseFormat,
 } from "../../packages/server/src/services/noodle/noodle-response-format.js";
 import { normalizeOpenAIChatCompletionsResponseFormat } from "../../packages/server/src/services/llm/providers/openai.provider.js";
+import {
+  isOpenRouterApiUrl,
+  OPENROUTER_APP_REFERER,
+  OPENROUTER_APP_TITLE,
+  requestHeadersWithOpenRouterAttribution,
+} from "../../packages/server/src/utils/openrouter-attribution.js";
 
 function assertStrictObjects(value: unknown): void {
   if (!value || typeof value !== "object") return;
@@ -102,5 +108,21 @@ assert.equal(
   false,
 );
 assert.deepEqual(unrelatedCustomBody, {});
+
+const attributedHeaders = requestHeadersWithOpenRouterAttribution("https://openrouter.ai/api/v1/models", {
+  Authorization: "Bearer test",
+});
+assert.equal(attributedHeaders?.get("authorization"), "Bearer test");
+assert.equal(attributedHeaders?.get("HTTP-Referer"), OPENROUTER_APP_REFERER);
+assert.equal(attributedHeaders?.get("X-OpenRouter-Title"), OPENROUTER_APP_TITLE);
+const unrelatedHeaders = requestHeadersWithOpenRouterAttribution("https://api.openai.com/v1/models", {
+  Authorization: "Bearer test",
+});
+assert.equal(unrelatedHeaders?.get("HTTP-Referer"), null);
+assert.equal(unrelatedHeaders?.get("X-OpenRouter-Title"), null);
+assert.equal(isOpenRouterApiUrl("https://openrouter.ai/api/v1"), true);
+assert.equal(isOpenRouterApiUrl("https://api.openrouter.ai/v1"), true);
+assert.equal(isOpenRouterApiUrl("https://openrouter.ai.example.com/v1"), false);
+assert.equal(isOpenRouterApiUrl("not a URL"), false);
 
 process.stdout.write("Provider compatibility regression passed.\n");
