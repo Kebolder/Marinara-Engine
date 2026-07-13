@@ -1,6 +1,6 @@
-﻿// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ──────────────────────────────────────────────
 // Routes: Chats
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import AdmZip from "adm-zip";
 import { logger } from "../lib/logger.js";
@@ -867,7 +867,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
   // Update chat summaries (entry-level merge for day/week summaries).
   // Dedicated from generic metadata PATCH so concurrent user edits don't overwrite
-  // the entire daySummaries/weekSummaries maps â€” patchMetadata serializes the
+  // the entire daySummaries/weekSummaries maps — patchMetadata serializes the
   // read-modify-write per chat and merges per-entry onto fresh metadata, so a
   // queued in-flight generation write can't interleave between the read and write
   // and clobber user edits on other keys.
@@ -922,7 +922,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // any still covered by another enabled entry) BEFORE removing the entry.
     // Unhiding first is what keeps this safe without a transaction: if the
     // metadata write below fails, the messages are visible and the entry still
-    // exists (a benign, self-consistent state) â€” never hidden with no entry to
+    // exists (a benign, self-consistent state) — never hidden with no entry to
     // justify them. So no rollback bookkeeping is needed.
     if (body.operation === "delete") {
       const current = await storage.getById(req.params.id);
@@ -1208,7 +1208,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     };
   });
 
-  // â”€â”€ Chat Connections (OOC â†” Roleplay) â”€â”€
+  // ── Chat Connections (OOC ↔ Roleplay) ──
 
   // Connect two chats bidirectionally
   app.post<{ Params: { id: string } }>("/:id/connect", async (req, reply) => {
@@ -1310,7 +1310,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  // â”€â”€ Messages â”€â”€
+  // ── Messages ──
 
   // List messages for a chat (supports pagination via ?limit=N&before=CURSOR)
   app.get<{ Params: { id: string }; Querystring: { limit?: string; before?: string } }>(
@@ -1661,7 +1661,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     return updated;
   });
 
-  // Update message extra (partial merge) â€” also syncs to the active swipe
+  // Update message extra (partial merge) — also syncs to the active swipe
   app.patch<{ Params: { chatId: string; messageId: string } }>(
     "/:chatId/messages/:messageId/extra",
     async (req, reply) => {
@@ -1759,7 +1759,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       : null;
     const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
 
-    // â”€â”€ Enrich present characters with avatar paths â”€â”€
+    // ── Enrich present characters with avatar paths ──
     // Match NPC names against the chat's known character cards, then fall back to stored NPC avatars on disk.
     const charsNeedingAvatar = presentCharacters.filter(
       (c) => !c.avatarPath && c.name && !isManualTrackerCharacterId(c.characterId),
@@ -1774,7 +1774,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           return [];
         }
       })();
-      // Build a name â†’ avatarPath map from the chat's character records
+      // Build a name → avatarPath map from the chat's character records
       const nameToAvatar = new Map<string, string>();
       if (chatCharIds.length > 0) {
         const charRows = await app.db
@@ -1867,8 +1867,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (body.playerStats !== undefined) fields.playerStats = body.playerStats;
     if (body.personaStats !== undefined) fields.personaStats = body.personaStats as any[];
     if (body.fieldLocks !== undefined) fields.fieldLocks = normalizeTrackerFieldLocks(body.fieldLocks);
-    // Target the same snapshot the GET endpoint returns â€” the one for the last
-    // assistant message's active swipe â€” so edits persist to the row the user
+    // Target the same snapshot the GET endpoint returns — the one for the last
+    // assistant message's active swipe — so edits persist to the row the user
     // actually sees. Falls back to updateLatest when no messages exist yet.
     let updated: Awaited<ReturnType<typeof gameStateStore.updateLatest>> = null;
     if (hasExplicitTarget) {
@@ -1947,7 +1947,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  // Peek prompt â€” assemble the prompt for this chat as if generating right now
+  // Peek prompt — assemble the prompt for this chat as if generating right now
   app.post<{ Params: { id: string } }>("/:id/peek-prompt", async (req, reply) => {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
@@ -1990,7 +1990,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       };
     };
 
-    // â”€â”€ Primary: return the cached prompt from the last generation â”€â”€
+    // ── Primary: return the cached prompt from the last generation ──
     // This is an exact copy of what was actually sent to the model,
     // including all runtime injections (lorebooks, game state, scene context, etc.).
     const latestVisibleMessage = (() => {
@@ -2033,7 +2033,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
     }
 
-    // â”€â”€ Fallback: live assembly preview (no generation has happened yet) â”€â”€
+    // ── Fallback: live assembly preview (no generation has happened yet) ──
     // This is a best-effort approximation; it won't include runtime-only
     // injections like cached game state, scene context, semantic memory, etc.
     const presetId =
@@ -2084,7 +2084,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
           }));
 
-          // Strip trailing assistant messages â€” peek should show only what we SEND to the model
+          // Strip trailing assistant messages — peek should show only what we SEND to the model
           while (mappedMessages.length > 0 && mappedMessages[mappedMessages.length - 1]!.role === "assistant") {
             mappedMessages.pop();
           }
@@ -2285,7 +2285,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             idleDuration: promptIdleDuration,
           });
 
-          // â”€â”€ Strip <speaker> tags from chat history to save tokens (roleplay only) â”€â”€
+          // ── Strip <speaker> tags from chat history to save tokens (roleplay only) ──
           const isGroupChat = characterIds.length > 1;
           if (isGroupChat && chatMode !== "conversation") {
             const speakerCloseRegex = /<\/speaker>/g;
@@ -2302,7 +2302,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             }
           }
 
-          // â”€â”€ Inject group chat speaker tag instructions â”€â”€
+          // ── Inject group chat speaker tag instructions ──
           const groupChatMode =
             chatMode === "conversation" ? "merged" : ((chatMeta.groupChatMode as string) ?? "merged");
           const groupSpeakerColors =
@@ -2493,7 +2493,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             }
           }
 
-          // â”€â”€ Tracker context fallback: mirror the read-only snapshot injection from /api/generate â”€â”€
+          // ── Tracker context fallback: mirror the read-only snapshot injection from /api/generate ──
           const activeAgentIds = Array.isArray(chatMeta.activeAgentIds) ? (chatMeta.activeAgentIds as string[]) : [];
           const chatEnableAgents = shouldEnableAgentsForGeneration({
             chatEnableAgents: chatMeta.enableAgents === true,
@@ -2531,7 +2531,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
     }
 
-    // â”€â”€ Last resort: return raw chat messages â”€â”€
+    // ── Last resort: return raw chat messages ──
     const mappedMessages = chatMessages.map((m: any) => ({
       id: typeof m.id === "string" ? m.id : null,
       role: m.role === "narrator" ? "system" : m.role,
@@ -2552,7 +2552,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     };
   });
 
-  // â”€â”€ Swipes â”€â”€
+  // ── Swipes ──
 
   // List swipes for a message
   app.get<{ Params: { chatId: string; messageId: string } }>("/:chatId/messages/:messageId/swipes", async (req) => {
@@ -2628,7 +2628,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
-  // â”€â”€ Export â”€â”€
+  // ── Export ──
 
   type ExportFormat = "jsonl" | "text";
   type ChatRow = NonNullable<Awaited<ReturnType<typeof storage.getById>>>;
@@ -2823,7 +2823,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     const metadata = parseExportMetadata(chat.metadata);
     const branchName = typeof metadata.branchName === "string" ? metadata.branchName : "";
 
-    // Build a characterId â†’ name map for all characters in this chat
+    // Build a characterId → name map for all characters in this chat
     const charNameMap = new Map<string, string>();
     if (charIds.length > 0) {
       try {
@@ -2833,7 +2833,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           if (data?.name) charNameMap.set(row.id, data.name);
         }
       } catch {
-        // fall through â€” use chat name as fallback
+        // fall through — use chat name as fallback
       }
     }
     const primaryCharName = (charIds[0] && charNameMap.get(charIds[0])) ?? chat.name;
@@ -2879,7 +2879,7 @@ export async function chatsRoutes(app: FastifyInstance) {
         .content;
 
     if (format === "text") {
-      const header = `Chat: ${chat.name}\nDate: ${chat.createdAt}\n${"â”€".repeat(50)}\n`;
+      const header = `Chat: ${chat.name}\nDate: ${chat.createdAt}\n${"─".repeat(50)}\n`;
       const body = msgs
         .map((msg) => {
           const name = getDisplayName(msg);
@@ -3090,7 +3090,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
-  // â”€â”€ Branch (duplicate) â”€â”€
+  // ── Branch (duplicate) ──
 
   // Create a branch (copy) of an existing chat
   app.post<{ Params: { id: string } }>("/:id/branch", async (req, reply) => {
@@ -3315,10 +3315,10 @@ export async function chatsRoutes(app: FastifyInstance) {
     return storage.getById(newChat.id);
   });
 
-  // â”€â”€ Generate Summary â”€â”€
+  // ── Generate Summary ──
   // Calls the LLM to produce a rolling summary from the chat history,
   // saves it into chatMetadata.summary, and returns it.
-  // Model resolution: default-for-agents â†’ chat connection.
+  // Model resolution: default-for-agents → chat connection.
   app.post<{ Params: { id: string } }>("/:id/generate-summary", async (req, reply) => {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
@@ -3491,7 +3491,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // the recorded set always reflects messages actually hidden (no phantom set if a
     // separate client call were to fail). The client no longer hides. bulkSetHidden
     // returns exactly the ids it flipped visible->hidden, read at the moment of
-    // mutation â€” so ownership can never be a stale pre-provider snapshot that claims
+    // mutation — so ownership can never be a stale pre-provider snapshot that claims
     // a message another action hid during the (seconds-long) provider call above.
     const hideMessageIds =
       eligibleToHide.length > 0 ? await storage.bulkSetHiddenFromAI(req.params.id, eligibleToHide, true) : [];

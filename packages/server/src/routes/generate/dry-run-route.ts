@@ -1,4 +1,4 @@
-﻿import type { FastifyInstance } from "fastify";
+import type { FastifyInstance } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
@@ -619,7 +619,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     // Ephemeral user line (normal dry run only): mirrors an unsaved "what if I said this" turn.
-    // Impersonate mode does NOT add userMessage to history â€” same as POST /generate; direction is injected later.
+    // Impersonate mode does NOT add userMessage to history — same as POST /generate; direction is injected later.
     const userMessage = typeof body.userMessage === "string" ? body.userMessage : "";
     const lorebookGenerationTriggers = resolveDryRunLorebookGenerationTriggers(
       {
@@ -1468,7 +1468,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       }
     }
 
-    // â”€â”€ Impersonate: same instruction block as POST /api/generate (no DB writes) â”€â”€
+    // ── Impersonate: same instruction block as POST /api/generate (no DB writes) ──
     if (impersonate) {
       const impersonateInstruction = buildImpersonateInstruction({
         customPrompt: body.impersonatePromptTemplate ?? chatMeta.impersonatePrompt,
@@ -1503,7 +1503,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
     dedupeLastMessageWrappers(finalMessages);
 
-    // â”€â”€ Parameter normalization (mirror /api/generate) â”€â”€
+    // ── Parameter normalization (mirror /api/generate) ──
     const modelLower = (conn.model ?? "").toLowerCase();
     const providerLower = (conn.provider ?? "").toLowerCase();
 
@@ -1538,7 +1538,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     // enableThinking activates provider reasoning mode (separate from showing thoughts).
     const enableThinking = !!resolvedEffort;
 
-    // â”€â”€ Claude 4.5+ sampling parameter restrictions â”€â”€
+    // ── Claude 4.5+ sampling parameter restrictions ──
     const modelLc = (conn.model ?? "").toLowerCase();
 
     // Claude adaptive-only models: ALL sampling params removed except max_tokens (provider returns 400 otherwise).
@@ -1551,7 +1551,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       presencePenalty = 0;
     }
 
-    // Claude 4.5/4.6: only temperature supported â€” strip other sampling params.
+    // Claude 4.5/4.6: only temperature supported — strip other sampling params.
     const isClaudeTemperatureOnly =
       !isClaudeNoSampling &&
       (/claude-(opus|sonnet)-4-[56]/.test(modelLc) || /claude-(opus|sonnet)-4\.[56]/.test(modelLc));
@@ -1575,7 +1575,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
             conn.maxTokensOverride,
           );
 
-    // â”€â”€ Mirror /api/generate: normalize + fit prompt to context â”€â”€
+    // ── Mirror /api/generate: normalize + fit prompt to context ──
 
     // Collapse 3+ consecutive blank lines to save tokens
     for (const m of finalMessages) {
@@ -1671,7 +1671,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         try {
           if (!reply.raw.destroyed) reply.raw.write(": keepalive\n\n");
         } catch {
-          // Connection already closed â€” ignore
+          // Connection already closed — ignore
         }
       }, 15_000);
 
