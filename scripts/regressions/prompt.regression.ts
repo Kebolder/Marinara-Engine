@@ -1828,6 +1828,26 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         dynamicPromptGenerator: async () => "Centered portrait of a woman with clean lighting and a readable expression.",
       });
       assert.match(shortDescription.prompt, /^Required canonical NPC visual profile: man\./);
+
+      const narrationDescription = "A rain-soaked courier in a patched green cloak.";
+      const narrationAppearance = resolveNpcPortraitAppearance(
+        { description: null },
+        {
+          description: narrationDescription,
+          descriptionSource: "narration",
+          notes: [],
+        } as any,
+        null,
+      );
+      const narrationPrompt = await buildNpcPortraitProviderPrompt({
+        ...request,
+        appearance: narrationAppearance,
+      });
+      assert.equal(
+        narrationPrompt.prompt.toLowerCase().split(narrationDescription.toLowerCase()).length - 1,
+        1,
+      );
+      assert.doesNotMatch(narrationPrompt.prompt, /Canonical NPC profile:/);
     },
   },
   {

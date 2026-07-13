@@ -647,6 +647,8 @@ function prependCanonicalAppearanceIfMissing(
   maxLength: number,
   separator: string,
 ): string {
+  // Inspect the provider-visible slice. If identity is missing, rebuild from the original
+  // prompt so prefixing still happens before the single final maxLength truncation.
   const truncatedPrompt = prompt.slice(0, maxLength);
   if (!canonicalPrefix || promptContainsCanonicalAppearance(truncatedPrompt, canonicalAppearance)) {
     return truncatedPrompt;
@@ -655,6 +657,8 @@ function prependCanonicalAppearanceIfMissing(
 }
 
 function promptContainsCanonicalAppearance(prompt: string, canonicalAppearance: string): boolean {
+  // Whole-word matching can still treat short or generic appearances as incidental matches;
+  // changing this behavior trades duplicate suppression against identity preservation.
   const normalizedAppearance = normalizedPromptText(canonicalAppearance);
   if (!normalizedAppearance) return false;
   return ` ${normalizedPromptText(prompt)} `.includes(` ${normalizedAppearance} `);
