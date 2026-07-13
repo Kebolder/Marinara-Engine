@@ -2,6 +2,7 @@
 // Noodle Prompt Instructions
 // ──────────────────────────────────────────────
 import {
+  LIMITS,
   readNoodlePollFromMetadata,
   type NoodleAccountKind,
   type NoodleInteraction,
@@ -10,8 +11,12 @@ import {
 } from "@marinara-engine/shared";
 
 export const NOODLE_PAST_MEMORY_MIN_AGE_MS = 48 * 60 * 60 * 1000;
-export const NOODLE_PAST_MEMORY_MAX_ITEMS = 3;
-export const NOODLE_PAST_MEMORY_INCLUSION_CHANCE = 0.5;
+/** Behavior when a Noodle setting's `enableEnhancedTimelineWriting` is off — reproduces the exact pre-toggle defaults. */
+export const NOODLE_LEGACY_PAST_MEMORY_MAX_ITEMS = 3;
+export const NOODLE_LEGACY_PAST_MEMORY_INCLUSION_CHANCE = 0.5;
+/** Behavior when `enableEnhancedTimelineWriting` is on. */
+export const NOODLE_PAST_MEMORY_MAX_ITEMS = 5;
+export const NOODLE_PAST_MEMORY_INCLUSION_CHANCE = 0.85;
 export const NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION =
   "- The user persona is controlled exclusively by the user. Never generate posts, replies, likes, reposts, poll votes, or follows as a persona. Personas may only be mentioned or targeted by other accounts.";
 export const NOODLE_CREATIVE_FORMAT_INSTRUCTIONS = [
@@ -19,6 +24,44 @@ export const NOODLE_CREATIVE_FORMAT_INSTRUCTIONS = [
   "- Standard Unicode emojis are allowed in post and reply content. Use them naturally when they fit the account's voice or reaction; emojis are optional, and not every post or reply needs one.",
   "- Characters are allowed to be assholes to each other when it fits their personalities, history, and relationships. They may be rude, insulting, confrontational, jealous, petty, sarcastic, start arguments, revive old grievances, form rivalries, or deliberately stir up interpersonal drama. This is permission, not a quota: do not force hostility into every refresh or flatten established characterization just to create conflict.",
 ] as const;
+/** Legacy single-line tone instruction, used when `enableEnhancedTimelineWriting` is off. */
+export const NOODLE_LEGACY_TONE_INSTRUCTION =
+  "- Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, vulgar, or casual as fits them.";
+export const NOODLE_TONE_INSTRUCTIONS = [
+  "- Characters post like real people online (funny, messy, indirect, petty, affectionate, dramatic, vulgar, or casual) — but which of these fits, and how much, must come from each character's own Personality/Description/Backstory below, not a default upbeat voice. Do not make every account sound equally enthusiastic, chatty, or friendly.",
+  "- Before writing each account's posts/replies, briefly ground yourself in that account's stated personality traits (guarded, blunt, anxious, arrogant, deadpan, etc.) and let sentence length, punctuation, capitalization, and emoji use vary accordingly. A withdrawn or hostile character should not sound like an enthusiastic extrovert.",
+] as const;
+export const NOODLE_CONGRUENCY_INSTRUCTION =
+  "- Multiple active accounts may know each other from shared chats, prior Noodle posts, or each other's lore below. When it fits, have accounts react to, quote, subtweet, or argue with each other's posts in this same batch (via @handle mentions and targetTempId), not just post in isolation.";
+export const NOODLE_RANDOM_USER_TREATMENT_INSTRUCTION =
+  "- Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.";
+/**
+ * Default text for the editable "Noodle Timeline Voice & Tone" prompt override
+ * (registry/noodle.ts: NOODLE_TIMELINE_VOICE). Deliberately limited to tone and creative-freedom
+ * instructions only — schema-critical output-format rules (structured action limits, target
+ * field rules, handle preservation, persona authorship, adult platform policy, "Return JSON
+ * only") stay hardcoded in buildRefreshPrompt() outside this override, so a user rewriting their
+ * voice/tone text cannot accidentally break the noodleGeneratedRefreshSchema output contract.
+ *
+ * `enhanced` mirrors the Noodle setting `enableEnhancedTimelineWriting` (off by default): off
+ * reproduces the original single-line tone instruction with no congruency instruction; on adds
+ * the personality-grounding tone instructions and the cross-account congruency instruction. This
+ * only affects the UNEDITED default — once a user customizes the override, their text is used
+ * regardless of the setting.
+ */
+export function noodleTimelineVoiceDefaultText(enhanced: boolean): string {
+  return [
+    ...(enhanced ? NOODLE_TONE_INSTRUCTIONS : [NOODLE_LEGACY_TONE_INSTRUCTION]),
+    NOODLE_RANDOM_USER_TREATMENT_INSTRUCTION,
+    ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
+    ...(enhanced ? [NOODLE_CONGRUENCY_INSTRUCTION] : []),
+  ].join("\n");
+}
+/** Legacy recalled-memory instruction, used when `enableEnhancedTimelineWriting` is off. */
+export const NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION =
+  "- These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.";
+export const NOODLE_RECALLED_MEMORY_INSTRUCTION =
+  "- These posts are more than 48 hours old and are past context an account might plausibly remember, especially posts or threads involving currently active accounts. When a recalled post naturally continues a relevant thread, character relationship, or grievance, feel free to revisit, reply to, repost, or build on it — but do not force a reference to every recalled post, and skip ones that don't fit the moment.";
 
 type NoodleTimelineFeatureSettings = Pick<
   NoodleSettings,
@@ -216,9 +259,13 @@ export function noodlePastMemoryCutoff(at = new Date()): string {
   return new Date(at.getTime() - NOODLE_PAST_MEMORY_MIN_AGE_MS).toISOString();
 }
 
-export function noodlePastMemorySampleSize(random: RandomSource = Math.random): number {
-  if (normalizedRandom(random) >= NOODLE_PAST_MEMORY_INCLUSION_CHANCE) return 0;
-  return 1 + Math.floor(normalizedRandom(random) * NOODLE_PAST_MEMORY_MAX_ITEMS);
+export function noodlePastMemorySampleSize(
+  random: RandomSource = Math.random,
+  inclusionChance: number = NOODLE_PAST_MEMORY_INCLUSION_CHANCE,
+  maxItems: number = NOODLE_PAST_MEMORY_MAX_ITEMS,
+): number {
+  if (normalizedRandom(random) >= inclusionChance) return 0;
+  return 1 + Math.floor(normalizedRandom(random) * maxItems);
 }
 
 export function sampleNoodlePastMemories<T>(
@@ -234,6 +281,41 @@ export function sampleNoodlePastMemories<T>(
     [pool[index], pool[selectedIndex]] = [pool[selectedIndex]!, pool[index]!];
   }
   return pool.slice(0, count);
+}
+
+/**
+ * Like sampleNoodlePastMemories, but biases selection toward items weightFn scores higher
+ * (e.g. posts authored by or mentioning currently active accounts), using weighted sampling
+ * without replacement (`-log(random) / weight` keys, sorted ascending). Baseline weight (see
+ * weightFn) keeps unrelated older posts occasionally reachable rather than filtering them out.
+ */
+export function sampleNoodlePastMemoriesWeighted<T>(
+  items: readonly T[],
+  limit: number,
+  weightFn: (item: T) => number,
+  random: RandomSource = Math.random,
+): T[] {
+  const count = Math.min(Math.max(0, Math.floor(limit)), NOODLE_PAST_MEMORY_MAX_ITEMS, items.length);
+  if (count === 0) return [];
+  const keyed = items.map((item) => {
+    const weight = Math.max(weightFn(item), 0.001);
+    const roll = Math.max(normalizedRandom(random), 1e-9);
+    return { item, key: -Math.log(roll) / weight };
+  });
+  keyed.sort((left, right) => left.key - right.key);
+  return keyed.slice(0, count).map((entry) => entry.item);
+}
+
+/**
+ * Noodle can batch far more characters into one refresh (up to 100, or uncapped with "All
+ * invited") than a normal chat turn (1-2 characters), so it scales its own lorebook budget by
+ * active character count rather than reusing DEFAULT_LOREBOOK_TOKEN_BUDGET outright — a
+ * single-character refresh gets at least the floor, and a large roster is capped at the same
+ * default a normal chat turn would get, never more.
+ */
+export function noodleLorebookTokenBudget(activeCharacterCount: number): number {
+  const scaled = Math.max(activeCharacterCount, 0) * LIMITS.NOODLE_LOREBOOK_TOKEN_BUDGET_PER_ACCOUNT;
+  return Math.min(LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET, Math.max(LIMITS.NOODLE_LOREBOOK_TOKEN_BUDGET_FLOOR, scaled));
 }
 
 export function noodleTimelineFeatureInstructions(settings: NoodleTimelineFeatureSettings): string[] {

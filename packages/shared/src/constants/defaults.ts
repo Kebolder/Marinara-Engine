@@ -74,6 +74,15 @@ export const LIMITS = {
   LOREBOOK_DEFAULT_SCAN_DEPTH: 10,
   /** Default global lorebook token budget per generation. 0 means unlimited when explicitly configured per chat. */
   DEFAULT_LOREBOOK_TOKEN_BUDGET: 8192,
+  /**
+   * Per-active-character lorebook token budget for a single Noodle refresh. Noodle can batch far
+   * more characters into one generation call (up to 100, or uncapped with "All invited") than a
+   * normal chat turn (1-2 characters), so it scales its own lorebook budget by active character
+   * count instead of reusing DEFAULT_LOREBOOK_TOKEN_BUDGET outright — see NOODLE_LOREBOOK_TOKEN_BUDGET_FLOOR.
+   */
+  NOODLE_LOREBOOK_TOKEN_BUDGET_PER_ACCOUNT: 400,
+  /** Minimum Noodle lorebook token budget even for a single active character. */
+  NOODLE_LOREBOOK_TOKEN_BUDGET_FLOOR: 1500,
   /** Default summary trigger: every N messages */
   SUMMARY_INTERVAL: 50,
   /** Default vectorization: top-K results */
