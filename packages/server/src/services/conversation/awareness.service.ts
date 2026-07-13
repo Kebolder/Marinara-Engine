@@ -64,7 +64,7 @@ function defaultWindow(): { start: Date; end: Date } {
 
 /**
  * Detect temporal keywords in a user message and return
- * all matching time windows (plus the default 2h window).
+ * all matching time windows (plus the default 1h window).
  */
 function detectTimeWindows(userMessage: string): Array<{ start: Date; end: Date }> {
   const windows: Array<{ start: Date; end: Date }> = [defaultWindow()];

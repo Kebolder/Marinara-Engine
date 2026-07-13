@@ -54,7 +54,11 @@ class MarinaraAbortButton(CoordinatorEntity[MarinaraCoordinator], ButtonEntity):
 
 
 class MarinaraSyncToolsButton(CoordinatorEntity[MarinaraCoordinator], ButtonEntity):
-    """Push all 21 HA tool definitions into Marinara's Custom Tools."""
+    """Push the enabled HA tool definitions into Marinara's Custom Tools.
+
+    23 tool definitions exist in total; Locks and Generic Service Calls are
+    excluded by default, so 20 sync unless the user opts them in via Options.
+    """
 
     _attr_icon = "mdi:cloud-sync-outline"
 

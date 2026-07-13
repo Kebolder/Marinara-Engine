@@ -52,6 +52,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   MIN_AGENT_MAX_TOKENS,
   getAgentPromptTemplateOptions,
+  resolveDefaultAgentPromptTemplateId,
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
@@ -66,6 +67,7 @@ import {
   type CharacterGroup,
   type ConversationCommandKey,
   type Lorebook,
+  type Message,
 } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -170,6 +172,8 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "react", label: "Reactions", description: "Let characters react to messages with emoji badges." },
   { id: "uno", label: "UNO", description: "Let characters start a game of UNO at the table when you agree to play." },
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
+  { id: "poker", label: "Poker", description: "Let characters sit down for a game of Texas Hold'em poker at the table." },
+  { id: "eightball", label: "8-Ball Pool", description: "Let characters rack up a game of 8-ball pool at the table." },
 ];
 
 // ─── Main component ───────────────────────────
@@ -248,6 +252,7 @@ const WIZARD_PRIMARY_BUTTON_CLASS =
   "flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const WIZARD_SECONDARY_BUTTON_CLASS =
   "flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50";
+const CHARACTER_PICKER_PAGE_SIZE = 50;
 
 function readChatMetadata(chat: Chat): Record<string, unknown> {
   const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
@@ -802,6 +807,11 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const [search, setSearch] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState("");
+  const [characterPickerLimit, setCharacterPickerLimit] = useState(CHARACTER_PICKER_PAGE_SIZE);
+
+  useEffect(() => {
+    setCharacterPickerLimit(CHARACTER_PICKER_PAGE_SIZE);
+  }, [search]);
 
   const charInfoMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof parseCharacterDisplayData>>();
@@ -968,13 +978,19 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     [chat.id, updateChat],
   );
 
-  const available = characters.filter((c) => {
-    if (chatCharIds.includes(c.id)) return false;
-    const info = getCharacterInfo(c);
-    const query = search.toLowerCase();
-    const title = getCharacterTitle(info)?.toLowerCase() ?? "";
-    return info.name.toLowerCase().includes(query) || title.includes(query);
-  });
+  const available = useMemo(
+    () =>
+      characters.filter((c) => {
+        if (chatCharIds.includes(c.id)) return false;
+        const info = getCharacterInfo(c);
+        const query = search.toLowerCase();
+        const title = getCharacterTitle(info)?.toLowerCase() ?? "";
+        return info.name.toLowerCase().includes(query) || title.includes(query);
+      }),
+    [characters, chatCharIds, getCharacterInfo, search],
+  );
+  const visibleAvailable = available.slice(0, characterPickerLimit);
+  const hasMoreAvailable = available.length > visibleAvailable.length;
 
   const hasConnection = !!chat.connectionId;
   const hasCharacters = chatCharIds.length > 0;
@@ -1302,7 +1318,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                 <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
               </button>
             )}
-            {available.map((character) => {
+            {visibleAvailable.map((character) => {
               const info = getCharacterInfo(character);
               const title = getCharacterTitle(info);
               return (
@@ -1333,6 +1349,15 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                 </button>
               );
             })}
+            {hasMoreAvailable && (
+              <button
+                type="button"
+                onClick={() => setCharacterPickerLimit((limit) => limit + CHARACTER_PICKER_PAGE_SIZE)}
+                className="w-full border-t border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+              >
+                Load more ({visibleAvailable.length} of {available.length})
+              </button>
+            )}
             {available.length === 0 && (
               <p className="px-3 py-3 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
                 {characters.filter((character) => !chatCharIds.includes(character.id)).length === 0
@@ -1841,8 +1866,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   }, [chat.personaId, chatCharIds, charName, charTitle, characters, personas]);
 
   // Track whether the user has manually edited the chat name.
-  // The roleplay wizard doesn't expose a name field, so this stays false
-  // and we always auto-rename based on character selection.
+  // The Connection step's Name input flips this to true onBlur when the
+  // user changes it, which suppresses auto-rename on character selection.
   const [userEditedName, setUserEditedName] = useState(false);
 
   // Build an auto-generated chat name from character IDs
@@ -1995,8 +2020,23 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     onFinish();
   }, [chat.id, chatCharIds, createInitialGreetingForCharacter, customizeParameters, generationParameters, onFinish, updateMeta]);
 
+  const seedInitialGreetingsIfEmpty = useCallback(async () => {
+    if (chatCharIds.length === 0) return;
+    try {
+      const messages = await api.get<Array<Pick<Message, "role">>>(`/chats/${chat.id}/messages`);
+      const hasNonSystemMessage = messages.some((message) => message.role !== "system");
+      if (hasNonSystemMessage) return;
+    } catch {
+      return;
+    }
+    for (const charId of chatCharIds) {
+      await createInitialGreetingForCharacter(charId);
+    }
+  }, [chat.id, chatCharIds, createInitialGreetingForCharacter]);
+
   const handleShortcutApply = useCallback(async () => {
     if (!shortcutPresetId) {
+      await seedInitialGreetingsIfEmpty();
       onFinish();
       return;
     }
@@ -2006,18 +2046,24 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     } catch {
       /* fall through — still close the wizard */
     } finally {
+      await seedInitialGreetingsIfEmpty();
       setShortcutApplying(false);
       onFinish();
     }
-  }, [shortcutPresetId, chat.id, applyChatPreset, onFinish]);
+  }, [shortcutPresetId, chat.id, applyChatPreset, onFinish, seedInitialGreetingsIfEmpty]);
 
   // Search state for character & lorebook pickers
   const [charSearch, setCharSearch] = useState("");
   const [selectedRoleplayFolderId, setSelectedRoleplayFolderId] = useState("");
+  const [characterPickerLimit, setCharacterPickerLimit] = useState(CHARACTER_PICKER_PAGE_SIZE);
   const [lbSearch, setLbSearch] = useState("");
   const [agentSearch, setAgentSearch] = useState("");
   const [agentAddPreview, setAgentAddPreview] = useState<AgentAddPreview | null>(null);
   const [addingAgentToChat, setAddingAgentToChat] = useState(false);
+
+  useEffect(() => {
+    setCharacterPickerLimit(CHARACTER_PICKER_PAGE_SIZE);
+  }, [charSearch]);
 
   // On the preset step, wait for full preset data before allowing advance
   const isPresetStep = currentStep.key === "preset";
@@ -2131,6 +2177,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+          defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
         }),
       });
       toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);
@@ -2237,6 +2284,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       const title = charTitle(c)?.toLowerCase() ?? "";
       return charName(c).toLowerCase().includes(query) || title.includes(query);
     });
+    const visibleAvailable = available.slice(0, characterPickerLimit);
+    const hasMoreAvailable = available.length > visibleAvailable.length;
     const addRandomCharacter = () => {
       const selected = new Set(chatCharIds);
       const query = charSearch.trim().toLowerCase();
@@ -2360,7 +2409,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                 <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
               </button>
             )}
-            {available.map((c) => {
+            {visibleAvailable.map((c) => {
               const name = charName(c);
               const title = charTitle(c);
               return (
@@ -2393,6 +2442,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                 </button>
               );
             })}
+            {hasMoreAvailable && (
+              <button
+                type="button"
+                onClick={() => setCharacterPickerLimit((limit) => limit + CHARACTER_PICKER_PAGE_SIZE)}
+                className="w-full border-t border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+              >
+                Load more ({visibleAvailable.length} of {available.length})
+              </button>
+            )}
             {available.length === 0 && (
               <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                 {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0

@@ -11,7 +11,7 @@ import { mapSheetAttributesToRPG } from "../services/game/skill-check.service.js
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import type { ChatMessage } from "../services/llm/base-provider.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
-import { normalizeRpgStatPools, stripMacroComments } from "@marinara-engine/shared";
+import { localAuthProviderBaseUrl, normalizeRpgStatPools, stripMacroComments } from "@marinara-engine/shared";
 import type {
   EncounterInitRequest,
   EncounterActionRequest,
@@ -24,6 +24,7 @@ import type {
   EncounterLogEntry,
   RPGStatsConfig,
 } from "@marinara-engine/shared";
+import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
 
 // ──────────────────────────────────────────────
 // Helpers
@@ -66,10 +67,8 @@ async function resolveConnection(
     const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
     baseUrl = providerDef?.defaultBaseUrl ?? "";
   }
-  // Claude (Subscription) uses the local Claude Agent SDK and has no HTTP
-  // endpoint — return a sentinel so the gate passes. The provider ignores it.
-  if (!baseUrl && conn.provider === "claude_subscription") baseUrl = "claude-agent-sdk://local";
-  if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
+  const localAuthBaseUrl = localAuthProviderBaseUrl(conn.provider);
+  if (!baseUrl && localAuthBaseUrl) baseUrl = localAuthBaseUrl;
   if (!baseUrl) throw new Error("No base URL configured for this connection");
 
   return { conn, baseUrl };
@@ -160,12 +159,18 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
  * user who picks a per-chat persona but doesn't have a matching global active
  * persona ends up named "User" in combat because the encounter prompt's
  * `${personaName}` placeholder defaulted to that string.
+ *
+ * Game mode skips the active-persona fallback — persona must be explicitly
+ * selected in the setup wizard (see generate.routes.ts persona resolution),
+ * so a persona-less game stays persona-less in combat too.
  */
-async function buildPersonaContext(chars: ReturnType<typeof createCharactersStorage>, chatPersonaId: string | null) {
+async function buildPersonaContext(
+  chars: ReturnType<typeof createCharactersStorage>,
+  chatPersonaId: string | null,
+  chatMode?: string | null,
+) {
   const allPersonas = await chars.listPersonas();
-  const persona =
-    (chatPersonaId ? allPersonas.find((p) => p.id === chatPersonaId) : null) ??
-    allPersonas.find((p) => p.isActive === "true");
+  const persona = resolveActivePersonaCandidate(allPersonas, chatPersonaId, chatMode);
   if (!persona) return { personaName: "User", personaCtx: "No persona information available." };
   let ctx = `Name: ${persona.name}\n`;
   const description = cardPromptText(persona.description);
@@ -570,7 +575,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
       let chatMeta: Record<string, unknown> | null = null;
       if (typeof chat.metadata === "string") {
         try {
@@ -665,7 +670,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
       const spellbookCtx = await loadSpellbookContext(spellbookId);
 
       const chatMessages = await chats.listMessages(chatId);
@@ -763,7 +768,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
 
       const prompt = buildSummaryPrompt(
         personaName,

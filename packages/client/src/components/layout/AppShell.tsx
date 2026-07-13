@@ -67,6 +67,7 @@ const BotBrowserView = lazy(() =>
 const GameAssetsBrowserView = lazy(() =>
   import("../game-assets/GameAssetsBrowserView").then((module) => ({ default: module.GameAssetsBrowserView })),
 );
+const NoodleView = lazy(() => import("../noodle/NoodleView").then((module) => ({ default: module.NoodleView })));
 const RightPanel = lazy(() => import("./RightPanel").then((module) => ({ default: module.RightPanel })));
 const TrackerDataSidebar = lazy(() =>
   import("./TrackerDataSidebar").then((module) => ({ default: module.TrackerDataSidebar })),
@@ -89,13 +90,13 @@ const PANEL_RESIZE_STEP = 16;
 const PANEL_RESIZE_LARGE_STEP = 48;
 const SHARED_SIDEBAR_WIDTH_MIN = Math.max(SIDEBAR_WIDTH_MIN, RIGHT_PANEL_WIDTH_MIN);
 const SHARED_SIDEBAR_WIDTH_MAX = Math.min(SIDEBAR_WIDTH_MAX, RIGHT_PANEL_WIDTH_MAX);
-const RESIZER_HITBOX = 10;
 const TRACKER_PANEL_EDGE_OFFSET = 8;
 const TRACKER_PANEL_HUD_GAP = 6;
 const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
 const TRACKER_PANEL_DESKTOP_EXIT_MS = 240;
 const TRACKER_PANEL_DESKTOP_EASE = [0.16, 1, 0.3, 1] as const;
 const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
+const DESKTOP_SHELL_PANEL_EXIT_MS = 160;
 const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
@@ -176,6 +177,21 @@ function MountOnceWhenOpened({
 
 function SidePanelFallback() {
   return <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>;
+}
+
+function useExitPresence(open: boolean, exitMs: number) {
+  const [present, setPresent] = useState(open);
+
+  useEffect(() => {
+    if (open) {
+      setPresent(true);
+      return;
+    }
+    const timeout = window.setTimeout(() => setPresent(false), exitMs);
+    return () => window.clearTimeout(timeout);
+  }, [exitMs, open]);
+
+  return open || present;
 }
 
 export function AppShell() {
@@ -273,14 +289,26 @@ export function AppShell() {
     };
   }, []);
 
-  const desktopReservedSidebarWidth = sidebarOpen ? liveSidebarWidth : 0;
-  const desktopReservedRightPanelWidth = rightPanelOpen ? liveRightPanelWidth : 0;
+  const shellOverlayMode = isMobile;
+  const desktopSidebarPresent = useExitPresence(sidebarOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
+  const desktopRightPanelPresent = useExitPresence(rightPanelOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
+  const [rightPanelEverOpened, setRightPanelEverOpened] = useState(rightPanelOpen);
+  useEffect(() => {
+    if (rightPanelOpen) setRightPanelEverOpened(true);
+  }, [rightPanelOpen]);
+
+  const layoutSidebarOpen = shellOverlayMode ? sidebarOpen : desktopSidebarPresent;
+  const layoutRightPanelOpen = shellOverlayMode ? rightPanelOpen : desktopRightPanelPresent;
+  const desktopReservedSidebarWidth = layoutSidebarOpen ? liveSidebarWidth : 0;
+  const desktopReservedRightPanelWidth = layoutRightPanelOpen ? liveRightPanelWidth : 0;
   const desktopCenterWidth = Math.max(0, viewportWidth - desktopReservedSidebarWidth - desktopReservedRightPanelWidth);
   const centerSqueezedByPanels =
-    !isMobile && (sidebarOpen || rightPanelOpen) && viewportWidth > 0 && desktopCenterWidth < CENTER_COMPACT_WIDTH;
-  const shellOverlayMode = isMobile;
-  const chatUiInsetLeft = !shellOverlayMode && sidebarOpen ? Math.round(liveSidebarWidth) : 0;
-  const chatUiInsetRight = !shellOverlayMode && rightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
+    !isMobile &&
+    (layoutSidebarOpen || layoutRightPanelOpen) &&
+    viewportWidth > 0 &&
+    desktopCenterWidth < CENTER_COMPACT_WIDTH;
+  const chatUiInsetLeft = !shellOverlayMode && layoutSidebarOpen ? Math.round(liveSidebarWidth) : 0;
+  const chatUiInsetRight = !shellOverlayMode && layoutRightPanelOpen ? Math.round(liveRightPanelWidth) : 0;
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -378,6 +406,7 @@ export function AppShell() {
   const regexDetailId = useUIStore((s) => s.regexDetailId);
   const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const gameAssetsBrowserOpen = useUIStore((s) => s.gameAssetsBrowserOpen);
+  const noodleOpen = useUIStore((s) => s.noodleOpen);
   const hasCompletedOnboarding = useUIStore((s) => s.hasCompletedOnboarding);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const activeChat = useChatStore((s) => s.activeChat);
@@ -546,12 +575,13 @@ export function AppShell() {
     <LorebookEditor />
   ) : null;
 
-  const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
+  const showAmbientDecor =
+    isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen;
   const hasDetailView = detailView != null;
   const trackerPanelModeAvailable = activeChat?.mode === "roleplay" || activeChat?.mode === "visual_novel";
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
   const trackerPanelSurfaceAvailable =
-    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
+    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen && !hasDetailView;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
 
   const professorMariFloatingActive = hasDetailView && hasProfessorMariFloatingFollowup();
@@ -599,15 +629,17 @@ export function AppShell() {
     const topBarRect = topBar ? readVisibleElementRect(topBar) : null;
     if (topBarRect) topCandidates.push(Math.ceil(topBarRect.bottom + TRACKER_PANEL_HUD_GAP));
 
-    const anchors = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
-    anchors.forEach((anchor) => {
-      const rect = readVisibleElementRect(anchor);
-      if (rect) topCandidates.push(Math.ceil(rect.bottom + TRACKER_PANEL_HUD_GAP));
-    });
+    if (!trackerPanelDockToEdge) {
+      const anchors = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
+      anchors.forEach((anchor) => {
+        const rect = readVisibleElementRect(anchor);
+        if (rect) topCandidates.push(Math.ceil(rect.bottom + TRACKER_PANEL_HUD_GAP));
+      });
+    }
 
     const nextTop = Math.max(...topCandidates);
     setTrackerPanelTop((current) => (current === nextTop ? current : nextTop));
-  }, []);
+  }, [trackerPanelDockToEdge]);
 
   useLayoutEffect(() => {
     if (shellOverlayMode || trackerPanelVisible || !trackerPanelSurfaceAvailable) return;
@@ -783,8 +815,8 @@ export function AppShell() {
             Math.min(56, (trackerPanelToggleAnchorY ?? trackerPanelTop) - trackerPanelTop),
           )}px`,
           ...(side === "left"
-            ? { left: sidebarOpen ? liveSidebarWidth + RESIZER_HITBOX : 0 }
-            : { right: rightPanelOpen ? liveRightPanelWidth + RESIZER_HITBOX : 0 }),
+            ? { left: sidebarOpen ? liveSidebarWidth : 0 }
+            : { right: rightPanelOpen ? liveRightPanelWidth : 0 }),
           ...(trackerPanelBackgroundStyle ?? {}),
         }}
       >
@@ -828,9 +860,19 @@ export function AppShell() {
         data-tour="sidebar"
         data-component="ChatSidebarPanel"
         aria-label="Chat list"
+        aria-hidden={!sidebarOpen}
+        inert={!sidebarOpen}
         className={cn(
-          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
-          sidebarDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
+          shellOverlayMode && "backdrop-blur-xl",
+          sidebarDragWidth == null &&
+            (shellOverlayMode
+              ? "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
+              : "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]"),
+          !shellOverlayMode &&
+            (sidebarOpen
+              ? "mari-shell-panel-enter-left translate-x-0 opacity-100"
+              : "pointer-events-none -translate-x-3 opacity-0"),
           sidebarOpen && !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right md:relative",
           shellOverlayMode &&
             cn(
@@ -839,7 +881,9 @@ export function AppShell() {
             ),
           !sidebarOpen && shellOverlayMode && "!w-0",
         )}
-        style={{ width: sidebarOpen ? (shellOverlayMode ? "100vw" : liveSidebarWidth) : 0 }}
+        style={{
+          width: shellOverlayMode ? (sidebarOpen ? "100vw" : 0) : desktopSidebarPresent ? liveSidebarWidth : 0,
+        }}
       >
         <div className="h-full" style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}>
           <ChatSidebar />
@@ -856,7 +900,7 @@ export function AppShell() {
           tabIndex={0}
           onMouseDown={startSidebarResize}
           onKeyDown={adjustSidebarWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+          className="absolute inset-y-0 z-40 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
           style={{ left: sidebarOpen ? liveSidebarWidth : 0 }}
         />
       )}
@@ -902,7 +946,17 @@ export function AppShell() {
             }
           >
             <Suspense fallback={<MainPaneFallback />}>
-              {shellOverlayMode ? <ChatArea /> : (detailView ?? <ChatArea />)}
+              {shellOverlayMode ? (
+                noodleOpen ? (
+                  <NoodleView />
+                ) : (
+                  <ChatArea />
+                )
+              ) : noodleOpen ? (
+                <NoodleView />
+              ) : (
+                (detailView ?? <ChatArea />)
+              )}
             </Suspense>
           </div>
           <Suspense fallback={null}>
@@ -990,19 +1044,25 @@ export function AppShell() {
         <aside
           data-component="RightPanelDesktop"
           aria-label="Settings and tools panel"
+          aria-hidden={!rightPanelOpen}
+          inert={!rightPanelOpen}
           className={cn(
-            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/80 backdrop-blur-xl",
-            rightPanelDragWidth == null && "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]",
+            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
+            rightPanelDragWidth == null &&
+              "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]",
+            rightPanelOpen
+              ? "mari-shell-panel-enter-right translate-x-0 opacity-100"
+              : "pointer-events-none translate-x-3 opacity-0",
             rightPanelOpen && "mari-shell-panel-edge mari-shell-panel-edge--left relative",
           )}
           style={
             {
-              width: rightPanelOpen ? liveRightPanelWidth : 0,
+              width: desktopRightPanelPresent ? liveRightPanelWidth : 0,
               "--mari-right-panel-width": `${liveRightPanelWidth}px`,
             } as CSSProperties
           }
         >
-          {rightPanelOpen && (
+          {(rightPanelOpen || rightPanelEverOpened) && (
             <div className="h-full" style={{ width: liveRightPanelWidth }}>
               <Suspense fallback={<SidePanelFallback />}>
                 <RightPanel />
@@ -1042,7 +1102,7 @@ export function AppShell() {
           tabIndex={0}
           onMouseDown={startRightPanelResize}
           onKeyDown={adjustRightPanelWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+          className="absolute inset-y-0 z-40 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
           style={{ right: rightPanelOpen ? liveRightPanelWidth : 0 }}
         />
       )}

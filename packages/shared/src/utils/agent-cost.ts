@@ -12,10 +12,12 @@
 //     Does NOT include the chat context (recent messages, character cards,
 //     persona, lorebook, summary) that each call also carries — real per-turn
 //     usage will be substantially higher. UI copy should make that clear.
-//   - extraCalls: count of distinct (phase × connection) groups. This mirrors
+//   - extraCalls: count of distinct (phase × connection × execution lane)
+//     groups. This mirrors
 //     the server-side batching in
 //     `packages/server/src/services/agents/agent-pipeline.ts`: agents that
-//     share a phase AND connection batch into a single LLM call. v1 ignores
+//     share a phase, connection, and lane batch into a single LLM call. Rewrite
+//     agents use a dedicated lane and never share tracker calls. v1 ignores
 //     the tool-extraction nuance (tool-using agents technically run alone,
 //     adding 1 call each beyond the batch) — fine for a soft signal.
 // ──────────────────────────────────────────────
@@ -31,6 +33,8 @@ export interface AgentCostInput {
   connectionId: string | null;
   /** Resolved prompt template (custom override OR built-in default). */
   promptTemplate: string;
+  /** Resolved output format, used to isolate custom rewrite agents. */
+  resultType?: string;
 }
 
 export interface AgentLoadCost {
@@ -56,6 +60,11 @@ export const AGENT_COST_HIGH_TOKENS = 4000;
  * in this set.
  */
 const NO_EXTRA_CALL_AGENT_TYPES = new Set<string>();
+const BUILT_IN_REWRITE_AGENT_TYPES = new Set(["prose-guardian", "continuity", "html"]);
+
+function getAgentCostLane(agent: AgentCostInput): "rewrite" | "standard" {
+  return agent.resultType === "text_rewrite" || BUILT_IN_REWRITE_AGENT_TYPES.has(agent.type) ? "rewrite" : "standard";
+}
 
 // TODO: replace chars/4 with a real tokenizer when the project picks one up.
 // Matches the existing `estimateTokens` helpers scattered across the client
@@ -72,7 +81,7 @@ export function estimateAgentLoadCost(enabled: AgentCostInput[], defaultConnecti
     instructionTokens += approximateTokens(a.promptTemplate);
     if (NO_EXTRA_CALL_AGENT_TYPES.has(a.type)) continue;
     const connection = a.connectionId ?? defaultConnectionId ?? "default";
-    callKeys.add(`${a.phase}::${connection}`);
+    callKeys.add(`${a.phase}::${connection}::${getAgentCostLane(a)}`);
   }
 
   const extraCalls = callKeys.size;

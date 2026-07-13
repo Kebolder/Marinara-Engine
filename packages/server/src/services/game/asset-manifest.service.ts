@@ -268,21 +268,3 @@ export function getAssetManifest(): AssetManifest {
   }
   return buildAssetManifest();
 }
-
-/**
- * Build a condensed asset list string for injection into GM prompts.
- * Only includes tags, grouped by category.
- */
-export function buildAssetTagList(): string {
-  const manifest = getAssetManifest();
-  if (manifest.count === 0) return "";
-
-  const sections: string[] = [];
-  for (const [category, entries] of Object.entries(manifest.byCategory)) {
-    if (entries.length === 0) continue;
-    const tags = entries.map((e) => e.tag).join(", ");
-    sections.push(`${category}: [${tags}]`);
-  }
-
-  return sections.join("\n");
-}

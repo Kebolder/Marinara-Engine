@@ -34,7 +34,7 @@
         "packages/shared/"
       ],
       "guidance": [
-        "docs/ARCHITECTURE_MAP.md"
+        "docs/development/architecture-map.md"
       ],
       "checks": [
         "packages/shared stays runtime-agnostic: no React, DOM, Fastify, Drizzle, filesystem, network, or provider SDK imports. It holds only shared types, schemas, constants, and pure helpers.",
@@ -49,7 +49,7 @@
       ],
       "guidance": [
         "packages/client/.instructions.md",
-        "docs/FRONTEND.md"
+        "docs/development/frontend.md"
       ],
       "checks": [
         "Server calls go through the @/lib/api-client wrapper (api.get/post/patch/delete/upload/download/stream/streamEvents), never raw fetch().",
@@ -85,10 +85,10 @@
         "packages/server/src/routes/conversation.routes.ts"
       ],
       "guidance": [
-        "docs/ARCHITECTURE_MAP.md",
-        "docs/GAME_MODE.md",
-        "docs/ROLEPLAY.md",
-        "docs/CONVERSATION.md"
+        "docs/development/architecture-map.md",
+        "docs/game/getting-started.md",
+        "docs/roleplay/getting-started.md",
+        "docs/conversation/getting-started.md"
       ],
       "checks": [
         "Conversation, roleplay/visual-novel, and game behavior stay with their owning mode. Conversation must not know about game dice, GM tags, QTE, maps, or game combat.",
@@ -106,8 +106,8 @@
         "packages/client/src/lib/api-client.ts"
       ],
       "guidance": [
-        "docs/ARCHITECTURE_MAP.md",
-        "docs/GENERATION_PARAMETERS.md"
+        "docs/development/architecture-map.md",
+        "docs/prompts/generation-parameters.md"
       ],
       "checks": [
         "SSE/streaming changes preserve the token and event contract on both ends: api.stream/streamEvents on the client and the onToken/event emitters in generate.routes.ts on the server.",
@@ -123,7 +123,7 @@
         "packages/server/src/services/import/"
       ],
       "guidance": [
-        "docs/FILE_STORAGE_MIGRATION.md"
+        "docs/development/file-storage-migration.md"
       ],
       "checks": [
         "Parent records must not collect IDs, metadata, counts, or relationships from child rows that later skip import or fail to persist.",

@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
   Wand2,
   ArrowRight,
@@ -27,8 +27,16 @@ import {
   FolderOpen,
 } from "lucide-react";
 import {
+  ANIME_GAME_PROMPT_TEMPLATE_ID,
+  ANIME_GAME_SYSTEM_PROMPT,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   DEFAULT_GAME_SYSTEM_PROMPT,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   type CharacterGroup,
+  type GameInitialSetupLabels,
   type GameSetupConfig,
   type GameGmMode,
 } from "@marinara-engine/shared";
@@ -66,7 +74,7 @@ interface GameSetupWizardProps {
   onComplete: (
     config: GameSetupConfig,
     preferences: string,
-    connections: { gmConnectionId?: string },
+    connections: { gmConnectionId?: string; shareLabels?: GameInitialSetupLabels },
     gameName?: string,
   ) => void;
   onCancel: () => void;
@@ -371,7 +379,9 @@ function normalizeGameLanguage(language: string): string {
 }
 
 export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }: GameSetupWizardProps) {
+  const prefersReducedMotion = useReducedMotion();
   const [step, setStep] = useState(0);
+  const [generationElapsedSeconds, setGenerationElapsedSeconds] = useState(0);
   const [gameName, setGameName] = useState("");
   const [genres, setGenres] = useState<string[]>(["Fantasy"]);
   const [customGenre, setCustomGenre] = useState("");
@@ -408,8 +418,11 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [enableLorebookKeeper, setEnableLorebookKeeper] = useState(false);
   const [imageConnectionId, setImageConnectionId] = useState<string | null>(null);
   const [videoConnectionId, setVideoConnectionId] = useState<string | null>(null);
-  const [enableStoryboardIllustrations, setEnableStoryboardIllustrations] = useState(false);
+  const [enableStoryboardIllustrations, setEnableStoryboardIllustrations] = useState(true);
   const [enableStoryboardAnimations, setEnableStoryboardAnimations] = useState(false);
+  const [storyboardKeyframeCount, setStoryboardKeyframeCount] = useState(
+    GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  );
   const [sceneConnectionId, setSceneConnectionId] = useState<string | null>(null);
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
   const [lbSearch, setLbSearch] = useState("");
@@ -423,6 +436,8 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [promptPresetTouched, setPromptPresetTouched] = useState(false);
   const [customGamePromptEnabled, setCustomGamePromptEnabled] = useState(false);
   const [gameSystemPromptDraft, setGameSystemPromptDraft] = useState(DEFAULT_GAME_SYSTEM_PROMPT);
+  const [gameSystemPromptEdited, setGameSystemPromptEdited] = useState(false);
+  const [gamePresentation, setGamePresentation] = useState<"standard" | "anime">("standard");
   const [language, setLanguage] = useState("English");
   const [startMuted, setStartMuted] = useState(false);
   const [expandedLearnedOptions, setExpandedLearnedOptions] = useState<Record<LearnedOptionGroup, boolean>>({
@@ -444,6 +459,18 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   useEffect(() => {
     useSidecarStore.getState().fetchStatus();
   }, []);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setGenerationElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const updateElapsed = () => setGenerationElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1_000);
+    return () => window.clearInterval(interval);
+  }, [isLoading]);
 
   // Once status loads, sync the local toggle with the persisted config
   useEffect(() => {
@@ -496,12 +523,29 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const preferredImageConnectionId = useMemo(() => getPreferredConnectionId(imageConnections), [imageConnections]);
   const preferredVideoConnectionId = useMemo(() => getPreferredConnectionId(videoConnections), [videoConnections]);
   const promptPresets = useMemo(
-    () => (promptPresetsList as Array<{ id: string; name: string; isDefault?: boolean | string }>) ?? [],
+    () =>
+      (promptPresetsList as Array<{
+        id: string;
+        name: string;
+        gamePrompt?: string;
+        isDefault?: boolean | string;
+      }>) ?? [],
     [promptPresetsList],
   );
-  const selectedPromptPresetName = useMemo(
-    () => promptPresets.find((preset) => preset.id === promptPresetId)?.name ?? null,
+  const selectedPromptPreset = useMemo(
+    () => promptPresets.find((preset) => preset.id === promptPresetId) ?? null,
     [promptPresetId, promptPresets],
+  );
+  const selectedPromptPresetName = useMemo(
+    () => selectedPromptPreset?.name ?? null,
+    [selectedPromptPreset],
+  );
+  const effectiveGameSystemPrompt = useMemo(
+    () =>
+      gamePresentation === "anime"
+        ? ANIME_GAME_SYSTEM_PROMPT
+        : selectedPromptPreset?.gamePrompt?.trim() || DEFAULT_GAME_SYSTEM_PROMPT,
+    [gamePresentation, selectedPromptPreset?.gamePrompt],
   );
   const personas = useMemo(
     () =>
@@ -674,6 +718,12 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
     }
   }, [defaultPreset?.id, promptPresetId, promptPresetTouched]);
 
+  useEffect(() => {
+    if (!gameSystemPromptEdited) {
+      setGameSystemPromptDraft(effectiveGameSystemPrompt);
+    }
+  }, [effectiveGameSystemPrompt, gameSystemPromptEdited]);
+
   const handlePromptPresetChange = useCallback((presetId: string | null) => {
     setPromptPresetTouched(true);
     setPromptPresetId(presetId);
@@ -732,7 +782,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
     const customGameSystemPrompt =
       customGamePromptEnabled &&
       trimmedGameSystemPrompt &&
-      trimmedGameSystemPrompt !== DEFAULT_GAME_SYSTEM_PROMPT.trim()
+      trimmedGameSystemPrompt !== effectiveGameSystemPrompt.trim()
         ? trimmedGameSystemPrompt
         : null;
     const trimmedGameSpecialInstructions = gameSpecialInstructions.trim();
@@ -772,8 +822,17 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         enableSpriteGeneration: enableSpriteGeneration || undefined,
         imageConnectionId: enableSpriteGeneration && imageConnectionId ? imageConnectionId : undefined,
         videoConnectionId: enableSpriteGeneration && videoConnectionId ? videoConnectionId : undefined,
-        gameStoryboardAutoIllustrationsEnabled: storyboardIllustrationsEnabled || undefined,
+        gameStoryboardAutoIllustrationsEnabled: enableSpriteGeneration
+          ? enableStoryboardIllustrations
+          : undefined,
         gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
+        gameStoryboardKeyframeCount: storyboardKeyframeCount,
+        gameGmPromptTemplateId: gamePresentation === "anime" ? ANIME_GAME_PROMPT_TEMPLATE_ID : null,
+        gameStoryboardAnimationPromptTemplateId:
+          gamePresentation === "anime" ? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID : null,
+        gameStoryboardVideoPromptTemplateId:
+          gamePresentation === "anime" ? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID : null,
+        gameStoryboardUseDirectScenePrompt: gamePresentation === "anime" || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,
         customHudWidgets:
@@ -800,6 +859,24 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
       preferences,
       {
         gmConnectionId: gmConnectionId ?? undefined,
+        shareLabels: {
+          characterNames: Object.fromEntries(
+            characters
+              .filter((character) =>
+                [...partyCharacterIds, ...(gmCharacterId ? [gmCharacterId] : [])].includes(character.id),
+              )
+              .map((character) => [character.id, character.name]),
+          ),
+          lorebookNames: Object.fromEntries(
+            lorebooks
+              .filter((lorebook) => activeLorebookIds.includes(lorebook.id))
+              .map((lorebook) => [lorebook.id, lorebook.name]),
+          ),
+          promptPresetNames: selectedPromptPreset
+            ? { [selectedPromptPreset.id]: selectedPromptPreset.name }
+            : undefined,
+          personaName: personas.find((persona) => persona.id === personaId)?.name ?? null,
+        },
       },
       gameName.trim() || undefined,
     );
@@ -1750,6 +1827,10 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                               Attach keyframes to GM narration so the floating viewer changes with the current story
                               section.
                             </p>
+                            <p className="mt-1 text-[0.55rem] leading-relaxed text-[var(--muted-foreground)]">
+                              Recommended: use a strong state-of-the-art image model for storyboard images, or
+                              something equivalent to Google Nano Banana 2 Lite.
+                            </p>
                           </div>
                         </div>
                         <button
@@ -1818,6 +1899,33 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                             />
                           </span>
                         </button>
+                        {enableStoryboardIllustrations && (
+                          <label className="block rounded-lg bg-[var(--background)]/70 px-3 py-2 ring-1 ring-[var(--border)]">
+                            <span className="flex items-center justify-between gap-3">
+                              <span>
+                                <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                                  Keyframes per Turn
+                                </span>
+                                <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
+                                  Target storyboard shots. Short turns may produce fewer.
+                                </span>
+                              </span>
+                              <span className="min-w-7 rounded-md bg-[var(--secondary)] px-2 py-1 text-center text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)]">
+                                {storyboardKeyframeCount}
+                              </span>
+                            </span>
+                            <input
+                              type="range"
+                              min={GAME_STORYBOARD_KEYFRAME_COUNT_MIN}
+                              max={GAME_STORYBOARD_KEYFRAME_COUNT_MAX}
+                              step={1}
+                              value={storyboardKeyframeCount}
+                              onChange={(event) => setStoryboardKeyframeCount(Number(event.target.value))}
+                              className="mt-2 w-full accent-[var(--primary)]"
+                              aria-label="Keyframes per Turn"
+                            />
+                          </label>
+                        )}
                         <p className="text-[0.55rem] leading-relaxed text-[var(--muted-foreground)]">
                           Illustrations use the image connection. Animations also need the video connection below and
                           cost much more per turn.
@@ -2132,6 +2240,25 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
           <>
             <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
+                <Sparkles size={12} />
+                Presentation
+              </label>
+              <select
+                value={gamePresentation}
+                onChange={(event) => setGamePresentation(event.target.value === "anime" ? "anime" : "standard")}
+                className={GAME_SETUP_INPUT_CLASS}
+              >
+                <option value="standard">Standard</option>
+                <option value="anime">Anime Episode</option>
+              </select>
+              <p className="mt-1 text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
+                {gamePresentation === "anime"
+                  ? "Shapes narration like an anime episode and pairs Comic Page Animation with Comic Page Video for storyboard animations. It does not enable image or video generation or change your connections."
+                  : "Uses the standard flexible Game Mode narration and media prompts."}
+              </p>
+            </div>
+            <div>
+              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                 <Feather size={12} />
                 Game Prompt Preset
               </label>
@@ -2148,7 +2275,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 ))}
               </select>
               <p className="mt-1 text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
-                Uses the Game mode prompt from the selected preset unless the custom GM prompt below is enabled.
+                {gamePresentation === "anime"
+                  ? "The Anime Game Prompt replaces the selected preset's Game prompt. Other preset settings remain available."
+                  : "Uses the Game mode prompt from the selected preset unless the custom GM prompt below is enabled."}
               </p>
             </div>
 
@@ -2185,8 +2314,12 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                     <p className="text-xs font-medium text-[var(--foreground)]">GM Prompt</p>
                     <p className="text-[0.55rem] text-[var(--muted-foreground)]">
                       {customGamePromptEnabled
-                        ? "Custom prompt will override the selected preset"
-                        : selectedPromptPresetName
+                        ? gameSystemPromptEdited
+                          ? "Custom prompt will override the selected prompt"
+                          : "Previewing the selected prompt; edit it to override"
+                        : gamePresentation === "anime"
+                          ? "Using Anime Game Prompt"
+                          : selectedPromptPresetName
                           ? `Using ${selectedPromptPresetName}`
                           : "Using default game prompt"}
                     </p>
@@ -2194,7 +2327,15 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                    {customGamePromptEnabled ? "Custom" : selectedPromptPresetName ? "Preset" : "Default"}
+                    {customGamePromptEnabled
+                      ? gameSystemPromptEdited
+                        ? "Custom"
+                        : "Preview"
+                      : gamePresentation === "anime"
+                        ? "Anime"
+                        : selectedPromptPresetName
+                          ? "Preset"
+                          : "Default"}
                   </span>
                   <div
                     className={cn(
@@ -2216,22 +2357,28 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
                   <textarea
                     value={gameSystemPromptDraft}
-                    onChange={(event) => setGameSystemPromptDraft(event.target.value)}
+                    onChange={(event) => {
+                      setGameSystemPromptDraft(event.target.value);
+                      setGameSystemPromptEdited(true);
+                    }}
                     rows={10}
                     maxLength={16000}
                     className="max-h-72 min-h-48 w-full resize-y rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-all placeholder:text-[var(--muted-foreground)]/50 focus:ring-[var(--primary)]/40"
                   />
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                      Resetting or leaving this unchanged keeps the built-in default.
+                      Leaving this unchanged keeps the selected presentation or preset.
                     </p>
                     <button
                       type="button"
-                      onClick={() => setGameSystemPromptDraft(DEFAULT_GAME_SYSTEM_PROMPT)}
+                      onClick={() => {
+                        setGameSystemPromptDraft(effectiveGameSystemPrompt);
+                        setGameSystemPromptEdited(false);
+                      }}
                       className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                     >
                       <RotateCcw size={11} />
-                      Reset
+                      Reset to selected
                     </button>
                   </div>
                 </div>
@@ -2243,6 +2390,33 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
             </div>
 
             <div className="shrink-0 border-t border-[var(--border)]/70 px-5 py-3">
+              {isLoading && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between gap-3 text-[0.6875rem]">
+                    <span className="font-medium text-[var(--foreground)]" role="status" aria-live="polite">
+                      Hold on tight, the game is being generated right now!
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 tabular-nums text-[var(--muted-foreground)]">
+                      {generationElapsedSeconds}s
+                    </span>
+                  </div>
+                  <div
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--muted)]/60"
+                    role="progressbar"
+                    aria-label="Generating game world"
+                  >
+                    <motion.div
+                      className="h-full w-2/5 rounded-full bg-[var(--primary)]"
+                      animate={prefersReducedMotion ? { x: 0 } : { x: ["-110%", "260%"] }}
+                      transition={
+                        prefersReducedMotion
+                          ? undefined
+                          : { duration: 1.35, ease: [0.16, 1, 0.3, 1], repeat: Infinity }
+                      }
+                    />
+                  </div>
+                </div>
+              )}
               <div className="mb-3 flex items-center justify-center gap-1.5">
                 {steps.map((item, i) => (
                   <button

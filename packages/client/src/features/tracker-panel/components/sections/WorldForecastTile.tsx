@@ -1,7 +1,12 @@
 import type { CSSProperties } from "react";
 import type { TrackerPanelSizeProfile, TrackerTemperatureUnit } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
-import { getTemperatureColor, getTemperatureGaugeDisplay, getWeatherEmoji } from "../../lib/world-state-display";
+import {
+  getTemperatureColor,
+  getTemperatureGaugeDisplay,
+  getWeatherEmoji,
+  parsePureTemperatureValue,
+} from "../../lib/world-state-display";
 import { visibleText } from "../../lib/tracker-display";
 import { FittedText } from "../controls/InlineControls";
 import { useTrackerFieldLock } from "../TrackerLockContext";
@@ -30,7 +35,10 @@ export function WorldForecastTile({
   const temperatureLock = useTrackerFieldLock(temperatureLockKey);
   const weatherText = visibleText(weather, "Set weather");
   const temperatureDisplay = getTemperatureGaugeDisplay(temperature, trackerTemperatureUnit);
+  const temperatureText = temperature?.trim() ?? "";
+  const useDescriptiveTempRail = temperatureText.length > 0 && parsePureTemperatureValue(temperatureText) === null;
   const useHorizontalTempRail = trackerPanelSizeProfile !== "compact";
+  const useHorizontalTempLayout = useHorizontalTempRail || useDescriptiveTempRail;
   return (
     <WorldTileShell label="Forecast" className="min-h-[3.125rem]">
       <div className="@container relative h-full min-w-0 overflow-hidden">
@@ -38,9 +46,11 @@ export function WorldForecastTile({
           aria-hidden="true"
           className={cn(
             "pointer-events-none absolute top-1/2 z-0 -translate-y-1/2 select-none text-[2.75rem] leading-none opacity-[0.085] saturate-125 @min-[7rem]:text-[3.25rem] @min-[10rem]:text-[4rem] @min-[14rem]:text-[4.65rem]",
-            useHorizontalTempRail
-              ? "right-[4rem] @min-[7rem]:right-[4.15rem] @min-[10rem]:right-[4.25rem] @min-[14rem]:right-[4.35rem]"
-              : "right-[2rem] @min-[7rem]:right-[2.3rem] @min-[10rem]:right-[2.7rem] @min-[14rem]:right-[3.05rem]",
+            useDescriptiveTempRail
+              ? "right-[46%] @min-[10rem]:right-[44%] @min-[14rem]:right-[42%]"
+              : useHorizontalTempRail
+                ? "right-[4rem] @min-[7rem]:right-[4.15rem] @min-[10rem]:right-[4.25rem] @min-[14rem]:right-[4.35rem]"
+                : "right-[2rem] @min-[7rem]:right-[2.3rem] @min-[10rem]:right-[2.7rem] @min-[14rem]:right-[3.05rem]",
           )}
         >
           {getWeatherEmoji(weather)}
@@ -54,20 +64,26 @@ export function WorldForecastTile({
           placeholder="Set weather"
           className={cn(
             "relative z-[2] flex h-full min-w-0 flex-col justify-center overflow-hidden px-1.5 py-1 text-left @min-[10rem]:px-2",
-            useHorizontalTempRail
-              ? "pr-[4.75rem] @min-[7rem]:pr-[4.9rem] @min-[10rem]:pr-[5rem] @min-[14rem]:pr-[5.1rem]"
-              : "pr-[2.65rem] @min-[7rem]:pr-[2.95rem] @min-[10rem]:pr-[3.35rem] @min-[14rem]:pr-[3.85rem]",
+            useDescriptiveTempRail
+              ? "pr-[48%] @min-[10rem]:pr-[46%] @min-[14rem]:pr-[44%]"
+              : useHorizontalTempRail
+                ? "pr-[4.75rem] @min-[7rem]:pr-[4.9rem] @min-[10rem]:pr-[5rem] @min-[14rem]:pr-[5.1rem]"
+                : "pr-[2.65rem] @min-[7rem]:pr-[2.95rem] @min-[10rem]:pr-[3.35rem] @min-[14rem]:pr-[3.85rem]",
           )}
           inputClassName={cn(
             "text-left text-[0.75rem]",
-            useHorizontalTempRail
-              ? "pr-[4.75rem] @min-[7rem]:pr-[4.9rem] @min-[10rem]:pr-[5rem] @min-[14rem]:pr-[5.1rem]"
-              : "pr-[2.65rem] @min-[7rem]:pr-[2.95rem] @min-[10rem]:pr-[3.35rem] @min-[14rem]:pr-[3.85rem]",
+            useDescriptiveTempRail
+              ? "pr-[48%] @min-[10rem]:pr-[46%] @min-[14rem]:pr-[44%]"
+              : useHorizontalTempRail
+                ? "pr-[4.75rem] @min-[7rem]:pr-[4.9rem] @min-[10rem]:pr-[5rem] @min-[14rem]:pr-[5.1rem]"
+                : "pr-[2.65rem] @min-[7rem]:pr-[2.95rem] @min-[10rem]:pr-[3.35rem] @min-[14rem]:pr-[3.85rem]",
           )}
           editHintClassName={cn(
-            useHorizontalTempRail
-              ? "right-[4.45rem] @min-[7rem]:right-[4.6rem] @min-[10rem]:right-[4.7rem] @min-[14rem]:right-[4.8rem]"
-              : "right-[2.45rem] @min-[7rem]:right-[2.65rem] @min-[10rem]:right-[2.95rem] @min-[14rem]:right-[3.25rem]",
+            useDescriptiveTempRail
+              ? "right-[47%] @min-[10rem]:right-[45%] @min-[14rem]:right-[43%]"
+              : useHorizontalTempRail
+                ? "right-[4.45rem] @min-[7rem]:right-[4.6rem] @min-[10rem]:right-[4.7rem] @min-[14rem]:right-[4.8rem]"
+                : "right-[2.45rem] @min-[7rem]:right-[2.65rem] @min-[10rem]:right-[2.95rem] @min-[14rem]:right-[3.25rem]",
           )}
           {...weatherLock}
         >
@@ -76,9 +92,11 @@ export function WorldForecastTile({
         <div
           className={cn(
             "absolute bottom-0.5 right-0.5 top-0.5 z-[3]",
-            useHorizontalTempRail
-              ? "w-[4.15rem] @min-[7rem]:w-[4.25rem] @min-[10rem]:w-[4.35rem] @min-[14rem]:w-[4.45rem]"
-              : "w-[2.3rem] @min-[7rem]:w-[2.45rem] @min-[10rem]:bottom-0.5 @min-[10rem]:top-auto @min-[10rem]:h-[2.95rem] @min-[10rem]:w-[2.7rem] @min-[14rem]:w-[3rem]",
+            useDescriptiveTempRail
+              ? "w-[46%] @min-[10rem]:w-[44%] @min-[14rem]:w-[42%]"
+              : useHorizontalTempRail
+                ? "w-[4.15rem] @min-[7rem]:w-[4.25rem] @min-[10rem]:w-[4.35rem] @min-[14rem]:w-[4.45rem]"
+                : "w-[2.3rem] @min-[7rem]:w-[2.45rem] @min-[10rem]:bottom-0.5 @min-[10rem]:top-auto @min-[10rem]:h-[2.95rem] @min-[10rem]:w-[2.7rem] @min-[14rem]:w-[3rem]",
           )}
         >
           <WorldRenderedEdit
@@ -88,20 +106,26 @@ export function WorldForecastTile({
             placeholder="Set temp"
             className={cn(
               "h-full w-full rounded-[3px] bg-[color-mix(in_srgb,var(--background)_38%,transparent)] text-center shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent),0_0_8px_color-mix(in_srgb,var(--background)_30%,transparent)] ring-1 ring-[var(--border)]/24 hover:!bg-[color-mix(in_srgb,var(--background)_46%,transparent)]",
-              useHorizontalTempRail
+              useHorizontalTempLayout
                 ? "grid grid-cols-[minmax(0,1fr)_1.4rem] items-center gap-0.5 py-0.5 pl-0.5 pr-1 @min-[10rem]:grid-cols-[minmax(0,1fr)_1.5rem] @min-[14rem]:gap-1 @min-[14rem]:pl-1 @min-[14rem]:pr-1.5"
                 : "flex flex-col items-center justify-center gap-[0.125rem] px-0 pb-0.5 pt-0.5 @min-[10rem]:gap-0.5 @min-[10rem]:pt-0.5",
             )}
-            inputClassName={cn("text-center text-[0.625rem]", useHorizontalTempRail && "text-[0.6875rem]")}
+            inputClassName={cn(
+              "text-center text-[0.625rem]",
+              useHorizontalTempRail && "text-[0.6875rem]",
+              useDescriptiveTempRail && "text-left",
+            )}
             showEditHint={false}
             {...temperatureLock}
           >
             <span
               className={cn(
-                "min-w-0 truncate font-black leading-none tracking-normal drop-shadow-sm",
-                useHorizontalTempRail
-                  ? "justify-self-end text-right text-[0.625rem] @min-[10rem]:text-[0.6875rem] @min-[14rem]:text-[0.75rem]"
-                  : "text-[0.5625rem] @min-[10rem]:text-[0.625rem]",
+                "min-w-0 font-black tracking-normal drop-shadow-sm",
+                useDescriptiveTempRail
+                  ? "line-clamp-3 w-full justify-self-stretch whitespace-normal break-words text-left text-[0.5625rem] leading-[1.05] @min-[10rem]:text-[0.625rem]"
+                  : useHorizontalTempLayout
+                    ? "truncate justify-self-end text-right text-[0.625rem] leading-none @min-[10rem]:text-[0.6875rem] @min-[14rem]:text-[0.75rem]"
+                    : "truncate text-[0.5625rem] leading-none @min-[10rem]:text-[0.625rem]",
                 getTemperatureColor(temperature),
               )}
             >
@@ -110,12 +134,12 @@ export function WorldForecastTile({
             <span
               className={cn(
                 "flex min-w-0 items-center justify-center overflow-visible",
-                useHorizontalTempRail ? "h-full w-full" : "order-first h-[1.55rem] w-full @min-[14rem]:h-[1.6rem]",
+                useHorizontalTempLayout ? "h-full w-full" : "order-first h-[1.55rem] w-full @min-[14rem]:h-[1.6rem]",
               )}
             >
               <WorldThermometerGauge
                 display={temperatureDisplay}
-                variant={useHorizontalTempRail ? "expanded" : "compact"}
+                variant={useHorizontalTempLayout ? "expanded" : "compact"}
               />
             </span>
           </WorldRenderedEdit>

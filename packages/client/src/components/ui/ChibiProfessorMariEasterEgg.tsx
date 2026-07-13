@@ -38,16 +38,14 @@ function showChibiProfessorMariToast() {
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
-        <div className="flex h-24 w-20 shrink-0 items-end justify-center overflow-hidden rounded-md border border-[var(--border)] bg-[var(--accent)]/45">
-          <img
-            src={CHIBI_PROFESSOR_MARI_IMAGE}
-            alt="Chibi Professor Mari"
-            className="h-full w-full object-contain p-1"
-            onError={(event) => {
-              event.currentTarget.hidden = true;
-            }}
-          />
-        </div>
+        <img
+          src={CHIBI_PROFESSOR_MARI_IMAGE}
+          alt="Chibi Professor Mari"
+          className="h-24 w-20 shrink-0 self-end object-contain drop-shadow-[0_4px_10px_rgb(0_0_0/0.25)]"
+          onError={(event) => {
+            event.currentTarget.hidden = true;
+          }}
+        />
         <div className="space-y-2 text-sm leading-relaxed">
           <p>
             If you see this image while scrolling through Marinara Engine, you've been visited by the rare Chibi

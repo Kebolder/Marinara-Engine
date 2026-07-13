@@ -4,7 +4,15 @@
 import { z } from "zod";
 import { LIMITS } from "../constants/defaults.js";
 
-export const lorebookCategorySchema = z.enum(["world", "character", "npc", "spellbook", "uncategorized"]);
+export const LOREBOOK_CATEGORY_VALUES = ["world", "character", "npc", "spellbook", "uncategorized"] as const;
+export type LorebookCategoryValue = (typeof LOREBOOK_CATEGORY_VALUES)[number];
+export const lorebookCategorySchema = z.enum(LOREBOOK_CATEGORY_VALUES);
+
+export function normalizeLorebookCategory(value: unknown): LorebookCategoryValue {
+  if (typeof value !== "string") return "uncategorized";
+  const parsed = lorebookCategorySchema.safeParse(value.trim().toLowerCase());
+  return parsed.success ? parsed.data : "uncategorized";
+}
 
 export const lorebookScopeModeSchema = z.enum(["all", "disabled", "specific"]);
 
@@ -84,10 +92,11 @@ function addLorebookScopeConflictIssues(value: LorebookScopeConflictInput, ctx: 
 }
 
 // ──────────────────────────────────────────────
-// Folders — collapsible containers for entries
-// `parentFolderId` is reserved for a future nested-folder PR; v1 enforces
-// `null` at the route layer so the schema accepts the field but the server
-// rejects non-null values.
+// Folders — collapsible containers for entries.
+// Folders may nest via `parentFolderId` (`null` = a root-level folder). The
+// POST route verifies the parent exists in the same lorebook; PATCH validates
+// the full move (no self-parent, same lorebook, no descendant cycle) via
+// `canReparentFolder` before persisting.
 // ──────────────────────────────────────────────
 export const createLorebookFolderSchema = z.object({
   name: z.string().min(1).max(200),
@@ -126,11 +135,7 @@ export const createLorebookSchema = z
       .min(0)
       .max(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX)
       .default(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT),
-    vectorScoreThreshold: z
-      .number()
-      .min(0)
-      .max(1)
-      .default(LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT),
+    vectorScoreThreshold: z.number().min(0).max(1).default(LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT),
     vectorMaxResults: z
       .number()
       .int()
@@ -159,12 +164,7 @@ export const updateLorebookSchema = z
     imagePath: z.string().nullable().optional(),
     scanDepth: z.number().int().min(0).optional(),
     tokenBudget: z.number().int().min(0).optional(),
-    entryLimit: z
-      .number()
-      .int()
-      .min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN)
-      .max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX)
-      .optional(),
+    entryLimit: z.number().int().min(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN).max(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX).optional(),
     recursiveScanning: z.boolean().optional(),
     maxRecursionDepth: z.number().int().min(1).max(10).optional(),
     excludeFromVectorization: z.boolean().optional(),
@@ -282,9 +282,33 @@ export const updateLorebookEntrySchema = z.object({
   excludeFromVectorization: z.boolean().optional(),
 });
 
+const bulkUpdateLorebookEntryChangesSchema = updateLorebookEntrySchema
+  .pick({
+    enabled: true,
+    constant: true,
+    selective: true,
+    matchWholeWords: true,
+    caseSensitive: true,
+    useRegex: true,
+    preventRecursion: true,
+    excludeRecursion: true,
+    delayUntilRecursion: true,
+    excludeFromVectorization: true,
+    locked: true,
+  })
+  .refine((changes) => Object.values(changes).some((value) => value !== undefined), {
+    message: "Choose at least one setting to update",
+  });
+
+export const bulkUpdateLorebookEntriesSchema = z.object({
+  entryIds: z.array(z.string().min(1)).min(1).max(5000),
+  changes: bulkUpdateLorebookEntryChangesSchema,
+});
+
 export type CreateLorebookInput = z.input<typeof createLorebookSchema>;
 export type UpdateLorebookInput = z.infer<typeof updateLorebookSchema>;
 export type CreateLorebookEntryInput = z.input<typeof createLorebookEntrySchema>;
 export type UpdateLorebookEntryInput = z.infer<typeof updateLorebookEntrySchema>;
+export type BulkUpdateLorebookEntriesInput = z.infer<typeof bulkUpdateLorebookEntriesSchema>;
 export type CreateLorebookFolderInput = z.input<typeof createLorebookFolderSchema>;
 export type UpdateLorebookFolderInput = z.infer<typeof updateLorebookFolderSchema>;

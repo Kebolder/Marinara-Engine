@@ -19,7 +19,11 @@ import { useTrackerLockContext } from "../TrackerLockContext";
 function isLongCustomField(field: CustomTrackerField): boolean {
   const name = visibleText(field.name, "");
   const value = visibleText(field.value, "");
-  return name.length > 16 || value.length > 22 || (/\s/.test(value) && value.length > 14);
+  return name.length > 24 || value.length > 32 || (/\s/.test(value) && value.length > 26);
+}
+
+function isNumericCustomFieldValue(value: string): boolean {
+  return /^[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:\s*%|\s*\/\s*[+-]?\d+(?:[.,]\d+)?)?$/.test(value.trim());
 }
 
 function shouldUseCustomFieldColumns(
@@ -79,15 +83,15 @@ function CustomFieldList({
       ) : (
         <div
           className={cn(
-            "grid grid-cols-1 border-t border-[var(--border)]/30",
+            "grid grid-cols-1 border-t border-[var(--border)]/30 px-1",
             useFieldColumns && "@min-[300px]:grid-cols-2",
           )}
         >
           {fields.map((field, index) => {
             const allowWrap = readableValues && isLongCustomField(field);
             const valueText = visibleText(field.value, "");
-            const valueIsLong = valueText.length > 18 || valueText.includes(" ");
-            const valueAlignment = allowWrap && valueIsLong ? "text-left" : "text-right tabular-nums";
+            const numericValue = isNumericCustomFieldValue(valueText);
+            const valueTypography = numericValue ? "tabular-nums" : undefined;
             const valueLockKey = customTrackerLockKey(field, "value", index);
             const valueLocked = isTrackerFieldLocked(fieldLocks, valueLockKey);
             const toggleValueLock = () => {
@@ -99,9 +103,10 @@ function CustomFieldList({
               <div
                 key={`${field.name}-${index}`}
                 className={cn(
-                  "group/field relative grid min-h-6 grid-cols-[minmax(3rem,0.42fr)_minmax(0,1fr)] items-center gap-1 border-b border-[var(--border)]/28 px-1 py-0.5 text-[0.6875rem] leading-[0.875rem]",
-                  trackerPanelSizeProfile !== "compact" && "grid-cols-[minmax(3.5rem,0.42fr)_minmax(0,1fr)]",
-                  allowWrap && "min-h-8 items-start py-1 leading-[0.95rem]",
+                  "group/field relative grid min-h-7 grid-cols-[minmax(5.5rem,0.42fr)_minmax(0,1fr)] items-center gap-2 border-b border-[var(--border)]/28 px-1 py-1 text-[0.6875rem] leading-[0.875rem] transition-colors hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)]",
+                  trackerPanelSizeProfile !== "compact" &&
+                    "grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)]",
+                  allowWrap && "leading-[0.95rem]",
                   useFieldColumns &&
                     index % 2 === 0 &&
                     !(fields.length % 2 === 1 && index === fields.length - 1) &&
@@ -110,7 +115,6 @@ function CustomFieldList({
                     fields.length % 2 === 1 &&
                     index === fields.length - 1 &&
                     "@min-[300px]:col-span-2",
-                  onUpdate && "pr-5",
                   deleteMode && "pr-9",
                 )}
               >
@@ -119,8 +123,9 @@ function CustomFieldList({
                     value={field.name}
                     onSave={(name) => updateField(index, { ...field, name: name || "Field" })}
                     placeholder="Field"
-                    className={cn("min-w-0 px-0.5 py-0 font-medium", allowWrap && "min-h-5")}
+                    className={cn("min-w-0 px-0.5 py-0 font-semibold", allowWrap && "min-h-5")}
                     previewLineCount={allowWrap ? 2 : undefined}
+                    previewClassName={allowWrap ? "leading-[1.25]" : undefined}
                     scrollOnHover={!allowWrap}
                     showEditHint={false}
                     locked={isTrackerFieldLocked(fieldLocks, customTrackerLockKey(field, "name", index))}
@@ -130,7 +135,7 @@ function CustomFieldList({
                 ) : (
                   <span
                     className={cn(
-                      "min-w-0 px-0.5 font-medium text-[var(--muted-foreground)]",
+                      "min-w-0 px-0.5 font-semibold text-[var(--muted-foreground)]",
                       allowWrap ? "line-clamp-2 break-words" : "truncate",
                     )}
                   >
@@ -143,12 +148,13 @@ function CustomFieldList({
                     onSave={(value) => updateField(index, { ...field, value })}
                     placeholder="Value"
                     className={cn(
-                      "min-w-0 px-0.5 py-0",
-                      valueAlignment,
-                      allowWrap ? "min-h-5 justify-start leading-[1.15]" : "justify-end",
+                      "min-w-0 justify-start px-0.5 py-0 text-left",
+                      valueTypography,
+                      allowWrap ? "min-h-5 leading-[1.15]" : undefined,
                     )}
                     twoLinePreview={allowWrap}
                     previewLineCount={allowWrap ? 2 : undefined}
+                    previewClassName={allowWrap ? "leading-[1.25]" : undefined}
                     scrollOnHover={!allowWrap}
                     showEditHint={false}
                     locked={valueLocked || field.locked}
@@ -158,27 +164,25 @@ function CustomFieldList({
                 ) : (
                   <span
                     className={cn(
-                      "min-w-0 px-0.5 text-[var(--foreground)]",
-                      valueAlignment,
+                      "min-w-0 px-0.5 py-0 text-left text-[var(--foreground)]",
+                      valueTypography,
                       allowWrap ? "line-clamp-2 break-words leading-[1.15]" : "truncate",
                     )}
                   >
                     {visibleText(field.value, "Empty")}
                   </span>
                 )}
-                {onUpdate && (
+                {onUpdate && deleteMode && (
                   <span className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-                    {deleteMode && (
-                      <button
-                        type="button"
-                        onClick={() => removeField(index)}
-                        className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--background)]/85 text-[var(--destructive)] shadow-sm ring-1 ring-[var(--border)]/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-[var(--border)] active:scale-90"
-                        title="Remove field"
-                        aria-label={`Remove ${visibleText(field.name, "field")}`}
-                      >
-                        <X size="0.5625rem" />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeField(index)}
+                      className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--background)]/85 text-[var(--destructive)] shadow-sm ring-1 ring-[var(--border)]/70 backdrop-blur-sm transition-all hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-[var(--border)] active:scale-90"
+                      title="Remove field"
+                      aria-label={`Remove ${visibleText(field.name, "field")}`}
+                    >
+                      <X size="0.5625rem" />
+                    </button>
                   </span>
                 )}
               </div>

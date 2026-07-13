@@ -15,10 +15,12 @@ import {
 import { newId, now } from "../../utils/id-generator.js";
 import {
   LIMITS,
+  normalizeLorebookCategory,
   type CreateLorebookInput,
   type UpdateLorebookInput,
   type CreateLorebookEntryInput,
   type UpdateLorebookEntryInput,
+  type BulkUpdateLorebookEntriesInput,
   type CreateLorebookFolderInput,
   type UpdateLorebookFolderInput,
 } from "@marinara-engine/shared";
@@ -30,10 +32,19 @@ import { toPaginatedList } from "../../utils/list-pagination.js";
 function normalizeLorebookEntryLimit(value: unknown): number {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT;
-  return Math.max(
-    LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
-    Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
-  );
+  return Math.max(LIMITS.LOREBOOK_ENTRY_LIMIT_MIN, Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)));
+}
+
+function normalizeNonNegativeLorebookInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeLorebookMaxRecursionDepth(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 3;
+  return Math.max(1, Math.min(10, Math.trunc(parsed)));
 }
 
 function normalizeLorebookVectorQueryDepth(value: unknown): number {
@@ -143,9 +154,12 @@ function parseLorebookRow(row: Record<string, unknown>) {
   const personaIds = resolveLinkIds(row.personaIds, row.personaId);
   return {
     ...row,
+    category: normalizeLorebookCategory(row.category),
+    scanDepth: normalizeNonNegativeLorebookInteger(row.scanDepth, 2),
+    tokenBudget: normalizeNonNegativeLorebookInteger(row.tokenBudget, 2048),
     recursiveScanning: row.recursiveScanning === "true",
     entryLimit: normalizeLorebookEntryLimit(row.entryLimit),
-    maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
+    maxRecursionDepth: normalizeLorebookMaxRecursionDepth(row.maxRecursionDepth),
     excludeFromVectorization: row.excludeFromVectorization === "true",
     vectorQueryDepth: normalizeLorebookVectorQueryDepth(row.vectorQueryDepth),
     vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(row.vectorScoreThreshold),
@@ -166,7 +180,11 @@ function parseLorebookRow(row: Record<string, unknown>) {
 }
 
 function parseStringArray(value: unknown): string[] {
-  const normalize = (items: unknown[]) => items.map(String).map((item) => item.trim()).filter(Boolean);
+  const normalize = (items: unknown[]) =>
+    items
+      .map(String)
+      .map((item) => item.trim())
+      .filter(Boolean);
   if (Array.isArray(value)) return normalize(value);
   if (typeof value !== "string" || !value.trim()) return [];
   try {
@@ -822,14 +840,40 @@ export function createLorebooksStorage(db: DB) {
       if (input.locked !== undefined) updates.locked = String(input.locked);
       if (input.preventRecursion !== undefined) updates.preventRecursion = String(input.preventRecursion);
       if (input.excludeRecursion !== undefined) updates.excludeRecursion = String(input.excludeRecursion);
-      if (input.delayUntilRecursion !== undefined)
-        updates.delayUntilRecursion = String(input.delayUntilRecursion);
+      if (input.delayUntilRecursion !== undefined) updates.delayUntilRecursion = String(input.delayUntilRecursion);
       if (input.excludeFromVectorization !== undefined)
         updates.excludeFromVectorization = String(input.excludeFromVectorization);
       if (shouldClearEmbedding) updates.embedding = null;
 
       await db.update(lorebookEntries).set(updates).where(eq(lorebookEntries.id, id));
       return this.getEntry(id);
+    },
+
+    async bulkUpdateEntries(
+      lorebookId: string,
+      entryIds: string[],
+      changes: BulkUpdateLorebookEntriesInput["changes"],
+    ) {
+      const uniqueEntryIds = Array.from(new Set(entryIds));
+      const rows = await db
+        .select({ id: lorebookEntries.id })
+        .from(lorebookEntries)
+        .where(and(eq(lorebookEntries.lorebookId, lorebookId), inArray(lorebookEntries.id, uniqueEntryIds)));
+      if (rows.length !== uniqueEntryIds.length) {
+        throw new Error("One or more selected entries do not belong to this lorebook");
+      }
+
+      const updates: Record<string, unknown> = { updatedAt: now() };
+      for (const [field, value] of Object.entries(changes)) {
+        if (value !== undefined) updates[field] = String(value);
+      }
+      if (changes.excludeFromVectorization === true) updates.embedding = null;
+
+      await db
+        .update(lorebookEntries)
+        .set(updates)
+        .where(and(eq(lorebookEntries.lorebookId, lorebookId), inArray(lorebookEntries.id, uniqueEntryIds)));
+      return { updated: rows.length };
     },
 
     /** Update just the embedding vector for an entry. */
@@ -963,7 +1007,8 @@ export function createLorebooksStorage(db: DB) {
         lorebookId,
         name: input.name,
         enabled: String(input.enabled ?? true),
-        // v1 ignores any non-null parentFolderId — caller is the route layer.
+        // Honors input.parentFolderId (null = root); the route layer validates
+        // the parent (exists, same lorebook, no cycle) before calling.
         parentFolderId: input.parentFolderId ?? null,
         order,
         createdAt: timestamp,

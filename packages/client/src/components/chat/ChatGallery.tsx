@@ -721,7 +721,10 @@ export function ChatGallery({
       {portalRoot &&
         assetBrowserOpen &&
         createPortal(
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]">
+          <div
+            data-chat-floating-panel
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]"
+          >
             <div className="flex max-h-[88vh] w-[min(58rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl bg-[var(--background)] shadow-2xl ring-1 ring-[var(--border)]">
               <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
@@ -808,7 +811,10 @@ export function ChatGallery({
       {portalRoot &&
         confirmDeleteId &&
         createPortal(
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]">
+          <div
+            data-chat-floating-panel
+            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]"
+          >
             <div className="mx-4 rounded-xl bg-[var(--background)] p-5 shadow-2xl ring-1 ring-[var(--border)]">
               <p className="mb-4 text-sm font-medium">Delete this image?</p>
               <div className="flex gap-2">

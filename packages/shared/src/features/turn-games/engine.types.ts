@@ -151,6 +151,26 @@ export interface TurnGameEngine<TState, TMove, TConfig, TPublic = unknown> {
    * should still return a best-effort move that `applyMove` will reject.
    */
   parseToolCall(name: string, args: Record<string, unknown>): TMove | null;
+
+  /**
+   * OPTIONAL. The character that should voice this game's narration events
+   * (e.g. a poker dealer announcing blinds and street deals), or `null` for a
+   * silent/house narrator. Games without a narrator concept simply omit this
+   * method — the runner treats a missing method the same as always returning
+   * `null`. Purely a narration hint; it must never affect rules or dealing.
+   */
+  announcerCharacterId?(state: TState): string | null;
+
+  /**
+   * OPTIONAL. Drain any narration events an engine has queued on `state`
+   * (e.g. "Hand #3 — blinds 20/40", "Flop: A♥ T♦ 4♣ — pot 240") since they
+   * were last drained. Returns `null` when the queue is empty, otherwise the
+   * queue-cleared state plus the events, in the order they were queued. The
+   * runner calls this after every move and, when `announcerCharacterId` names
+   * a character, voices the returned events in that character's persona.
+   * Games without queued narration simply omit this method.
+   */
+  drainAnnouncements?(state: TState): { state: TState; announcements: GameEvent[] } | null;
 }
 
 /** A game engine with its generics erased — for registry storage and runner glue. */

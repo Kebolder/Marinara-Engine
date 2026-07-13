@@ -502,8 +502,8 @@ export function getBusyDelay(
 }
 
 /**
- * Shorter delay for direct user messages (user is actively waiting).
- * Returns 0 for online, shorter delays for idle/dnd than autonomous delays.
+ * Delegates to getConfiguredResponseDelay; currently identical to getBusyDelay
+ * (no direct-message-specific shortening).
  */
 export function getDirectMessageDelay(
   status: ConversationPresenceStatus,

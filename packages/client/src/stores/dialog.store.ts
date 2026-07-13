@@ -16,8 +16,6 @@ export type AlertDialogState = AppDialogCommon & {
 
 export type ConfirmDialogState = AppDialogCommon & {
   kind: "confirm";
-  /** When set, the confirm dialog shows an opt-in checkbox whose state is returned. */
-  checkboxLabel?: string;
 };
 
 export type PromptDialogState = AppDialogCommon & {

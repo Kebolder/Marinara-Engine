@@ -1,97 +1,93 @@
 # Android (Termux) Installation Guide
 
-Marinara Engine runs on Android via [Termux](https://f-droid.org/en/packages/com.termux/), a terminal emulator and Linux environment for Android.
+This guide shows you how to run Marinara Engine on an Android phone or tablet. Marinara runs inside Termux, a free Linux environment for Android. You can set it up the easy way with the Android app, or by hand in the Termux terminal.
 
-> **Important:** The Android APK is a Termux bootstrap + WebView shell, not a native Android server build. It can download Termux from F-Droid, hand it to Android's installer, start the Termux setup flow, and then open the local server, but Android still requires the user to approve install and command-permission prompts.
+## What Termux and F-Droid are
 
-## Prerequisites
+Termux is a free app that gives your phone a small Linux system and a command line. Marinara Engine needs it because Marinara is a Linux server, not a native Android app.
 
-Install **Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/). Do **not** use the Play Store version — it is outdated and unsupported.
+F-Droid is a free, open-source app store for Android. You install Termux from F-Droid.
 
-## Installation
+Install Termux from F-Droid here: [Termux on F-Droid](https://f-droid.org/en/packages/com.termux/). Do not use the Play Store version of Termux. It is outdated and does not work with Marinara.
 
-### Release APK Bootstrap
+## Install with the Android app (APK)
+
+The easiest path uses the Marinara Engine Android app. An APK is an Android app install file. This app is a small helper: it sets up Termux for you, then opens Marinara once the local server is running. It still needs Termux to do the real work, so Android will ask you to approve a few prompts.
 
 1. Download the Android APK from the [latest GitHub Release](https://github.com/Pasta-Devs/Marinara-Engine/releases).
-2. Install and open **Marinara Engine**.
+2. Install the APK, then open the app.
 3. Tap **Install / Start Marinara**.
-4. If Termux is missing, approve Android's install prompts so Marinara can download and install the F-Droid Termux APK.
-5. Grant **Run commands in Termux environment** when Android asks.
-6. If Termux blocks external commands, paste the copied `allow-external-apps` command into Termux once, then tap **Install / Start Marinara** again.
-7. Wait for the Termux launcher to install dependencies, build Marinara Engine, and start the server.
-8. Return to **Marinara Engine**. The APK retries until `http://127.0.0.1:<PORT>` is ready.
+4. If Termux is not installed yet, approve Android's install prompts so the app can download and install Termux from F-Droid.
+5. When Android asks, grant the **Run commands in Termux environment** permission.
+6. If Termux blocks the setup, the app copies an `allow-external-apps` command for you. Paste that command into Termux once, then tap **Install / Start Marinara** again.
+7. Wait while Termux installs the dependencies and builds Marinara. The first build takes a few minutes.
+8. The app opens Marinara for you once the local server is ready.
 
-### Manual Termux Install
+If you prefer a home-screen icon that opens Marinara like a normal app, this same Android app provides it. It is a wrapper around the Termux server, so the server must be set up first. It cannot skip Android's install and permission prompts.
 
-Open Termux and run:
+## Install manually in Termux
 
-```bash
+If you would rather not use the app, you can install Marinara by hand. Open Termux and paste this one command:
+
+```
 pkg update -y && pkg install -y git nodejs-lts && ([ -d "$HOME/Marinara-Engine/.git" ] || git clone https://github.com/Pasta-Devs/Marinara-Engine.git "$HOME/Marinara-Engine") && cd "$HOME/Marinara-Engine" && chmod +x start-termux.sh && ./start-termux.sh
 ```
 
-This one-liner:
+This one command does five things:
 
-1. Updates Termux packages
-2. Installs Git and Node.js. Marinara requires Node.js 24 LTS or newer; after installation, run `node -v` to confirm Termux installed `v24` or newer.
-3. Clones the Marinara Engine repo if it is not already installed
-4. Makes the launcher executable
-5. Runs the Termux launcher for the first time
+1. Updates the Termux packages.
+2. Installs Git and Node.js. Marinara needs Node.js version 24 or 25.
+3. Downloads Marinara Engine, unless it is already installed.
+4. Makes the launcher (the `start-termux.sh` script) runnable.
+5. Runs the launcher for the first time.
 
-The Termux launcher installs dependencies, builds the app with Android-friendly low-memory build steps, prepares local file-backed storage, and starts the server at `http://127.0.0.1:<PORT>` using the `PORT` value from `.env` or the default `7860`.
+The launcher installs the app's dependencies, builds Marinara on your device, and starts the local server. It also upgrades Node.js for you if your version is too old. The first run is slow because it builds the app. Later runs are much faster.
 
-> **Note:** The first run takes a few minutes because it builds the app on your device. Subsequent runs are much faster.
+When it finishes, open this address in your Android browser:
 
-After installation, open **`http://127.0.0.1:<PORT>`** in your Android browser, or install the PWA from the "Add to Home Screen" prompt for a more native experience.
+```
+http://127.0.0.1:7860
+```
 
-## Starting the App Again
+Marinara listens on the port set by `PORT` (the network port the app uses). The default is 7860. If you set a different `PORT`, use that number instead.
 
-After the initial setup, start Marinara Engine by running in Termux:
+Tip: to get an app-like icon, open your browser menu and choose the option that adds Marinara to your home screen. The exact menu name differs between browsers.
 
-```bash
+## Start Marinara again
+
+After the first setup, you do not repeat the install. Open Termux and run:
+
+```
 cd Marinara-Engine
 ./start-termux.sh
 ```
 
-That command checks for updates before starting. If you want to start the already-installed local copy without checking GitHub or applying updates, run:
+The launcher checks for updates, then starts Marinara. To start your current copy without checking GitHub, add `--skip-update`:
 
-```bash
+```
 cd Marinara-Engine
 ./start-termux.sh --skip-update
 ```
 
-## Android App Shell (APK)
+## Access from another device
 
-If you want a dedicated home-screen icon that opens Marinara Engine like a native app, see [android/README.md](../../android/README.md). The APK is a Termux bootstrap + WebView wrapper around the Termux-served app. It opens the local server when it is already running and provides setup actions when it is not.
-
-Release-page APK downloads still rely on Termux for the local Linux/Node runtime. The APK reduces the setup dance by downloading Termux and launching Android's installer for the user, but it cannot bypass Android's user-visible install and command-permission prompts.
-
-## Accessing from Another Device
-
-The Termux launcher binds to `0.0.0.0` by default, so the app is already reachable on your local network. See the [FAQ](../FAQ.md#how-do-i-access-marinara-engine-from-my-phone-or-another-device) for step-by-step LAN access instructions.
+By default, the launcher makes Marinara reachable on your local network. This means a laptop or another phone on the same Wi-Fi can open it. For step-by-step instructions on finding the right address, see the [Frequently Asked Questions](../FAQ.md).
 
 ## Updating
 
-The `start-termux.sh` launcher automatically updates Marinara Engine on each run:
+Each time you run the launcher (`./start-termux.sh`), it checks GitHub for a newer version and updates before it starts. So the simple way to stay current is to just start Marinara normally.
 
-1. Fetches the latest code for the current update branch, then fast-forwards normal clones or moves detached release checkouts to that commit. Local `staging` branches follow `origin/staging`; all other launcher checkouts follow stable `origin/main`.
-2. Detects whether the checkout changed
-3. Temporarily stashes tracked local changes if needed, then reapplies them
-4. Reinstalls dependencies, refreshes native packages for the current Node architecture, and rebuilds when needed, using sequential low-memory server/client builds on Android
-5. Starts the app on the current version
+To start your installed copy without updating, use the skip flag:
 
-Simply run `./start-termux.sh` to get the latest version each time.
+```
+./start-termux.sh --skip-update
+```
 
-If an update is temporarily broken or you need to stay on the current local copy, run `./start-termux.sh --skip-update` instead. The skip-update command still installs missing dependencies and builds missing output when needed; it only skips the GitHub update check and checkout step.
+You can also check for updates inside the app. Open **Settings**, go to the **Advanced** tab, and open the **Updates** section. Click **Check for Updates** to see if a newer release exists. The in-app **Apply Update** button is off by default and needs setup. For how to enable and use it, see [Upgrading Marinara Engine](../UPGRADING.md).
 
-### In-App Update Check
+## Related guides
 
-You can also go to **Settings → Advanced → Updates** and click **Check for Updates** to see whether a new release exists. The in-app **Apply Update** button is disabled by default; to enable it, set `UPDATES_APPLY_ENABLED=true`, set `ADMIN_SECRET`, and save that same secret in **Settings → Advanced → Admin Access**. Otherwise, run `./start-termux.sh` again to let the launcher update and relaunch the app.
-
-If you use the optional Android WebView APK or PWA, **Apply Update** updates the Termux server behind it. Remote browser sessions also need `UPDATES_ALLOW_REMOTE_APPLY=true`; otherwise, stop the Termux launcher and run `./start-termux.sh` again.
-
----
-
-## See Also
-
-- [Configuration Reference](../CONFIGURATION.md) — environment variables and `.env` setup
-- [Troubleshooting](../TROUBLESHOOTING.md) — common issues and fixes
+- [Marinara Engine Installation](../INSTALLATION.md)
+- [iOS / iPadOS PWA Guide](ios-pwa.md)
+- [Upgrading Marinara Engine](../UPGRADING.md)
+- [Frequently Asked Questions](../FAQ.md)

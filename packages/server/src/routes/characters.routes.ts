@@ -9,9 +9,14 @@ import {
   updateGroupSchema,
   createPersonaGroupSchema,
   updatePersonaGroupSchema,
+  generateAboutMeSchema,
+  resolveAboutMeSources,
+  DEFAULT_ABOUT_ME_CHAT_CONTEXT_LIMIT,
   PROFESSOR_MARI_ID,
+  PROVIDERS,
   CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
 } from "@marinara-engine/shared";
+import { createLLMProvider } from "../services/llm/provider-registry.js";
 import type { ConversationCallCharacterVideoClipKind, ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
@@ -19,6 +24,7 @@ import { createPersonaGalleryStorage } from "../services/storage/persona-gallery
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
@@ -46,6 +52,11 @@ import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from ".
 import { logger } from "../lib/logger.js";
 import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
+import {
+  clearEmbeddedLorebookFromCharacter,
+  embedLorebookIntoCharacter,
+  getEmbeddedLorebookId,
+} from "../services/lorebook/character-book-sync.js";
 import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
@@ -541,6 +552,148 @@ export async function charactersRoutes(app: FastifyInstance) {
   const storage = createCharactersStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const personaGallery = createPersonaGalleryStorage(app.db);
+  const lorebooksStorage = createLorebooksStorage(app.db);
+  const connections = createConnectionsStorage(app.db);
+  const loadCharacterLorebookEntries = async (characterId: string) => {
+    const books = (await lorebooksStorage.listByCharacter(characterId)) as Array<{ id: string }>;
+    if (books.length === 0) return [];
+    const entries = (await lorebooksStorage.listEntriesByLorebooks(books.map((b) => b.id))) as Array<{
+      id?: string;
+      name?: string;
+      content?: string;
+      enabled?: boolean;
+    }>;
+    return entries.filter((e) => e.enabled !== false && typeof e.content === "string" && e.content.trim().length > 0);
+  };
+
+  /**
+   * POST /api/characters/generate-about-me
+   * AI-write a Convo-mode "about me" from card/persona fields. One-shot,
+   * non-streaming. The prompt deliberately produces an IN-CHARACTER bio, which
+   * for many characters means something short, empty, joking, or barely there.
+   */
+  app.post("/generate-about-me", async (req) => {
+    const input = generateAboutMeSchema.parse(req.body);
+    const conn = await connections.getWithKey(input.connectionId);
+    if (!conn) throw Object.assign(new Error("API connection not found"), { statusCode: 400 });
+
+    let baseUrl = conn.baseUrl;
+    if (!baseUrl) baseUrl = PROVIDERS[conn.provider as keyof typeof PROVIDERS]?.defaultBaseUrl ?? "";
+    if (!baseUrl && conn.provider === "claude_subscription") baseUrl = "claude-agent-sdk://local";
+    if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
+    if (!baseUrl) throw Object.assign(new Error("No base URL configured for this connection"), { statusCode: 400 });
+
+    const provider = createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    );
+
+    const who = input.kind === "persona" ? "this user persona" : "this character";
+    const systemPrompt = [
+      `You write a Conversation-mode "about me" — a short self-authored profile blurb, like a Discord bio — for ${who}, in their own voice.`,
+      "This is THEIR bio as THEY would write it, not a description of them by someone else. Write only the bio text; no quotes, labels, or preamble.",
+      "Authenticity over completeness: real people's bios are wildly uneven. Depending on who they are, the right answer might be a single line, a couple of emoji, an inside joke, something cryptic or deflecting, a wall of oversharing, or genuinely nothing at all.",
+      "Do NOT default to a tidy, thorough, earnest bio. Let their personality decide the length, tone, and effort — a guarded or aloof character writes little or nothing; a chaotic oversharer writes a mess. Match them.",
+      "If they plausibly wouldn't have a bio, it is correct to return an empty string or a bare placeholder.",
+    ].join("\n");
+
+    // Draw only from the sources the character opted into (default: personality only).
+    // Different cards store their substance differently — some leave card fields blank
+    // and live entirely in a lorebook — so each source is individually selectable.
+    const sources = resolveAboutMeSources(input.sources);
+    const cardParts: string[] = [];
+    if (input.name) cardParts.push(`Name: ${input.name}`);
+    if (sources.description && input.description) cardParts.push(`Description: ${input.description}`);
+    if (sources.personality && input.personality) cardParts.push(`Personality: ${input.personality}`);
+    if (sources.scenario && input.scenario) cardParts.push(`Scenario: ${input.scenario}`);
+    if (sources.backstory && input.backstory) cardParts.push(`Backstory: ${input.backstory}`);
+    if (sources.appearance && input.appearance) cardParts.push(`Appearance: ${input.appearance}`);
+    if (sources.convoBehavior && input.convoBehavior?.trim())
+      cardParts.push(`How they behave in conversation: ${input.convoBehavior.trim()}`);
+
+    // Lorebook entries (characters only). All of the character's lorebook entries come
+    // through listByCharacter — the embedded card book is synced to a standalone that
+    // shows up here too, so every entry has a stable db id that matches the source
+    // picker's selection. Capped so a big lorebook can't blow up this one-shot request.
+    if (sources.lorebook && input.characterId && input.kind === "character") {
+      try {
+        const loreLines: string[] = [];
+        const entries = await loadCharacterLorebookEntries(input.characterId);
+        // When the user picked specific entries, include only those; absent → all.
+        const selectedEntryIds = Array.isArray(sources.lorebookEntryIds) ? new Set(sources.lorebookEntryIds) : null;
+        for (const e of entries) {
+          if (selectedEntryIds && (!e.id || !selectedEntryIds.has(e.id))) continue;
+          const content = e.content?.trim() ?? "";
+          loreLines.push(e.name ? `[${e.name}] ${content}` : content);
+        }
+        const lore = loreLines.join("\n").slice(0, 8000).trim();
+        if (lore) cardParts.push(`From their lorebook:\n${lore}`);
+      } catch {
+        /* lorebook is best-effort context; ignore fetch/parse errors */
+      }
+    }
+
+    // Chat context — only meaningful for a chat-specific (override) about me.
+    let chatTranscript = "";
+    if (sources.chatContext && input.chatId) {
+      try {
+        const chatsStorage = createChatsStorage(app.db);
+        const limit = Math.max(1, Math.min(200, sources.chatContextLimit ?? DEFAULT_ABOUT_ME_CHAT_CONTEXT_LIMIT));
+        const recent = (await chatsStorage.listMessagesPaginated(input.chatId, limit)) as Array<{
+          role: string;
+          content: string;
+        }>;
+        chatTranscript = recent
+          .map((m) => `${m.role}: ${(m.content ?? "").trim()}`)
+          .filter((line) => line.trim())
+          .join("\n")
+          .slice(-8000)
+          .trim();
+      } catch {
+        /* chat context is best-effort; ignore errors */
+      }
+    }
+
+    const userContent =
+      `Here is what defines them:\n${cardParts.join("\n\n")}\n\n` +
+      (chatTranscript ? `Recent conversation, for tone and context:\n${chatTranscript}\n\n` : "") +
+      (input.instruction?.trim() ? `Extra direction from the user: ${input.instruction.trim()}\n\n` : "") +
+      `Write their Conversation-mode "about me" now, staying true to who they are.`;
+
+    // A short bio needs little output, but "thinking" models (e.g. Gemini 3.x) draw
+    // reasoning tokens from the SAME output budget — so the old 512 cap was consumed
+    // entirely by thinking and returned no content ("finished without content
+    // (MAX_TOKENS)"). Use a generous ceiling (not a target — a short bio still stops
+    // early, so this doesn't inflate cost) plus low reasoning effort so thinking
+    // models don't overthink a casual bio and always leave room for the text.
+    const result = await provider.chatComplete(
+      [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      { model: conn.model, temperature: 0.9, maxTokens: 4096, reasoningEffort: "low" },
+    );
+    return { aboutMe: (result.content ?? "").trim() };
+  });
+
+  /**
+   * GET /api/characters/:id/lorebook-entries
+   * A character's lorebook entries (embedded + linked — the embedded card book is
+   * synced to a standalone that shows up here too, so ids match generation). Used by
+   * the AI-write source picker to choose which entries feed the "about me". Names only.
+   */
+  app.get<{ Params: { id: string } }>("/:id/lorebook-entries", async (req) => {
+    const entries = await loadCharacterLorebookEntries(req.params.id);
+    return {
+      entries: entries.flatMap((e) =>
+        typeof e.id === "string" ? [{ id: e.id, name: e.name || "(unnamed entry)" }] : [],
+      ),
+    };
+  });
 
   // ── Characters ──
 
@@ -1343,6 +1496,89 @@ export async function charactersRoutes(app: FastifyInstance) {
     };
   });
 
+  // Remove the embedded lorebook from this character's card: drop
+  // data.character_book and the embeddedLorebook pointer. The user-initiated
+  // inverse of embed/import; the linked standalone lorebook (if any) is kept.
+  app.delete<{ Params: { id: string } }>("/:id/embedded-lorebook", async (req, reply) => {
+    const cleared = await clearEmbeddedLorebookFromCharacter(app.db, req.params.id);
+    if (!cleared) return reply.status(404).send({ error: "Character not found" });
+    return { success: true };
+  });
+
+  // Embed a standalone/linked character lorebook INTO this character's card
+  // (data.character_book) so it exports with the card — the inverse of the
+  // import above. Writes the lorebook's current entries and the forward
+  // pointer; future /lorebooks edits then keep the embedded copy in sync.
+  app.post<{ Params: { id: string }; Body: { lorebookId?: string } }>(
+    "/:id/embedded-lorebook/embed",
+    async (req, reply) => {
+      const lorebookId = typeof req.body?.lorebookId === "string" ? req.body.lorebookId.trim() : "";
+      if (!lorebookId) return reply.status(400).send({ error: "lorebookId is required" });
+
+      const char = await storage.getById(req.params.id);
+      if (!char) return reply.status(404).send({ error: "Character not found" });
+
+      const lorebook = (await lorebooksStorage.getById(lorebookId)) as Record<string, unknown> | null;
+      if (!lorebook) return reply.status(404).send({ error: "Lorebook not found" });
+
+      // A character card only carries a character-scoped book. Persona
+      // lorebooks are identified by persona links and have no card slot.
+      const personaIds = Array.isArray(lorebook.personaIds) ? (lorebook.personaIds as unknown[]) : [];
+      if (
+        personaIds.length > 0 ||
+        typeof lorebook.personaId === "string" ||
+        (typeof lorebook.category === "string" && lorebook.category !== "character")
+      ) {
+        return reply.status(400).send({ error: "Only character lorebooks can be embedded into a character card." });
+      }
+
+      // A card has a single character_book slot. Allow only when the slot is
+      // empty or already belongs to this lorebook (refresh); never clobber a
+      // different embedded book or an unpointered baked snapshot.
+      const charData = JSON.parse(char.data) as Record<string, unknown>;
+      const currentEmbeddedId = getEmbeddedLorebookId(charData);
+      const hasBook = charData.character_book !== null && charData.character_book !== undefined;
+      const slotBelongsToThis = currentEmbeddedId === lorebookId;
+      const slotEmpty = !currentEmbeddedId && !hasBook;
+      if (!slotBelongsToThis && !slotEmpty) {
+        return reply
+          .status(409)
+          .send({ error: "This character already has an embedded lorebook. Remove it first, then embed this one." });
+      }
+
+      // Ensure the book is linked to this character so it auto-activates and
+      // stays live-syncable — additively (union), never replacing other links.
+      const linkedIds = Array.isArray(lorebook.characterIds) ? (lorebook.characterIds as string[]) : [];
+      const linkAdded = !linkedIds.includes(req.params.id);
+      if (linkAdded) {
+        await lorebooksStorage.update(lorebookId, {
+          characterIds: Array.from(new Set([...linkedIds, req.params.id])),
+        });
+      }
+
+      let result: Awaited<ReturnType<typeof embedLorebookIntoCharacter>>;
+      try {
+        result = await embedLorebookIntoCharacter(app.db, req.params.id, lorebookId);
+      } catch (err) {
+        if (linkAdded) {
+          try {
+            await lorebooksStorage.update(lorebookId, { characterIds: linkedIds });
+          } catch (rollbackErr) {
+            logger.error(rollbackErr, "Failed to roll back lorebook link after embedded lorebook write failed");
+          }
+        }
+        throw err;
+      }
+      return {
+        success: true,
+        lorebookId,
+        entriesEmbedded: result.entriesEmbedded,
+        refreshed: result.refreshed,
+        characterBook: result.characterBook,
+      };
+    },
+  );
+
   // ── Export as PNG ──
 
   app.get<{ Params: { id: string } }>("/:id/export-png", async (req, reply) => {
@@ -1496,6 +1732,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       creator?: string;
       personaVersion?: string;
       creatorNotes?: string;
+      phoneticName?: string;
       personality?: string;
       scenario?: string;
       backstory?: string;
@@ -1508,6 +1745,9 @@ export async function charactersRoutes(app: FastifyInstance) {
       createdAt?: string;
       updatedAt?: string;
       savedStatusOptions?: string;
+      convoDisplayName?: string;
+      aboutMe?: string;
+      convoBehavior?: string;
     };
     return storage.createPersona(
       name,

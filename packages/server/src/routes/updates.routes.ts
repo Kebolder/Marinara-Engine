@@ -16,6 +16,8 @@ import {
 } from "../config/runtime-config.js";
 import { getBuildCommit, getBuildLabel } from "../config/build-info.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
+import { isLoopbackIp } from "../middleware/ip-allowlist.js";
+import { isGitUpdateApplyAllowed } from "../services/updates/update-apply-policy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -54,9 +56,10 @@ const UPDATE_CHANNELS: Record<UpdateChannel, UpdateChannelInfo> = {
 const DEFAULT_PNPM_VERSION = "10.33.2";
 const PNPM_NONINTERACTIVE_ARGS = ["--config.trustPolicy=off", "--config.confirmModulesPurge=false"];
 const PNPM_UPDATE_INSTALL_ARGS = ["install", "--force", "--frozen-lockfile"];
+const MANUAL_PNPM_COMMAND = `corepack pnpm@${DEFAULT_PNPM_VERSION}`;
 const DOCKER_IMAGE = "ghcr.io/pasta-devs/marinara-engine";
 const MANUAL_GIT_UPDATE_COMMAND =
-  "git fetch origin +refs/heads/main:refs/remotes/origin/main && (git merge --ff-only origin/main || git checkout --detach origin/main) && pnpm --config.trustPolicy=off --config.confirmModulesPurge=false install --force --frozen-lockfile && pnpm build && pnpm start";
+  `git fetch origin +refs/heads/main:refs/remotes/origin/main && (git merge --ff-only origin/main || git checkout --detach origin/main) && ${MANUAL_PNPM_COMMAND} --config.trustPolicy=off --config.confirmModulesPurge=false install --force --frozen-lockfile && ${MANUAL_PNPM_COMMAND} --filter @marinara-engine/shared build && ${MANUAL_PNPM_COMMAND} --filter @marinara-engine/server --filter @marinara-engine/client --parallel run build && ${MANUAL_PNPM_COMMAND} start`;
 const DOCKER_UPDATE_COMMAND = "docker compose pull && docker compose up -d";
 const ANDROID_APK_NOTICE =
   "> [!IMPORTANT]\n" +
@@ -162,16 +165,20 @@ async function getUpdateChannelForCheckout(root: string, branch: string | null |
   return UPDATE_CHANNELS.stable;
 }
 
-function getManualGitApplyCommand(channel = UPDATE_CHANNELS.stable, platform: ServerPlatform = "unknown") {
+function getManualGitApplyCommand(
+  channel = UPDATE_CHANNELS.stable,
+  platform: ServerPlatform = "unknown",
+  pnpmCommand = MANUAL_PNPM_COMMAND,
+) {
   const checkoutCommand =
     channel.id === "staging"
       ? `git show-ref --verify --quiet refs/heads/${channel.branch} && (git checkout ${channel.branch} && git merge --ff-only ${channel.targetRef}) || git checkout -b ${channel.branch} ${channel.targetRef}`
       : `(git merge --ff-only ${channel.targetRef} || git checkout --detach ${channel.targetRef})`;
   const buildCommand =
     platform === "android-termux"
-      ? "pnpm --filter @marinara-engine/shared build && pnpm --filter @marinara-engine/server build && pnpm --filter @marinara-engine/client build"
-      : "pnpm --filter @marinara-engine/shared build && pnpm --filter @marinara-engine/server --filter @marinara-engine/client --parallel run build";
-  return `git fetch ${UPDATE_REMOTE} ${channel.fetchRef} && ${checkoutCommand} && pnpm --config.trustPolicy=off --config.confirmModulesPurge=false ${PNPM_UPDATE_INSTALL_ARGS.join(" ")} && ${buildCommand}`;
+      ? `${pnpmCommand} --filter @marinara-engine/shared build && ${pnpmCommand} --filter @marinara-engine/server build && ${pnpmCommand} --filter @marinara-engine/client build`
+      : `${pnpmCommand} --filter @marinara-engine/shared build && ${pnpmCommand} --filter @marinara-engine/server --filter @marinara-engine/client --parallel run build`;
+  return `git fetch ${UPDATE_REMOTE} ${channel.fetchRef} && ${checkoutCommand} && ${pnpmCommand} --config.trustPolicy=off --config.confirmModulesPurge=false ${PNPM_UPDATE_INSTALL_ARGS.join(" ")} && ${buildCommand}`;
 }
 
 function getManualUpdateCommand(installType: InstallType, platform: ServerPlatform, channel = UPDATE_CHANNELS.stable) {
@@ -385,7 +392,7 @@ async function resolvePinnedPnpmRunner(root: string): Promise<PnpmRunner> {
       timeout: 10_000,
       shell,
     });
-    if (stdout.trim()) {
+    if (stdout.trim() === pnpmVersion) {
       return { command: "pnpm", prefixArgs: [] };
     }
   } catch {
@@ -482,7 +489,6 @@ type ApplyUpdateBody = {
   confirm?: boolean;
   channel?: UpdateChannel;
   currentVersion?: string;
-  currentBuild?: string | null;
   currentCommit?: string | null;
   targetRef?: string;
   targetCommit?: string;
@@ -519,7 +525,12 @@ function buildReleasePayload(release: NonNullable<typeof cachedRelease>) {
   };
 }
 
-function getApplyAvailability(installType: InstallType, platform: ServerPlatform, channel = UPDATE_CHANNELS.stable) {
+function getApplyAvailability(
+  installType: InstallType,
+  platform: ServerPlatform,
+  channel = UPDATE_CHANNELS.stable,
+  localChannelSwitchRequested = false,
+) {
   const enabled = isUpdatesApplyEnabled();
   if (installType === "docker") {
     return {
@@ -539,7 +550,7 @@ function getApplyAvailability(installType: InstallType, platform: ServerPlatform
       manualUpdateHint: getManualUpdateHint(installType, platform, channel),
     };
   }
-  if (!enabled) {
+  if (!isGitUpdateApplyAllowed({ updatesApplyEnabled: enabled, localChannelSwitchRequested })) {
     return {
       applyAvailable: false,
       updatesApplyEnabled: false,
@@ -550,10 +561,11 @@ function getApplyAvailability(installType: InstallType, platform: ServerPlatform
   }
   return {
     applyAvailable: true,
-    updatesApplyEnabled: true,
+    updatesApplyEnabled: enabled,
     applyUnavailableReason: null,
     manualUpdateCommand: null,
     manualUpdateHint: null,
+    channelSwitch: localChannelSwitchRequested,
   };
 }
 
@@ -573,12 +585,19 @@ export async function updatesRoutes(app: FastifyInstance) {
     const clientPlatform = getClientPlatform(req.headers["user-agent"]);
     const root = getMonorepoRoot();
     const currentBranch = gitInstall ? await getCurrentBranch(root) : null;
+    const currentChannel = gitInstall ? await getUpdateChannelForCheckout(root, currentBranch) : UPDATE_CHANNELS.stable;
     const channel = await resolveUpdateChannel(
       root,
       (req.query as { channel?: unknown } | undefined)?.channel,
       currentBranch,
     );
-    const applyAvailability = getApplyAvailability(installType, serverPlatform, channel);
+    const channelSwitch = gitInstall && currentChannel.id !== channel.id;
+    const applyAvailability = getApplyAvailability(
+      installType,
+      serverPlatform,
+      channel,
+      channelSwitch && isLoopbackIp(req.ip),
+    );
 
     // Check commits behind for git installs
     let commitsBehind: number | null = null;
@@ -604,7 +623,8 @@ export async function updatesRoutes(app: FastifyInstance) {
         currentBranch,
         channels: serializeUpdateChannels(),
         ...buildReleasePayload(cachedRelease),
-        updateAvailable: (channel.id === "stable" && versionUpdate) || (commitsBehind != null && commitsBehind > 0),
+        updateAvailable:
+          channelSwitch || (channel.id === "stable" && versionUpdate) || (commitsBehind != null && commitsBehind > 0),
         versionUpdate: channel.id === "stable" ? versionUpdate : false,
         commitsBehind: commitsBehind ?? 0,
         installType,
@@ -636,7 +656,8 @@ export async function updatesRoutes(app: FastifyInstance) {
         currentBranch,
         channels: serializeUpdateChannels(),
         ...buildReleasePayload(cachedRelease),
-        updateAvailable: (channel.id === "stable" && versionUpdate) || (commitsBehind != null && commitsBehind > 0),
+        updateAvailable:
+          channelSwitch || (channel.id === "stable" && versionUpdate) || (commitsBehind != null && commitsBehind > 0),
         versionUpdate: channel.id === "stable" ? versionUpdate : false,
         commitsBehind: commitsBehind ?? 0,
         installType,
@@ -657,7 +678,7 @@ export async function updatesRoutes(app: FastifyInstance) {
         channelLabel: channel.label,
         currentBranch,
         channels: serializeUpdateChannels(),
-        updateAvailable: commitsBehind != null && commitsBehind > 0,
+        updateAvailable: channelSwitch || (commitsBehind != null && commitsBehind > 0),
         commitsBehind: commitsBehind ?? 0,
         installType,
         serverPlatform,
@@ -676,7 +697,9 @@ export async function updatesRoutes(app: FastifyInstance) {
     const serverPlatform = getServerPlatform();
     const root = getMonorepoRoot();
     const currentBranch = gitInstall ? await getCurrentBranch(root) : null;
+    const currentChannel = gitInstall ? await getUpdateChannelForCheckout(root, currentBranch) : UPDATE_CHANNELS.stable;
     const channel = await resolveUpdateChannel(root, req.body?.channel, currentBranch);
+    const localChannelSwitchRequested = gitInstall && currentChannel.id !== channel.id && isLoopbackIp(req.ip);
 
     if (!gitInstall) {
       const manualUpdateCommand = getManualUpdateCommand(installType, serverPlatform, channel);
@@ -694,7 +717,12 @@ export async function updatesRoutes(app: FastifyInstance) {
       });
     }
 
-    if (!isUpdatesApplyEnabled()) {
+    if (
+      !isGitUpdateApplyAllowed({
+        updatesApplyEnabled: isUpdatesApplyEnabled(),
+        localChannelSwitchRequested,
+      })
+    ) {
       return reply.status(403).send({
         error: "Auto-update apply is disabled for this install",
         message: `Update manually with: ${getManualUpdateCommand("git", serverPlatform, channel) ?? getGitLauncherCommand(serverPlatform)}. Advanced git installs can enable server-side update application with UPDATES_APPLY_ENABLED=true.`,
@@ -874,9 +902,10 @@ export async function updatesRoutes(app: FastifyInstance) {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       const pnpmVersion = getPinnedPnpmVersion(root);
+      const manualPnpmCommand = `corepack pnpm@${pnpmVersion}`;
       return reply.status(500).send({
         error: `Update failed: ${message}`,
-        hint: `You can try running the update manually: ${getManualGitApplyCommand(channel)}. If pnpm is unavailable, run npm install -g pnpm@${pnpmVersion} first.`,
+        hint: `You can try running the update manually: ${getManualGitApplyCommand(channel, serverPlatform, manualPnpmCommand)}. If Corepack cannot launch pnpm ${pnpmVersion}, install the pinned version with npm install -g pnpm@${pnpmVersion} and rerun the command.`,
       });
     }
   });

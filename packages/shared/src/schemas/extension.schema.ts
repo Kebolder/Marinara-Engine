@@ -34,6 +34,24 @@ const jsByteLimit = (value: string | null | undefined) =>
 
 const jsByteMessage = `JS must be at most ${MAX_EXTENSION_JS_BYTES} bytes`;
 const extensionRuntimeSchema = z.enum(["client", "server"]);
+const MAX_EXTENSION_STORAGE_BYTES = 1_000_000;
+const extensionStorageByteMessage = `Extension storage must be at most ${MAX_EXTENSION_STORAGE_BYTES} bytes`;
+
+const extensionStorageByteLimit = (value: Record<string, unknown>) => {
+  try {
+    return utf8ByteLength(JSON.stringify(value)) <= MAX_EXTENSION_STORAGE_BYTES;
+  } catch {
+    return false;
+  }
+};
+
+export const extensionStoragePatchSchema = z
+  .record(z.string(), z.unknown())
+  .refine(extensionStorageByteLimit, { message: extensionStorageByteMessage });
+
+export const extensionStorageResponseSchema = z.object({
+  value: extensionStoragePatchSchema,
+});
 
 export const createExtensionSchema = z.object({
   name: z.string().min(1).max(200),
@@ -79,3 +97,5 @@ export const updateExtensionSchema = z
 
 export type CreateExtensionInput = z.input<typeof createExtensionSchema>;
 export type UpdateExtensionInput = z.infer<typeof updateExtensionSchema>;
+export type ExtensionStoragePatchInput = z.infer<typeof extensionStoragePatchSchema>;
+export type ExtensionStorageResponse = z.infer<typeof extensionStorageResponseSchema>;

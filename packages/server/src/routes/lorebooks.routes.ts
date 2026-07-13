@@ -11,6 +11,7 @@ import {
   updateLorebookSchema,
   createLorebookEntrySchema,
   updateLorebookEntrySchema,
+  bulkUpdateLorebookEntriesSchema,
   createLorebookFolderSchema,
   updateLorebookFolderSchema,
   LOCAL_SIDECAR_CONNECTION_ID,
@@ -40,6 +41,7 @@ import { parseGameStateRow, resolveVisibleGameStateAnchor } from "./generate/gen
 import {
   syncCharacterBookFromLorebook,
   clearCharacterEmbeddedLorebook,
+  resolveEmbeddedCharacterId,
 } from "../services/lorebook/character-book-sync.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
@@ -479,12 +481,13 @@ export async function lorebooksRoutes(app: FastifyInstance) {
   });
 
   app.delete<{ Params: { id: string } }>("/:id", async (req, reply) => {
-    // Capture the linked characterId BEFORE removal — once the row is gone
-    // we can no longer recover it, and the character still holds a stale
-    // pointer at extensions.importMetadata.embeddedLorebook that needs
-    // clearing alongside the V2 character_book mirror.
-    const lorebook = (await storage.getById(req.params.id)) as Record<string, unknown> | null;
-    const linkedCharacterId = lorebook && typeof lorebook.characterId === "string" ? lorebook.characterId : null;
+    // Resolve the embedding character BEFORE removal — once the row is gone we
+    // can no longer recover it, and the character still holds a pointer at
+    // extensions.importMetadata.embeddedLorebook that needs clearing alongside
+    // the V2 character_book mirror. Resolve via the authoritative forward
+    // pointer (not the lorebook's alphabetically-first link) so a book embedded
+    // into a non-first-linked character is cleared from the right card.
+    const linkedCharacterId = await resolveEmbeddedCharacterId(app.db, req.params.id);
 
     const chatsStorage = createChatsStorage(app.db);
     await chatsStorage.removeLorebookFromChatMetadata(req.params.id);
@@ -596,6 +599,20 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       return created;
     } catch (err) {
       if (err instanceof Error && err.message === "folderId does not belong to this lorebook") {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/:id/entries/bulk", async (req, reply) => {
+    const input = bulkUpdateLorebookEntriesSchema.parse(req.body);
+    try {
+      const result = await storage.bulkUpdateEntries(req.params.id, input.entryIds, input.changes);
+      await syncCharacterBookFromLorebook(app.db, req.params.id);
+      return result;
+    } catch (err) {
+      if (err instanceof Error && err.message === "One or more selected entries do not belong to this lorebook") {
         return reply.status(400).send({ error: err.message });
       }
       throw err;

@@ -10,7 +10,7 @@ import {
   type LorebookScopeMode,
 } from "@marinara-engine/shared";
 import { useChats } from "../../hooks/use-chats";
-import { useLorebooks, useUpdateLorebook } from "../../hooks/use-lorebooks";
+import { useEmbedLorebook, useLorebooks, useUpdateLorebook } from "../../hooks/use-lorebooks";
 import { DEFAULT_LOREBOOK_SCOPE, normalizeLorebookScope } from "../../lib/lorebook-scope";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
@@ -22,6 +22,14 @@ interface LorebookAssignmentSectionProps {
   ownerType: LorebookOwnerType;
   ownerId: string | null;
   ownerName: string;
+  /** The lorebook currently embedded in the character card (character owners only). */
+  embeddedLorebookId?: string | null;
+  /** True when the card's single character_book slot is already occupied (may be an unpointered baked book). */
+  slotOccupied?: boolean;
+  /** Called after a successful embed so the parent editor can patch its local state. */
+  onEmbedded?: (result: { lorebookId: string; characterBook: unknown }) => void;
+  /** Reports embed/refresh progress so the parent editor can block racing saves. */
+  onEmbeddingChange?: (embedding: boolean) => void;
 }
 
 interface AssignmentDraft {
@@ -34,7 +42,7 @@ interface AssignmentDraft {
 const MODE_LABELS: Record<ChatMode, string> = {
   conversation: "Conversation",
   roleplay: "Roleplay",
-  visual_novel: "Visual Novel",
+  visual_novel: "Roleplay (Legacy)",
   game: "Game",
 };
 
@@ -54,13 +62,17 @@ function getOwnerIds(lorebook: Lorebook, ownerType: LorebookOwnerType) {
   return ownerType === "character" ? uniqueIds(lorebook.characterIds ?? []) : uniqueIds(lorebook.personaIds ?? []);
 }
 
-function getScopeLabel(scope: LorebookScope, chats: Chat[]) {
+function getOwnerLabel(ownerType: LorebookOwnerType, ownerName: string) {
+  return ownerName.trim() || (ownerType === "character" ? "this character" : "this persona");
+}
+
+function getScopeLabel(scope: LorebookScope, chats: Chat[], ownerType: LorebookOwnerType, ownerName: string) {
   if (scope.mode === "disabled") return "Disabled";
   if (scope.mode === "specific") {
     const count = scope.chatIds.filter((id) => chats.some((chat) => chat.id === id)).length;
     return count === 1 ? "1 chat" : `${count} chats`;
   }
-  return "All chats";
+  return `All chats with ${getOwnerLabel(ownerType, ownerName)}`;
 }
 
 function matchesOwnerChat(chat: Chat, ownerType: LorebookOwnerType, ownerId: string | null) {
@@ -69,12 +81,35 @@ function matchesOwnerChat(chat: Chat, ownerType: LorebookOwnerType, ownerId: str
   return chat.personaId === ownerId;
 }
 
-export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: LorebookAssignmentSectionProps) {
+export function LorebookAssignmentSection({
+  ownerType,
+  ownerId,
+  ownerName,
+  embeddedLorebookId,
+  slotOccupied,
+  onEmbedded,
+  onEmbeddingChange,
+}: LorebookAssignmentSectionProps) {
   const openModal = useUIStore((state) => state.openModal);
   const openLorebookDetail = useUIStore((state) => state.openLorebookDetail);
   const { data: lorebooks = [], isLoading } = useLorebooks("character");
   const { data: chats = [] } = useChats();
   const updateLorebook = useUpdateLorebook();
+  const embedLorebook = useEmbedLorebook();
+
+  const handleEmbed = async (lorebook: Lorebook) => {
+    if (!ownerId) return;
+    onEmbeddingChange?.(true);
+    try {
+      const res = await embedLorebook.mutateAsync({ characterId: ownerId, lorebookId: lorebook.id });
+      onEmbedded?.({ lorebookId: lorebook.id, characterBook: res.characterBook });
+      toast.success(res.refreshed ? `Refreshed embedded ${lorebook.name}.` : `Embedded ${lorebook.name} into the card.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to embed lorebook.");
+    } finally {
+      onEmbeddingChange?.(false);
+    }
+  };
   const [draft, setDraft] = useState<AssignmentDraft | null>(null);
 
   const eligibleChats = useMemo(
@@ -146,18 +181,24 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
   const unassignLorebook = async (lorebook: Lorebook) => {
     if (!ownerId) return;
     const nextOwnerIds = getOwnerIds(lorebook, ownerType).filter((id) => id !== ownerId);
+    const isEmbedded = ownerType === "character" && lorebook.id === embeddedLorebookId;
     try {
       await updateLorebook.mutateAsync({
         id: lorebook.id,
         ...(ownerType === "character" ? { characterIds: nextOwnerIds } : { personaIds: nextOwnerIds }),
       });
-      toast.success(`Removed ${lorebook.name}.`);
+      toast.success(
+        isEmbedded
+          ? `Unlinked ${lorebook.name}. It's still embedded in the card — use "Remove from card" to unbake the embedded copy.`
+          : `Removed ${lorebook.name}.`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to remove lorebook.");
     }
   };
 
   const specificSelectionInvalid = draft?.mode === "specific" && draft.chatIds.length === 0;
+  const ownerLabel = getOwnerLabel(ownerType, ownerName);
 
   return (
     <div className="space-y-3">
@@ -173,7 +214,7 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
             type="button"
             onClick={handleCreateLorebook}
             disabled={!ownerId}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--secondary-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:opacity-50"
+            className="mari-chrome-control mari-chrome-control--compact gap-1.5 px-3 py-1.5 text-xs disabled:opacity-50"
           >
             <Plus size="0.75rem" />
             New
@@ -212,7 +253,7 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
                 >
                   <span className="block truncate text-xs font-medium text-[var(--foreground)]">{lorebook.name}</span>
                   <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                    {getScopeLabel(scope, eligibleChats)}
+                    {getScopeLabel(scope, eligibleChats, ownerType, ownerName)}
                   </span>
                 </button>
                 <button
@@ -222,12 +263,52 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
                 >
                   Scope
                 </button>
+                {ownerType === "character" &&
+                  (lorebook.id === embeddedLorebookId ? (
+                    <>
+                      <span className="rounded-lg bg-emerald-500/15 px-2 py-1 text-[0.625rem] font-medium text-emerald-500">
+                        Embedded
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleEmbed(lorebook)}
+                        disabled={embedLorebook.isPending}
+                        className="rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+                        title="Rewrite the card's embedded copy from this lorebook's current entries"
+                      >
+                        Refresh
+                      </button>
+                    </>
+                  ) : embeddedLorebookId || slotOccupied ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="cursor-not-allowed rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] opacity-50"
+                      title="Remove the current embedded lorebook first"
+                    >
+                      Embed into card
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleEmbed(lorebook)}
+                      disabled={embedLorebook.isPending}
+                      className="rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/15 disabled:opacity-50"
+                      title="Write this lorebook into the character card so it exports with the character"
+                    >
+                      Embed into card
+                    </button>
+                  ))}
                 <button
                   type="button"
                   onClick={() => unassignLorebook(lorebook)}
                   disabled={updateLorebook.isPending}
-                  className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-50"
-                  title="Remove lorebook"
+                  className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+                  title={
+                    ownerType === "character" && lorebook.id === embeddedLorebookId
+                      ? "Unlink lorebook (the card's embedded copy stays — use Remove from card)"
+                      : "Remove lorebook"
+                  }
                 >
                   <Trash2 size="0.75rem" />
                 </button>
@@ -305,7 +386,8 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
                 <div>
                   <p className="text-xs font-semibold">Scope</p>
                   <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                    Controls where this assignment is active.
+                    Controls where this assignment is active. All chats means chats that include {ownerLabel}, not every
+                    chat in Marinara.
                   </p>
                 </div>
 
@@ -321,7 +403,11 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
                         : "bg-[var(--card)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
                     )}
                   >
-                    {mode === "all" ? "All chats" : mode === "disabled" ? "Disabled for all chats" : "Specific chats"}
+                    {mode === "all"
+                      ? `All chats with ${ownerLabel}`
+                      : mode === "disabled"
+                        ? "Disabled for all chats"
+                        : "Specific chats"}
                     {draft.mode === mode && <Check size="0.75rem" />}
                   </button>
                 ))}

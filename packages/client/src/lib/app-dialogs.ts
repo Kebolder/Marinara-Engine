@@ -58,7 +58,7 @@ export function showAlertDialog(options: Omit<AlertDialogState, "kind">): Promis
   });
 }
 
-export function showConfirmDialog(options: Omit<ConfirmDialogState, "kind" | "checkboxLabel">): Promise<boolean> {
+export function showConfirmDialog(options: Omit<ConfirmDialogState, "kind">): Promise<boolean> {
   return openDialog<boolean>({
     kind: "confirm",
     confirmLabel: "Confirm",
@@ -69,30 +69,10 @@ export function showConfirmDialog(options: Omit<ConfirmDialogState, "kind" | "ch
 
 export function confirmNonEmptyFolderDelete(
   itemCount: number,
-  options: Omit<ConfirmDialogState, "kind" | "checkboxLabel">,
+  options: Omit<ConfirmDialogState, "kind">,
 ): Promise<boolean> {
   if (itemCount <= 0) return Promise.resolve(true);
   return showConfirmDialog(options);
-}
-
-export type ConfirmWithCheckboxResult = { confirmed: boolean; checked: boolean };
-
-/**
- * Confirm dialog with an extra opt-in checkbox (e.g. "also delete subfolders").
- * Resolves both whether the user confirmed and whether the box was ticked.
- */
-export function showConfirmWithCheckbox(
-  options: Omit<ConfirmDialogState, "kind" | "checkboxLabel"> & { checkboxLabel: string },
-): Promise<ConfirmWithCheckboxResult> {
-  return openDialog<boolean | string>({
-    kind: "confirm",
-    confirmLabel: "Confirm",
-    cancelLabel: "Cancel",
-    ...options,
-  }).then((result) => ({
-    confirmed: result === true || result === "checked",
-    checked: result === "checked",
-  }));
 }
 
 export function showPromptDialog(options: Omit<PromptDialogState, "kind">): Promise<string | null> {

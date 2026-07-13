@@ -5,13 +5,10 @@ function stripFences(raw: string): string {
     .replace(/\n?```\s*$/i, "");
 }
 
-function extractObjectCandidate(raw: string): string {
-  const start = raw.indexOf("{");
-  if (start === -1) return raw.trim();
-
+function findJsonRegionEnd(raw: string, start: number): number | null {
   let inString = false;
   let escaped = false;
-  let depth = 0;
+  const closers: string[] = [];
 
   for (let i = start; i < raw.length; i++) {
     const char = raw[i]!;
@@ -28,15 +25,103 @@ function extractObjectCandidate(raw: string): string {
       continue;
     }
     if (inString) continue;
-    if (char === "{") depth += 1;
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return raw.slice(start, i + 1).trim();
+    if (char === "{") {
+      closers.push("}");
+      continue;
+    }
+    if (char === "[") {
+      closers.push("]");
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      if (closers.at(-1) !== char) return null;
+      closers.pop();
+      if (closers.length === 0) return i + 1;
     }
   }
 
-  const end = raw.lastIndexOf("}");
-  return end > start ? raw.slice(start, end + 1).trim() : raw.slice(start).trim();
+  return null;
+}
+
+function extractRepairCandidate(raw: string): string {
+  const objectStart = raw.indexOf("{");
+  const arrayStart = raw.indexOf("[");
+  const starts = [objectStart, arrayStart].filter((index) => index >= 0);
+  if (starts.length === 0) return raw.trim();
+
+  const start = Math.min(...starts);
+  const end = findJsonRegionEnd(raw, start);
+  return raw.slice(start, end ?? undefined).trim();
+}
+
+function collectBalancedJsonRegions(raw: string): Array<{ start: number; end: number }> {
+  const regions: Array<{ start: number; end: number }> = [];
+  const stack: Array<{ start: number; closer: "}" | "]" }> = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < raw.length; index++) {
+    const char = raw[index]!;
+    if (stack.length === 0) {
+      if (char === "{") stack.push({ start: index, closer: "}" });
+      else if (char === "[") stack.push({ start: index, closer: "]" });
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && inString) {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === "{") {
+      stack.push({ start: index, closer: "}" });
+      continue;
+    }
+    if (char === "[") {
+      stack.push({ start: index, closer: "]" });
+      continue;
+    }
+    if (char !== "}" && char !== "]") continue;
+    if (stack.at(-1)?.closer !== char) {
+      stack.length = 0;
+      inString = false;
+      escaped = false;
+      continue;
+    }
+    const opened = stack.pop()!;
+    regions.push({ start: opened.start, end: index + 1 });
+  }
+
+  return regions;
+}
+
+function parseEmbeddedJson(raw: string): unknown | undefined {
+  const regions = collectBalancedJsonRegions(raw).sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  );
+  const independentRegions: Array<{ start: number; end: number }> = [];
+  let enclosingEnd = -1;
+  for (const region of regions) {
+    if (region.end <= enclosingEnd) continue;
+    independentRegions.push(region);
+    enclosingEnd = region.end;
+  }
+  independentRegions.sort((left, right) => right.start - left.start);
+  for (const region of independentRegions) {
+    try {
+      return unwrapJsonString(JSON.parse(raw.slice(region.start, region.end)));
+    } catch {
+      // This balanced brace region was not valid JSON; an earlier independent region may be.
+    }
+  }
+  return undefined;
 }
 
 function extractJsonishCandidate(raw: string): string {
@@ -236,7 +321,10 @@ export function parseGameJsonish(raw: string): unknown {
     // Continue.
   }
 
-  const candidate = extractObjectCandidate(unfenced);
+  const embedded = parseEmbeddedJson(unfenced);
+  if (embedded !== undefined) return embedded;
+
+  const candidate = extractRepairCandidate(unfenced);
   try {
     return unwrapJsonString(JSON.parse(repairJsonish(candidate)));
   } catch {

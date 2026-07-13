@@ -24,6 +24,8 @@ export interface CompileImagePromptInput {
   userPositive?: string | null;
   userNegative?: string | null;
   hardNegative?: string | null;
+  /** Apply the selected grammar to generated prose that is normally preserved for review/readability. */
+  applyPromptModeToSourcePrompt?: boolean;
 }
 
 export function compileImagePrompt(input: CompileImagePromptInput): CompiledImagePrompt {
@@ -40,9 +42,11 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
   const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
+  const applyPromptModeToSourcePrompt = input.applyPromptModeToSourcePrompt === true;
   const preserveGeneratedPrompt =
-    input.kind === "illustration" || input.kind === "background" || input.kind === "selfie";
-  const compactTags = !preserveGeneratedPrompt && taggedPromptMode;
+    !applyPromptModeToSourcePrompt &&
+    (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
+  const compactTags = !applyPromptModeToSourcePrompt && !preserveGeneratedPrompt && taggedPromptMode;
   const compactVisualPrompt =
     profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;
@@ -328,6 +332,7 @@ function splitPromptFragments(
     .replace(/\r\n?/g, "\n")
     .replace(/[.!?]\s+(?=(?:avoid|no|without|exclude|do not include|don't include)\b)/gi, "\n")
     .replace(/\b(?:avoid|negative prompt|undesired content)\s*:/gi, "\navoid ")
+    .replace(/\b(?:SD|Stable Diffusion)\/Illustrious\s+tags?\s*:/gi, "\n")
     .replace(/\b(?:positive prompt|tags?)\s*:/gi, "\n");
 
   if (promptMode === "natural") {
@@ -565,13 +570,22 @@ function distillVisualPhrases(value: string): string[] {
   addIfPresent(fragments, text, /\breading glasses\b/i, "reading glasses");
   addIfPresent(fragments, text, /\bstatement ring\b/i, "statement ring");
   addIfPresent(fragments, text, /\bdark red nails\b/i, "dark red nails");
+  addIfPresent(fragments, text, /\b(?:fox|kitsune|wolf|cat|rabbit|deer|lizard|dragon|bird|serpent)[-\s](?:woman|man|girl|boy|person|humanoid|creature)\b/i);
+  addIfPresent(fragments, text, /\b(?:silver|white|black|brown|red|golden|blue|grey|gray|orange)[-\s]furred\b/i);
+  addIfPresent(fragments, text, /\b(?:silver|white|black|brown|red|golden|blue|grey|gray|orange)\s+fur\b/i);
+  addIfPresent(fragments, text, /\b(?:fox|wolf|cat|rabbit|deer|lizard|dragon|bird|serpent)\s+(?:ears?|tail|tails?|horns?|wings?)\b/i);
+  addIfPresent(fragments, text, /\b(?:persimmon|red|blue|black|white|gold|golden|green|purple|pink|silver|grey|gray|brown)\s+kimono\b/i);
+  addIfPresent(fragments, text, /\b(?:kimono|sari|hanfu|cheongsam|qipao|cloak|cape|mantle|hood|veil|mask|visor|goggles)\b/i);
+  addIfPresent(fragments, text, /\b(?:scroll|debt[-\s]scroll|book|tome|lantern|fan|parasol|satchel|pouch)\b/i);
+  addIfPresent(fragments, text, /\btucked in (?:her|his|their|a|the)?\s*sleeve\b/i);
 
   if (fragments.length > 0) return fragments.filter((fragment) => shouldKeepTaggedSourceFragment(fragment));
   return [];
 }
 
-function addIfPresent(fragments: string[], text: string, pattern: RegExp, fragment: string): void {
-  if (pattern.test(text)) fragments.push(fragment);
+function addIfPresent(fragments: string[], text: string, pattern: RegExp, fragment?: string): void {
+  const match = text.match(pattern);
+  if (match?.[0]) fragments.push(fragment ?? cleanVisualPhrase(match[0]));
 }
 
 function cleanVisualPhrase(value: string): string {
@@ -593,7 +607,7 @@ function shouldKeepTaggedSourceFragment(value: string, requireVisualCue = false)
   if (!clean) return false;
   if (clean.length > 120) return false;
   if (
-    /\b(?:debt|childhood|academy|army|airship|country|refugee|business|district|background|universe|agency|determined|goal|dream|survived|moved|born|build|hoped|hope|better|spells?|uncertain|terms?|eventually|struggles?|managed|opened|enrolled|expelled|tracked)\b/i.test(
+    /\b(?:childhood|academy|army|airship|country|refugee|business|district|background|universe|agency|determined|goal|dream|survived|moved|born|build|hoped|hope|better|spells?|uncertain|terms?|eventually|struggles?|managed|opened|enrolled|expelled|tracked)\b/i.test(
       clean,
     )
   ) {
@@ -606,7 +620,7 @@ function shouldKeepTaggedSourceFragment(value: string, requireVisualCue = false)
 }
 
 function hasVisualCue(value: string): boolean {
-  return /\b(?:female|male|woman|man|girl|boy|non[-\s]?binary|androgynous|genderless|adult|young adult|middle-aged|middle aged|elderly|senior|human|elf|dwarf|orc|android|robot|twenties|thirties|forties|fifties|sixties|statuesque|hair|eyes?|skin|face|body|petite|tall|short|slim|muscular|scar|freckles|beard|makeup|cheekbones|nails|smil(?:e|ing)|flowers?|ring|armor|armour|dress|shirt|blouse|trousers|coat|jacket|blazer|robe|uniform|sword|staff|hat|glasses|boots|portrait|close-up|upper body|face-and-shoulders|full body|centered|looking at viewer|expression|silhouette|fantasy|medieval|kingdom|castle|village|tavern|dungeon|forest|field|farm|road|market|city|urban|street|alley|temple|church|ruins?|graveyard|cave|mountain|river|lake|desert|snow|rain|storm|fog|night|dawn|morning|noon|afternoon|evening|sci-fi|scifi|cyberpunk|space|futuristic|modern|contemporary|western|victorian|steampunk|environment|landscape|scenery|location|interior|exterior)\b/i.test(
+  return /\b(?:female|male|woman|man|girl|boy|non[-\s]?binary|androgynous|genderless|adult|young adult|middle-aged|middle aged|elderly|senior|human|humanoid|elf|dwarf|orc|fae|fairy|demon|angel|vampire|mermaid|harpy|centaur|kobold|kitsune|fox|wolf|cat|rabbit|deer|lizard|dragon|serpent|fur|furred|tail|tails?|ears?|horns?|wings?|android|robot|twenties|thirties|forties|fifties|sixties|statuesque|hair|eyes?|skin|face|body|petite|tall|short|slim|muscular|scar|freckles|beard|makeup|cheekbones|nails|smil(?:e|ing)|flowers?|ring|armor|armour|dress|shirt|blouse|trousers|coat|jacket|blazer|robe|uniform|kimono|sari|hanfu|cheongsam|qipao|cloak|cape|mantle|hood|veil|mask|visor|goggles|sword|staff|scroll|book|tome|lantern|fan|parasol|satchel|pouch|hat|glasses|boots|sleeve|portrait|close-up|upper body|face-and-shoulders|full body|centered|looking at viewer|expression|silhouette|fantasy|medieval|kingdom|castle|village|tavern|dungeon|forest|field|farm|road|market|city|urban|street|alley|temple|church|ruins?|graveyard|cave|mountain|river|lake|desert|snow|rain|storm|fog|night|dawn|morning|noon|afternoon|evening|sci-fi|scifi|cyberpunk|space|futuristic|modern|contemporary|western|victorian|steampunk|environment|landscape|scenery|location|interior|exterior)\b/i.test(
     value,
   );
 }

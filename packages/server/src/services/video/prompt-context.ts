@@ -7,6 +7,7 @@ export interface SceneVideoPromptLimits {
 }
 
 const XAI_PROMPT_MAX_LENGTH = 3800;
+const UNBOUNDED_PROMPT_PART_LENGTH = Number.MAX_SAFE_INTEGER;
 
 const BOILERPLATE_PROMPT_CHUNK_PATTERNS = [
   /^(anime style|illustration|best quality|detailed eyes|clean lineart)$/i,
@@ -21,22 +22,32 @@ const BOILERPLATE_PROMPT_CHUNK_PATTERNS = [
   /subtitles|captions|speech bubbles|watermarks|logos|signatures|ui/i,
 ];
 
-export function getSceneVideoPromptLimits(isXai: boolean): SceneVideoPromptLimits {
-  return isXai
-    ? {
-        narrationSummary: 360,
-        illustrationPrompt: 900,
-        artStyle: 260,
-        title: 96,
-        finalPrompt: XAI_PROMPT_MAX_LENGTH,
-      }
-    : {
-        narrationSummary: 650,
-        illustrationPrompt: 1400,
-        artStyle: 420,
-        title: 120,
-        finalPrompt: null,
-      };
+export function getSceneVideoPromptLimits(isXai: boolean, isGeminiOmni = false): SceneVideoPromptLimits {
+  if (isXai) {
+    return {
+      narrationSummary: 360,
+      illustrationPrompt: 900,
+      artStyle: 260,
+      title: 96,
+      finalPrompt: XAI_PROMPT_MAX_LENGTH,
+    };
+  }
+  if (isGeminiOmni) {
+    return {
+      narrationSummary: UNBOUNDED_PROMPT_PART_LENGTH,
+      illustrationPrompt: UNBOUNDED_PROMPT_PART_LENGTH,
+      artStyle: UNBOUNDED_PROMPT_PART_LENGTH,
+      title: UNBOUNDED_PROMPT_PART_LENGTH,
+      finalPrompt: null,
+    };
+  }
+  return {
+    narrationSummary: 650,
+    illustrationPrompt: 1400,
+    artStyle: 420,
+    title: 120,
+    finalPrompt: null,
+  };
 }
 
 export function compactVideoPromptText(value: unknown, maxLength: number): string {

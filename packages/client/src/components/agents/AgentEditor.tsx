@@ -898,7 +898,7 @@ export function AgentEditor() {
     };
   }, [isMusicAgent, dbConfig?.id]);
 
-  // Fetch YouTube key-configured status when viewing Music DJ or a legacy YouTube agent.
+  // Fetch YouTube key-configured status when viewing Music DJ (Spotify); the legacy YouTube-agent path is unreachable.
   useEffect(() => {
     if (!showsYoutubeSettings || !dbConfig?.id) {
       setYoutubeConfigured(false);
@@ -928,7 +928,6 @@ export function AgentEditor() {
 
   // Whether the prompt textarea shows the default or a custom override
   const isUsingDefaultPrompt = !localPrompt.trim();
-  const _displayPrompt = isUsingDefaultPrompt ? defaultPrompt : localPrompt;
 
   const allConnections =
     (connections as
@@ -1537,7 +1536,7 @@ export function AgentEditor() {
           {isCustomAgent && dbConfig && (
             <button
               onClick={handleDelete}
-              className="mari-editor-action mari-editor-action--danger inline-flex"
+              className="mari-editor-action inline-flex"
               title="Delete agent"
               aria-label="Delete agent"
             >
@@ -3277,7 +3276,7 @@ export function AgentEditor() {
                                     },
                                   });
                                 }}
-                                className="shrink-0 p-1 rounded text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                className="shrink-0 rounded p-1 text-white/20 transition-colors hover:bg-white/10 hover:text-white/70"
                                 title="Delete file"
                               >
                                 <Trash2 size="0.75rem" />
@@ -3481,7 +3480,7 @@ export function AgentEditor() {
                           <button
                             type="button"
                             onClick={() => handleRemovePromptTemplate(option.id)}
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+	                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                             title="Remove prompt option"
                           >
                             <Trash2 size="0.75rem" />
@@ -3570,7 +3569,7 @@ export function AgentEditor() {
                   ))}
                 </div>
                 <p className="mt-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                  Tool-use must also be enabled per chat via Chat Settings → "Enable Function Calling".
+                  Tool-use must also be enabled per chat via Chat Settings → Function Calling → "Enable Tool Use".
                 </p>
               </>
             )}

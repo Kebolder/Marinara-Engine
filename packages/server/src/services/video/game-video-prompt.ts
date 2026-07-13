@@ -47,9 +47,10 @@ export function normalizeGameVideoPromptTemplates(value: unknown): AgentPromptTe
 
 function resolveGameVideoPromptTemplateId(args: {
   meta: Record<string, unknown>;
+  templateId?: string | null;
   options: AgentPromptTemplateOption[];
 }): string {
-  const selected = readTrimmedString(args.meta.gameVideoPromptTemplateId);
+  const selected = readTrimmedString(args.templateId) ?? readTrimmedString(args.meta.gameVideoPromptTemplateId);
   if (selected && args.options.some((option) => option.id === selected)) return selected;
   return GAME_VIDEO_PROMPT_TEMPLATE_ID;
 }
@@ -89,6 +90,7 @@ async function loadStoredGameVideoPromptOverride(args: {
 export async function loadGameVideoPrompt(args: {
   promptOverridesStorage: PromptOverridesStorage;
   meta: Record<string, unknown>;
+  templateId?: string | null;
   ctx: GameVideoCtx;
   debugMode?: boolean;
 }): Promise<string> {
@@ -96,11 +98,12 @@ export async function loadGameVideoPrompt(args: {
     ...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
     ...normalizeGameVideoPromptTemplates(args.meta.gameVideoPromptTemplates),
   ];
-  const explicitTemplateId = readTrimmedString(args.meta.gameVideoPromptTemplateId);
+  const explicitTemplateId = readTrimmedString(args.templateId) ?? readTrimmedString(args.meta.gameVideoPromptTemplateId);
   const hasExplicitTemplateSelection =
     explicitTemplateId !== null && options.some((option) => option.id === explicitTemplateId);
   const templateId = resolveGameVideoPromptTemplateId({
     meta: args.meta,
+    templateId: args.templateId,
     options,
   });
   const selectedTemplate =

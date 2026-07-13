@@ -1,7 +1,14 @@
 import { Component, useCallback, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
-import { normalizeTrackerFieldLocksForState, toggleTrackerFieldLock } from "@marinara-engine/shared";
+import {
+  normalizeTrackerFieldLocksForState,
+  normalizeTrackerHiddenFields,
+  toggleTrackerFieldHidden,
+  toggleTrackerFieldLock,
+  type TrackerHiddenFields,
+} from "@marinara-engine/shared";
 import { TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR, useUIStore } from "../../../stores/ui.store";
 import { useChatStore } from "../../../stores/chat.store";
+import { useGameStateStore } from "../../../stores/game-state.store";
 import { useGameStatePatcher } from "../../../hooks/use-game-state-patcher";
 import { getCssBackgroundStyle, getCssColorFallback, isCssGradient } from "../../../lib/css-colors";
 import { useRenderTimer } from "../../../lib/perf-diagnostics";
@@ -85,13 +92,32 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
   const [deleteMode, setDeleteMode] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [lockMode, setLockMode] = useState(false);
+  const [hideMode, setHideMode] = useState(false);
   const fieldLocks = currentGameState
     ? normalizeTrackerFieldLocksForState(currentGameState.fieldLocks, currentGameState)
     : null;
+  const hiddenTrackerFields = currentGameState ? normalizeTrackerHiddenFields(currentGameState.hiddenTrackerFields) : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId: activeChatId, fieldLocks, patchField });
+  const updateHiddenTrackerFields = useCallback(
+    (updater: (hiddenFields: TrackerHiddenFields | null | undefined) => TrackerHiddenFields) => {
+      const latestState = useGameStateStore.getState().current;
+      const base =
+        latestState?.chatId === activeChatId
+          ? normalizeTrackerHiddenFields(latestState.hiddenTrackerFields)
+          : hiddenTrackerFields;
+      patchField("hiddenTrackerFields", updater(base));
+    },
+    [activeChatId, hiddenTrackerFields, patchField],
+  );
   const toggleFieldLock = useCallback((key: string) => {
     updateFieldLocks((locks) => toggleTrackerFieldLock(locks, key));
   }, [updateFieldLocks]);
+  const toggleFieldHidden = useCallback(
+    (key: string) => {
+      updateHiddenTrackerFields((hiddenFields) => toggleTrackerFieldHidden(hiddenFields, key));
+    },
+    [updateHiddenTrackerFields],
+  );
   const hasFixedTrackerPanel = orderedTrackerSections.length > 0;
   const showTrackerSections = !!activeChatId && !isLoadingGameState && !!currentGameState && hasFixedTrackerPanel;
   const trackerPanelHasCustomBackground =
@@ -133,18 +159,25 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
       <div className="pointer-events-none absolute inset-0 z-0 opacity-[0.08] [background-image:linear-gradient(color-mix(in_srgb,var(--foreground)_12%,transparent)_1px,transparent_1px),linear-gradient(90deg,color-mix(in_srgb,var(--foreground)_9%,transparent)_1px,transparent_1px)] [background-size:8px_8px]" />
       <TrackerLockProvider
         fieldLocks={fieldLocks}
+        hiddenTrackerFields={hiddenTrackerFields}
         lockMode={lockMode}
+        hideMode={hideMode}
         onSetLockMode={setLockMode}
+        onSetHideMode={setHideMode}
         onToggleFieldLock={toggleFieldLock}
+        onToggleFieldHidden={toggleFieldHidden}
         onUpdateFieldLocks={updateFieldLocks}
+        onUpdateHiddenFields={updateHiddenTrackerFields}
       >
         <TrackerSidebarHeader
           trackerPanelSide={trackerPanelSide}
           sizeProfile={trackerPanelSizeProfile}
           addMode={addMode}
           deleteMode={deleteMode}
+          hideMode={hideMode}
           onSetAddMode={setAddMode}
           onSetDeleteMode={setDeleteMode}
+          onSetHideMode={setHideMode}
           onSetSide={setTrackerPanelSide}
           onSetSizeProfile={setTrackerPanelSizeProfile}
           onClose={() => setTrackerPanelOpen(false)}
@@ -180,6 +213,7 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
                 toggleTrackerPanelSectionCollapsed={toggleTrackerPanelSectionCollapsed}
                 deleteMode={deleteMode}
                 addMode={addMode}
+                hideMode={hideMode}
               />
             </TrackerPanelErrorBoundary>
           ) : null}

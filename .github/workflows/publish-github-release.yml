@@ -56,6 +56,20 @@ jobs:
       - name: Render release notes
         run: pnpm release:notes -- "${{ steps.resolve_tag.outputs.version }}" --output release-notes.md
 
+      - name: Build named source archive
+        id: source_archive
+        shell: bash
+        run: |
+          archive="Marinara-Engine-${{ steps.resolve_tag.outputs.version }}.zip"
+          git archive \
+            --format=zip \
+            --prefix="Marinara-Engine-${{ steps.resolve_tag.outputs.version }}/" \
+            --output="$archive" \
+            "${{ steps.resolve_tag.outputs.tag }}"
+          test -s "$archive"
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+          ls -lh "$archive"
+
       - name: Publish release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
@@ -63,3 +77,4 @@ jobs:
           name: ${{ steps.resolve_tag.outputs.tag }}
           body_path: release-notes.md
           generate_release_notes: false
+          files: ${{ steps.source_archive.outputs.path }}

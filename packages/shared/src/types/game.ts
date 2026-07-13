@@ -185,6 +185,16 @@ export interface GameSetupConfig {
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** Automatically create storyboard keyframe videos after completed GM turns. */
   gameStoryboardAutoGenerationEnabled?: boolean;
+  /** Target number of storyboard keyframes to create per completed GM turn. */
+  gameStoryboardKeyframeCount?: number;
+  /** Selected built-in or chat-local GM prompt template. */
+  gameGmPromptTemplateId?: string | null;
+  /** Selected animation-ready storyboard director template. */
+  gameStoryboardAnimationPromptTemplateId?: string | null;
+  /** Selected prompt template used only for storyboard keyframe videos. */
+  gameStoryboardVideoPromptTemplateId?: string | null;
+  /** Send storyboard imagePrompt directly to the image compiler/provider. */
+  gameStoryboardUseDirectScenePrompt?: boolean;
   /** Unified art style prompt applied to all generated images (auto-generated at setup) */
   artStylePrompt?: string;
   /** Optional image style profile applied to generated images in this game. */
@@ -217,6 +227,40 @@ export interface GameSetupConfig {
   gameSystemPrompt?: string | null;
   /** Additional game-mode generation instructions appended to the GM format reminder. */
   gameSpecialInstructions?: string | null;
+}
+
+/** Safe, immutable connection details retained for sharing a game's original setup. */
+export interface GameInitialSetupConnectionSnapshot {
+  name: string;
+  provider?: string | null;
+  model?: string | null;
+  service?: string | null;
+}
+
+/** Creation-time display names for local resources referenced by the setup. */
+export interface GameInitialSetupLabels {
+  characterNames?: Record<string, string>;
+  lorebookNames?: Record<string, string>;
+  promptPresetNames?: Record<string, string>;
+  personaName?: string | null;
+}
+
+/** Immutable copy of the choices and effective parameters used when a game was first created. */
+export interface GameInitialSetupSnapshot {
+  config: GameSetupConfig;
+  /** Effective values after connection defaults and setup overrides were merged. */
+  effectiveGenerationParameters?: Partial<GenerationParameters> | null;
+  /** Free-text preferences are sent separately during setup, so retain them beside the config. */
+  preferences?: string | null;
+  /** Safe display details only. API keys, URLs, and local connection IDs are never retained here. */
+  connections?: {
+    gm?: GameInitialSetupConnectionSnapshot | null;
+    scene?: GameInitialSetupConnectionSnapshot | null;
+    image?: GameInitialSetupConnectionSnapshot | null;
+    video?: GameInitialSetupConnectionSnapshot | null;
+  };
+  labels?: GameInitialSetupLabels;
+  createdAt: string;
 }
 
 // ── Dice ──
@@ -294,9 +338,6 @@ export interface CombatSkill {
   element?: string;
   statusEffect?: string;
 }
-
-/** Element presets for the elemental reaction system */
-export type ElementPresetName = "default" | "genshin" | "hsr";
 
 /** Lightweight element info for the client */
 export interface ElementInfo {

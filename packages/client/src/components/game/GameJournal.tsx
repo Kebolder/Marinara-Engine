@@ -365,11 +365,14 @@ function TimelineView({ entries }: { entries: JournalEntry[] }) {
   );
 }
 
+// Thresholds must match getReputationTier in packages/server/src/services/game/reputation.service.ts
 function reputationLabel(rep: number): { text: string; color: string } {
+  if (rep >= 80) return { text: "Devoted", color: "text-emerald-300" };
   if (rep >= 50) return { text: "Allied", color: "text-emerald-400" };
   if (rep >= 20) return { text: "Friendly", color: "text-green-400" };
   if (rep >= -20) return { text: "Neutral", color: "text-gray-400" };
-  if (rep >= -50) return { text: "Hostile", color: "text-orange-400" };
+  if (rep >= -50) return { text: "Unfriendly", color: "text-amber-400" };
+  if (rep >= -80) return { text: "Hostile", color: "text-orange-400" };
   return { text: "Enemy", color: "text-red-400" };
 }
 

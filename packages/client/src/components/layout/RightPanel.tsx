@@ -29,11 +29,15 @@ const BotBrowserPanel = lazy(() =>
 
 const PANEL_CONFIG: Record<string, { title: string; icon: ReactNode; gradient?: string; gradientClass?: string }> = {
   "bot-browser": {
-    title: "Browser",
+    title: "Bot Browser",
     icon: <Bot size="0.875rem" />,
     gradient: "from-lime-400 via-green-500 to-cyan-500",
   },
-  characters: { title: "Characters", icon: <Users size="0.875rem" />, gradient: "from-pink-400 to-rose-500" },
+  characters: {
+    title: "Characters",
+    icon: <Users size="0.875rem" />,
+    gradientClass: "bg-[image:var(--marinara-app-accent-gradient)] text-[var(--primary-foreground)]",
+  },
   lorebooks: { title: "Lorebooks", icon: <BookOpen size="0.875rem" />, gradient: "from-amber-400 to-orange-500" },
   presets: {
     title: "Presets",

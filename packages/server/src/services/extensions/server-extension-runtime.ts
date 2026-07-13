@@ -2,7 +2,9 @@ import vm from "node:vm";
 import type { FastifyInstance } from "fastify";
 import type { DB } from "../../db/connection.js";
 import { logger } from "../../lib/logger.js";
+import { createAppSettingsStorage } from "../storage/app-settings.storage.js";
 import { createExtensionsStorage } from "../storage/extensions.storage.js";
+import { createExtensionSettingsStorage } from "./extension-storage.service.js";
 import { safeFetch } from "../../utils/security.js";
 import type { InstalledExtension } from "@marinara-engine/shared";
 
@@ -197,6 +199,7 @@ class ServerExtensionRuntime {
   }
 
   private async load(extension: InstalledExtension): Promise<void> {
+    if (!this.db) throw new Error("Server extension runtime is not connected to storage");
     const cleanupFns: CleanupFn[] = [];
     const activeExtension: ActiveServerExtension = {
       id: extension.id,
@@ -231,6 +234,7 @@ class ServerExtensionRuntime {
       const payload = { extensionId: extension.id, extensionName: extension.name, args: normalizeLogArgs(args) };
       logger[level](payload, "[server-extension] %s", extension.name);
     };
+    const extensionSettings = createExtensionSettingsStorage(createAppSettingsStorage(this.db));
     const marinara = Object.freeze({
       runtime: "server" as const,
       version: 1,
@@ -249,6 +253,11 @@ class ServerExtensionRuntime {
           maxResponseBytes: SERVER_EXTENSION_FETCH_MAX_BYTES,
           bufferResponse: false,
         }),
+      storage: Object.freeze({
+        get: () => extensionSettings.get(extension.id),
+        patch: (patch: Record<string, unknown>) => extensionSettings.patch(extension.id, patch),
+        delete: () => extensionSettings.remove(extension.id),
+      }),
       setTimeout: timers.setManagedTimeout,
       setInterval: timers.setManagedInterval,
       clearTimeout,

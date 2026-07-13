@@ -346,6 +346,17 @@ export async function getActiveTurnGame(db: DB, chatId: string): Promise<LoadedG
 }
 
 /**
+ * Load the chat's latest game snapshot regardless of terminal status — unlike
+ * `getActiveTurnGame`, this returns a FINISHED game too. Used by the bot-turn
+ * loop's post-loop announcement drain: a showdown/game_over event queued by the
+ * last bot move needs to be voiced even though the game is now finished (at
+ * which point `getActiveTurnGame` would return null and hide it).
+ */
+export async function loadTurnGameForDrain(db: DB, chatId: string): Promise<LoadedGame | null> {
+  return loadGame(db, chatId, null);
+}
+
+/**
  * Load the chat's game once and return a per-seat context builder for it, so a
  * multi-character generation pays the game load (message-anchor scan + state
  * parse) once per request instead of once per responding character. Returns

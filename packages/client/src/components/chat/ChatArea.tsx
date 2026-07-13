@@ -61,6 +61,7 @@ import {
   BUILT_IN_AGENTS,
   PROFESSOR_MARI_ID,
   buildGuidedGenerationInstructionMessage,
+  normalizeManualTrackerAgentTypes,
   type AchievementEvent,
   type GeneratedSceneVideo,
   type SpritePlacement,
@@ -109,8 +110,7 @@ import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { HomeAchievements } from "./HomeAchievements";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
-import { PendingTypingDots } from "./PendingTypingDots";
-import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
+import { CreatorNotesCssInjector, type CardCssMode, type PersonaCssRow } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
 import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "../ui/ImagePromptReviewModal";
 
@@ -345,6 +345,8 @@ function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
     const extensions = data.extensions && typeof data.extensions === "object" ? data.extensions : {};
     return {
       name: data.name ?? "Unknown",
+      convoDisplayName: extensions.convoDisplayName || undefined,
+      phoneticName: extensions.phoneticName || undefined,
       description: data.description ?? "",
       personality: data.personality ?? "",
       backstory: extensions.backstory ?? "",
@@ -373,6 +375,8 @@ function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
 function areCharacterMapValuesEqual(a: CharacterMapValue, b: CharacterMapValue): boolean {
   return (
     a.name === b.name &&
+    a.convoDisplayName === b.convoDisplayName &&
+    a.phoneticName === b.phoneticName &&
     a.description === b.description &&
     a.personality === b.personality &&
     a.backstory === b.backstory &&
@@ -514,6 +518,7 @@ export function ChatArea() {
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
   const editLastMessageOnArrowUp = useUIStore((s) => s.editLastMessageOnArrowUp);
+  const ttsLineVolume = useUIStore((s) => s.ttsLineVolume);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
@@ -538,6 +543,9 @@ export function ChatArea() {
   const [homeProfessorChatOpen, setHomeProfessorChatOpen] = useState(false);
   const [homeProfessorChatActive, setHomeProfessorChatActive] = useState(false);
   const homeProfessorChatOpenRef = useRef(false);
+  const homeViewportRef = useRef<HTMLDivElement>(null);
+  const homeContentRef = useRef<HTMLDivElement>(null);
+  const [homeFitScale, setHomeFitScale] = useState(1);
   const queryClient = useQueryClient();
   useEffect(() => {
     homeProfessorChatOpenRef.current = homeProfessorChatOpen;
@@ -549,6 +557,61 @@ export function ChatArea() {
   const handleHomeProfessorChatExitComplete = useCallback(() => {
     if (!homeProfessorChatOpenRef.current) setHomeProfessorChatActive(false);
   }, []);
+  useLayoutEffect(() => {
+    if (activeChatId || homeProfessorChatActive) {
+      setHomeFitScale(1);
+      return;
+    }
+
+    const viewport = homeViewportRef.current;
+    const content = homeContentRef.current;
+    if (!viewport || !content) return;
+
+    let frame: number | null = null;
+    let disposed = false;
+    const updateScale = () => {
+      frame = null;
+      if (disposed) return;
+
+      const viewportStyle = getComputedStyle(viewport);
+      const availableHeight =
+        viewport.clientHeight -
+        Number.parseFloat(viewportStyle.paddingTop || "0") -
+        Number.parseFloat(viewportStyle.paddingBottom || "0");
+      const availableWidth =
+        viewport.clientWidth -
+        Number.parseFloat(viewportStyle.paddingLeft || "0") -
+        Number.parseFloat(viewportStyle.paddingRight || "0");
+      const naturalHeight = content.scrollHeight;
+      const naturalWidth = content.scrollWidth;
+
+      if (availableHeight <= 0 || availableWidth <= 0 || naturalHeight <= 0 || naturalWidth <= 0) return;
+
+      const nextScale = Math.min(1, availableHeight / naturalHeight, availableWidth / naturalWidth);
+      const fittedScale = Math.max(0, Math.floor(nextScale * 1000) / 1000);
+      setHomeFitScale((current) => (Math.abs(current - fittedScale) < 0.001 ? current : fittedScale));
+    };
+    const scheduleScaleUpdate = () => {
+      if (disposed) return;
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateScale);
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => scheduleScaleUpdate());
+    resizeObserver?.observe(viewport);
+    resizeObserver?.observe(content);
+    window.addEventListener("resize", scheduleScaleUpdate);
+    void document.fonts?.ready.then(scheduleScaleUpdate);
+    updateScale();
+
+    return () => {
+      disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleScaleUpdate);
+    };
+  }, [activeChatId, homeProfessorChatActive]);
   const trackHomeFooterAchievement = useCallback(
     (event: AchievementEvent) => {
       void trackAchievementEvent(event, { keepalive: true })
@@ -667,14 +730,6 @@ export function ChatArea() {
     if (!messages) return map;
     messages.forEach((message, index) => {
       map.set(messageOffset + index, message.id);
-    });
-    return map;
-  }, [messageOffset, messages]);
-  const _messageOrderIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    if (!messages) return map;
-    messages.forEach((message, index) => {
-      map.set(message.id, messageOffset + index);
     });
     return map;
   }, [messageOffset, messages]);
@@ -801,6 +856,7 @@ export function ChatArea() {
         if (typeof snapshot.name !== "string") continue;
         map.set(id, {
           name: snapshot.name,
+          convoDisplayName: snapshot.convoDisplayName,
           description: snapshot.description ?? "",
           personality: snapshot.personality ?? "",
           backstory: snapshot.backstory ?? "",
@@ -923,6 +979,8 @@ export function ChatArea() {
     return {
       id: persona.id,
       name: persona.name,
+      convoDisplayName: persona.convoDisplayName || undefined,
+      phoneticName: persona.phoneticName || undefined,
       description: persona.description ?? "",
       personality: persona.personality || undefined,
       scenario: persona.scenario || undefined,
@@ -1209,10 +1267,23 @@ export function ChatArea() {
     chatMeta.cardCssMode === "exclusive" || chatMeta.cardCssMode === "chat" ? chatMeta.cardCssMode : "disabled";
   const cardCssChatMode: ChatModeFilter =
     chatMode === "conversation" ? "conversation" : chatMode === "game" ? "game" : "roleplay";
+  // Persona creator-notes CSS only reaches the Conversation about-me popout
+  // (personas have no other data-card-css hook), so only feed it in Convo mode.
+  const cardCssPersonas = useMemo<PersonaCssRow[] | undefined>(() => {
+    if (chatMode !== "conversation") return undefined;
+    const persona = (chatPersona ?? (!isGameChat ? activePersonaFallback : null)) as
+      | { id?: string; creatorNotes?: string | null }
+      | null
+      | undefined;
+    return persona?.id
+      ? [{ id: persona.id, creatorNotes: typeof persona.creatorNotes === "string" ? persona.creatorNotes : null }]
+      : undefined;
+  }, [chatMode, chatPersona, activePersonaFallback, isGameChat]);
   const cardCssInjector = (
     <CreatorNotesCssInjector
       characterIds={chatCharIds}
       allCharacters={chatCharacterRows}
+      personas={cardCssPersonas}
       mode={cardCssMode}
       chatMode={cardCssChatMode}
     />
@@ -1430,6 +1501,19 @@ export function ChatArea() {
     for (const id of activeAgentIds) set.add(id);
     return set;
   }, [chatMeta.enableAgents, chatMeta.activeAgentIds]);
+  const manualTrackerAgentTypes = useMemo(
+    () => normalizeManualTrackerAgentTypes(chatMeta.manualTrackerAgentTypes),
+    [chatMeta.manualTrackerAgentTypes],
+  );
+  const manualTrackerTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const type of enabledAgentTypes) {
+      if (!BUILT_IN_TRACKER_AGENT_ID_SET.has(type)) continue;
+      if (chatMeta.manualTrackers === true || manualTrackerAgentTypes[type] === true) set.add(type);
+    }
+    return set;
+  }, [chatMeta.manualTrackers, enabledAgentTypes, manualTrackerAgentTypes]);
+  const hasManualTrackerAgents = manualTrackerTypes.size > 0;
 
   const combatAgentEnabled = enabledAgentTypes.has("combat");
   const expressionAgentEnabled = enabledAgentTypes.has("expression");
@@ -1731,12 +1815,16 @@ export function ChatArea() {
 
   const handleRerunTrackers = useCallback(async () => {
     if (!activeChatId || isStreaming || agentProcessing) return;
-    const types = Array.from(enabledAgentTypes).filter(
-      (type) => BUILT_IN_TRACKER_AGENT_ID_SET.has(type) || !BUILT_IN_AGENT_ID_SET.has(type),
-    );
+    const manualTypes = Array.from(manualTrackerTypes);
+    const types =
+      manualTypes.length > 0
+        ? manualTypes
+        : Array.from(enabledAgentTypes).filter(
+            (type) => BUILT_IN_TRACKER_AGENT_ID_SET.has(type) || !BUILT_IN_AGENT_ID_SET.has(type),
+          );
     if (types.length === 0) return;
     await retryAgents(activeChatId, types);
-  }, [activeChatId, isStreaming, agentProcessing, enabledAgentTypes, retryAgents]);
+  }, [activeChatId, isStreaming, agentProcessing, enabledAgentTypes, manualTrackerTypes, retryAgents]);
 
   const handleRerunSingleTracker = useCallback(
     async (agentType: string) => {
@@ -1859,9 +1947,9 @@ export function ChatArea() {
   // Peek prompt state
   const [peekPromptData, setPeekPromptData] = useState<PeekPromptData | null>(null);
 
-  const handlePeekPrompt = useCallback(() => {
+  const handlePeekPrompt = useCallback((messageId?: string) => {
     if (!activeChatId) return;
-    peekPrompt.mutate(activeChatId, {
+    peekPrompt.mutate(messageId ? { chatId: activeChatId, messageId } : activeChatId, {
       onSuccess: (data) => setPeekPromptData(data),
       onError: (error) => {
         const message =
@@ -2122,6 +2210,7 @@ export function ChatArea() {
   const userScrolledAtRef = useRef(0);
   const forcedBottomScrollRef = useRef<{ requestedAt: number; behavior: ScrollBehavior } | null>(null);
   const openedAtBottomChatIdRef = useRef<string | null>(null);
+  const streamScrollFrameRef = useRef(0);
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
     if (el) {
@@ -2130,6 +2219,23 @@ export function ChatArea() {
     }
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
+  const scheduleStreamScrollToBottom = useCallback(() => {
+    if (streamScrollFrameRef.current) return;
+    streamScrollFrameRef.current = requestAnimationFrame(() => {
+      streamScrollFrameRef.current = 0;
+      if (isLoadingMoreRef.current || !isNearBottomRef.current || userScrolledAwayRef.current) return;
+      // Streaming already animates the text every frame. Starting a new smooth
+      // scroll for every character queues competing animations and makes both
+      // the typewriter and bottom-follow motion stutter.
+      scrollToMessagesBottom("auto");
+    });
+  }, [scrollToMessagesBottom]);
+  useEffect(
+    () => () => {
+      if (streamScrollFrameRef.current) cancelAnimationFrame(streamScrollFrameRef.current);
+    },
+    [],
+  );
   const scheduleScrollToMessagesBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       scrollToMessagesBottom(behavior);
@@ -2275,8 +2381,9 @@ export function ChatArea() {
 
     void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id, {
       progressive: cfg.progressivePlayback,
+      volume: ttsLineVolume / 100,
     });
-  }, [characterMap, isStreaming, resolveTTSCharacterId]);
+  }, [characterMap, isStreaming, resolveTTSCharacterId, ttsLineVolume]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;
   const newestMsgSwipeIndex = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.activeSwipeIndex;
@@ -2310,13 +2417,25 @@ export function ChatArea() {
     const unsub = useChatStore.subscribe((state) => {
       if (state.streamBuffer !== prev) {
         prev = state.streamBuffer;
-        if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
-          scrollToMessagesBottom("smooth");
-        }
+        scheduleStreamScrollToBottom();
       }
     });
     return unsub;
-  }, [scrollToMessagesBottom]);
+  }, [scheduleStreamScrollToBottom]);
+
+  // The stream-buffer subscription runs before React necessarily commits the
+  // corresponding text. Observe the rendered transcript as well so long
+  // typewriter rewrites follow the actual growing DOM instead of scrolling to
+  // the previous frame's height. The normal near-bottom/user-scroll guards in
+  // scheduleStreamScrollToBottom still let readers disengage auto-follow.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!isStreaming || !el || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver(() => scheduleStreamScrollToBottom());
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [isStreaming, scheduleStreamScrollToBottom]);
 
   // Preserve scroll position when older messages are prepended
   const pageCount = msgData?.pages.length ?? 0;
@@ -2443,20 +2562,28 @@ export function ChatArea() {
       <>
         <HomeCreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
         <div
+          ref={homeViewportRef}
           data-component="ChatArea.EmptyState"
           className={cn(
             "mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center",
-            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-y-auto p-1.5 sm:p-3 lg:p-3",
+            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-hidden p-1.5 sm:p-3 lg:p-3",
           )}
         >
           {showEmptyStateEffects && !homeProfessorChatActive && <HomeStarfield />}
           <div
+            ref={homeContentRef}
+            data-component="ChatArea.HomeContent"
             className={cn(
               "relative z-[1] flex w-full flex-col items-center",
               homeProfessorChatActive
                 ? "min-h-0 flex-1 max-w-none gap-0 py-0"
-                : "max-w-5xl gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
+                : "home-viewport-fit-content max-w-5xl shrink-0 gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
             )}
+            style={
+              homeProfessorChatActive
+                ? undefined
+                : ({ "--mari-home-fit-scale": String(homeFitScale) } as CSSProperties)
+            }
           >
             {!homeProfessorChatActive && (
               <>
@@ -2728,9 +2855,12 @@ export function ChatArea() {
             characters={gameCharacters}
             personaInfo={personaInfo}
             chatBackground={chatBackground}
+            connectedChatName={connectedChatName}
             onOpenSettings={handleOpenSettingsPanel}
             onCloseSettings={handleCloseSettingsPanel}
+            onSwitchChat={chat.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onDeleteMessage={handleDelete}
+            onPeekPrompt={handlePeekPrompt}
             multiSelectMode={multiSelectMode}
             selectedMessageIds={selectedMessageIds}
           />
@@ -2906,6 +3036,7 @@ export function ChatArea() {
           fullBodySpriteOpacity={fullBodySpriteOpacity}
           spriteArrangeMode={spriteArrangeMode}
           enabledAgentTypes={enabledAgentTypes}
+          manualTrackersActive={hasManualTrackerAgents}
           chatCharIds={chatCharIds}
           characterMap={characterMap}
           characterNames={characterNames}
@@ -3015,18 +3146,6 @@ export function ChatArea() {
         />
       )}
     </>
-  );
-}
-
-/** Animated typing indicator — three bouncing dots (currently unused, kept for future) */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-1 px-4 py-3">
-      <div className="flex items-center gap-1 rounded-xl bg-[var(--secondary)] px-4 py-2.5">
-        <PendingTypingDots dotClassName="bg-[var(--muted-foreground)]/60" />
-      </div>
-    </div>
   );
 }
 

@@ -54,6 +54,15 @@ export interface SceneFullPlan {
   participationGuide: string;
 }
 
+export type ScenePromptPov = "first_person" | "second_person" | "third_person";
+export type ScenePromptTense = "past" | "present" | "future";
+
+export interface ScenePromptPreferences {
+  pov: ScenePromptPov;
+  tense: ScenePromptTense;
+  extraInstructions?: string;
+}
+
 /** Request body for POST /scene/create. */
 export interface SceneCreateRequest {
   /** The conversation chat to branch from. */
@@ -143,6 +152,8 @@ export interface ScenePlanRequest {
   prompt: string;
   /** Connection override. */
   connectionId?: string | null;
+  /** Optional user preferences for the generated scene prompt and opening message. */
+  promptPreferences?: ScenePromptPreferences | null;
 }
 
 /** Response from POST /scene/plan — the LLM plans everything. */

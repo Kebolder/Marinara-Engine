@@ -42,6 +42,7 @@ export default defineConfig({
             DEV_SERVER_READY_TIMEOUT_MS: "180000",
             LOG_DISABLE_REQUEST_LOGGING: "true",
             LOG_LEVEL: "silent",
+            MARINARA_E2E_DISABLE_RATE_LIMIT: "true",
             MARINARA_ENV_FILE: "../../.tmp/playwright-data/.env",
             PORT: String(serverPort),
             SKIP_PWA: "true",

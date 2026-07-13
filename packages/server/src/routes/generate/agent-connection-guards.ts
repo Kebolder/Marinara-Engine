@@ -6,6 +6,7 @@ export type AgentConnectionWarning = {
   message: string;
   agentNames: string[];
   fallbackPrevented?: true;
+  connectionId?: string;
   connectionName?: string;
   model?: string;
 };
@@ -48,6 +49,7 @@ export function buildLocalSidecarUnavailableWarning(agentNames: string[]): Agent
 
 export function buildDefaultAgentConnectionWarning(args: {
   agentNames: string[];
+  connectionId: string;
   connectionName: string;
   model: string;
 }): AgentConnectionWarning {
@@ -59,6 +61,7 @@ export function buildDefaultAgentConnectionWarning(args: {
     code: "default_agent_connection_active",
     severity: "warning",
     agentNames: normalizedNames,
+    connectionId: args.connectionId,
     connectionName: args.connectionName,
     model: args.model,
     message: `${agentList} ${noun} using the default agent connection "${args.connectionName}" (${args.model}). If this is a paid API model, agent calls may bill that provider.`,

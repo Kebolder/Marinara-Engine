@@ -7,12 +7,17 @@ import { gameStateSnapshots } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import {
   coerceGameStateTextValue,
+  normalizeWorldCustomFields,
   normalizeTrackerFieldLocks,
   normalizeTrackerFieldLocksForState,
+  normalizeTrackerHiddenFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   trackerFieldLocksAreEmpty,
+  trackerHiddenFieldsAreEmpty,
   type GameState,
   type TrackerFieldLocks,
+  type TrackerHiddenFields,
 } from "@marinara-engine/shared";
 
 export type GameStateVisibleAnchor = { messageId: string; swipeIndex: number };
@@ -27,10 +32,12 @@ type GameStateUpdateFields = Partial<
     | "location"
     | "weather"
     | "temperature"
+    | "worldCustomFields"
     | "presentCharacters"
     | "playerStats"
     | "personaStats"
     | "fieldLocks"
+    | "hiddenTrackerFields"
   >
 >;
 
@@ -44,11 +51,13 @@ type LockMigrationStateSource = {
   location?: unknown;
   weather?: unknown;
   temperature?: unknown;
+  worldCustomFields?: unknown;
   presentCharacters?: unknown;
   recentEvents?: unknown;
   playerStats?: unknown;
   personaStats?: unknown;
   fieldLocks?: unknown;
+  hiddenTrackerFields?: unknown;
   createdAt?: unknown;
 };
 
@@ -67,9 +76,7 @@ function parseStoredManualOverrides(value: unknown): Record<string, string> | nu
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, string>)
-        : null;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string>) : null;
     } catch {
       return null;
     }
@@ -84,6 +91,11 @@ function serializeManualOverrides(manualOverrides: Record<string, string> | null
 function serializeFieldLocks(fieldLocks: TrackerFieldLocks | null | undefined) {
   const normalized = normalizeTrackerFieldLocks(fieldLocks);
   return trackerFieldLocksAreEmpty(normalized) ? null : JSON.stringify(normalized);
+}
+
+function serializeHiddenTrackerFields(hiddenFields: TrackerHiddenFields | null | undefined) {
+  const normalized = normalizeTrackerHiddenFields(hiddenFields);
+  return trackerHiddenFieldsAreEmpty(normalized) ? null : JSON.stringify(normalized);
 }
 
 function parseSnapshotJson<T>(value: unknown, fallback: T): T {
@@ -108,11 +120,13 @@ function buildLockMigrationState(row: LockMigrationStateSource): GameState {
     location: coerceGameStateTextValue(row.location),
     weather: coerceGameStateTextValue(row.weather),
     temperature: coerceGameStateTextValue(row.temperature),
+    worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, [])),
     presentCharacters: parseSnapshotJson(row.presentCharacters, []),
     recentEvents: parseSnapshotJson(row.recentEvents, []),
     playerStats: parseSnapshotJson(row.playerStats, null),
     personaStats: parseSnapshotJson(row.personaStats, null),
     fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
+    hiddenTrackerFields: parseTrackerHiddenFields(row.hiddenTrackerFields),
     createdAt: typeof row.createdAt === "string" ? row.createdAt : now(),
   };
 }
@@ -314,12 +328,14 @@ export function createGameStateStorage(db: DB) {
         messageId: state.messageId,
         swipeIndex: state.swipeIndex,
         ...coerceSnapshotTextFields(state),
+        worldCustomFields: JSON.stringify(normalizeWorldCustomFields(state.worldCustomFields)),
         presentCharacters: JSON.stringify(state.presentCharacters),
         recentEvents: JSON.stringify(state.recentEvents),
         playerStats: state.playerStats ? JSON.stringify(state.playerStats) : null,
         personaStats: state.personaStats ? JSON.stringify(state.personaStats) : null,
         manualOverrides: serializeManualOverrides(manualOverrides),
         fieldLocks: serializeFieldLocks(state.fieldLocks),
+        hiddenTrackerFields: serializeHiddenTrackerFields(state.hiddenTrackerFields),
         committed: state.committed ? 1 : 0,
         createdAt: now(),
       });
@@ -380,6 +396,7 @@ export function createGameStateStorage(db: DB) {
         location: coerceGameStateTextValue(latest?.location),
         weather: coerceGameStateTextValue(latest?.weather),
         temperature: coerceGameStateTextValue(latest?.temperature),
+        worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(latest?.worldCustomFields, [])),
         presentCharacters: latest?.presentCharacters
           ? typeof latest.presentCharacters === "string"
             ? JSON.parse(latest.presentCharacters)
@@ -401,6 +418,7 @@ export function createGameStateStorage(db: DB) {
             : latest.personaStats
           : null,
         fieldLocks: parseTrackerFieldLocks(latest?.fieldLocks),
+        hiddenTrackerFields: parseTrackerHiddenFields(latest?.hiddenTrackerFields),
       };
       baseState.fieldLocks = normalizeTrackerFieldLocksForState(
         baseState.fieldLocks,
@@ -413,11 +431,19 @@ export function createGameStateStorage(db: DB) {
       if (fields.location !== undefined) baseState.location = coerceGameStateTextValue(fields.location);
       if (fields.weather !== undefined) baseState.weather = coerceGameStateTextValue(fields.weather);
       if (fields.temperature !== undefined) baseState.temperature = coerceGameStateTextValue(fields.temperature);
+      if (fields.worldCustomFields !== undefined)
+        baseState.worldCustomFields = normalizeWorldCustomFields(fields.worldCustomFields);
       if (fields.presentCharacters !== undefined) baseState.presentCharacters = fields.presentCharacters as any;
       if (fields.playerStats !== undefined) baseState.playerStats = fields.playerStats as any;
       if (fields.personaStats !== undefined) baseState.personaStats = fields.personaStats as any;
       if (fields.fieldLocks !== undefined) {
-        baseState.fieldLocks = normalizeTrackerFieldLocksForState(fields.fieldLocks, buildLockMigrationState(baseState));
+        baseState.fieldLocks = normalizeTrackerFieldLocksForState(
+          fields.fieldLocks,
+          buildLockMigrationState(baseState),
+        );
+      }
+      if (fields.hiddenTrackerFields !== undefined) {
+        baseState.hiddenTrackerFields = normalizeTrackerHiddenFields(fields.hiddenTrackerFields);
       }
 
       const manualOverrides = manual
@@ -434,11 +460,7 @@ export function createGameStateStorage(db: DB) {
     },
 
     /** Internal: apply field updates + optional manual-override tracking to a snapshot row. */
-    async _applyUpdate(
-      row: typeof gameStateSnapshots.$inferSelect,
-      fields: GameStateUpdateFields,
-      manual?: boolean,
-    ) {
+    async _applyUpdate(row: typeof gameStateSnapshots.$inferSelect, fields: GameStateUpdateFields, manual?: boolean) {
       const updates: Record<string, unknown> = {};
       const existingLockMigrationState = buildLockMigrationState(row);
       if (fields.date !== undefined) updates.date = coerceGameStateTextValue(fields.date);
@@ -446,11 +468,15 @@ export function createGameStateStorage(db: DB) {
       if (fields.location !== undefined) updates.location = coerceGameStateTextValue(fields.location);
       if (fields.weather !== undefined) updates.weather = coerceGameStateTextValue(fields.weather);
       if (fields.temperature !== undefined) updates.temperature = coerceGameStateTextValue(fields.temperature);
+      if (fields.worldCustomFields !== undefined)
+        updates.worldCustomFields = JSON.stringify(normalizeWorldCustomFields(fields.worldCustomFields));
       if (fields.presentCharacters !== undefined) updates.presentCharacters = JSON.stringify(fields.presentCharacters);
       if (fields.playerStats !== undefined)
         updates.playerStats = fields.playerStats ? JSON.stringify(fields.playerStats) : null;
       if (fields.personaStats !== undefined)
         updates.personaStats = fields.personaStats ? JSON.stringify(fields.personaStats) : null;
+      if (fields.hiddenTrackerFields !== undefined)
+        updates.hiddenTrackerFields = serializeHiddenTrackerFields(fields.hiddenTrackerFields);
 
       if (manual) {
         const storedOverrides = parseStoredManualOverrides(row.manualOverrides) ?? {};
@@ -473,6 +499,9 @@ export function createGameStateStorage(db: DB) {
       if (fields.fieldLocks !== undefined) {
         const incomingLockMigrationState = buildLockMigrationState({
           ...row,
+          ...(fields.worldCustomFields !== undefined
+            ? { worldCustomFields: normalizeWorldCustomFields(fields.worldCustomFields) }
+            : {}),
           ...(fields.presentCharacters !== undefined ? { presentCharacters: fields.presentCharacters } : {}),
           ...(fields.playerStats !== undefined ? { playerStats: fields.playerStats } : {}),
           ...(fields.personaStats !== undefined ? { personaStats: fields.personaStats } : {}),

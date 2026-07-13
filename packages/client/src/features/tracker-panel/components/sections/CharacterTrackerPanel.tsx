@@ -38,6 +38,7 @@ export function CharacterTrackerPanel({
   onUploadAvatar,
   deleteMode,
   addMode,
+  hideMode,
   action,
   collapsed = false,
   onToggleCollapsed,
@@ -61,6 +62,7 @@ export function CharacterTrackerPanel({
   onUploadAvatar: (index: number) => void;
   deleteMode: boolean;
   addMode: boolean;
+  hideMode: boolean;
   action?: ReactNode;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
@@ -120,6 +122,7 @@ export function CharacterTrackerPanel({
         characterIndex={index}
         deleteMode={deleteMode}
         addMode={addMode}
+        hideMode={hideMode}
         featured={featured}
         onToggleFeatured={() => onToggleFeatured(cardKey)}
         onUploadAvatar={() => onUploadAvatar(index)}

@@ -1,166 +1,244 @@
 # Run via Container (Docker / Podman)
 
-## Docker
+This guide shows you how to run Marinara Engine inside a container using Docker or Podman. A container is a self-contained package that bundles the app and everything it needs to run. You do not have to install Node.js or other tools on your computer. If you are new and just want Marinara running, this is the easiest path.
 
-### Pre-built Image
+## Prerequisites
 
-The repo includes a ready-to-use [`docker-compose.yml`](../../docker-compose.yml) in the project root. From a Marinara Engine checkout, run:
+Before you start, install one of these on the machine that will run Marinara:
+
+- Docker Desktop (Windows or macOS) or Docker Engine (Linux). Docker is the most common container tool.
+- Or Podman. Podman is a drop-in replacement for Docker. It runs without a background service and works well without root access.
+
+A few terms used below:
+
+- **Image**: a downloadable, read-only template that contains Marinara Engine. You run an image to create a running container.
+- **Volume**: a storage area the container tool manages for you. A volume keeps your data even when you delete and recreate the container.
+- **LAN**: your local network (the Wi-Fi or wired network at your home or office).
+
+The official Marinara images are published at `ghcr.io/pasta-devs/marinara-engine`.
+
+## Pull and run
+
+The repository includes a ready-to-use `docker-compose.yml` file in the project root. Compose reads this file and starts the container for you. This is the recommended way to run Marinara.
+
+1. Get a copy of the repository. If you already have a Marinara Engine checkout, open a terminal in that folder. If not, clone it first:
+
+```bash
+git clone https://github.com/Pasta-Devs/Marinara-Engine.git
+```
+
+2. Move into the folder:
+
+```bash
+cd Marinara-Engine
+```
+
+3. Start the container in the background:
 
 ```bash
 docker compose up -d
 ```
 
-Then open **<http://127.0.0.1:7860>**.
+The `docker-compose.yml` file uses the `ghcr.io/pasta-devs/marinara-engine:latest` image and downloads it the first time you run this command. The first download can take a few minutes.
 
-That Compose file tracks `ghcr.io/pasta-devs/marinara-engine:latest`. Every tagged release also publishes immutable version tags, such as `ghcr.io/pasta-devs/marinara-engine:X.Y.Z`, plus the matching lite tag `ghcr.io/pasta-devs/marinara-engine:X.Y.Z-lite`.
+## Check that it is working
 
-Compose binds to `127.0.0.1` by default. To expose the container to your LAN, change the port mapping to `${PORT:-7860}:7860`, set `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, and `ADMIN_SECRET`, then restart. See [Access Control](../CONFIGURATION.md#access-control).
+1. Open your web browser.
+2. Go to this address:
 
-Data (file-backed storage, uploads, fonts, default backgrounds) is stored in the Compose-managed `marinara-data` volume. Compose prefixes volume names with the project name, so the actual Docker volume name follows a `<compose-project>_marinara-data` pattern. Discover the exact name before inspecting it:
+```text
+http://127.0.0.1:7860
+```
+
+You should see the Marinara Engine home screen. If you do, the container is running. The address `127.0.0.1` means "this same computer", and `7860` is the default port Marinara listens on.
+
+If the page does not load, see the Troubleshooting section below.
+
+## Where your data is stored
+
+Your data (your chats, characters, uploads, fonts, and default backgrounds) is saved as plain files. Marinara uses file-backed storage, which means your data lives as normal files rather than inside a single database file. Compose keeps these files in a named volume called `marinara-data`.
+
+Compose adds the project folder name in front of volume names, so the real volume name follows a `PROJECT_marinara-data` pattern. To find the exact name on your machine, list the volumes:
 
 ```bash
 docker volume ls --filter name=marinara-data
-docker volume inspect <volume-name-from-the-list>
 ```
 
-The bare `marinara-data` name applies to the `docker run -v marinara-data:/app/data` examples below.
-
-On startup, the official image repairs ownership of `/app/data` for named volumes, then drops back to the non-root runtime user. This lets older Docker installs migrate to file-backed storage without manual `chown` steps. The runtime `.env` file is auto-created at `/app/data/.env`, and file-native storage is pinned to `/app/data/storage`, so both app settings and user data remain inside the mounted volume.
-
-To pull the latest image and restart:
+Then inspect the one from the list to see where it lives:
 
 ```bash
-docker compose down && docker compose pull && docker compose up -d
+docker volume inspect PROJECT_marinara-data
 ```
 
-### Staging Image
+Replace `PROJECT_marinara-data` with the name the previous command printed.
 
-An unstable `ghcr.io/pasta-devs/marinara-engine:staging` image is published from the latest `staging` branch build. Use it only for testing unreleased changes.
+Each time the container starts, it prepares the data folder. By default the container starts as root. It fixes the folder ownership so the app can write to it, then switches to a non-root user for safety. This repair works for the named volume and also for a folder you mount from your host. It means older setups can move to file-backed storage without you running any manual ownership commands.
 
-Use a separate data volume for staging so unstable builds cannot mutate your stable release data:
+Marinara also creates an empty settings file at `/app/data/.env` inside the volume on first start. This is where you can add server settings later. Because it lives in the volume, your settings survive container restarts and image updates. See [Server Configuration Reference](../CONFIGURATION.md) for the full list of settings.
+
+## Exposing Marinara to your LAN
+
+By default, Compose only lets you reach Marinara from the same computer. This is the safe default. If you want to open Marinara on your phone or another computer on your network, you must do two things. Change the port mapping, and turn on a login so strangers cannot reach it.
+
+Basic Auth is a simple username and password prompt that protects the app. Never expose Marinara to your network without it.
+
+1. Open `docker-compose.yml` in a text editor.
+
+2. Find the port line. It looks like this:
+
+```yaml
+ports:
+  - "127.0.0.1:${PORT:-7860}:7860"
+```
+
+3. Remove the `127.0.0.1:` part so the app is reachable from other devices:
+
+```yaml
+ports:
+  - "${PORT:-7860}:7860"
+```
+
+4. In the same file, add a login and an admin secret to the `environment:` list. Use your own values:
+
+```yaml
+environment:
+  - BASIC_AUTH_USER=yourname
+  - BASIC_AUTH_PASS=a-long-random-password
+  - ADMIN_SECRET=another-long-random-value
+```
+
+5. Save the file and restart the container:
 
 ```bash
-docker run -d \
-  --name marinara-staging \
-  -p 127.0.0.1:7860:7860 \
-  -v marinara-staging-data:/app/data \
-  ghcr.io/pasta-devs/marinara-engine:staging
+docker compose up -d
 ```
 
-To update that staging container:
+Now other devices on your network can reach Marinara at `http://YOUR_COMPUTER_IP:7860` when `PORT` is unset. If you set `PORT`, replace `7860` with that host port. They must enter the username and password you set. To find good ways to allow only certain devices, and to learn what the admin secret does, read [Remote Access: Basic Auth and IP Allowlist](../REMOTE_ACCESS.md).
+
+## Choosing an image: latest, staging, or lite
+
+Marinara publishes several image tags. Pick the one that fits your needs.
+
+- `latest` is the recommended stable release. The `docker-compose.yml` file uses it by default.
+- `X.Y.Z` is a fixed version, such as `ghcr.io/pasta-devs/marinara-engine:2.0.6`. Use this when you want to pin one exact release.
+- `staging` is an unstable test build from the latest development code. Use it only to try unreleased changes. It may break, may change behavior without notes, and may not let you move data back to a stable build.
+- `lite` is a smaller image. It is described in the next section.
+
+If you run the `staging` image, use a separate volume so an unstable build cannot change your stable data:
 
 ```bash
-docker pull ghcr.io/pasta-devs/marinara-engine:staging
-docker rm -f marinara-staging 2>/dev/null || true
-docker run -d --name marinara-staging \
-  -p 127.0.0.1:7860:7860 \
-  -v marinara-staging-data:/app/data \
-  ghcr.io/pasta-devs/marinara-engine:staging
+docker run -d --name marinara-staging -p 127.0.0.1:7860:7860 -v marinara-staging-data:/app/data ghcr.io/pasta-devs/marinara-engine:staging
 ```
 
-> **Warning:** The staging image may be broken, may change behavior without release notes, and may not support downgrading data back to stable builds. `:latest` remains the recommended stable release image.
+### The lite image
 
-### Build from Source
+The lite image is a smaller variant that trades some offline features for a much smaller download. It is built on Wolfi, a minimal Linux base made for containers.
 
-If you prefer to build the image yourself:
+The lite image removes the features that need large local files:
+
+| Removed in lite | What you lose |
+| --- | --- |
+| Local Model (Gemma, runs on your machine) | You cannot run an AI model on your own hardware. |
+| Local embedding model | No on-device text embeddings. |
+| Memory Recall (semantic search) | Depends on the local embedding model. |
+| Local Whisper voice input | Speech-to-text for Conversation calls is gone. |
+
+Everything else works the same: chat, roleplay, Game Mode, agents, lorebooks, characters, and connections to remote AI providers. To use any AI features with the lite image, you must connect an external provider (for example OpenRouter, OpenAI, or a self-hosted model). See [Connecting to an AI Provider](../connections/connecting-to-a-provider.md).
+
+The lite tag is `ghcr.io/pasta-devs/marinara-engine:lite`, and each release also ships a version-pinned lite tag like `ghcr.io/pasta-devs/marinara-engine:X.Y.Z-lite`. To run it:
 
 ```bash
-git clone https://github.com/Pasta-Devs/Marinara-Engine.git
-cd Marinara-Engine
-docker build -t marinara-engine .
-docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data marinara-engine
+docker run -d --name marinara-lite -p 127.0.0.1:7860:7860 -v marinara-data:/app/data ghcr.io/pasta-devs/marinara-engine:lite
 ```
+
+Some older lite images can crash on Raspberry Pi 4 and similar ARM computers. The crash shows a `SIGILL` error (an illegal-instruction error from the processor) during outgoing AI provider calls. If you use one of these devices, run the regular `latest` image instead. See [Troubleshooting Marinara Engine](../TROUBLESHOOTING.md) for the current details.
+
+## Updating
+
+Container images do not update themselves. You pull a newer image and restart the container by hand.
+
+For Docker Compose, run this one command:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+For Podman Compose, run this one command:
+
+```bash
+podman compose pull && podman compose up -d
+```
+
+You can also check your version inside the app. Open **Settings**, go to the **Advanced** tab, and find the **Updates** section. Click **Check for Updates**. For container installs, Marinara detects that it is running in Docker and shows you the release image tag plus the host command to run. It cannot apply the update from inside the browser, so you still run the command above on the host.
 
 ## Podman
 
-Podman is a drop-in replacement for Docker with better security features. Rootless mode is supported out of the box — no daemon required.
+Podman runs the same images as Docker. In most cases you can swap `docker` for `podman` in the commands above.
 
-**Pre-built image:**
+To start with Compose:
 
 ```bash
 podman compose up -d
 ```
 
-Or:
+To run a single container without Compose:
 
 ```bash
 podman run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data ghcr.io/pasta-devs/marinara-engine:latest
 ```
 
-> **Note:** `podman compose` requires the [`podman-compose`](https://github.com/containers/podman-compose/) plugin. On most distributions you can install it with `sudo dnf install podman-compose` (Fedora), `sudo apt install podman-compose` (Debian/Ubuntu), or `pip install podman-compose`.
+The `podman compose` command needs the `podman-compose` helper. Install it with the command for your system.
 
-## Lite Image (Optional)
-
-A **lite** image variant is available that trades some offline features for a significantly smaller footprint (~60 % smaller than the full image). It is built on [Wolfi](https://wolfi.dev/) — a minimal, CVE-focused Linux (un)distribution designed for containers.
-
-> **Raspberry Pi 4 / Cortex-A72 note:** Known affected lite images include `1.5.7-lite`, `1.5.8-lite`, and the `:lite` tag published for v1.5.8 on 2026-05-05. They can crash with `SIGILL` on Pi 4-class ARM CPUs during outgoing LLM API calls because of an upstream Wolfi `nodejs-24` aarch64 regression. Until Wolfi publishes a fixed Node package, use the regular `:latest` image on those devices, or pin the last known-good lite image by digest:
->
-> ```yaml
-> image: ghcr.io/pasta-devs/marinara-engine@sha256:726b3c82468a1e1b0ed84579c754202d700e8cf27861465d1c41fd2dc99adab8
-> ```
->
-> See [Lite container crashes on Raspberry Pi 4 / Cortex-A72](../TROUBLESHOOTING.md#lite-container-crashes-on-raspberry-pi-4--cortex-a72) for details.
-
-### What is removed
-
-| Feature                                    | Why it’s heavy                                                                |
-| ------------------------------------------ | ----------------------------------------------------------------------------- |
-| Local sidecar model (llama-server / Gemma) | Native runtime libs (`libssl`, `libgomp`, `libvulkan`), large model downloads |
-| Local embedding model (all-MiniLM-L6-v2)   | `onnxruntime-node`, `onnxruntime-web`, `@huggingface/transformers`            |
-| Memory recall (semantic search)            | Depends on the local embedding model                                          |
-| Local Whisper voice input                  | Uses the sidecar speech runtime for Conversation-call speech-to-text          |
-
-All core features — chat, roleplay, game mode, agents, lorebooks, characters, connections to remote LLM APIs — work exactly the same. You just need an external API connection (OpenRouter, OpenAI, Ollama, etc.) for all LLM features instead of being able to run a model locally via ME.
-
-### Pre-built image
+On Fedora:
 
 ```bash
-docker pull ghcr.io/pasta-devs/marinara-engine:lite
-docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data ghcr.io/pasta-devs/marinara-engine:lite
+sudo dnf install podman-compose
 ```
 
-Or with Podman:
+On Debian or Ubuntu:
 
 ```bash
-podman run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data ghcr.io/pasta-devs/marinara-engine:lite
+sudo apt install podman-compose
 ```
 
-### Build from source
+With pip:
 
 ```bash
-git clone https://github.com/Pasta-Devs/Marinara-Engine.git
-cd Marinara-Engine
+pip install podman-compose
+```
+
+## Build the image yourself
+
+If you prefer to build the image from source instead of downloading it:
+
+```bash
+docker build -t marinara-engine .
+```
+
+Then run your own build:
+
+```bash
+docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data marinara-engine
+```
+
+To build the lite image from source, point Docker at the lite build file:
+
+```bash
 docker build -f Dockerfile.lite -t marinara-engine:lite .
-docker run -d -p 127.0.0.1:7860:7860 -v marinara-data:/app/data marinara-engine:lite
 ```
 
-> **Note:** The lite image is published alongside each versioned release (e.g. `ghcr.io/pasta-devs/marinara-engine:X.Y.Z-lite`). It is **not** published on every push to `main`.
+## Troubleshooting
 
-## Updating
+**The page will not load, or the port is already in use.** Another program may already use port `7860`. Change the port mapping to a free port, such as `8080:7860` in the `ports:` list. Then restart with `docker compose up -d` and open `http://127.0.0.1:8080`.
 
-### Docker
+**Marinara cannot write files, or you see permission errors.** The container repairs the ownership of the data folder each time it starts. This works for named volumes and for folders you mount from your host. The repair can fail on some host file systems, and it is skipped if you set `MARINARA_SKIP_DATA_CHOWN=true`. If the errors continue, use the default `marinara-data` named volume. It is the most reliable choice.
 
-Pull the latest image and restart:
+**The lite image crashes on a Raspberry Pi 4.** See the lite image note above. Use the regular `latest` image on that hardware.
 
-```bash
-docker compose down && docker compose pull && docker compose up -d
-```
+For more help, read [Troubleshooting Marinara Engine](../TROUBLESHOOTING.md).
 
-### Podman
+## Related guides
 
-```bash
-podman compose down && podman compose pull && podman compose up -d
-```
-
-### In-App Update Check
-
-You can also go to **Settings → Advanced → Updates** and click **Check for Updates**. For container installs, the UI identifies the server as Docker, shows the versioned release image tag, and gives the host command to run: `docker compose pull && docker compose up -d`.
-
-> Container images are published from `v*` release tags. Auto-update is not available for container installs; you pull new images manually.
-
----
-
-## See Also
-
-- [Configuration Reference](../CONFIGURATION.md) — environment variables and `.env` setup
-- [Troubleshooting](../TROUBLESHOOTING.md) — common issues and fixes (includes container permission fixes)
+- [Server Configuration Reference](../CONFIGURATION.md)
+- [Remote Access: Basic Auth and IP Allowlist](../REMOTE_ACCESS.md)
+- [Troubleshooting Marinara Engine](../TROUBLESHOOTING.md)

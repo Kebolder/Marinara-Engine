@@ -12,7 +12,13 @@
 // ──────────────────────────────────────────────
 import type { AgentResult, AgentContext, AgentPhase } from "@marinara-engine/shared";
 import type { BaseLLMProvider } from "../llm/base-provider.js";
-import { executeAgent, executeAgentBatch, type AgentExecConfig, type AgentToolContext } from "./agent-executor.js";
+import {
+  executeAgent,
+  executeAgentBatch,
+  resolveAgentResultType,
+  type AgentExecConfig,
+  type AgentToolContext,
+} from "./agent-executor.js";
 import { logger } from "../../lib/logger.js";
 import { settleAgentJobsWithConcurrencyLimit } from "./agent-concurrency.js";
 export { settleAgentJobsWithConcurrencyLimit } from "./agent-concurrency.js";
@@ -119,9 +125,19 @@ function providerKey(provider: BaseLLMProvider): number {
 function postProcessingDataKey(agent: ResolvedAgent): string {
   if (agent.phase !== "post_processing") return "default";
   return [
+    getAgentBatchLane(agent),
     agent.settings.includePreGenInjections === true ? "pre-gen" : "no-pre-gen",
     agent.settings.includeParallelResults === true ? "parallel" : "no-parallel",
   ].join(":");
+}
+
+/**
+ * Rewrite agents edit the assistant transcript and must never share an LLM
+ * request with tracker or other post-processing work. Built-in rewrite agents
+ * may still be combined into their dedicated editor call before this stage.
+ */
+export function getAgentBatchLane(agent: Pick<ResolvedAgent, "phase" | "type" | "settings">): "rewrite" | "standard" {
+  return agent.phase === "post_processing" && resolveAgentResultType(agent) === "text_rewrite" ? "rewrite" : "standard";
 }
 
 function buildAgentContext(agent: ResolvedAgent, context: AgentContext): AgentContext {
@@ -391,7 +407,7 @@ export interface AgentPipelineResult {
 
 /**
  * Run ALL enabled agents across the full pipeline.
- * Call `runPreGeneration` before generating, fire `runParallel` concurrently
+ * Call `preGenerate` before generating, fire `runParallel` concurrently
  * with the main generation, then call `postGenerate` after the response is
  * complete, passing the final response text.
  *

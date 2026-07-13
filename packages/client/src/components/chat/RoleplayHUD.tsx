@@ -52,11 +52,14 @@ import type {
   InventoryItem,
   QuestProgress,
   CustomTrackerField,
+  WorldCustomField,
   Message,
+  TrackerHiddenFields,
 } from "@marinara-engine/shared";
 import {
   inventoryItemTrackerLockPrefix,
   normalizeTrackerFieldLocksForState,
+  normalizeTrackerHiddenFields,
   removeTrackerFieldLockPrefix,
   toggleTrackerFieldLock,
 } from "@marinara-engine/shared";
@@ -176,6 +179,7 @@ export function RoleplayHUD({
       location: null,
       weather: null,
       temperature: null,
+      worldCustomFields: [],
       presentCharacters: [],
       recentEvents: [],
       playerStats: {
@@ -188,6 +192,7 @@ export function RoleplayHUD({
       },
       personaStats: [],
       fieldLocks: null,
+      hiddenTrackerFields: null,
     };
     discardPendingGameStatePatch(chatId);
     const prev = useGameStateStore.getState().current;
@@ -214,6 +219,7 @@ export function RoleplayHUD({
   const location = gameState?.location ?? null;
   const weather = gameState?.weather ?? null;
   const temperature = gameState?.temperature ?? null;
+  const worldCustomFields = Array.isArray(gameState?.worldCustomFields) ? gameState.worldCustomFields : [];
   const presentCharacters = gameState?.presentCharacters ?? [];
   const personaStatBars = gameState?.personaStats ?? [];
   const playerStats = gameState?.playerStats ?? null;
@@ -222,7 +228,19 @@ export function RoleplayHUD({
   const activeQuests = playerStats?.activeQuests ?? [];
   const customTrackerFields = playerStats?.customTrackerFields ?? [];
   const fieldLocks = gameState ? normalizeTrackerFieldLocksForState(gameState.fieldLocks, gameState) : null;
+  const hiddenTrackerFields = gameState ? normalizeTrackerHiddenFields(gameState.hiddenTrackerFields) : null;
   const updateFieldLocks = useTrackerFieldLockUpdater({ chatId, fieldLocks, patchField });
+  const updateHiddenTrackerFields = useCallback(
+    (updater: (hiddenFields: TrackerHiddenFields | null | undefined) => TrackerHiddenFields) => {
+      const latestState = useGameStateStore.getState().current;
+      const base =
+        latestState?.chatId === chatId
+          ? normalizeTrackerHiddenFields(latestState.hiddenTrackerFields)
+          : hiddenTrackerFields;
+      patchField("hiddenTrackerFields", updater(base));
+    },
+    [chatId, hiddenTrackerFields, patchField],
+  );
   const updateInventoryItems = useCallback(
     (items: InventoryItem[]) => patchPlayerStats("inventory", items),
     [patchPlayerStats],
@@ -230,7 +248,9 @@ export function RoleplayHUD({
   const removeInventoryItem = useCallback(
     (index: number) => {
       updateInventoryItems(inventory.filter((_, itemIndex) => itemIndex !== index));
-      updateFieldLocks((locks) => removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(inventory[index]!, index)));
+      updateFieldLocks((locks) =>
+        removeTrackerFieldLockPrefix(locks, inventoryItemTrackerLockPrefix(inventory[index]!, index)),
+      );
     },
     [inventory, updateFieldLocks, updateInventoryItems],
   );
@@ -253,10 +273,12 @@ export function RoleplayHUD({
   return (
     <TrackerLockProvider
       fieldLocks={fieldLocks}
+      hiddenTrackerFields={hiddenTrackerFields}
       lockMode={lockMode}
       onSetLockMode={setLockMode}
       onToggleFieldLock={toggleFieldLock}
       onUpdateFieldLocks={updateFieldLocks}
+      onUpdateHiddenFields={updateHiddenTrackerFields}
     >
       <div
         className={cn(
@@ -306,12 +328,14 @@ export function RoleplayHUD({
                 time={time ?? ""}
                 weather={weather ?? ""}
                 temperature={temperature ?? ""}
+                worldCustomFields={worldCustomFields}
                 trackerTemperatureUnit={trackerTemperatureUnit}
                 onSaveLocation={(v) => patchField("location", v)}
                 onSaveDate={(v) => patchField("date", v)}
                 onSaveTime={(v) => patchField("time", v)}
                 onSaveWeather={(v) => patchField("weather", v)}
                 onSaveTemperature={(v) => patchField("temperature", v)}
+                onUpdateWorldCustomFields={(fields) => patchField("worldCustomFields", fields)}
                 layout={layout}
                 onRerunSingleTracker={onRerunSingleTracker}
                 isTrackerRetryBusy={isTrackerBusy}
@@ -373,12 +397,14 @@ export function RoleplayHUD({
                 time={time ?? ""}
                 weather={weather ?? ""}
                 temperature={temperature ?? ""}
+                worldCustomFields={worldCustomFields}
                 trackerTemperatureUnit={trackerTemperatureUnit}
                 onSaveLocation={(v) => patchField("location", v)}
                 onSaveDate={(v) => patchField("date", v)}
                 onSaveTime={(v) => patchField("time", v)}
                 onSaveWeather={(v) => patchField("weather", v)}
                 onSaveTemperature={(v) => patchField("temperature", v)}
+                onUpdateWorldCustomFields={(fields) => patchField("worldCustomFields", fields)}
                 layout={layout}
                 onRerunSingleTracker={onRerunSingleTracker}
                 isTrackerRetryBusy={isTrackerBusy}
@@ -1271,12 +1297,14 @@ function CombinedWorldWidget({
   time,
   weather,
   temperature,
+  worldCustomFields,
   trackerTemperatureUnit,
   onSaveLocation,
   onSaveDate,
   onSaveTime,
   onSaveWeather,
   onSaveTemperature,
+  onUpdateWorldCustomFields,
   layout,
   onRerunSingleTracker,
   isTrackerRetryBusy,
@@ -1286,12 +1314,14 @@ function CombinedWorldWidget({
   time: string;
   weather: string;
   temperature: string;
+  worldCustomFields: WorldCustomField[];
   trackerTemperatureUnit: TrackerTemperatureUnit;
   onSaveLocation: (v: string) => void;
   onSaveDate: (v: string) => void;
   onSaveTime: (v: string) => void;
   onSaveWeather: (v: string) => void;
   onSaveTemperature: (v: string) => void;
+  onUpdateWorldCustomFields: (fields: WorldCustomField[]) => void;
   layout: "top" | "left" | "right";
   onRerunSingleTracker?: (agentType: string) => void;
   isTrackerRetryBusy?: boolean;
@@ -1492,11 +1522,13 @@ function CombinedWorldWidget({
             time={time}
             weather={weather}
             temperature={temperature}
+            worldCustomFields={worldCustomFields}
             onSaveLocation={onSaveLocation}
             onSaveDate={onSaveDate}
             onSaveTime={onSaveTime}
             onSaveWeather={onSaveWeather}
             onSaveTemperature={onSaveTemperature}
+            onUpdateWorldCustomFields={onUpdateWorldCustomFields}
             weatherEmoji={weatherEmoji}
             pinColor={pinColor}
             dateColor={dateColor}

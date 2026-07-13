@@ -14,12 +14,15 @@ import {
   generationParametersSchema,
   inferImageSource,
   inferVideoSource,
+  isLocalAuthProvider,
+  localAuthProviderBaseUrl,
   normalizeVideoGenerationProfile,
 } from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { resetMemoryRecallVectorizerCache } from "../services/memory-recall-embedding.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { fetchOpenAIChatGPTModels, getOpenAIChatGPTAuth } from "../services/llm/openai-chatgpt-auth.js";
+import { fetchGrokCliModels } from "../services/llm/providers/grok-subscription.provider.js";
 import { buildGoogleVertexModelUrl, googleAuthHeadersForVertex } from "../services/llm/providers/google.provider.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { isImageLocalUrlsEnabled, isProviderLocalUrlsEnabled } from "../config/runtime-config.js";
@@ -108,6 +111,7 @@ function usesResponsesEndpointForTestMessage(provider: string, model: string): b
   if (!isOpenAICompatibleProvider(provider) || provider === "custom") return false;
   const normalized = model.toLowerCase();
   return (
+    normalized.startsWith("gpt-5.6") ||
     normalized.startsWith("gpt-5.5") ||
     normalized.startsWith("gpt-5.4") ||
     normalized.startsWith("codex-") ||
@@ -120,6 +124,7 @@ function usesResponsesEndpointForTestMessage(provider: string, model: string): b
 function describeTestMessageTarget(provider: string, baseUrl: string, model: string): string {
   if (provider === "claude_subscription") return "Claude Agent SDK";
   if (provider === "openai_chatgpt") return "local ChatGPT session";
+  if (provider === "grok_subscription") return "local Grok CLI session";
   if (!baseUrl) return "(no base URL)";
   if (provider === "google_vertex") return buildGoogleVertexModelUrl(baseUrl, model, "generateContent");
   if (isOpenAICompatibleProvider(provider)) {
@@ -436,6 +441,34 @@ export async function connectionsRoutes(app: FastifyInstance) {
         };
       }
 
+      if (conn.provider === "grok_subscription") {
+        const provider = createLLMProvider(
+          conn.provider,
+          // Grok CLI subscription auth is local-only: the CLI reads the
+          // cached `grok login` session, so API key/base URL are intentionally
+          // unused here and in normal generation.
+          "",
+          "",
+          conn.maxContext,
+          conn.openrouterProvider,
+          conn.maxTokensOverride,
+        );
+        let responseText = "";
+        for await (const chunk of provider.chat([{ role: "user", content: "Reply with OK." }], {
+          model: conn.model ?? "",
+          maxTokens: 32,
+          stream: false,
+        })) {
+          responseText += chunk;
+        }
+        return {
+          success: true,
+          message: `Grok CLI completed a real request: ${responseText.trim().slice(0, 120) || "OK"}`,
+          latencyMs: Date.now() - start,
+          modelName: conn.model || "Grok CLI default",
+        };
+      }
+
       // Simple models list fetch to verify the key works
       const { PROVIDERS } = await import("@marinara-engine/shared");
       const provider = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
@@ -573,6 +606,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
           // before the host has run `codex login`.
         }
         return { models: MODEL_LISTS.openai_chatgpt.map((m) => ({ id: m.id, name: m.name })) };
+      }
+
+      if (conn.provider === "grok_subscription") {
+        const models = await fetchGrokCliModels();
+        return { models };
       }
 
       if (conn.provider === "video_generation") {
@@ -936,11 +974,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
         ? DEFAULT_XAI_VIDEO_BASE_URL
         : isGoogleVeoVideo
           ? DEFAULT_GOOGLE_VEO_VIDEO_BASE_URL
-        : isOpenRouterVideo
-          ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-        : isSeedanceVideo
-          ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-          : providerDef?.defaultBaseUrl || DEFAULT_GEMINI_OMNI_VIDEO_BASE_URL)
+          : isOpenRouterVideo
+            ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
+            : isSeedanceVideo
+              ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
+              : providerDef?.defaultBaseUrl || DEFAULT_GEMINI_OMNI_VIDEO_BASE_URL)
     ).replace(/\/+$/, "");
     const videoModel =
       conn.model ||
@@ -948,20 +986,20 @@ export async function connectionsRoutes(app: FastifyInstance) {
         ? DEFAULT_XAI_VIDEO_MODEL
         : isGoogleVeoVideo
           ? DEFAULT_GOOGLE_VEO_VIDEO_MODEL
-        : isOpenRouterVideo
-          ? DEFAULT_OPENROUTER_VIDEO_MODEL
-        : isSeedanceVideo
-          ? DEFAULT_SEEDANCE_VIDEO_MODEL
-          : DEFAULT_GEMINI_OMNI_VIDEO_MODEL);
+          : isOpenRouterVideo
+            ? DEFAULT_OPENROUTER_VIDEO_MODEL
+            : isSeedanceVideo
+              ? DEFAULT_SEEDANCE_VIDEO_MODEL
+              : DEFAULT_GEMINI_OMNI_VIDEO_MODEL);
     const activeDefaults = isXaiVideo
       ? defaults.xai
       : isGoogleVeoVideo
         ? defaults.googleVeo
         : isOpenRouterVideo
           ? defaults.openrouter
-        : isSeedanceVideo
-          ? defaults.seedance
-          : defaults.geminiOmni;
+          : isSeedanceVideo
+            ? defaults.seedance
+            : defaults.geminiOmni;
 
     const prompt =
       "Create a concise cinematic 16:9 game scene video: a plate of spaghetti with marinara sauce on a table, gentle steam rising, warm kitchen light, slow push-in camera, no text or logos.";
@@ -978,11 +1016,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
           ? defaults.xai.resolution
           : isGoogleVeoVideo
             ? defaults.googleVeo.resolution
-          : isOpenRouterVideo
-            ? defaults.openrouter.resolution
-          : isSeedanceVideo
-            ? defaults.seedance.resolution
-            : undefined,
+            : isOpenRouterVideo
+              ? defaults.openrouter.resolution
+              : isSeedanceVideo
+                ? defaults.seedance.resolution
+                : undefined,
       });
       return {
         success: true,
@@ -1007,9 +1045,10 @@ export async function connectionsRoutes(app: FastifyInstance) {
   //    billed against. The Claude Agent SDK can silently route a request to a
   //    smaller model (fast mode, post-rate-limit `cooldown` state, account-tier
   //    gating) without surfacing the swap to the caller. We send a tiny prompt
-  //    through the SDK with fast mode forced off, then return the model(s) the
-  //    SDK reports in `modelUsage` plus its `fast_mode_state` so the UI can
-  //    show "you asked for X, the SDK billed Y." ──
+  //    through the SDK with the connection's own fast-mode setting (not
+  //    forced off), then return the model(s) the SDK reports in `modelUsage`
+  //    plus its `fast_mode_state` so the UI can show "you asked for X, the
+  //    SDK billed Y." ──
   app.post<{ Params: { id: string } }>("/:id/diagnose-claude-subscription", async (req, reply) => {
     const conn = await storage.getWithKey(req.params.id);
     if (!conn) return reply.status(404).send({ error: "Connection not found" });
@@ -1103,7 +1142,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: "This provider does not support chat test messages." });
     }
 
-    if (!conn.model) {
+    if (!conn.model && conn.provider !== "grok_subscription") {
       return reply.status(400).send({ error: "No model configured. Set a model first." });
     }
 
@@ -1113,19 +1152,20 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
     // Local subscription/session providers manage their own endpoint, so skip
     // the baseUrl precondition. Every HTTP provider still requires one.
-    if (!baseUrl && conn.provider !== "claude_subscription" && conn.provider !== "openai_chatgpt") {
+    if (!baseUrl && !isLocalAuthProvider(conn.provider)) {
       return reply.status(400).send({ error: "No base URL configured" });
     }
 
     const start = Date.now();
     const requestDebug = readDebugMode(req.body);
     const debugLog = (message: string, ...args: any[]) => logDebugOverride(requestDebug, message, ...args);
-    const targetUrl = describeTestMessageTarget(conn.provider, baseUrl, conn.model);
+    const model = conn.model ?? "";
+    const targetUrl = describeTestMessageTarget(conn.provider, baseUrl, model);
     try {
-      debugLog("[connections/test-message] provider=%s model=%s url=%s", conn.provider, conn.model, targetUrl);
+      debugLog("[connections/test-message] provider=%s model=%s url=%s", conn.provider, model, targetUrl);
       const provider = createLLMProvider(
         conn.provider,
-        baseUrl,
+        localAuthProviderBaseUrl(conn.provider) ?? baseUrl,
         conn.apiKey,
         conn.maxContext,
         conn.openrouterProvider,
@@ -1135,7 +1175,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
 
       let fullResponse = "";
       for await (const chunk of provider.chat([{ role: "user", content: "hi" }], {
-        model: conn.model,
+        model,
         temperature: 0.7,
         maxTokens: 200,
         stream: false,
@@ -1154,13 +1194,13 @@ export async function connectionsRoutes(app: FastifyInstance) {
         success: true,
         response: fullResponse.slice(0, 500),
         latencyMs,
-        model: conn.model,
+        model: model || "Grok CLI default",
       };
     } catch (err) {
       debugLog(
         "[connections/test-message] provider=%s model=%s url=%s failed: %s",
         conn.provider,
-        conn.model,
+        model,
         targetUrl,
         err instanceof Error ? err.message : "Unknown error",
       );
@@ -1169,7 +1209,7 @@ export async function connectionsRoutes(app: FastifyInstance) {
         response: "",
         latencyMs: Date.now() - start,
         error: err instanceof Error ? err.message : "Unknown error",
-        model: conn.model,
+        model: model || "Grok CLI default",
       };
     }
   });

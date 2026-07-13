@@ -20,6 +20,153 @@ const MAX_DOC_BYTES = 5 * 1024 * 1024;
 /** Root-level docs pinned to the top of the index, in this order */
 const PINNED_DOCS = ["FAQ.md", "INSTALLATION.md", "UPGRADING.md", "CONFIGURATION.md", "TROUBLESHOOTING.md"];
 
+/**
+ * Category folders in browse order: new-user flow first (getting started,
+ * install, connect a provider, then the three chat modes side by side),
+ * reference material later, developer docs last. Folders missing from this
+ * list sort alphabetically after the listed ones, so a new category still
+ * shows up without a code change.
+ */
+const DIR_ORDER = [
+  "home",
+  "installation",
+  "connections",
+  "conversation",
+  "roleplay",
+  "game",
+  "characters",
+  "chats",
+  "lorebooks",
+  "agents",
+  "media",
+  "prompts",
+  "noodle",
+  "appearance",
+  "settings",
+  "data",
+  "extending",
+  "integrations",
+  "development",
+];
+
+/**
+ * Reading order inside each category folder: overview and getting-started
+ * guides first, then task guides, then reference. Files missing from a list
+ * sort alphabetically after the listed ones.
+ */
+const DOC_ORDER: Record<string, string[]> = {
+  home: ["welcome.md", "tutorial.md", "professor-mari.md", "achievements.md"],
+  installation: ["windows.md", "macos-linux.md", "containers.md", "android-termux.md", "ios-pwa.md"],
+  connections: [
+    "connecting-to-a-provider.md",
+    "providers-reference.md",
+    "subscription-clis.md",
+    "local-self-hosted.md",
+    "local-model.md",
+    "organizing-connections.md",
+  ],
+  conversation: [
+    "getting-started.md",
+    "profiles.md",
+    "schedules.md",
+    "calls.md",
+    "selfies.md",
+    "emoji-stickers-gifs.md",
+    "table-games.md",
+  ],
+  roleplay: [
+    "getting-started.md",
+    "backgrounds.md",
+    "hud-and-trackers.md",
+    "combat-encounters.md",
+    "narrative-director.md",
+    "scenes.md",
+  ],
+  game: [
+    "getting-started.md",
+    "combat.md",
+    "party-and-npcs.md",
+    "sessions-and-saves.md",
+    "map-time-weather.md",
+    "dice-and-skill-checks.md",
+    "hud-widgets.md",
+    "game-assets.md",
+    "storyboard.md",
+  ],
+  characters: [
+    "creating-and-editing-characters.md",
+    "personas.md",
+    "choosing-your-persona.md",
+    "sprites.md",
+    "galleries.md",
+    "library-organization.md",
+    "colors-and-stats.md",
+    "import-export.md",
+    "bot-browser.md",
+  ],
+  chats: [
+    "managing-chats.md",
+    "sending-and-streaming.md",
+    "messages.md",
+    "branches.md",
+    "guided-and-impersonate.md",
+    "peek-prompt.md",
+    "chat-settings.md",
+    "slash-commands.md",
+    "group-chats.md",
+    "connected-chats.md",
+    "export-import.md",
+  ],
+  lorebooks: [
+    "overview.md",
+    "entries.md",
+    "token-budgets.md",
+    "semantic-search.md",
+    "linking-to-characters.md",
+    "import-export.md",
+  ],
+  agents: [
+    "agents-overview.md",
+    "built-in-agents.md",
+    "custom-agents.md",
+    "knowledge-sources.md",
+    "memory.md",
+    "approvals-and-agent-suite.md",
+  ],
+  media: [
+    "image-providers.md",
+    "style-profiles.md",
+    "illustrator-agent.md",
+    "scene-backgrounds.md",
+    "scene-video.md",
+    "animated-expressions.md",
+    "tts-setup.md",
+    "music.md",
+  ],
+  prompts: [
+    "presets.md",
+    "preset-variables.md",
+    "macros.md",
+    "conditional-prompts.md",
+    "generation-parameters.md",
+    "chat-settings-presets.md",
+    "prompt-overrides.md",
+  ],
+  noodle: ["overview.md", "settings.md"],
+  appearance: ["appearance-settings.md", "fonts.md", "chat-backgrounds.md", "custom-css-themes.md", "card-css-theming.md"],
+  data: ["importing-from-sillytavern.md", "backup-and-restore.md", "where-data-is-stored.md", "clearing-data.md"],
+  extending: ["regex-scripts.md", "custom-tools.md", "extensions.md"],
+  integrations: ["home-assistant.md", "discord-mirror.md", "message-translation.md", "haptic-feedback.md"],
+  development: [
+    "architecture-map.md",
+    "frontend.md",
+    "file-storage-migration.md",
+    "noodle-internals.md",
+    "writing-extensions.md",
+    "ios-pwa-safe-area.md",
+  ],
+};
+
 interface DocSummary {
   /** Path relative to the docs folder, forward slashes (e.g. "installation/windows.md") */
   path: string;
@@ -111,10 +258,21 @@ async function collectDocs(dir: string, relativeDir: string): Promise<DocSummary
   return docs;
 }
 
-function docSortKey(doc: DocSummary): [number, number, string] {
-  const pinned = doc.dir === "" ? PINNED_DOCS.indexOf(doc.path) : -1;
-  // Root-level guides first (pinned ones ahead of the rest), then subfolders alphabetically.
-  return [doc.dir === "" ? 0 : 1, pinned === -1 ? PINNED_DOCS.length : pinned, `${doc.dir}/${doc.path}`];
+/** Position of `value` in `list`; unlisted values sort after every listed one. */
+function rankIn(list: string[] | undefined, value: string): number {
+  const index = list ? list.indexOf(value) : -1;
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+// Root-level guides first (pinned ones ahead of the rest), then category
+// folders in DIR_ORDER, each folder's docs in DOC_ORDER reading order.
+// Alphabetical fallbacks keep unlisted folders and files browsable.
+function docSortKey(doc: DocSummary): [number, number, string, number, string] {
+  if (doc.dir === "") {
+    return [0, rankIn(PINNED_DOCS, doc.path), "", 0, doc.path];
+  }
+  const fileName = doc.path.slice(doc.dir.length + 1);
+  return [1, rankIn(DIR_ORDER, doc.dir), doc.dir, rankIn(DOC_ORDER[doc.dir], fileName), fileName];
 }
 
 export async function docsRoutes(app: FastifyInstance) {
@@ -128,7 +286,13 @@ export async function docsRoutes(app: FastifyInstance) {
       docs.sort((a, b) => {
         const ka = docSortKey(a);
         const kb = docSortKey(b);
-        return ka[0] - kb[0] || ka[1] - kb[1] || ka[2].localeCompare(kb[2]);
+        return (
+          ka[0] - kb[0] ||
+          ka[1] - kb[1] ||
+          ka[2].localeCompare(kb[2]) ||
+          ka[3] - kb[3] ||
+          ka[4].localeCompare(kb[4])
+        );
       });
       return { root: DOCS_DIR, docs };
     } catch (err) {

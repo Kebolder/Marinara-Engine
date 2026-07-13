@@ -27,6 +27,7 @@ import {
 } from "../services/generation/content-hooks.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import AdmZip from "adm-zip";
+import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
 
 function cardPromptText(value: unknown): string {
   return typeof value === "string" ? stripMacroComments(value).trim() : "";
@@ -334,9 +335,7 @@ export async function promptsRoutes(app: FastifyInstance) {
     let personaFields: { personality?: string; scenario?: string; backstory?: string; appearance?: string } = {};
     // Get active persona
     const allPersonas = await charStorage.listPersonas();
-    const activePersona =
-      (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
-      allPersonas.find((p: any) => p.isActive === "true");
+    const activePersona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chat.mode);
     if (activePersona) {
       personaId = activePersona.id as string;
       personaName = activePersona.name;

@@ -30,8 +30,7 @@ function toReasoningEffort(v: unknown): "low" | "medium" | "high" | "xhigh" | "m
   if (typeof v === "string" && v === "min") return "low";
   if (typeof v === "string" && v === "max") return "maximum";
   if (typeof v === "string" && v === "auto") return "maximum";
-  if (typeof v === "string" && VALID_REASONING.has(v))
-    return v as "low" | "medium" | "high" | "xhigh" | "maximum";
+  if (typeof v === "string" && VALID_REASONING.has(v)) return v as "low" | "medium" | "high" | "xhigh" | "maximum";
   return null;
 }
 
@@ -56,10 +55,7 @@ function parseStringArray(raw: unknown, parseJsonString: boolean): string[] {
 
 function normalizeStopSequences(preset: STPreset): string[] {
   const seen = new Set<string>();
-  const stops = [
-    ...parseStringArray(preset.custom_stopping_strings, true),
-    ...parseStringArray(preset.stop, false),
-  ];
+  const stops = [...parseStringArray(preset.custom_stopping_strings, true), ...parseStringArray(preset.stop, false)];
   return stops.filter((stop) => {
     if (seen.has(stop)) return false;
     seen.add(stop);

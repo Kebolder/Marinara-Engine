@@ -183,14 +183,6 @@ const MODE_CONFIG: Record<
     description: "Immersive roleplay with characters, game state tracking, and world simulation.",
     logoModeClass: "mari-chat-logo-mode--roleplay",
   },
-  visual_novel: {
-    icon: <Theater size="0.875rem" />,
-    label: "Visual Novel",
-    shortLabel: "VN",
-    description: "A full game experience with backgrounds, sprites, text boxes, and choices.",
-    logoModeClass: "mari-chat-logo-mode--game",
-    comingSoon: true,
-  },
   game: {
     icon: <Theater size="0.875rem" />,
     label: "Game",
@@ -305,7 +297,9 @@ export function ChatSidebar() {
   const modeChats = useMemo(
     () =>
       (chats ?? []).filter(
-        (chat) => chat.mode === activeTab && !(chat.mode === "conversation" && chat.metadata?.gameId),
+        (chat) =>
+          (chat.mode === activeTab || (activeTab === "roleplay" && chat.mode === "visual_novel")) &&
+          !(chat.mode === "conversation" && chat.metadata?.gameId),
       ),
     [chats, activeTab],
   );
@@ -443,7 +437,9 @@ export function ChatSidebar() {
   // ── Folder grouping ──
   const modeFolders = useMemo(() => {
     if (!folders) return [] as ChatFolder[];
-    return folders.filter((f) => f.mode === activeTab).sort((a, b) => a.sortOrder - b.sortOrder);
+    return folders
+      .filter((f) => f.mode === activeTab || (activeTab === "roleplay" && f.mode === "visual_novel"))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
   }, [folders, activeTab]);
 
   const { unfiledChats, folderChatsMap } = useMemo(() => {
@@ -543,7 +539,7 @@ export function ChatSidebar() {
 
     // 1. Tab sync — once per chat switch
     if (!s.tabSynced) {
-      const chatMode = chat.mode as "conversation" | "roleplay" | "game";
+      const chatMode = chat.mode === "visual_novel" ? "roleplay" : chat.mode;
       if (chatMode === "conversation" || chatMode === "roleplay" || chatMode === "game") {
         setActiveTab(chatMode);
       }
@@ -838,7 +834,7 @@ export function ChatSidebar() {
 
   // ── Chat row renderer (shared between unfiled + folder sections) ──
   const renderChatRow = ({ chat, branchCount }: (typeof displayChats)[number]) => {
-    const cfg = MODE_CONFIG[chat.mode] ?? MODE_CONFIG.conversation;
+    const cfg = MODE_CONFIG[chat.mode === "visual_novel" ? "roleplay" : chat.mode] ?? MODE_CONFIG.conversation;
     const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
     const isSelected = selectedChatIds.has(chat.id);
     const charIds = normalizeChatCharacterIds((chat as { characterIds?: unknown }).characterIds);
@@ -1103,9 +1099,9 @@ export function ChatSidebar() {
                 }
               }
             }}
-            className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+            className="shrink-0 rounded-md p-1 text-[var(--muted-foreground)] opacity-0 transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] group-hover:opacity-100 max-md:opacity-100"
           >
-            <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+            <Trash2 size="0.75rem" />
           </button>
         )}
       </div>
@@ -1144,7 +1140,9 @@ export function ChatSidebar() {
             const cfg = MODE_CONFIG[tab];
             const isActive = activeTab === tab;
             const tabUnread =
-              chats?.filter((c) => c.mode === tab).reduce((sum, c) => sum + (unreadCounts.get(c.id) || 0), 0) ?? 0;
+              chats
+                ?.filter((c) => c.mode === tab || (tab === "roleplay" && c.mode === "visual_novel"))
+                .reduce((sum, c) => sum + (unreadCounts.get(c.id) || 0), 0) ?? 0;
             return (
               <button
                 key={tab}
@@ -1694,9 +1692,9 @@ function FolderRow({
             e.stopPropagation();
             onDelete(folder, chatCount);
           }}
-          className="shrink-0 rounded-md p-1 opacity-0 transition-all hover:bg-[var(--destructive)]/20 group-hover:opacity-100 max-md:opacity-100"
+          className="shrink-0 rounded-md p-1 text-[var(--muted-foreground)] opacity-0 transition-all hover:bg-[var(--accent)] hover:text-[var(--foreground)] group-hover:opacity-100 max-md:opacity-100"
         >
-          <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+          <Trash2 size="0.75rem" />
         </button>
       </div>
       {/* Folder contents */}

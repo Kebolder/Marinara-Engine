@@ -39,6 +39,7 @@ const ROUTE_RULES: Array<{ pattern: RegExp; rule: RateLimitRule }> = [
 
 const buckets = new Map<string, Bucket>();
 let lastSweepAt = 0;
+const isE2ERateLimitDisabled = process.env.MARINARA_E2E_DISABLE_RATE_LIMIT === "true";
 
 function selectRule(url: string): RateLimitRule {
   const path = url.split("?")[0] ?? url;
@@ -55,6 +56,7 @@ function sweepExpired(now: number) {
 
 export function rateLimitHook(request: FastifyRequest, reply: FastifyReply, done: () => void) {
   if (!request.url.startsWith("/api/")) return done();
+  if (isE2ERateLimitDisabled) return done();
 
   const now = Date.now();
   sweepExpired(now);

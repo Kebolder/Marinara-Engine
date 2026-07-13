@@ -1016,7 +1016,7 @@ function RelationshipMeterWidget({ widget }: { widget: HudWidget }) {
   const value = getNumericWidgetValue(widget);
   const milestones = Array.isArray(widget.config.milestones) ? widget.config.milestones : [];
   const pct = Math.max(0, Math.min(100, (value / Math.max(1, max)) * 100));
-  const accent = widget.accent ?? "#ec4899";
+  const accent = widget.accent ?? "var(--marinara-chat-chrome-accent)";
 
   // Find current milestone
   const currentMilestone = [...milestones].sort((a, b) => b.at - a.at).find((m) => value >= m.at);
@@ -1033,7 +1033,7 @@ function RelationshipMeterWidget({ widget }: { widget: HudWidget }) {
           className="h-full rounded-full transition-all duration-700"
           style={{
             width: `${pct}%`,
-            background: `linear-gradient(90deg, ${accent}80, ${accent})`,
+            background: `linear-gradient(90deg, color-mix(in srgb, ${accent} 50%, transparent), ${accent})`,
           }}
         />
         {/* Milestone markers */}

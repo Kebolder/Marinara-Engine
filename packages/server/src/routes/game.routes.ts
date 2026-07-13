@@ -23,6 +23,7 @@ import { extractLeadingThinkingBlocks } from "../services/llm/inline-thinking.js
 import { type ChatCompletionResult, type ChatMessage, type ChatOptions } from "../services/llm/base-provider.js";
 import { isDiceNotation, rollDice } from "../services/game/dice.service.js";
 import { jsonishLooksTruncated, parseGameJsonish } from "../services/game/jsonish.js";
+import { resolveInitialGameGmConnectionId } from "../services/game/initial-game-setup.js";
 import { validateTransition } from "../services/game/state-machine.service.js";
 import {
   buildSetupPrompt,
@@ -50,7 +51,6 @@ import {
   withActiveGameMapMeta,
 } from "../services/game/map-position.service.js";
 import { resolveCombatRound, type CombatantStats } from "../services/game/combat.service.js";
-import { getElementPreset, listElementPresets } from "../services/game/element-reactions.service.js";
 import { generateCombatLoot, generateLootTable } from "../services/game/loot.service.js";
 import {
   advanceTime,
@@ -73,7 +73,10 @@ import {
 } from "../services/game/skill-check.service.js";
 import { applyAllSegmentEdits, stripGmCommandTags } from "../services/game/segment-edits.js";
 import { processLorebooks } from "../services/lorebook/index.js";
-import { GAME_LOREBOOK_KEEPER_SOURCE_ID } from "../services/lorebook/game-lorebook-scope.js";
+import {
+  GAME_LOREBOOK_KEEPER_SOURCE_ID,
+  resolveLorebookScopeExclusions,
+} from "../services/lorebook/game-lorebook-scope.js";
 import {
   applyMoraleEvent,
   getMoraleTier,
@@ -97,22 +100,27 @@ import {
   findKnownModel,
   generationParametersSchema,
   VIDEO_GENERATION_SETTINGS_KEY,
-  VIDEO_DEFAULTS_STORAGE_KEY,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
-  createDefaultVideoGenerationProfile,
-  inferVideoSource,
+  GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   normalizeVideoGenerationUserSettings,
-  normalizeVideoGenerationProfile,
   normalizeAgentPromptTemplateOptions,
   isClaudeAdaptiveOnlyNoSamplingModel,
-  supportsXhighReasoningEffort,
+  localAuthProviderBaseUrl,
+  resolveProviderReasoningEffort,
   scoreMusic,
   scoreAmbient,
   serializeResolvedSkillCheckTag,
   applyTrackerFieldLocksToGameStatePatch,
+  normalizeWorldCustomFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   normalizeRpgStatPools,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
@@ -128,6 +136,7 @@ import { postToDiscordWebhook } from "../services/discord-webhook.js";
 import { isDebugAgentsEnabled } from "../config/runtime-config.js";
 import type {
   GameActiveState,
+  GameInitialSetupConnectionSnapshot,
   GameSetupConfig,
   GameMap,
   GameNpc,
@@ -140,6 +149,7 @@ import type {
   GenerationParameterSendMap,
   GenerationParameters,
   APIProvider,
+  SceneIllustrationCharacterPrompt,
   SceneIllustrationRequest,
   QuestProgress,
   SessionSummary,
@@ -153,6 +163,9 @@ import {
   generateNpcPortrait,
   generateBackground,
   generateSceneIllustration,
+  resolveSceneIllustrationGenerationConcurrency,
+  resolveSceneIllustrationReferenceImageLimit,
+  supportsSceneIllustrationStructuredCharacterPrompts,
   readAvatarBase64,
   buildBackgroundProviderPrompt,
   buildNpcPortraitProviderPrompt,
@@ -165,11 +178,10 @@ import { saveImageToDisk } from "../services/image/image-generation.js";
 import {
   generateVideo,
   removeSavedVideoFromDisk,
-  resolveVideoReferencePublicUploadOptions,
   saveVideoToDisk,
   type VideoReferenceImage,
-  type VideoReferencePublicUploadOptions,
 } from "../services/video/video-generation.js";
+import { resolveGameVideoRuntime, type GameVideoRuntime } from "../services/video/game-video-runtime.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import {
   loadImageGenerationUserSettings,
@@ -191,7 +203,6 @@ import {
 import {
   compactVideoPromptText,
   excerptIllustrationPromptForVideo,
-  getSceneVideoPromptLimits,
   limitSceneVideoPromptForProvider,
   summarizeVideoNarration,
   type SceneVideoPromptLimits,
@@ -363,6 +374,179 @@ function extractCharacterAppearanceText(characterData: Record<string, unknown>):
   return [appearance, description].filter(Boolean).join("; ").slice(0, 500);
 }
 
+type IllustrationCharacterAssetMaps = {
+  charReferenceByName: Map<string, string>;
+  charAvatarByName: Map<string, string>;
+  charDescriptionByName: Map<string, string>;
+};
+
+type IllustrationCharacterAssetDetail = {
+  name: string;
+  referenceAttached: boolean;
+  referenceSource?: "sprite" | "avatar";
+  appearanceAttached: boolean;
+};
+
+type IllustrationCharacterAssets = {
+  referenceImages: string[];
+  characterDescriptions: string[];
+  referenceDetails: IllustrationCharacterAssetDetail[];
+  maxReferenceImages: number;
+  requestedNames: string[];
+};
+
+type StoryboardCharacterContext = IllustrationCharacterAssetMaps & {
+  allowedCharacterNames: string[];
+  trackedNpcs: Array<Record<string, unknown>>;
+};
+
+function emptyIllustrationCharacterAssetMaps(): IllustrationCharacterAssetMaps {
+  return {
+    charReferenceByName: new Map<string, string>(),
+    charAvatarByName: new Map<string, string>(),
+    charDescriptionByName: new Map<string, string>(),
+  };
+}
+
+function addUniqueCharacterName(target: string[], seen: Set<string>, name: unknown): void {
+  const text = typeof name === "string" ? name.trim() : "";
+  if (!text) return;
+  const normalized = normalizeAvatarLookupName(text);
+  if (!normalized || seen.has(normalized)) return;
+  seen.add(normalized);
+  target.push(text);
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean) : [];
+}
+
+function addCharacterRowIllustrationAssets(
+  maps: IllustrationCharacterAssetMaps,
+  character: { id: string; data: string; avatarPath?: string | null },
+): string | null {
+  try {
+    const parsed = JSON.parse(character.data) as Record<string, unknown> & { name?: string };
+    const name = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null;
+    if (!name) return null;
+
+    const fullBodyReference = readPreferredFullBodySpriteBase64(character.id);
+    if (fullBodyReference) addNameLookupEntry(maps.charReferenceByName, name, fullBodyReference.base64);
+    if (character.avatarPath) addNameLookupEntry(maps.charAvatarByName, name, character.avatarPath);
+
+    const appearanceText = extractCharacterAppearanceText(parsed);
+    if (appearanceText) addNameLookupEntry(maps.charDescriptionByName, name, appearanceText);
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+function addPersonaIllustrationAssets(
+  maps: IllustrationCharacterAssetMaps,
+  persona:
+    | {
+        id: string;
+        name?: string | null;
+        avatarPath?: string | null;
+        appearance?: string | null;
+        description?: string | null;
+      }
+    | null
+    | undefined,
+): string | null {
+  const name = typeof persona?.name === "string" && persona.name.trim() ? persona.name.trim() : null;
+  if (!persona || !name) return null;
+
+  const fullBodyReference = readPreferredFullBodySpriteBase64(persona.id);
+  if (fullBodyReference) addNameLookupEntry(maps.charReferenceByName, name, fullBodyReference.base64);
+  if (persona.avatarPath) addNameLookupEntry(maps.charAvatarByName, name, persona.avatarPath);
+
+  const appearance = typeof persona.appearance === "string" ? persona.appearance.trim() : "";
+  const description = typeof persona.description === "string" ? persona.description.trim() : "";
+  const appearanceText = [appearance, description].filter(Boolean).join("; ").slice(0, 500);
+  if (appearanceText) addNameLookupEntry(maps.charDescriptionByName, name, appearanceText);
+  return name;
+}
+
+function getStoryboardLibraryCharacterIds(
+  meta: Record<string, unknown>,
+  setupConfig: Record<string, unknown> | null,
+  chatCharacterIds: string[],
+): string[] {
+  const storedPartyIds = readStringArray(meta.gamePartyCharacterIds);
+  const setupPartyIds = readStringArray(setupConfig?.partyCharacterIds);
+  const partyIds = storedPartyIds.length > 0 ? storedPartyIds : [...setupPartyIds, ...chatCharacterIds];
+  return Array.from(new Set(partyIds)).filter((id) => !isPartyNpcId(id));
+}
+
+function storyboardTrackedNpcsFromState(latestState: unknown): Array<Record<string, unknown>> {
+  const latest = asStoryboardRecord(latestState);
+  const presentCharacters = parseStoredJson<Array<Record<string, unknown>>>(latest.presentCharacters) ?? [];
+  const trackedNpcs: Array<Record<string, unknown>> = [];
+  for (const character of presentCharacters) {
+    const name = readTrimmedString(character.name);
+    if (!name) continue;
+    trackedNpcs.push({
+      name,
+      description: readTrimmedString(character.appearance) ?? readTrimmedString(character.description) ?? "",
+      avatarUrl: readTrimmedString(character.avatarPath) ?? readTrimmedString(character.avatarUrl),
+      gender: readTrimmedString(character.gender),
+      pronouns: readTrimmedString(character.pronouns),
+    });
+  }
+  return trackedNpcs;
+}
+
+async function buildStoryboardCharacterContext(args: {
+  characters: ReturnType<typeof createCharactersStorage>;
+  chat: { characterIds?: unknown; personaId?: string | null };
+  meta: Record<string, unknown>;
+  setupConfig: Record<string, unknown> | null;
+  latestState: unknown;
+}): Promise<StoryboardCharacterContext> {
+  const maps = emptyIllustrationCharacterAssetMaps();
+  const allowedCharacterNames: string[] = [];
+  const seenAllowedNames = new Set<string>();
+  const chatCharacterIds = parseChatCharacterIds(args.chat.characterIds);
+  const libraryCharacterIds = getStoryboardLibraryCharacterIds(args.meta, args.setupConfig, chatCharacterIds);
+
+  for (const id of libraryCharacterIds) {
+    try {
+      const character = await args.characters.getById(id);
+      if (!character) continue;
+      const name = addCharacterRowIllustrationAssets(maps, character);
+      addUniqueCharacterName(allowedCharacterNames, seenAllowedNames, name);
+    } catch {
+      /* skip unresolvable game character */
+    }
+  }
+
+  const personaId = args.chat.personaId || readTrimmedString(args.setupConfig?.personaId);
+  if (personaId) {
+    try {
+      const persona = await args.characters.getPersona(personaId);
+      const name = addPersonaIllustrationAssets(maps, persona);
+      addUniqueCharacterName(allowedCharacterNames, seenAllowedNames, name);
+    } catch {
+      /* skip unresolvable persona */
+    }
+  }
+
+  const trackedNpcs = storyboardTrackedNpcsFromState(args.latestState);
+  for (const npc of trackedNpcs) addUniqueCharacterName(allowedCharacterNames, seenAllowedNames, npc.name);
+
+  const gameCards = Array.isArray(args.meta.gameCharacterCards)
+    ? (args.meta.gameCharacterCards as Record<string, unknown>[])
+    : [];
+  for (const card of gameCards) addUniqueCharacterName(allowedCharacterNames, seenAllowedNames, card.name);
+
+  const gameNpcs = Array.isArray(args.meta.gameNpcs) ? (args.meta.gameNpcs as GameNpc[]) : [];
+  for (const npc of gameNpcs) addUniqueCharacterName(allowedCharacterNames, seenAllowedNames, npc.name);
+
+  return { ...maps, allowedCharacterNames: allowedCharacterNames.slice(0, 40), trackedNpcs };
+}
+
 function collectIllustrationCharacterAssets(opts: {
   illustration: SceneIllustrationRequest;
   characterNames: string[];
@@ -373,7 +557,8 @@ function collectIllustrationCharacterAssets(opts: {
   charDescriptionByName: Map<string, string>;
   includeReferenceImages?: boolean;
   includeCharacterDescriptions?: boolean;
-}): { referenceImages: string[]; characterDescriptions: string[] } {
+  maxReferenceImages?: number;
+}): IllustrationCharacterAssets {
   const npcAvatarByName = new Map<string, string>();
   const npcDescriptionByName = new Map<string, string>();
   for (const npc of opts.trackedNpcs) {
@@ -391,70 +576,81 @@ function collectIllustrationCharacterAssets(opts: {
   const requestedNames = (opts.illustration.characters?.length ? opts.illustration.characters : opts.characterNames)
     .map((name) => name.trim())
     .filter(Boolean);
+  const maxReferenceImages = Math.max(0, Math.trunc(opts.maxReferenceImages ?? 4));
+  const maxCharacterNames = Math.min(16, Math.max(6, maxReferenceImages, requestedNames.length));
   const uniqueNames = Array.from(
     new Map(
       requestedNames
         .map((name) => [normalizeAvatarLookupName(name), name] as const)
         .filter(([normalizedName]) => normalizedName.length > 0),
     ).values(),
-  ).slice(0, 6);
+  ).slice(0, maxCharacterNames);
 
   const references: string[] = [];
   const characterDescriptions: string[] = [];
+  const referenceDetails: IllustrationCharacterAssetDetail[] = [];
   const seen = new Set<string>();
   const described = new Set<string>();
   const includeReferenceImages = opts.includeReferenceImages !== false;
   const includeCharacterDescriptions = opts.includeCharacterDescriptions !== false;
   for (const name of uniqueNames) {
+    let referenceAttached = false;
+    let referenceSource: IllustrationCharacterAssetDetail["referenceSource"];
     if (includeReferenceImages) {
       const preferredReference = findCharAvatarFuzzy(name, opts.charReferenceByName);
-      if (preferredReference && !seen.has(preferredReference) && references.length < 4) {
+      if (preferredReference && !seen.has(preferredReference) && references.length < maxReferenceImages) {
         seen.add(preferredReference);
         references.push(preferredReference);
+        referenceAttached = true;
+        referenceSource = "sprite";
       } else {
         const avatarPath =
           findCharAvatarFuzzy(name, opts.charAvatarByName) ?? findCharAvatarFuzzy(name, npcAvatarByName);
         const base64 = avatarPath && !seen.has(avatarPath) ? readAvatarBase64(avatarPath) : undefined;
-        if (avatarPath && base64 && references.length < 4) {
+        if (avatarPath && base64 && references.length < maxReferenceImages) {
           seen.add(avatarPath);
           references.push(base64);
+          referenceAttached = true;
+          referenceSource = "avatar";
         }
       }
     }
 
-    if (!includeCharacterDescriptions) continue;
-
-    const description =
-      findCharAvatarFuzzy(name, opts.charDescriptionByName) ?? findCharAvatarFuzzy(name, npcDescriptionByName);
+    let appearanceAttached = false;
+    const description = includeCharacterDescriptions
+      ? (findCharAvatarFuzzy(name, opts.charDescriptionByName) ?? findCharAvatarFuzzy(name, npcDescriptionByName))
+      : undefined;
     const normalizedName = normalizeAvatarLookupName(name);
     if (description && !described.has(normalizedName)) {
       described.add(normalizedName);
       characterDescriptions.push(`${name}: ${description}`.slice(0, 300));
+      appearanceAttached = true;
     }
+    referenceDetails.push({
+      name,
+      referenceAttached,
+      ...(referenceSource ? { referenceSource } : {}),
+      appearanceAttached,
+    });
   }
-  return { referenceImages: references, characterDescriptions: characterDescriptions.slice(0, 5) };
+  return {
+    referenceImages: references,
+    characterDescriptions: characterDescriptions.slice(0, maxCharacterNames),
+    referenceDetails,
+    maxReferenceImages,
+    requestedNames: uniqueNames,
+  };
 }
 
-function applyGeneratedIllustration(
-  sceneResult: Record<string, unknown>,
-  generatedTag: string,
-  segment: number | undefined,
-): void {
-  sceneResult.generatedIllustration = { tag: generatedTag, ...(segment !== undefined ? { segment } : {}) };
-  if (segment !== undefined && segment > 0) {
-    const effects = Array.isArray(sceneResult.segmentEffects)
-      ? (sceneResult.segmentEffects as Record<string, unknown>[])
-      : [];
-    sceneResult.segmentEffects = effects;
-    let target = effects.find((effect) => effect.segment === segment);
-    if (!target) {
-      target = { segment };
-      effects.push(target);
-    }
-    target.background = generatedTag;
-  } else {
-    sceneResult.background = generatedTag;
-  }
+function formatIllustrationAssetDebug(assets: IllustrationCharacterAssets): string {
+  if (!assets.referenceDetails.length) return "none";
+  return assets.referenceDetails
+    .map((detail) => {
+      const ref = detail.referenceAttached ? `ref:${detail.referenceSource ?? "unknown"}` : "no-ref";
+      const appearance = detail.appearanceAttached ? "+appearance" : "";
+      return `${detail.name}=${ref}${appearance}`;
+    })
+    .join(", ");
 }
 
 function generatedBackgroundSlug(value: string): string {
@@ -1061,16 +1257,6 @@ const GENERATED_ILLUSTRATION_TAG_PREFIX = "backgrounds:illustrations:";
 const GAME_SCENE_VIDEOS_ROOT = join(DATA_DIR, "game-scene-videos");
 const CHAT_GALLERY_ROOT = join(DATA_DIR, "gallery");
 const GAME_SCENE_VIDEO_FILENAME_RE = /^[A-Za-z0-9_-]+\.mp4$/;
-const DEFAULT_GEMINI_OMNI_MODEL = "gemini-omni-flash-preview";
-const DEFAULT_GEMINI_OMNI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_GOOGLE_VEO_MODEL = "veo-3.1-generate-preview";
-const DEFAULT_GOOGLE_VEO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
-const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
-const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
-const DEFAULT_OPENROUTER_VIDEO_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_SEEDANCE_VIDEO_MODEL = "seedance-2-0";
-const DEFAULT_SEEDANCE_VIDEO_BASE_URL = "https://api.seedance2.ai";
 
 type GameSceneVideoRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGameSceneVideosStorage>["getById"]>>>;
 type ChatGalleryImageRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGalleryStorage>["getById"]>>>;
@@ -1260,6 +1446,10 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
   const promptDraft = await loadGameVideoPrompt({
     promptOverridesStorage: args.promptOverridesStorage,
     meta: args.meta,
+    templateId:
+      typeof args.meta.gameStoryboardVideoPromptTemplateId === "string"
+        ? args.meta.gameStoryboardVideoPromptTemplateId
+        : null,
     debugMode: args.debugMode,
     ctx: {
       sceneTitle: compactVideoPromptText(
@@ -1284,31 +1474,6 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
   return limitSceneVideoPromptForProvider(promptDraft, args.promptLimits.finalPrompt);
 }
 
-function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
-  if (!raw) return {};
-  let parsed: unknown = raw;
-  if (typeof parsed === "string") {
-    try {
-      parsed = JSON.parse(parsed) as unknown;
-    } catch {
-      return {};
-    }
-  }
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? { ...(parsed as Record<string, unknown>) }
-    : {};
-}
-
-function getStoredVideoDefaults(raw: unknown) {
-  const root = parseDefaultParametersRoot(raw);
-  return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
-}
-
-function hasStoredVideoDefaults(raw: unknown) {
-  const root = parseDefaultParametersRoot(raw);
-  return Object.prototype.hasOwnProperty.call(root, VIDEO_DEFAULTS_STORAGE_KEY);
-}
-
 async function resolveGameVideoConnectionId(
   meta: Record<string, unknown>,
   connections: ReturnType<typeof createConnectionsStorage>,
@@ -1329,6 +1494,7 @@ function sourceIllustrationPathForMetadata(assetPath: string): string {
 }
 
 const MAX_GAME_HUD_WIDGETS = 4;
+const GAME_REPUTATION_ACTION_MAX_LENGTH = 500;
 const trimmedWidgetString = (max: number) => z.string().trim().min(1).max(max);
 
 const hudWidgetSchema = z.object({
@@ -1367,6 +1533,16 @@ const gameSetupConfigSchema = z.object({
   videoConnectionId: z.string().optional(),
   gameStoryboardAutoIllustrationsEnabled: z.boolean().optional(),
   gameStoryboardAutoGenerationEnabled: z.boolean().optional(),
+  gameStoryboardKeyframeCount: z
+    .number()
+    .int()
+    .min(GAME_STORYBOARD_KEYFRAME_COUNT_MIN)
+    .max(GAME_STORYBOARD_KEYFRAME_COUNT_MAX)
+    .optional(),
+  gameGmPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardAnimationPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardVideoPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardUseDirectScenePrompt: z.boolean().optional(),
   artStylePrompt: z.string().max(500).optional(),
   imageStyleProfileId: z.string().nullable().optional(),
   activeLorebookIds: z.array(z.string()).optional(),
@@ -1388,8 +1564,16 @@ const gameSetupConfigSchema = z.object({
 const createGameSchema = z.object({
   name: z.string().min(1).max(200),
   setupConfig: gameSetupConfigSchema,
+  preferences: z.string().max(5000).default(""),
+  shareLabels: z
+    .object({
+      characterNames: z.record(z.string(), z.string().max(500)).optional(),
+      lorebookNames: z.record(z.string(), z.string().max(500)).optional(),
+      promptPresetNames: z.record(z.string(), z.string().max(500)).optional(),
+      personaName: z.string().max(500).nullable().optional(),
+    })
+    .optional(),
   connectionId: z.string().optional(),
-  characterConnectionId: z.string().optional(),
   promptPresetId: z.string().optional(),
   chatId: z.string().optional(),
 });
@@ -2406,16 +2590,43 @@ async function resolveConnection(
     const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
     baseUrl = providerDef?.defaultBaseUrl ?? "";
   }
-  // Claude (Subscription) uses the local Claude Agent SDK and has no HTTP
-  // endpoint — return a sentinel so the gate passes. The provider ignores it.
-  if (!baseUrl && conn.provider === "claude_subscription") baseUrl = "claude-agent-sdk://local";
-  if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
+  const localAuthBaseUrl = localAuthProviderBaseUrl(conn.provider);
+  if (!baseUrl && localAuthBaseUrl) baseUrl = localAuthBaseUrl;
   if (!baseUrl) throw new Error("No base URL configured for this connection");
 
   return { conn, baseUrl, defaultGenerationParameters: parseStoredGenerationParameters(conn.defaultParameters) };
 }
 
 type StoredGenerationParameters = Partial<GenerationParameters>;
+
+type InitialSetupConnectionRow = {
+  name?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  imageGenerationSource?: unknown;
+  imageService?: unknown;
+  videoGenerationSource?: unknown;
+  videoService?: unknown;
+};
+
+function snapshotInitialSetupConnection(
+  connection: InitialSetupConnectionRow | null | undefined,
+): GameInitialSetupConnectionSnapshot | null {
+  if (!connection || typeof connection.name !== "string" || !connection.name.trim()) return null;
+  const firstString = (...values: unknown[]) =>
+    values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() ?? null;
+  return {
+    name: connection.name.trim(),
+    provider: firstString(connection.provider),
+    model: firstString(connection.model),
+    service: firstString(
+      connection.imageService,
+      connection.videoService,
+      connection.imageGenerationSource,
+      connection.videoGenerationSource,
+    ),
+  };
+}
 
 function parseStoredGenerationParameters(raw: unknown): StoredGenerationParameters | null {
   let parsed = raw;
@@ -2528,22 +2739,13 @@ function resolveGameReasoningEffort(
   if (!reasoningEffort) return undefined;
   const modelLower = model.toLowerCase();
   const providerLower = (provider ?? "").toLowerCase();
-  const isClaudeAdaptiveOnly = isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-  const isNativeAnthropicAdaptiveOnly =
-    (providerLower === "anthropic" || providerLower === "claude_subscription") && isClaudeAdaptiveOnly;
-  if (
-    modelLower.startsWith("grok-4.3") ||
-    modelLower.startsWith("grok-4-1-fast") ||
-    modelLower.startsWith("x-ai/grok-")
-  ) {
-    return undefined;
-  }
-  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
-  if (reasoningEffort === "max") return isNativeAnthropicAdaptiveOnly ? "max" : "high";
-  if (reasoningEffort === "xhigh") return supportsXhigh ? "xhigh" : "high";
-  if (reasoningEffort !== "maximum") return reasoningEffort;
-
-  return isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
+  return (
+    resolveProviderReasoningEffort({
+      provider: providerLower,
+      model: modelLower,
+      reasoningEffort,
+    }) ?? undefined
+  );
 }
 
 /** Build model-aware generation options for game calls. */
@@ -2581,17 +2783,18 @@ function gameGenOptions(
   // provider strips them on the wire, but we omit them here so the
   // logged options match what is actually sent.
   const isClaudeAdaptiveOnly = isClaudeAdaptiveOnlyNoSamplingModel(m);
-  const isNativeAnthropicAdaptiveOnly =
-    (providerLower === "anthropic" || providerLower === "claude_subscription") && isClaudeAdaptiveOnly;
-  const isGrokAutoReasoning = m.startsWith("grok-4.3") || m.startsWith("grok-4-1-fast") || m.startsWith("x-ai/grok-");
-  const supportsXhigh = supportsXhighReasoningEffort(m);
+  const defaultReasoningEffort = resolveProviderReasoningEffort({
+    provider: providerLower,
+    model: m,
+    reasoningEffort: "maximum",
+  });
   const base: ChatOptions = {
     model,
     maxTokens: 8192,
     verbosity: "high",
   };
-  if (!isGrokAutoReasoning) {
-    base.reasoningEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
+  if (defaultReasoningEffort) {
+    base.reasoningEffort = defaultReasoningEffort;
     // Required for providers that actually attach thinking config to the request body.
     base.enableThinking = true;
   }
@@ -3973,9 +4176,9 @@ function extractNarrationNpcCandidates(narration: string, excludedNames: string[
     new RegExp(`(?:^|\\n)\\s*([A-Z][A-Za-z'’-]+(?:\\s+[A-Z][A-Za-z'’-]+)?)\\s*:\\s*["“«「]`, "gm"),
     new RegExp(
       `\"[^\"]+\"[,.]?\\s+([A-Z][A-Za-z'’-]+(?:\\s+[A-Z][A-Za-z'’-]+)?)\\s+${NARRATION_NPC_SPEECH_VERB_PATTERN}\\b`,
-      "gi",
+      "g",
     ),
-    new RegExp(`\\b([A-Z][A-Za-z'’-]+(?:\\s+[A-Z][A-Za-z'’-]+)?)\\b\\s+${NARRATION_NPC_SPEECH_VERB_PATTERN}\\b`, "gi"),
+    new RegExp(`\\b([A-Z][A-Za-z'’-]+(?:\\s+[A-Z][A-Za-z'’-]+)?)\\b\\s+${NARRATION_NPC_SPEECH_VERB_PATTERN}\\b`, "g"),
     /\b(?:named|called)\s+([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)?)\b/gi,
     /\b([A-Z][A-Za-z'’-]+(?:\s+[A-Z][A-Za-z'’-]+)?),\s+(?:a|an|the)\b/g,
   ];
@@ -4256,6 +4459,7 @@ type PlannedStoryboardKeyframe = {
   imagePrompt: string;
   videoPrompt: string;
   characters: string[];
+  characterPrompts: SceneIllustrationCharacterPrompt[];
   continuityNotes: string;
   cameraMotion: string;
   transitionHint: string;
@@ -4342,9 +4546,23 @@ function normalizeStoryboardAspectRatio(
   return value === "9:16" || value === "16:9" ? value : fallback;
 }
 
+function clampStoryboardDuration(value: number): number {
+  return Math.min(
+    GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+    Math.max(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN, Math.trunc(value)),
+  );
+}
+
 function normalizeStoryboardDuration(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) ? Math.min(15, Math.max(1, Math.trunc(parsed))) : fallback;
+  return Number.isFinite(parsed) ? clampStoryboardDuration(parsed) : clampStoryboardDuration(fallback);
+}
+
+function normalizeStoryboardKeyframeCount(value: unknown, fallback = GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed)
+    ? Math.min(GAME_STORYBOARD_KEYFRAME_COUNT_MAX, Math.max(GAME_STORYBOARD_KEYFRAME_COUNT_MIN, Math.trunc(parsed)))
+    : fallback;
 }
 
 function compactStoryboardText(value: unknown, max: number): string {
@@ -4487,8 +4705,246 @@ function parseStoryboardCharacters(value: unknown): string[] {
   return [];
 }
 
+function storyboardSourceMentionsCharacter(sourceNarration: string, name: string): boolean {
+  const cleanName = name.trim();
+  if (!cleanName) return false;
+  const escapedName = cleanName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapedName}([^\\p{L}\\p{N}]|$)`, "iu").test(sourceNarration);
+}
+
+function storyboardNormalizedMentionIndex(text: string, name: string): number {
+  const normalizedText = ` ${normalizeAvatarLookupName(text.replace(/['\u2019]s\b/giu, ""))} `;
+  if (!normalizedText.trim()) return -1;
+  let bestIndex = -1;
+  const normalizedName = normalizeAvatarLookupName(name);
+  const words = normalizedName.split(/\s+/).filter(Boolean);
+  const withoutLeadingTitle =
+    words.length > 1 && AVATAR_NAME_TITLE_WORDS.has(words[0]!) ? words.slice(1).join(" ") : normalizedName;
+  // Visibility matching must not use per-word fuzzy aliases: color words like
+  // "amber", "blue", and "violet" can otherwise promote old slime NPCs.
+  for (const normalizedAlias of Array.from(new Set([normalizedName, withoutLeadingTitle]))) {
+    if (normalizedAlias.length < 2) continue;
+    const escapedAlias = normalizedAlias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`(?:^| )${escapedAlias}(?= |$)`, "u").exec(normalizedText);
+    if (!match) continue;
+    if (bestIndex < 0 || match.index < bestIndex) bestIndex = match.index;
+  }
+  return bestIndex;
+}
+
+function sanitizeStoryboardCharactersForRoster(
+  value: unknown,
+  allowedCharacterNames: string[] | undefined,
+  sourceNarration: string,
+): string[] {
+  const characters = parseStoryboardCharacters(value);
+  if (!allowedCharacterNames?.length) return characters;
+
+  const allowed = new Set(
+    allowedCharacterNames.map((name) => normalizeAvatarLookupName(name)).filter((name) => name.length > 0),
+  );
+  return characters.filter((name) => {
+    const normalized = normalizeAvatarLookupName(name);
+    return allowed.has(normalized) || storyboardSourceMentionsCharacter(sourceNarration, name);
+  });
+}
+
+function reconcileStoryboardCharactersForFrame(args: {
+  value: unknown;
+  allowedCharacterNames: string[] | undefined;
+  sourceNarration: string;
+  frameText: string;
+  maxCharacters?: number;
+}): { characters: string[]; omittedMentionedCharacters: string[] } {
+  const maxCharacters = Math.min(16, Math.max(1, Math.trunc(args.maxCharacters ?? 8)));
+  const characters = sanitizeStoryboardCharactersForRoster(
+    args.value,
+    args.allowedCharacterNames,
+    args.sourceNarration,
+  );
+  const result: string[] = [];
+  const seen = new Set<string>();
+  const addCharacter = (name: string): void => {
+    const normalized = normalizeAvatarLookupName(name);
+    if (!normalized || seen.has(normalized) || result.length >= maxCharacters) return;
+    seen.add(normalized);
+    result.push(name);
+  };
+
+  for (const name of characters) addCharacter(name);
+
+  const mentionedAllowed = (args.allowedCharacterNames ?? [])
+    .map((name) => ({ name, index: storyboardNormalizedMentionIndex(args.frameText, name) }))
+    .filter((entry) => entry.index >= 0)
+    .sort((a, b) => a.index - b.index);
+
+  for (const { name } of mentionedAllowed) addCharacter(name);
+
+  const selected = new Set(result.map((name) => normalizeAvatarLookupName(name)));
+  const omittedMentionedCharacters = mentionedAllowed
+    .map((entry) => entry.name)
+    .filter((name) => !selected.has(normalizeAvatarLookupName(name)));
+  return { characters: result, omittedMentionedCharacters };
+}
+
+function appendStoryboardCharacterScopeToPrompt(
+  prompt: string,
+  characters: string[],
+  omittedCharacters: string[],
+): string {
+  const cleanPrompt = prompt.trim();
+  if (!characters.length) return cleanPrompt;
+  const basePrompt = cleanPrompt.replace(/\s+Final visibility rule:[\s\S]*$/u, "").trim();
+  const guard = [
+    `Only depict these named visible characters: ${characters.join(", ")}.`,
+    omittedCharacters.length
+      ? `Treat these other named characters as off-screen for this keyframe: ${omittedCharacters.join(", ")}.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return `${basePrompt} Final visibility rule: ${guard}`.trim();
+}
+
+function reconcileStoryboardFrameForRendering(args: {
+  frame: PlannedStoryboardKeyframe;
+  allowedCharacterNames: string[] | undefined;
+  sourceNarration: string;
+  maxVisibleCharacters: number;
+}): PlannedStoryboardKeyframe {
+  const basePrompt = args.frame.imagePrompt || args.frame.mangaPanelPrompt || args.frame.narrationBeat;
+  const frameText = [args.frame.title, args.frame.imagePrompt, args.frame.mangaPanelPrompt, args.frame.narrationBeat]
+    .filter(Boolean)
+    .join("\n");
+  const reconciledCharacters = reconcileStoryboardCharactersForFrame({
+    value: args.frame.characters,
+    allowedCharacterNames: args.allowedCharacterNames,
+    sourceNarration: args.sourceNarration,
+    frameText,
+    maxCharacters: args.maxVisibleCharacters,
+  });
+  const scopedPrompt = appendStoryboardCharacterScopeToPrompt(
+    basePrompt,
+    reconciledCharacters.characters,
+    reconciledCharacters.omittedMentionedCharacters,
+  );
+  const scopedMangaPanelPrompt = args.frame.mangaPanelPrompt
+    ? appendStoryboardCharacterScopeToPrompt(
+        args.frame.mangaPanelPrompt,
+        reconciledCharacters.characters,
+        reconciledCharacters.omittedMentionedCharacters,
+      )
+    : scopedPrompt;
+  return {
+    ...args.frame,
+    imagePrompt: scopedPrompt,
+    mangaPanelPrompt: scopedMangaPanelPrompt,
+    characters: reconciledCharacters.characters,
+    characterPrompts: sanitizeStoryboardCharacterPrompts(args.frame.characterPrompts, reconciledCharacters.characters),
+  };
+}
+
 function asStoryboardRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+const MAX_STORYBOARD_CHARACTER_PROMPTS = 6;
+
+function defaultStoryboardCharacterPosition(index: number, total: number): { x: number; y: number } {
+  if (total <= 1) return { x: 0.5, y: 0.5 };
+  if (total <= 3) return { x: (index + 1) / (total + 1), y: 0.5 };
+
+  const columns = 3;
+  const rows = Math.ceil(total / columns);
+  const row = Math.floor(index / columns);
+  const rowStart = row * columns;
+  const rowCount = Math.min(columns, total - rowStart);
+  return {
+    x: (index - rowStart + 1) / (rowCount + 1),
+    y: (row + 1) / (rows + 1),
+  };
+}
+
+function normalizeStoryboardCharacterCoordinate(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.round(Math.min(1, Math.max(0, numeric)) * 100) / 100;
+}
+
+function matchStoryboardCharacterPromptName(value: unknown, characters: string[]): string | null {
+  const requested = typeof value === "string" ? normalizeAvatarLookupName(value) : "";
+  if (!requested) return null;
+  return characters.find((name) => normalizeAvatarLookupName(name) === requested) ?? null;
+}
+
+function sanitizeStoryboardCharacterPrompts(value: unknown, characters: string[]): SceneIllustrationCharacterPrompt[] {
+  if (!Array.isArray(value) || characters.length === 0) return [];
+  const seen = new Set<string>();
+  const candidates: Array<
+    Omit<SceneIllustrationCharacterPrompt, "position"> & { position?: { x: number; y: number } }
+  > = [];
+
+  for (const rawEntry of value.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS)) {
+    const entry = asStoryboardRecord(rawEntry);
+    const name = matchStoryboardCharacterPromptName(entry.name, characters);
+    const prompt = compactStoryboardText(entry.prompt, 1400);
+    if (!name || !prompt) continue;
+    const normalizedName = normalizeAvatarLookupName(name);
+    if (seen.has(normalizedName)) continue;
+    seen.add(normalizedName);
+
+    const rawPosition = asStoryboardRecord(entry.position);
+    const hasPosition = rawPosition.x != null || rawPosition.y != null;
+    candidates.push({
+      name,
+      prompt,
+      negativePrompt: compactStoryboardText(entry.negativePrompt, 700) || undefined,
+      position: hasPosition
+        ? {
+            x: normalizeStoryboardCharacterCoordinate(rawPosition.x, 0.5),
+            y: normalizeStoryboardCharacterCoordinate(rawPosition.y, 0.5),
+          }
+        : undefined,
+    });
+  }
+
+  return candidates.map((entry, index) => ({
+    ...entry,
+    position: entry.position ?? defaultStoryboardCharacterPosition(index, candidates.length),
+  }));
+}
+
+function storyboardCharacterPromptIdentity(name: string): string {
+  return name
+    .replace(/[-_]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function resolveStoryboardCharacterPromptsForImage(args: {
+  prompts: SceneIllustrationCharacterPrompt[];
+  characters: string[];
+  characterDescriptions: Map<string, string>;
+  includeCharacterAppearance: boolean;
+}): SceneIllustrationCharacterPrompt[] {
+  if (args.characters.length < 2) return [];
+  const promptByName = new Map(args.prompts.map((entry) => [normalizeAvatarLookupName(entry.name), entry] as const));
+  const selectedCharacters = args.characters.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS);
+
+  return selectedCharacters.map((name, index) => {
+    const existing = promptByName.get(normalizeAvatarLookupName(name));
+    const identity = storyboardCharacterPromptIdentity(name);
+    const appearance = args.includeCharacterAppearance
+      ? compactStoryboardText(findCharAvatarFuzzy(name, args.characterDescriptions), 320)
+      : "";
+    const basePrompt = existing?.prompt || `character, ${identity}`;
+    return {
+      name,
+      prompt: [basePrompt, appearance ? `appearance: ${appearance}` : ""].filter(Boolean).join(", "),
+      negativePrompt: existing?.negativePrompt,
+      position: existing?.position ?? defaultStoryboardCharacterPosition(index, selectedCharacters.length),
+    };
+  });
 }
 
 function fallbackStoryboardPlan(args: {
@@ -4497,9 +4953,11 @@ function fallbackStoryboardPlan(args: {
   keyframeCount: number;
   durationSeconds: number;
   aspectRatio: GameSceneVideoAspectRatio;
+  allowedCharacterNames?: string[];
+  maxVisibleCharacters?: number;
 }): PlannedStoryboard {
   const cleanNarration = compactStoryboardText(args.sourceNarration, 2000);
-  const frameCount = Math.min(6, Math.max(2, args.keyframeCount));
+  const frameCount = normalizeStoryboardKeyframeCount(args.keyframeCount);
   const sentences = cleanNarration.split(/(?<=[.!?])\s+/).filter(Boolean);
   const chunks = Array.from({ length: frameCount }, (_, index) => {
     if (args.sections.length > 0) {
@@ -4525,17 +4983,32 @@ function fallbackStoryboardPlan(args: {
       const firstSection = chunk.sections[0] ?? null;
       const lastSection = chunk.sections[chunk.sections.length - 1] ?? null;
       const beat = compactStoryboardText(chunk.text, 900);
+      const title = `Keyframe ${index + 1}`;
+      const imagePrompt = `Manga illustration keyframe, cinematic anime panel, expressive character acting, detailed environment, dramatic lighting. ${beat}`;
+      const reconciledCharacters = reconcileStoryboardCharactersForFrame({
+        value: [],
+        allowedCharacterNames: args.allowedCharacterNames,
+        sourceNarration: args.sourceNarration,
+        frameText: [title, imagePrompt, beat].join("\n"),
+        maxCharacters: args.maxVisibleCharacters,
+      });
+      const scopedImagePrompt = appendStoryboardCharacterScopeToPrompt(
+        imagePrompt,
+        reconciledCharacters.characters,
+        reconciledCharacters.omittedMentionedCharacters,
+      );
       return {
-        title: `Keyframe ${index + 1}`,
+        title,
         sectionStartIndex: firstSection?.index ?? null,
         sectionEndIndex: lastSection?.index ?? null,
         anchorQuote: compactStoryboardText(chunk.sections.map(storyboardSectionText).join(" "), 220),
         anchorKind: dominantStoryboardSectionKind(chunk.sections),
         narrationBeat: beat,
-        mangaPanelPrompt: `Manga illustration keyframe, cinematic anime panel, expressive character acting, detailed environment, dramatic lighting. ${beat}`,
-        imagePrompt: `Manga illustration keyframe, cinematic anime panel, expressive character acting, detailed environment, dramatic lighting. ${beat}`,
+        mangaPanelPrompt: scopedImagePrompt,
+        imagePrompt: scopedImagePrompt,
         videoPrompt: "",
-        characters: [],
+        characters: reconciledCharacters.characters,
+        characterPrompts: [],
         continuityNotes: "",
         cameraMotion: "",
         transitionHint: "",
@@ -4554,12 +5027,14 @@ function sanitizeStoryboardPlan(
     keyframeCount: number;
     durationSeconds: number;
     aspectRatio: GameSceneVideoAspectRatio;
+    allowedCharacterNames?: string[];
+    maxVisibleCharacters?: number;
   },
 ): PlannedStoryboard {
   const root = asStoryboardRecord(raw);
   const rawKeyframes = Array.isArray(root.keyframes) ? root.keyframes : [];
   const fallback = fallbackStoryboardPlan(args);
-  const keyframeCount = Math.min(6, Math.max(2, args.keyframeCount));
+  const keyframeCount = normalizeStoryboardKeyframeCount(args.keyframeCount);
   const frames = rawKeyframes
     .map((rawFrame, index): PlannedStoryboardKeyframe | null => {
       const frame = asStoryboardRecord(rawFrame);
@@ -4588,17 +5063,36 @@ function sanitizeStoryboardPlan(
         compactStoryboardText(coveredSections.map(storyboardSectionText).join(" "), 220) ||
         fallbackFrame?.anchorQuote ||
         "";
+      const title = compactStoryboardText(frame.title, 120) || `Keyframe ${index + 1}`;
+      const frameText = [title, imagePrompt, mangaPanelPrompt, narrationBeat].filter(Boolean).join("\n");
+      const reconciledCharacters = reconcileStoryboardCharactersForFrame({
+        value: frame.characters,
+        allowedCharacterNames: args.allowedCharacterNames,
+        sourceNarration: args.sourceNarration,
+        frameText,
+        maxCharacters: args.maxVisibleCharacters,
+      });
+      const scopedImagePrompt = appendStoryboardCharacterScopeToPrompt(
+        imagePrompt,
+        reconciledCharacters.characters,
+        reconciledCharacters.omittedMentionedCharacters,
+      );
+      const characterPrompts = sanitizeStoryboardCharacterPrompts(
+        frame.characterPrompts,
+        reconciledCharacters.characters,
+      );
       return {
-        title: compactStoryboardText(frame.title, 120) || `Keyframe ${index + 1}`,
+        title,
         sectionStartIndex,
         sectionEndIndex,
         anchorQuote,
         anchorKind,
         narrationBeat,
-        mangaPanelPrompt: mangaPanelPrompt || imagePrompt,
-        imagePrompt,
+        mangaPanelPrompt: mangaPanelPrompt || scopedImagePrompt,
+        imagePrompt: scopedImagePrompt,
         videoPrompt: "",
-        characters: parseStoryboardCharacters(frame.characters),
+        characters: reconciledCharacters.characters,
+        characterPrompts,
         continuityNotes: "",
         cameraMotion: "",
         transitionHint: "",
@@ -4607,9 +5101,9 @@ function sanitizeStoryboardPlan(
       };
     })
     .filter((frame): frame is PlannedStoryboardKeyframe => Boolean(frame))
-    .slice(0, Math.max(keyframeCount, 2));
+    .slice(0, keyframeCount);
 
-  if (frames.length < 2) return fallback;
+  if (frames.length < 1) return fallback;
 
   return {
     title: compactStoryboardText(root.title, 160) || fallback.title,
@@ -4660,6 +5154,7 @@ function buildStoryboardGameContextBlock(args: {
   meta: Record<string, unknown>;
   setupConfig: Record<string, unknown> | null;
   latestState: unknown;
+  allowedCharacterNames?: string[];
 }): string {
   const latest = asStoryboardRecord(args.latestState);
   const lines = [
@@ -4677,6 +5172,9 @@ function buildStoryboardGameContextBlock(args: {
       : "",
     readTrimmedString(args.meta.gameImagePromptInstructions)
       ? `User image instructions: ${compactStoryboardText(args.meta.gameImagePromptInstructions, 1200)}`
+      : "",
+    args.allowedCharacterNames?.length
+      ? `Allowed visible characters: ${compactStoryboardText(args.allowedCharacterNames.join(", "), 1200)}`
       : "",
   ].filter(Boolean);
   return `<game_context>\n${lines.join("\n")}\n</game_context>`;
@@ -4770,11 +5268,15 @@ async function buildStoryboardIllustratorMessages(args: {
   durationSeconds: number;
   aspectRatio: GameSceneVideoAspectRatio;
   generateVideos: boolean;
+  allowedCharacterNames?: string[];
+  maxVisibleCharacters?: number;
+  structuredCharacterPrompts?: boolean;
 }): Promise<{ systemPrompt: string; messages: ChatMessage[] }> {
   const gameContextBlock = buildStoryboardGameContextBlock({
     meta: args.meta,
     setupConfig: args.setupConfig,
     latestState: args.latestState,
+    allowedCharacterNames: args.allowedCharacterNames,
   });
   const sourceSectionsBlock = buildStoryboardSectionsBlock(args.sections);
   const sourceNarrationBlock =
@@ -4789,12 +5291,26 @@ async function buildStoryboardIllustratorMessages(args: {
     durationSeconds: args.durationSeconds,
     aspectRatio: args.aspectRatio,
   };
-  const systemPrompt = await loadStoryboardIllustratorSystemPrompt({
+  const baseSystemPrompt = await loadStoryboardIllustratorSystemPrompt({
     promptOverridesStorage: args.promptOverridesStorage,
     meta: args.meta,
     generateVideos: args.generateVideos,
     ctx: promptCtx,
   });
+  const structuredCharacterPromptInstructions = args.structuredCharacterPrompts
+    ? [
+        "NovelAI V4/V4.5 native multi-character prompting is enabled for this request.",
+        'Extend every keyframe with "characterPrompts": [ { "name": string, "prompt": string, "negativePrompt": string, "position": { "x": number, "y": number } } ].',
+        "For scenes with two or more named visible characters, include exactly one characterPrompts entry for every name in keyframe.characters, using the exact same spelling.",
+        "Keep keyframe.imagePrompt as the base scene prompt: subject-count tags, shared interaction, camera, composition, environment, lighting, mood, and props. Put character-specific identity, appearance, clothing, expression, pose, and role in that character's prompt.",
+        "Start each character prompt with girl, boy, or other without a number, then add the canonical character tag or visual identity traits.",
+        "For interactions, use NovelAI action roles such as source#hug, target#hug, or mutual#hug in the relevant character prompts when applicable.",
+        "Use negativePrompt to block traits belonging only to the other visible characters. Use an empty string when no character-specific negative is needed.",
+        "position is the character's approximate normalized center: x=0 is left, x=1 is right, y=0 is top, y=1 is bottom. Keep positions consistent with camera composition and character order.",
+        "For zero or one named visible character, return an empty characterPrompts array.",
+      ].join("\n")
+    : "";
+  const systemPrompt = [baseSystemPrompt, structuredCharacterPromptInstructions].filter(Boolean).join("\n\n");
   const promptTask = args.generateVideos
     ? "Create the animation-ready storyboard JSON now."
     : "Create the illustration storyboard JSON now.";
@@ -4814,6 +5330,14 @@ async function buildStoryboardIllustratorMessages(args: {
             `Aspect ratio: ${args.aspectRatio}.`,
             "Do not include videoPrompt, cameraMotion, transitionHint, or continuityNotes fields.",
             "Remember: storyboard only this GM narration turn, not the user's next CYOA/action.",
+            "Use only allowed visible characters from game_context; include a new NPC only if that exact name appears in this GM narration.",
+            args.maxVisibleCharacters
+              ? `Each keyframe may include at most ${args.maxVisibleCharacters} visible named characters; if more are present in the narration, choose the most important for that visual beat and treat the others as off-screen or unnamed background.`
+              : "",
+            "Keep each keyframe.characters exactly in sync with named visible characters in imagePrompt.",
+            args.structuredCharacterPrompts
+              ? "Also keep each keyframe.characterPrompts exactly in sync with keyframe.characters for multi-character scenes."
+              : "",
           ].join("\n"),
         ].join("\n\n"),
       },
@@ -5309,18 +5833,23 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/create", async (req) => {
     logger.info("[game/create] Received request");
     const parsedCreateGameInput = createGameSchema.parse(req.body);
-    const { name, connectionId, characterConnectionId, promptPresetId, chatId } = parsedCreateGameInput;
+    const { name, connectionId, promptPresetId, chatId, preferences, shareLabels } = parsedCreateGameInput;
     const selectedPromptPresetId = promptPresetId || parsedCreateGameInput.setupConfig.promptPresetId || null;
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
     const gameSpecialInstructions = parsedCreateGameInput.setupConfig.gameSpecialInstructions?.trim() || null;
+    const storyboardKeyframeCount = normalizeStoryboardKeyframeCount(
+      parsedCreateGameInput.setupConfig.gameStoryboardKeyframeCount,
+    );
+    const storyboardIllustrationsPreference =
+      parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled !== false;
     const visualGenerationEnabled =
       parsedCreateGameInput.setupConfig.enableSpriteGeneration === true ||
       parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled === true ||
       parsedCreateGameInput.setupConfig.gameStoryboardAutoGenerationEnabled === true;
     const storyboardIllustrationsEnabled =
       visualGenerationEnabled &&
-      (parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled === true ||
+      (storyboardIllustrationsPreference ||
         parsedCreateGameInput.setupConfig.gameStoryboardAutoGenerationEnabled === true);
     const storyboardAnimationsEnabled =
       storyboardIllustrationsEnabled &&
@@ -5329,8 +5858,11 @@ export async function gameRoutes(app: FastifyInstance) {
     const setupConfig: GameSetupConfig = {
       ...parsedCreateGameInput.setupConfig,
       enableSpriteGeneration: visualGenerationEnabled || undefined,
-      gameStoryboardAutoIllustrationsEnabled: storyboardIllustrationsEnabled || undefined,
+      gameStoryboardAutoIllustrationsEnabled: visualGenerationEnabled
+        ? storyboardIllustrationsEnabled
+        : parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled,
       gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
+      gameStoryboardKeyframeCount: storyboardKeyframeCount,
       enableCustomWidgets:
         parsedCreateGameInput.setupConfig.enableCustomWidgets !== false || customHudWidgets.length > 0,
       customHudWidgets: customHudWidgets.length > 0 ? customHudWidgets : undefined,
@@ -5338,12 +5870,7 @@ export async function gameRoutes(app: FastifyInstance) {
       gameSpecialInstructions,
     };
     const chats = createChatsStorage(app.db);
-    let defaultGenerationParameters: StoredGenerationParameters | null = null;
-    if (connectionId && connectionId !== "random") {
-      const connStorage = createConnectionsStorage(app.db);
-      const conn = await connStorage.getById(connectionId);
-      defaultGenerationParameters = parseStoredGenerationParameters(conn?.defaultParameters);
-    }
+    const connectionStorage = createConnectionsStorage(app.db);
 
     const gameId = randomUUID();
 
@@ -5376,6 +5903,13 @@ export async function gameRoutes(app: FastifyInstance) {
     }
     if (!sessionChat) throw new Error("Failed to create game session chat");
 
+    const resolvedGmConnectionId = resolveInitialGameGmConnectionId(connectionId, sessionChat.connectionId);
+    let defaultGenerationParameters: StoredGenerationParameters | null = null;
+    if (resolvedGmConnectionId && resolvedGmConnectionId !== "random") {
+      const conn = await connectionStorage.getById(resolvedGmConnectionId);
+      defaultGenerationParameters = parseStoredGenerationParameters(conn?.defaultParameters);
+    }
+
     const sessionMeta = parseMeta(sessionChat.metadata);
     const setupActiveAgentIds = [...(setupConfig.enableSpotifyDj ? ["spotify"] : [])];
     const spotifySourceType = setupConfig.spotifySourceType ?? "liked";
@@ -5384,6 +5918,18 @@ export async function gameRoutes(app: FastifyInstance) {
       sessionMeta.chatParameters,
       setupConfig.generationParameters,
     );
+    const snapshotConnection = async (id: string | null | undefined) => {
+      if (!id) return null;
+      if (id === "random") return { name: "Random connection pool", provider: "random" };
+      if (id === "local") return { name: "Local scene helper", provider: "local" };
+      return snapshotInitialSetupConnection(await connectionStorage.getById(id));
+    };
+    const [gmConnection, sceneConnection, imageConnection, videoConnection] = await Promise.all([
+      snapshotConnection(resolvedGmConnectionId),
+      snapshotConnection(setupConfig.sceneConnectionId),
+      snapshotConnection(setupConfig.imageConnectionId),
+      snapshotConnection(setupConfig.videoConnectionId),
+    ]);
     await chats.updateMetadata(sessionChat.id, {
       ...sessionMeta,
       gameId,
@@ -5409,9 +5955,21 @@ export async function gameRoutes(app: FastifyInstance) {
       gameRecentMusic: [],
       gameRecentSpotifyTracks: [],
       gameSetupConfig: setupConfig,
+      gameInitialSetup: {
+        config: setupConfig,
+        effectiveGenerationParameters: gameChatParameters,
+        preferences: preferences.trim() || null,
+        connections: {
+          gm: gmConnection,
+          scene: sceneConnection,
+          image: imageConnection,
+          video: videoConnection,
+        },
+        labels: shareLabels,
+        createdAt: new Date().toISOString(),
+      },
       gameSystemPrompt,
       gameSpecialInstructions,
-      gameCharacterConnectionId: null,
       gameSceneConnectionId: setupConfig.sceneConnectionId || null,
       gameNpcs: [],
       enableAgents: true,
@@ -5419,8 +5977,13 @@ export async function gameRoutes(app: FastifyInstance) {
       enableSpriteGeneration: setupConfig.enableSpriteGeneration || false,
       gameImageConnectionId: setupConfig.imageConnectionId || null,
       gameVideoConnectionId: setupConfig.videoConnectionId || null,
-      gameStoryboardAutoIllustrationsEnabled: setupConfig.gameStoryboardAutoIllustrationsEnabled === true,
+      gameStoryboardAutoIllustrationsEnabled: setupConfig.gameStoryboardAutoIllustrationsEnabled !== false,
       gameStoryboardAutoGenerationEnabled: setupConfig.gameStoryboardAutoGenerationEnabled === true,
+      gameStoryboardKeyframeCount: storyboardKeyframeCount,
+      gameGmPromptTemplateId: setupConfig.gameGmPromptTemplateId || null,
+      gameStoryboardAnimationPromptTemplateId: setupConfig.gameStoryboardAnimationPromptTemplateId || null,
+      gameStoryboardVideoPromptTemplateId: setupConfig.gameStoryboardVideoPromptTemplateId || null,
+      gameStoryboardUseDirectScenePrompt: setupConfig.gameStoryboardUseDirectScenePrompt === true,
       gameLastSceneVideoId: null,
       activeLorebookIds: setupConfig.activeLorebookIds || [],
       enableCustomWidgets: setupConfig.enableCustomWidgets !== false,
@@ -5592,10 +6155,14 @@ export async function gameRoutes(app: FastifyInstance) {
       });
       const resolveSetupLorebookMacrosForFinal = (value: string) =>
         resolveMacrosWithVariableSnapshot(value, setupPromptMacroContext);
+      const setupLorebookScopeExclusions = resolveLorebookScopeExclusions("game", meta);
       const lorebookResult = await processLorebooks(app.db, [], null, {
+        chatId,
         characterIds: setupConfig.partyCharacterIds,
         personaId: setupPersonaId,
         activeLorebookIds: setupConfig.activeLorebookIds,
+        excludedLorebookIds: setupLorebookScopeExclusions.excludedLorebookIds,
+        excludedSourceAgentIds: setupLorebookScopeExclusions.excludedSourceAgentIds,
         generationTriggers: ["game_setup", "game"],
         resolveContent: resolveSetupLorebookMacrosForFinal,
       });
@@ -6079,9 +6646,13 @@ export async function gameRoutes(app: FastifyInstance) {
       const stateStore = createGameStateStorage(app.db);
       const previousState = await stateStore.getLatest(latestSession.id);
       const previousPresentCharacters = parseJsonField<any[]>(previousState?.presentCharacters, []);
+      const previousWorldCustomFields = normalizeWorldCustomFields(
+        parseJsonField<unknown[]>(previousState?.worldCustomFields, []),
+      );
       const previousRecentEvents = parseJsonField<string[]>(previousState?.recentEvents, []);
       const previousPlayerStats = parseJsonField<Record<string, unknown> | null>(previousState?.playerStats, null);
       const previousPersonaStats = parseJsonField<any[] | null>(previousState?.personaStats, null);
+      const previousHiddenTrackerFields = parseTrackerHiddenFields(previousState?.hiddenTrackerFields);
       const carriedInventory = mergeGameInventoryItems(
         normalizeGameInventoryItems(prevMeta.gameInventory),
         inventoryFromPlayerStats(previousPlayerStats),
@@ -6200,10 +6771,12 @@ export async function gameRoutes(app: FastifyInstance) {
             location: previousState.location,
             weather: previousState.weather,
             temperature: previousState.temperature,
+            worldCustomFields: previousWorldCustomFields,
             presentCharacters: previousPresentCharacters,
             recentEvents: previousRecentEvents,
             playerStats: previousPlayerStats as any,
             personaStats: previousPersonaStats as any,
+            hiddenTrackerFields: previousHiddenTrackerFields,
             committed: true,
           });
         } catch (err) {
@@ -8143,35 +8716,6 @@ export async function gameRoutes(app: FastifyInstance) {
     return { result, combatants };
   });
 
-  // ── GET /game/elements/presets ──
-  app.get("/elements/presets", async () => {
-    const names = listElementPresets();
-    const presets = names.map((name) => {
-      const p = getElementPreset(name);
-      return { id: name, name: p.name, elements: p.elements };
-    });
-    return { presets };
-  });
-
-  // ── GET /game/elements/preset/:name ──
-  app.get("/elements/preset/:name", async (req) => {
-    const { name } = req.params as { name: string };
-    const preset = getElementPreset(name);
-    return {
-      id: name,
-      name: preset.name,
-      elements: preset.elements,
-      reactionCount: preset.reactions.length,
-      reactions: preset.reactions.map((r) => ({
-        trigger: r.trigger,
-        appliedWith: r.appliedWith,
-        reaction: r.reaction,
-        damageMultiplier: r.damageMultiplier,
-        description: r.description,
-      })),
-    };
-  });
-
   // ── POST /game/combat/loot ──
   app.post("/combat/loot", async (req) => {
     const schema = z.object({
@@ -8321,7 +8865,7 @@ export async function gameRoutes(app: FastifyInstance) {
       actions: z.array(
         z.object({
           npcId: z.string(),
-          action: z.string().min(1).max(50),
+          action: z.string().min(1).max(GAME_REPUTATION_ACTION_MAX_LENGTH),
           modifier: z.number().optional(),
         }),
       ),
@@ -8458,7 +9002,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
   // ── POST /game/party-turn ──
   // Generates the party's response to the latest GM narration.
-  // Uses the character connection (or falls back to GM connection).
+  // Uses the explicit override, else the chat/GM connection (there is no character-connection tier).
   // Returns parsed PartyDialogueLine[] and the raw response text.
   const partyTurnSchema = z.object({
     chatId: z.string().min(1),
@@ -8466,7 +9010,7 @@ export async function gameRoutes(app: FastifyInstance) {
     narration: z.string().min(1).max(50000),
     /** Optional player action text that preceded the GM narration. */
     playerAction: z.string().max(5000).optional(),
-    /** Override connection (falls back to character connection → GM connection). */
+    /** Override connection (falls back to the chat/GM connection). */
     connectionId: z.string().optional(),
     debugMode: z.boolean().optional().default(false),
   });
@@ -8898,6 +9442,8 @@ export async function gameRoutes(app: FastifyInstance) {
     const gameGenerationParameters = resolveStoredGameGenerationParameters(meta, defaultGenerationParameters);
     const enableGen = !!meta.enableSpriteGeneration;
     const enableAutoGen = enableGen && meta.gameImageAutoGenerationEnabled !== false;
+    const storyboardBackgroundVisualEnabled = meta.gameStoryboardViewerDisplayMode === "background";
+    const enableAutoBackgroundGen = enableAutoGen && !storyboardBackgroundVisualEnabled;
     const imgConnId = await resolveGameImageConnectionId(meta, agents);
     const setupCfgForScene = meta.gameSetupConfig as Record<string, unknown> | null;
     const artStyleForScene = (setupCfgForScene?.artStylePrompt as string) || "";
@@ -8916,7 +9462,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const sceneCtx = {
       ...(input.context as unknown as SceneAnalyzerContext),
       turnNumber: approxTurnNumber,
-      canGenerateBackgrounds: enableAutoGen && !!imgConnId,
+      canGenerateBackgrounds: enableAutoBackgroundGen && !!imgConnId,
       canGenerateIllustrations:
         enableAutoGen && !!imgConnId && isIllustrationAllowed(meta, approxTurnNumber, sessionNumber),
       artStylePrompt: artStyleForScene || null,
@@ -9096,11 +9642,12 @@ export async function gameRoutes(app: FastifyInstance) {
       // scene-analysis timeout even though the analyzer already returned valid JSON.
       // Missing/generated assets are handled by the follow-up /game/generate-assets
       // request, which reports asset failures separately.
-      const generateSceneWrapAssetsInline = false;
       if (!enableGen) {
         logger.debug("[game/scene-wrap] asset-gen skipped: enableSpriteGeneration=false");
       } else if (!enableAutoGen) {
         logger.debug("[game/scene-wrap] automatic visual generation skipped: gameImageAutoGenerationEnabled=false");
+      } else if (storyboardBackgroundVisualEnabled) {
+        logger.debug("[game/scene-wrap] background generation skipped: storyboard background display mode active");
       } else if (!imgConnId) {
         logger.debug("[game/scene-wrap] asset-gen skipped: no Illustrator image connection configured");
       }
@@ -9111,44 +9658,14 @@ export async function gameRoutes(app: FastifyInstance) {
         try {
           const imgConn = await connections.getWithKey(imgConnId);
           if (imgConn) {
-            const imgModel = imgConn.model || "";
-            const imgBaseUrl = imgConn.baseUrl || "https://image.pollinations.ai";
-            const imgApiKey = imgConn.apiKey || "";
-            const imgSource = (imgConn as any).imageGenerationSource || imgModel;
-            const imgServiceHint = imgConn.imageService || imgSource;
-            const imgComfyWorkflow = imgConn.comfyuiWorkflow || undefined;
-            const imgEndpointId = imgConn.imageEndpointId || undefined;
-            const imgDefaults = resolveConnectionImageDefaults(imgConn);
-            const imageSettings = await loadImageGenerationUserSettings(app.db);
-            const styleProfiles = imageSettings.styleProfiles;
-
-            const setupCfg = meta.gameSetupConfig as Record<string, unknown> | null;
-            const genre = (setupCfg?.genre as string) || "";
-            const setting = (setupCfg?.setting as string) || "";
-            const artStyle = (setupCfg?.artStylePrompt as string) || "";
-            const styleProfileId =
-              ((setupCfg?.imageStyleProfileId as string | undefined) ??
-                (meta.imageStyleProfileId as string | undefined)) ||
-              null;
-
             const charStore = createCharactersStorage(app.db);
             const allChars = await charStore.list();
-            const charReferenceByName = new Map<string, string>();
             const charAvatarByName = new Map<string, string>();
-            const charDescriptionByName = new Map<string, string>();
             for (const ch of allChars) {
               try {
                 const parsed = JSON.parse(ch.data) as Record<string, unknown> & { name?: string };
-                const fullBodyReference = parsed.name ? readPreferredFullBodySpriteBase64(ch.id) : null;
-                if (parsed.name && fullBodyReference) {
-                  addNameLookupEntry(charReferenceByName, parsed.name, fullBodyReference.base64);
-                }
                 if (parsed.name && ch.avatarPath) {
                   addNameLookupEntry(charAvatarByName, parsed.name, ch.avatarPath);
-                }
-                const appearanceText = extractCharacterAppearanceText(parsed);
-                if (parsed.name && appearanceText) {
-                  addNameLookupEntry(charDescriptionByName, parsed.name, appearanceText);
                 }
               } catch {
                 /* skip */
@@ -9156,75 +9673,7 @@ export async function gameRoutes(app: FastifyInstance) {
             }
 
             const illustration = sceneResult.illustration as SceneIllustrationRequest | null | undefined;
-            if (illustration && sceneCtx.canGenerateIllustrations && generateSceneWrapAssetsInline) {
-              const illustrationAssets = collectIllustrationCharacterAssets({
-                illustration,
-                characterNames: input.context.characterNames ?? [],
-                trackedNpcs: (input.context.trackedNpcs ?? []) as Array<Record<string, unknown>>,
-                gameNpcs: (meta.gameNpcs as GameNpc[]) ?? [],
-                charReferenceByName,
-                charAvatarByName,
-                charDescriptionByName,
-                includeReferenceImages: meta.gameImageUseAvatarReferences !== false,
-                includeCharacterDescriptions: meta.gameImageIncludeCharacterAppearance !== false,
-              });
-              let sentIllustrationPrompt: string | null = null;
-              const generatedTag = await generateSceneIllustration({
-                chatId: input.chatId,
-                title: illustration.title,
-                prompt: illustration.prompt,
-                reason: illustration.reason,
-                characters: illustration.characters,
-                characterDescriptions: illustrationAssets.characterDescriptions,
-                slug: illustration.slug,
-                genre,
-                setting,
-                artStyle,
-                imagePromptInstructions,
-                referenceImages: illustrationAssets.referenceImages,
-                imgSource,
-                imgModel,
-                imgBaseUrl,
-                imgApiKey,
-                imgService: imgServiceHint,
-                imgEndpointId,
-                imgComfyWorkflow,
-                imgDefaults,
-                styleProfiles,
-                styleProfileId,
-                debugLog: debugLogsEnabled ? debugLog : undefined,
-                promptOverridesStorage: createPromptOverridesStorage(app.db),
-                onCompiledPrompt: (compiled) => {
-                  sentIllustrationPrompt = compiled.prompt;
-                },
-              });
-              if (generatedTag) {
-                await addGeneratedIllustrationToGallery({
-                  app,
-                  chatId: input.chatId,
-                  tag: generatedTag,
-                  illustration,
-                  model: imgModel,
-                  prompt: sentIllustrationPrompt,
-                });
-                applyGeneratedIllustration(sceneResult, generatedTag, illustration.segment);
-                sceneResult.illustration = null;
-                try {
-                  const latestChat = await chats.getById(input.chatId);
-                  if (latestChat) {
-                    const latestMeta = parseMeta(latestChat.metadata);
-                    await chats.updateMetadata(input.chatId, {
-                      ...latestMeta,
-                      gameLastIllustrationTurn: approxTurnNumber,
-                      gameLastIllustrationSessionNumber: sessionNumber,
-                      gameLastIllustrationTag: generatedTag,
-                    });
-                  }
-                } catch {
-                  /* non-fatal */
-                }
-              }
-            } else if (illustration && sceneCtx.canGenerateIllustrations) {
+            if (illustration && sceneCtx.canGenerateIllustrations) {
               logger.debug("[game/scene-wrap] illustration generation deferred to /game/generate-assets");
             }
 
@@ -9243,98 +9692,6 @@ export async function gameRoutes(app: FastifyInstance) {
                 logger.debug(`[game/scene-wrap] bg "${chosenBg}" already in manifest, skipping generation`);
               } else {
                 logger.debug(`[game/scene-wrap] bg "${chosenBg}" not in manifest; generation will be deferred`);
-              }
-
-              if (!tagExists && generateSceneWrapAssetsInline) {
-                // The scene model wanted a bg that doesn't exist — generate one
-                const slug = generatedBackgroundSlug(chosenBg);
-
-                const generatedTag = await generateBackground({
-                  chatId: input.chatId,
-                  locationSlug: slug,
-                  sceneDescription: chosenBg.replace(/:/g, " ").replace(/-/g, " "),
-                  genre,
-                  setting,
-                  currentLocation: latestSceneState?.location ?? null,
-                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
-                  currentTimeOfDay:
-                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
-                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
-                  artStyle,
-                  imgSource,
-                  imgModel,
-                  imgBaseUrl,
-                  imgApiKey,
-                  imgService: imgServiceHint,
-                  imgEndpointId,
-                  imgComfyWorkflow,
-                  imgDefaults,
-                  styleProfiles,
-                  styleProfileId,
-                  debugLog: debugLogsEnabled ? debugLog : undefined,
-                  promptOverridesStorage: createPromptOverridesStorage(app.db),
-                });
-
-                if (generatedTag) {
-                  // Rewrite the scene result to use the generated tag
-                  sceneResult.background = generatedTag;
-                  // Also patch segmentEffects
-                  if (Array.isArray(sceneResult.segmentEffects)) {
-                    for (const fx of sceneResult.segmentEffects as Record<string, unknown>[]) {
-                      if (fx.background === chosenBg) {
-                        fx.background = generatedTag;
-                      }
-                    }
-                  }
-                }
-              } else if (!tagExists) {
-                logger.debug('[game/scene-wrap] bg "%s" generation deferred to /game/generate-assets', chosenBg);
-              }
-            }
-
-            // Also check segmentEffects for additional bg tags
-            if (Array.isArray(sceneResult.segmentEffects) && generateSceneWrapAssetsInline) {
-              const manifest = getAssetManifest();
-              for (const fx of sceneResult.segmentEffects as Record<string, unknown>[]) {
-                const segBg = fx.background as string | null;
-                if (!segBg || segBg === "black" || segBg === "none") continue;
-                if (manifest.assets[segBg]) continue;
-                const segTagExists = Object.keys(manifest.assets).some(
-                  (k) => k.startsWith("backgrounds:") && k.toLowerCase().includes(segBg.toLowerCase()),
-                );
-                if (segTagExists) continue;
-
-                const slug = generatedBackgroundSlug(segBg);
-
-                const generatedTag = await generateBackground({
-                  chatId: input.chatId,
-                  locationSlug: slug,
-                  sceneDescription: segBg.replace(/:/g, " ").replace(/-/g, " "),
-                  genre,
-                  setting,
-                  currentLocation: latestSceneState?.location ?? null,
-                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
-                  currentTimeOfDay:
-                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
-                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
-                  artStyle,
-                  imgSource,
-                  imgModel,
-                  imgBaseUrl,
-                  imgApiKey,
-                  imgService: imgServiceHint,
-                  imgEndpointId,
-                  imgComfyWorkflow,
-                  imgDefaults,
-                  styleProfiles,
-                  styleProfileId,
-                  debugLog: debugLogsEnabled ? debugLog : undefined,
-                  promptOverridesStorage: createPromptOverridesStorage(app.db),
-                });
-
-                if (generatedTag) {
-                  fx.background = generatedTag;
-                }
               }
             }
 
@@ -9516,8 +9873,18 @@ export async function gameRoutes(app: FastifyInstance) {
       )
       .max(200)
       .optional(),
-    keyframeCount: z.number().int().min(2).max(6).optional().default(4),
-    durationSeconds: z.number().int().min(1).max(15).optional(),
+    keyframeCount: z
+      .number()
+      .int()
+      .min(GAME_STORYBOARD_KEYFRAME_COUNT_MIN)
+      .max(GAME_STORYBOARD_KEYFRAME_COUNT_MAX)
+      .optional(),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN)
+      .max(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX)
+      .optional(),
     aspectRatio: z.enum(["16:9", "9:16"]).optional().default("16:9"),
     generateVideos: z.boolean().optional(),
     debugMode: z.boolean().optional().default(false),
@@ -9572,13 +9939,6 @@ export async function gameRoutes(app: FastifyInstance) {
       const sceneVideos = createGameSceneVideosStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const promptOverridesStorage = createPromptOverridesStorage(app.db);
-      const videoSettings = normalizeVideoGenerationUserSettings(
-        await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
-      );
-      const storyboardDurationSeconds = Math.min(
-        15,
-        Math.max(1, Math.trunc(input.durationSeconds ?? videoSettings.sceneVideoDurationSeconds)),
-      );
       await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard generate");
 
       const chat = await chats.getById(input.chatId);
@@ -9596,6 +9956,14 @@ export async function gameRoutes(app: FastifyInstance) {
       const sourceSections = normalizeStoryboardSections(input.sections, sourceNarration);
 
       const meta = parseMeta(chat.metadata);
+      const storyboardDurationSeconds = normalizeStoryboardDuration(
+        input.durationSeconds ?? meta.gameStoryboardAnimationDurationSeconds,
+        GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
+      );
+      const storyboardKeyframeCount = normalizeStoryboardKeyframeCount(
+        input.keyframeCount,
+        normalizeStoryboardKeyframeCount(meta.gameStoryboardKeyframeCount),
+      );
       const generateStoryboardVideos = input.generateVideos ?? meta.gameStoryboardAutoGenerationEnabled === true;
       const enableGen = !!meta.enableSpriteGeneration;
       const imgConnId = await resolveGameImageConnectionId(meta, agents);
@@ -9604,6 +9972,20 @@ export async function gameRoutes(app: FastifyInstance) {
       }
       const imgConn = await connections.getWithKey(imgConnId);
       if (!imgConn) return reply.status(404).send({ error: "Image generation connection not found" });
+      const storyboardImageRequestContext = {
+        imgSource: (imgConn as any).imageGenerationSource || imgConn.model || "",
+        imgModel: imgConn.model || "",
+        imgBaseUrl: imgConn.baseUrl || "https://image.pollinations.ai",
+        imgService: imgConn.imageService || (imgConn as any).imageGenerationSource || imgConn.model || "",
+      };
+      const storyboardReferenceImageLimit = resolveSceneIllustrationReferenceImageLimit(storyboardImageRequestContext);
+      const useNovelAiCharacterPrompts = meta.gameStoryboardUseNovelAiCharacterPrompts !== false;
+      const providerSupportsStructuredCharacterPrompts =
+        supportsSceneIllustrationStructuredCharacterPrompts(storyboardImageRequestContext);
+      const structuredCharacterPrompts = useNovelAiCharacterPrompts && providerSupportsStructuredCharacterPrompts;
+      const storyboardMaxVisibleCharacters = structuredCharacterPrompts
+        ? Math.min(MAX_STORYBOARD_CHARACTER_PROMPTS, storyboardReferenceImageLimit)
+        : storyboardReferenceImageLimit;
 
       const sceneConnId =
         readTrimmedString(meta.gameSceneConnectionId) ||
@@ -9632,6 +10014,14 @@ export async function gameRoutes(app: FastifyInstance) {
         (await createGameStateStorage(app.db)
           .getLatest(input.chatId)
           .catch(() => null));
+      const charStore = createCharactersStorage(app.db);
+      const storyboardCharacterContext = await buildStoryboardCharacterContext({
+        characters: charStore,
+        chat,
+        meta,
+        setupConfig: setupCfg,
+        latestState: fallbackState,
+      });
       const illustratorMessages = await buildStoryboardIllustratorMessages({
         promptOverridesStorage,
         meta,
@@ -9639,12 +10029,21 @@ export async function gameRoutes(app: FastifyInstance) {
         latestState: fallbackState,
         sourceNarration,
         sections: sourceSections,
-        keyframeCount: input.keyframeCount,
+        keyframeCount: storyboardKeyframeCount,
         durationSeconds: storyboardDurationSeconds,
         aspectRatio: input.aspectRatio,
         generateVideos: generateStoryboardVideos,
+        allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
+        maxVisibleCharacters: storyboardMaxVisibleCharacters,
+        structuredCharacterPrompts,
       });
       if (debugLogsEnabled) {
+        debugLog(
+          "[debug/game/storyboard-illustrator] nativeCharacterPrompts=%s settingEnabled=%s providerSupported=%s",
+          structuredCharacterPrompts,
+          useNovelAiCharacterPrompts,
+          providerSupportsStructuredCharacterPrompts,
+        );
         debugLog(
           "[debug/game/storyboard-illustrator] messages:\n%s",
           JSON.stringify(illustratorMessages.messages, null, 2),
@@ -9661,7 +10060,7 @@ export async function gameRoutes(app: FastifyInstance) {
             conn.model ?? "",
             {
               stream: false,
-              maxTokens: 2200,
+              maxTokens: structuredCharacterPrompts ? 3600 : 2200,
               responseFormat: { type: "json_object" },
               signal: storyboardAbortSignal,
             },
@@ -9677,9 +10076,11 @@ export async function gameRoutes(app: FastifyInstance) {
         plan = sanitizeStoryboardPlan(parseJSON(rawPlan), {
           sourceNarration,
           sections: sourceSections,
-          keyframeCount: input.keyframeCount,
+          keyframeCount: storyboardKeyframeCount,
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
+          allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
         });
       } catch (err) {
         illustratorErrorMessage =
@@ -9690,9 +10091,11 @@ export async function gameRoutes(app: FastifyInstance) {
         plan = fallbackStoryboardPlan({
           sourceNarration,
           sections: sourceSections,
-          keyframeCount: input.keyframeCount,
+          keyframeCount: storyboardKeyframeCount,
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
+          allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
         });
       }
 
@@ -9763,98 +10166,14 @@ export async function gameRoutes(app: FastifyInstance) {
           : "";
       const useAvatarReferences = meta.gameImageUseAvatarReferences !== false;
       const includeCharacterAppearance = meta.gameImageIncludeCharacterAppearance !== false;
-      const charStore = createCharactersStorage(app.db);
-      const allChars = await charStore.list();
-      const charReferenceByName = new Map<string, string>();
-      const charAvatarByName = new Map<string, string>();
-      const charDescriptionByName = new Map<string, string>();
-      for (const ch of allChars) {
-        try {
-          const parsed = JSON.parse(ch.data) as Record<string, unknown> & { name?: string };
-          const fullBodyReference = parsed.name ? readPreferredFullBodySpriteBase64(ch.id) : null;
-          if (parsed.name && fullBodyReference)
-            addNameLookupEntry(charReferenceByName, parsed.name, fullBodyReference.base64);
-          if (parsed.name && ch.avatarPath) addNameLookupEntry(charAvatarByName, parsed.name, ch.avatarPath);
-          const appearanceText = extractCharacterAppearanceText(parsed);
-          if (parsed.name && appearanceText) addNameLookupEntry(charDescriptionByName, parsed.name, appearanceText);
-        } catch {
-          /* skip malformed character data */
-        }
-      }
+      const { charReferenceByName, charAvatarByName, charDescriptionByName } = storyboardCharacterContext;
 
-      let videoRuntime: {
-        source: string;
-        serviceHint: string;
-        baseUrl: string;
-        apiKey: string;
-        model: string;
-        resolution?: "480p" | "720p" | "1080p";
-        maxDurationSeconds: number;
-        promptLimits: SceneVideoPromptLimits;
-        publicReferenceUpload: VideoReferencePublicUploadOptions | null;
-      } | null = null;
+      let videoRuntime: GameVideoRuntime | null = null;
       if (generateStoryboardVideos) {
         const videoConnectionId = await resolveGameVideoConnectionId(meta, connections);
         const videoConn = videoConnectionId ? await connections.getWithKey(videoConnectionId) : null;
         if (videoConn?.provider === "video_generation") {
-          const videoDefaults = videoConn.defaultParameters
-            ? getStoredVideoDefaults(videoConn.defaultParameters)
-            : createDefaultVideoGenerationProfile();
-          const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
-          const source =
-            explicitVideoSource ||
-            (videoDefaults.service !== "gemini_omni"
-              ? videoDefaults.service
-              : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
-          const rawServiceHint = videoConn.videoService || source;
-          const serviceHint =
-            rawServiceHint === "google_ai_studio"
-              ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
-              : rawServiceHint;
-          const isXaiVideo = source === "xai" || serviceHint === "xai";
-          const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
-          const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
-          const isSeedanceVideo = source === "seedance" || serviceHint === "seedance";
-          const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
-          videoRuntime = {
-            source,
-            serviceHint,
-            baseUrl:
-              videoConn.baseUrl ||
-              (isXaiVideo
-                ? DEFAULT_XAI_VIDEO_BASE_URL
-                : isGoogleVeoVideo
-                  ? DEFAULT_GOOGLE_VEO_BASE_URL
-                  : isOpenRouterVideo
-                    ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-                    : isSeedanceVideo
-                      ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-                      : DEFAULT_GEMINI_OMNI_BASE_URL),
-            apiKey: videoConn.apiKey || "",
-            model:
-              videoConn.model ||
-              (isXaiVideo
-                ? DEFAULT_XAI_VIDEO_MODEL
-                : isGoogleVeoVideo
-                  ? DEFAULT_GOOGLE_VEO_MODEL
-                  : isOpenRouterVideo
-                    ? DEFAULT_OPENROUTER_VIDEO_MODEL
-                    : isSeedanceVideo
-                      ? DEFAULT_SEEDANCE_VIDEO_MODEL
-                      : DEFAULT_GEMINI_OMNI_MODEL),
-            resolution: isXaiVideo
-              ? videoDefaults.xai.resolution
-              : isGoogleVeoVideo
-                ? videoDefaults.googleVeo.resolution
-                : isOpenRouterVideo
-                  ? videoDefaults.openrouter.resolution
-                  : isSeedanceVideo
-                    ? videoDefaults.seedance.resolution
-                    : undefined,
-            maxDurationSeconds: isXaiVideo || isSeedanceVideo ? 15 : isGoogleVeoVideo ? 8 : 60,
-            promptLimits,
-            publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
-          };
+          videoRuntime = resolveGameVideoRuntime(videoConn);
         }
       }
 
@@ -9876,12 +10195,31 @@ export async function gameRoutes(app: FastifyInstance) {
           return { generatedImage: false, generatedVideo: false, imageFailure: true, videoFailure: false };
         }
         await storyboards.updateKeyframe(frame.id, { status: "rendering_image", error: null });
-        const plannedFrame = plan.keyframes[frame.index] ?? plan.keyframes[0]!;
+        const plannedFrame = reconcileStoryboardFrameForRendering({
+          frame: plan.keyframes[frame.index] ?? plan.keyframes[0]!,
+          allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
+          sourceNarration,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
+        });
+        await storyboards.updateKeyframe(frame.id, {
+          imagePrompt: plannedFrame.imagePrompt,
+          mangaPanelPrompt: plannedFrame.mangaPanelPrompt,
+          characters: JSON.stringify(plannedFrame.characters),
+        });
+        const characterPrompts = structuredCharacterPrompts
+          ? resolveStoryboardCharacterPromptsForImage({
+              prompts: plannedFrame.characterPrompts,
+              characters: plannedFrame.characters,
+              characterDescriptions: charDescriptionByName,
+              includeCharacterAppearance,
+            })
+          : [];
         const illustration: SceneIllustrationRequest = {
           title: plannedFrame.title,
           prompt: plannedFrame.imagePrompt || plannedFrame.mangaPanelPrompt || plannedFrame.narrationBeat,
           reason: plannedFrame.narrationBeat || `Storyboard keyframe ${frame.index + 1}`,
           characters: plannedFrame.characters,
+          characterPrompts,
           slug: storyboardSlug(
             `${storyboardRow.id.slice(0, 8)}-${frame.index + 1}-${plannedFrame.title}`,
             `storyboard-${frame.index + 1}`,
@@ -9890,14 +10228,34 @@ export async function gameRoutes(app: FastifyInstance) {
         const illustrationAssets = collectIllustrationCharacterAssets({
           illustration,
           characterNames: plannedFrame.characters,
-          trackedNpcs: [],
+          trackedNpcs: storyboardCharacterContext.trackedNpcs,
           gameNpcs: (meta.gameNpcs as GameNpc[]) ?? [],
           charReferenceByName,
           charAvatarByName,
           charDescriptionByName,
           includeReferenceImages: useAvatarReferences,
           includeCharacterDescriptions: includeCharacterAppearance,
+          maxReferenceImages: storyboardReferenceImageLimit,
         });
+        if (debugLogsEnabled) {
+          debugLog(
+            "[debug/game/storyboard-image-assets] frame=%d visibleCharacters=%s referenceLimit=%d attachedRefs=%d requested=%s details=%s",
+            frame.index + 1,
+            plannedFrame.characters.join(", ") || "none",
+            illustrationAssets.maxReferenceImages,
+            illustrationAssets.referenceImages.length,
+            illustrationAssets.requestedNames.join(", ") || "none",
+            formatIllustrationAssetDebug(illustrationAssets),
+          );
+          if (characterPrompts.length > 0) {
+            debugLog(
+              "[debug/game/storyboard-image-assets] frame=%d nativeCharacterPrompts=%d prompts:\n%s",
+              frame.index + 1,
+              characterPrompts.length,
+              JSON.stringify(characterPrompts, null, 2),
+            );
+          }
+        }
         let sentIllustrationPrompt: string | null = null;
         try {
           const tag = await generateSceneIllustration({
@@ -9913,6 +10271,7 @@ export async function gameRoutes(app: FastifyInstance) {
             artStyle,
             imagePromptInstructions,
             referenceImages: illustrationAssets.referenceImages,
+            characterPrompts: illustration.characterPrompts,
             imgSource,
             imgModel,
             imgBaseUrl,
@@ -9926,6 +10285,8 @@ export async function gameRoutes(app: FastifyInstance) {
             debugLog: debugLogsEnabled ? debugLog : undefined,
             promptOverridesStorage,
             size: backgroundSize,
+            useDirectScenePrompt: meta.gameStoryboardUseDirectScenePrompt === true,
+            preserveFullScenePrompt: true,
             onCompiledPrompt: (compiled) => {
               sentIllustrationPrompt = compiled.prompt;
             },
@@ -10036,9 +10397,18 @@ export async function gameRoutes(app: FastifyInstance) {
           frameResults[index] = await renderStoryboardFrame(frame);
         }
       };
-      const frameWorkerLimit = videoRuntime
+      const requestedFrameWorkerLimit = videoRuntime
         ? GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY
         : GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY;
+      const frameWorkerLimit = resolveSceneIllustrationGenerationConcurrency(
+        {
+          imgSource,
+          imgModel,
+          imgBaseUrl,
+          imgService: imgServiceHint,
+        },
+        requestedFrameWorkerLimit,
+      );
       const frameWorkerCount = Math.min(frameWorkerLimit, frameRows.length);
       const initialStoryboard = await serializeGameTurnStoryboard({
         storyboards,
@@ -10229,80 +10599,31 @@ export async function gameRoutes(app: FastifyInstance) {
       sourceDescription = `the current scene illustration (${illustrationTag})`;
     }
 
-    const storedVideoDefaults =
-      videoConn.defaultParameters && hasStoredVideoDefaults(videoConn.defaultParameters)
-        ? getStoredVideoDefaults(videoConn.defaultParameters)
-        : null;
-    const videoDefaults = storedVideoDefaults ?? createDefaultVideoGenerationProfile();
-    const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
-    const source =
-      explicitVideoSource ||
-      (videoDefaults.service !== "gemini_omni"
-        ? videoDefaults.service
-        : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
-    const rawServiceHint = videoConn.videoService || source;
-    const serviceHint =
-      rawServiceHint === "google_ai_studio"
-        ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
-        : rawServiceHint;
-    const isXaiVideo = source === "xai" || serviceHint === "xai";
-    const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
-    const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
-    const isSeedanceVideo = source === "seedance" || serviceHint === "seedance";
-    const activeVideoDefaults = isXaiVideo
-      ? videoDefaults.xai
-      : isGoogleVeoVideo
-        ? videoDefaults.googleVeo
-        : isOpenRouterVideo
-          ? videoDefaults.openrouter
-          : isSeedanceVideo
-            ? videoDefaults.seedance
-            : videoDefaults.geminiOmni;
+    const videoRuntime = resolveGameVideoRuntime(videoConn);
+    const {
+      source,
+      serviceHint,
+      baseUrl,
+      model,
+      resolution,
+      promptLimits,
+      minDurationSeconds,
+      maxDurationSeconds,
+      publicReferenceUpload,
+      activeDefaults: activeVideoDefaults,
+      hasStoredDefaults,
+    } = videoRuntime;
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
-    const fallbackDurationSeconds = storedVideoDefaults
+    const fallbackDurationSeconds = hasStoredDefaults
       ? activeVideoDefaults.durationSeconds
       : videoSettings.sceneVideoDurationSeconds;
-    const maxDurationSeconds = isXaiVideo || isSeedanceVideo ? 15 : isGoogleVeoVideo ? 8 : 60;
-    const minDurationSeconds = isGoogleVeoVideo || isSeedanceVideo ? 4 : 1;
     const durationSeconds = Math.min(
       maxDurationSeconds,
       Math.max(minDurationSeconds, Math.trunc(input.durationSeconds ?? fallbackDurationSeconds)),
     );
     const aspectRatio = input.aspectRatio ?? activeVideoDefaults.aspectRatio;
-    const baseUrl =
-      videoConn.baseUrl ||
-      (isXaiVideo
-        ? DEFAULT_XAI_VIDEO_BASE_URL
-        : isGoogleVeoVideo
-          ? DEFAULT_GOOGLE_VEO_BASE_URL
-          : isOpenRouterVideo
-            ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-            : isSeedanceVideo
-              ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-              : DEFAULT_GEMINI_OMNI_BASE_URL);
-    const model =
-      videoConn.model ||
-      (isXaiVideo
-        ? DEFAULT_XAI_VIDEO_MODEL
-        : isGoogleVeoVideo
-          ? DEFAULT_GOOGLE_VEO_MODEL
-          : isOpenRouterVideo
-            ? DEFAULT_OPENROUTER_VIDEO_MODEL
-            : isSeedanceVideo
-              ? DEFAULT_SEEDANCE_VIDEO_MODEL
-              : DEFAULT_GEMINI_OMNI_MODEL);
-    const resolution = isXaiVideo
-      ? videoDefaults.xai.resolution
-      : isGoogleVeoVideo
-        ? videoDefaults.googleVeo.resolution
-        : isOpenRouterVideo
-          ? videoDefaults.openrouter.resolution
-          : isSeedanceVideo
-            ? videoDefaults.seedance.resolution
-            : undefined;
-    const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
 
     const latestState = await createGameStateStorage(app.db)
       .getLatest(input.chatId)
@@ -10365,7 +10686,7 @@ export async function gameRoutes(app: FastifyInstance) {
         aspectRatio,
         resolution,
         referenceImage,
-        publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
+        publicReferenceUpload,
         signal: sceneVideoAbortSignal,
       });
       const filePath = await saveVideoToDisk(input.chatId, generated.base64);
@@ -10414,6 +10735,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
     const meta = parseMeta(chat.metadata);
     const enableGen = !!meta.enableSpriteGeneration;
+    const backgroundGenerationEnabled = meta.gameStoryboardViewerDisplayMode !== "background";
     const imgConnId = await resolveGameImageConnectionId(meta, agents);
     if (!enableGen || !imgConnId) return { items: [] };
 
@@ -10477,7 +10799,7 @@ export async function gameRoutes(app: FastifyInstance) {
       height: number;
     }> = [];
 
-    if (input.backgroundTag) {
+    if (backgroundGenerationEnabled && input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
       const backgroundDescription =
         input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
@@ -10574,6 +10896,12 @@ export async function gameRoutes(app: FastifyInstance) {
           charDescriptionByName,
           includeReferenceImages: useAvatarReferences,
           includeCharacterDescriptions: includeCharacterAppearance,
+          maxReferenceImages: resolveSceneIllustrationReferenceImageLimit({
+            imgSource,
+            imgModel,
+            imgBaseUrl,
+            imgService: imgServiceHint,
+          }),
         });
         const compiledReviewPrompt = await buildSceneIllustrationProviderPrompt({
           chatId: input.chatId,
@@ -10768,6 +11096,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
       const meta = parseMeta(chat.metadata);
       const enableGen = !!meta.enableSpriteGeneration;
+      const backgroundGenerationEnabled = meta.gameStoryboardViewerDisplayMode !== "background";
       const imgConnId = await resolveGameImageConnectionId(meta, agents);
 
       if (!enableGen || !imgConnId) {
@@ -10849,7 +11178,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const generatedNpcAvatars: Array<{ name: string; avatarUrl: string }> = [];
 
       // ── Generate background ──
-      if (!assetAbortSignal.aborted && input.backgroundTag) {
+      if (!assetAbortSignal.aborted && backgroundGenerationEnabled && input.backgroundTag) {
         const slug = generatedBackgroundSlug(input.backgroundTag);
         const backgroundDescription =
           input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
@@ -10963,6 +11292,12 @@ export async function gameRoutes(app: FastifyInstance) {
             charDescriptionByName,
             includeReferenceImages: useAvatarReferences,
             includeCharacterDescriptions: includeCharacterAppearance,
+            maxReferenceImages: resolveSceneIllustrationReferenceImageLimit({
+              imgSource,
+              imgModel,
+              imgBaseUrl,
+              imgService: imgServiceHint,
+            }),
           });
           let sentIllustrationPrompt: string | null = null;
           const tag = await generateSceneIllustration({
@@ -11289,11 +11624,13 @@ export async function gameRoutes(app: FastifyInstance) {
         location: snapshot.location,
         weather: snapshot.weather,
         temperature: snapshot.temperature,
+        worldCustomFields: normalizeWorldCustomFields(parseJsonField(snapshot.worldCustomFields, [])),
         presentCharacters: parseJsonField(snapshot.presentCharacters, []),
         recentEvents: parseJsonField(snapshot.recentEvents, []),
         playerStats: parseJsonField(snapshot.playerStats, null),
         personaStats: parseJsonField(snapshot.personaStats, null),
         fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
+        hiddenTrackerFields: parseTrackerHiddenFields(snapshot.hiddenTrackerFields),
         committed: true,
       },
       manualOverrides,

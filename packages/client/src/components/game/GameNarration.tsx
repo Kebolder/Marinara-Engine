@@ -8,6 +8,8 @@ import {
   useState,
   useCallback,
   useRef,
+  lazy,
+  Suspense,
   type ReactNode,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -41,7 +43,12 @@ import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop, type LegacyAv
 import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { findNamedMapValue } from "../../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../../lib/game-segment-edits";
-import { parseGmTags, stripGmTagsKeepReadables } from "../../lib/game-tag-parser";
+import {
+  escapeStandaloneGameNarrationAngleLines,
+  hasVisibleGameNarrationText,
+  parseGmTags,
+  stripGmTagsKeepReadables,
+} from "../../lib/game-tag-parser";
 import { audioManager } from "../../lib/game-audio";
 import { normalizeSpriteExpressionKey, resolveSpriteExpression } from "../../lib/sprite-expression-match";
 import {
@@ -58,16 +65,12 @@ import { useGameModeStore } from "../../stores/game-mode.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { parseChatMetadata } from "../../lib/chat-display";
+import { parseMessageExtraRecord } from "../../lib/chat-message-extra";
 import { createMessageMacroResolver, findCharacterByName } from "../../lib/chat-macros";
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../lib/tts-audio-cache";
-import {
-  resolveTTSNarratorVoice,
-  resolveTTSVoiceForSpeaker,
-  splitTTSChunks,
-  ttsConfigMatchesSpeaker,
-} from "../../lib/tts-dialogue";
+import { resolveTTSNarratorVoice, resolveTTSVoiceForSpeaker, splitTTSChunks } from "../../lib/tts-dialogue";
 import {
   formatTextQuotes,
   normalizeTextForMatch,
@@ -78,6 +81,8 @@ import {
   type SkillCheckResult,
 } from "@marinara-engine/shared";
 import type { CharacterMap, PersonaInfo } from "../chat/chat-area.types";
+
+const GamePeekPromptButton = lazy(() => import("./GamePeekPromptButton"));
 
 /** Build inline style for a color that may be a plain color or a CSS gradient. */
 function nameColorStyle(color?: string): CSSProperties | undefined {
@@ -332,6 +337,11 @@ function isSyntheticGameStartMessage(message: Pick<NarrationMessage, "role" | "c
   return message.role === "user" && SYNTHETIC_GAME_START_MESSAGE_RE.test(message.content || "");
 }
 
+function hasExactCachedPrompt(message: Pick<Message, "extra"> | null): boolean {
+  const cachedPrompt = parseMessageExtraRecord(message?.extra).cachedPrompt;
+  return Array.isArray(cachedPrompt) && cachedPrompt.length > 0;
+}
+
 interface GameVoiceAudioJob {
   cacheKey: string;
   textCacheKey: string;
@@ -422,6 +432,8 @@ interface GameNarrationProps {
   onRetryCombatGeneration?: () => void;
   /** Open the standard delete-message flow for a backing chat message. */
   onDeleteMessage?: (messageId: string) => void;
+  /** Show the exact provider prompt cached for a generated Game Mode turn. */
+  onPeekPrompt?: (messageId: string) => void;
   /** Create a chat branch ending at a game log message or the current decision beat. */
   onBranchMessage?: (messageId: string) => void;
   /** Whether the global multi-delete bar is active. */
@@ -461,6 +473,8 @@ interface GameNarrationProps {
   voicePlaybackBlocked?: boolean;
   /** Effective game-mode TTS playback volume, 0–1. */
   gameVoiceVolume?: number;
+  /** Reuse cached voice if present, but never generate new TTS audio. Used by read-only replay. */
+  disableVoiceGeneration?: boolean;
   /**
    * Player hit the "Interrupt!" button. Soft-pauses narration: the parent
    * stops generation, records the interrupt anchor, and only truncates the
@@ -601,8 +615,10 @@ function buildVoiceConfigSignature(config?: TTSConfig | null): string {
     config.elevenLabsStability,
     config.elevenLabsLanguageCode,
     config.dialogueOnly ? "dialogue" : "all-text",
-    config.dialogueScope,
-    config.dialogueCharacterName,
+    // Fixed placeholders for the removed dialogueScope/dialogueCharacterName
+    // fields ("all"/"") so existing voice-line cache keys stay valid.
+    "all",
+    "",
   ].join("|");
 }
 
@@ -782,7 +798,6 @@ function getGameSegmentVoiceRequest(
   if (segment.type !== "dialogue" && segment.type !== "narration") return null;
 
   if (segment.type === "dialogue") {
-    if (!ttsConfigMatchesSpeaker(config, segment.speaker)) return null;
     const chunks = splitTTSChunks(segment.content);
     if (chunks.length === 0) return null;
     const tone = resolveGameSegmentTtsEmotion(segment);
@@ -952,6 +967,7 @@ export function GameNarration({
   combatGenerationFailed,
   onRetryCombatGeneration,
   onDeleteMessage,
+  onPeekPrompt,
   onBranchMessage,
   multiSelectMode = false,
   selectedMessageIds,
@@ -970,6 +986,7 @@ export function GameNarration({
   autoPlayBlocked,
   voicePlaybackBlocked,
   gameVoiceVolume = 1,
+  disableVoiceGeneration = false,
   onInterruptRequest,
   onInterruptCancel,
   interruptPending,
@@ -1665,6 +1682,25 @@ export function GameNarration({
       result[i] = prepareDisplaySegment(result[i]!);
     }
 
+    // Regexes and macros run after parsing and may erase an entire segment.
+    // Remove that final empty step while keeping source and party indices aligned.
+    for (let i = result.length - 1; i >= 0; i--) {
+      const segment = result[i]!;
+      if (hasVisibleGameNarrationText(segment.content) || segment.readableContent?.trim()) continue;
+      result.splice(i, 1);
+      origIndices.splice(i, 1);
+      editInfos.splice(i, 1);
+      sourceMessageIds.splice(i, 1);
+      if (partyStart < 0) continue;
+      if (i < partyStart) {
+        partyStart--;
+        continue;
+      }
+      const partyOffset = i - partyStart;
+      logBaseCutoff.splice(partyOffset, 1);
+      logCutoff.splice(partyOffset, 1);
+    }
+
     segmentOriginalIndices.current = origIndices;
     segmentEditInfoRef.current = editInfos;
     segmentSourceMessageIdsRef.current = sourceMessageIds;
@@ -1728,7 +1764,13 @@ export function GameNarration({
           arr.push({
             character: seg.speaker ?? "",
             type: seg.partyType,
-            content: prepareSegmentText(seg.content, seg.speaker ?? null, latestAssistant.id, latestAssistant.role, rawIndex),
+            content: prepareSegmentText(
+              seg.content,
+              seg.speaker ?? null,
+              latestAssistant.id,
+              latestAssistant.role,
+              rawIndex,
+            ),
             expression: seg.sprite,
             target: seg.whisperTarget,
             voiceSourceMessageId: latestAssistant.id,
@@ -1771,7 +1813,13 @@ export function GameNarration({
           arr.push({
             ...line,
             character: editedCharacter,
-            content: prepareSegmentText(editedContent, editedCharacter, partyChatMessageId, sourceRole, partySegmentIndex),
+            content: prepareSegmentText(
+              editedContent,
+              editedCharacter,
+              partyChatMessageId,
+              sourceRole,
+              partySegmentIndex,
+            ),
             voiceSourceMessageId: partyChatMessageId,
             voiceSourceSegmentIndex: partySegmentIndex,
             voiceSourceRole: sourceRole,
@@ -2874,7 +2922,7 @@ export function GameNarration({
   }, [active, narrationMessageChanged, scenePreparing, visibleChars, onReadable]);
 
   useEffect(() => {
-    if (!ttsConfig || !gameVoiceEnabled || isStreaming || generationFailed) return;
+    if (!ttsConfig || !gameVoiceEnabled || isStreaming || generationFailed || disableVoiceGeneration) return;
 
     const plans: GameVoiceEntryPlan[] = [];
     const queuePlan = (key: string | null, requests: GameSegmentVoiceRequest[]) => {
@@ -2966,6 +3014,7 @@ export function GameNarration({
     void gameVoiceGenerationTailRef.current;
   }, [
     cacheGameVoiceEntry,
+    disableVoiceGeneration,
     gameNpcs,
     gameVoiceConfigSignature,
     gameVoiceEnabled,
@@ -3418,6 +3467,8 @@ export function GameNarration({
     "absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--foreground)] px-0.5 text-[0.55rem] font-bold text-[var(--background)] ring-1 ring-[var(--background)]/20 dark:bg-white/90 dark:text-black dark:ring-black/20";
   const ACTIVE_SEGMENT_ACTION_BTN =
     "inline-flex items-center justify-center rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60";
+  const LOG_SEGMENT_ACTION_BTN =
+    "rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100";
   const combatMetaButton = onRequestCombatStart ? (
     <button
       type="button"
@@ -3726,7 +3777,13 @@ export function GameNarration({
       </div>
     ) : null;
 
-  const renderStackedLogSegment = (seg: NarrationSegment, entryMessageId: string) => {
+  const renderPeekPromptButton = (messageId: string, className: string) => (
+    <Suspense fallback={null}>
+      <GamePeekPromptButton messageId={messageId} className={className} onPeekPrompt={onPeekPrompt!} />
+    </Suspense>
+  );
+
+  const renderStackedLogSegment = (seg: NarrationSegment, entryMessageId: string, showMessageActions: boolean) => {
     const sourceMessageId = seg.sourceMessageId ?? entryMessageId;
     const hasSourceSegmentIndex = seg.sourceSegmentIndex != null;
     const sourceSegmentIndex = seg.sourceSegmentIndex ?? 0;
@@ -3746,6 +3803,13 @@ export function GameNarration({
     const canDeleteMessage =
       !!onDeleteMessage && !!sourceMessageId && (isUserAuthoredSource || sourceRole === "system");
     const canBranchMessage = !!onBranchMessage && !!sourceMessageId && isUserAuthoredSource;
+    const sourceMessage = sourceMessageId ? (sourceMessagesById.get(sourceMessageId) ?? null) : null;
+    const canPeekPrompt =
+      showMessageActions &&
+      !!onPeekPrompt &&
+      !!sourceMessageId &&
+      (sourceMessageRole === "assistant" || sourceMessageRole === "narrator") &&
+      hasExactCachedPrompt(sourceMessage);
     const canDeleteThisSegment =
       !!onDeleteSegment &&
       !!sourceMessageId &&
@@ -3753,7 +3817,8 @@ export function GameNarration({
       sourceRole !== "user" &&
       sourceRole !== "system" &&
       sourceMessageId !== "party-chat";
-    const isEditingThis = editingLogSeg?.messageId === sourceMessageId && editingLogSeg?.segIndex === sourceSegmentIndex;
+    const isEditingThis =
+      editingLogSeg?.messageId === sourceMessageId && editingLogSeg?.segIndex === sourceSegmentIndex;
     const showDeleteButton = canDeleteMessage || canDeleteThisSegment;
     const copyKey =
       sourceMessageId && hasSourceSegmentIndex
@@ -3791,6 +3856,9 @@ export function GameNarration({
         <GitBranch size={11} />
       </button>
     ) : null;
+    const peekPromptButton = canPeekPrompt
+      ? renderPeekPromptButton(sourceMessageId, stackedActionButtonClass)
+      : null;
     const deleteButton = showDeleteButton ? (
       <button
         type="button"
@@ -3867,13 +3935,14 @@ export function GameNarration({
       </>
     ) : null;
     const actionButtons =
-      deleteButton || branchButton || copyButton || editButtons ? (
+      deleteButton || branchButton || peekPromptButton || copyButton || editButtons ? (
         <div
           onPointerDown={stopLogActionPointerDown}
           onClick={(event) => event.stopPropagation()}
           className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
         >
           {branchButton}
+          {peekPromptButton}
           {deleteButton}
           {copyButton}
           {editButtons}
@@ -4019,7 +4088,7 @@ export function GameNarration({
             seg.partyType === "thought"
               ? "border-purple-400/10 bg-purple-950/15"
               : seg.partyType === "whisper"
-                ? "border-rose-400/10 bg-rose-950/15"
+                ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                 : seg.partyType === "side" || seg.partyType === "extra"
                   ? "border-sky-400/10 bg-sky-950/15"
                   : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/5 dark:bg-black/20",
@@ -4066,11 +4135,7 @@ export function GameNarration({
                   )}
                   title="Generate NPC portrait"
                 >
-                  {logPortraitGenerating ? (
-                    <Loader2 size="0.6rem" className="animate-spin" />
-                  ) : (
-                    <Wand2 size="0.6rem" />
-                  )}
+                  {logPortraitGenerating ? <Loader2 size="0.6rem" className="animate-spin" /> : <Wand2 size="0.6rem" />}
                 </button>
               )}
             </div>
@@ -4081,7 +4146,9 @@ export function GameNarration({
               crop={logAvatar.crop}
               className="h-7 w-7 shrink-0 rounded-lg border border-[var(--border)] dark:border-white/10"
               onLoadError={
-                canGenerateLogPortrait && seg.speaker ? () => onNpcPortraitLoadError?.(seg.speaker as string) : undefined
+                canGenerateLogPortrait && seg.speaker
+                  ? () => onNpcPortraitLoadError?.(seg.speaker as string)
+                  : undefined
               }
             />
           ) : (
@@ -4221,7 +4288,7 @@ export function GameNarration({
               >
                 {stackedLogEntries.map((entry) => (
                   <div key={entry.messageId} className="space-y-1.5">
-                    {entry.segments.map((seg) => renderStackedLogSegment(seg, entry.messageId))}
+                    {entry.segments.map((seg, index) => renderStackedLogSegment(seg, entry.messageId, index === 0))}
                   </div>
                 ))}
               </div>
@@ -4514,7 +4581,7 @@ export function GameNarration({
                             active.partyType === "thought"
                               ? "border-purple-400/10 bg-purple-950/20"
                               : active.partyType === "whisper"
-                                ? "border-rose-400/10 bg-rose-950/20"
+                                ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                                 : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/10 dark:bg-black/35",
                             activeSegmentActionButtons && "pr-16",
                           )}
@@ -4883,7 +4950,7 @@ export function GameNarration({
                 const entryIsTranslating = sourceMessage ? !!translating[entry.messageId] : false;
                 return (
                   <div key={entry.messageId} className="space-y-1.5">
-                    {entry.segments.map((seg) => {
+                    {entry.segments.map((seg, entrySegmentIndex) => {
                       const sourceMessageId = seg.sourceMessageId ?? entry.messageId;
                       const hasSourceSegmentIndex = seg.sourceSegmentIndex != null;
                       const sourceSegmentIndex = seg.sourceSegmentIndex ?? 0;
@@ -4941,6 +5008,15 @@ export function GameNarration({
                       const canDeleteMessage =
                         !!onDeleteMessage && !!sourceMessageId && (isUserAuthoredSource || sourceRole === "system");
                       const canBranchMessage = !!onBranchMessage && !!sourceMessageId && isUserAuthoredSource;
+                      const promptSourceMessage = sourceMessageId
+                        ? (sourceMessagesById.get(sourceMessageId) ?? null)
+                        : null;
+                      const canPeekPrompt =
+                        entrySegmentIndex === 0 &&
+                        !!onPeekPrompt &&
+                        !!sourceMessageId &&
+                        (sourceMessageRole === "assistant" || sourceMessageRole === "narrator") &&
+                        hasExactCachedPrompt(promptSourceMessage);
                       const canDeleteThisSegment =
                         !!onDeleteSegment &&
                         !!sourceMessageId &&
@@ -4969,7 +5045,7 @@ export function GameNarration({
                           type="button"
                           onPointerDown={stopLogActionPointerDown}
                           onClick={(event) => handleLogCopyButtonClick(event, copyKey, copyText)}
-                          className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                          className={LOG_SEGMENT_ACTION_BTN}
                           title="Copy"
                         >
                           {copiedMessageKey === copyKey ? <Check size={11} /> : <Copy size={11} />}
@@ -4985,13 +5061,16 @@ export function GameNarration({
                             onBranchMessage?.(sourceMessageId);
                             setLogsOpen(false);
                           }}
-                          className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                          className={LOG_SEGMENT_ACTION_BTN}
                           title="Branch from here"
                           aria-label="Branch from here"
                         >
                           <GitBranch size={11} />
                         </button>
                       ) : null;
+                      const peekPromptButton = canPeekPrompt
+                        ? renderPeekPromptButton(sourceMessageId, LOG_SEGMENT_ACTION_BTN)
+                        : null;
                       const deleteButton = showDeleteButton ? (
                         <button
                           type="button"
@@ -5125,7 +5204,7 @@ export function GameNarration({
                                 });
                                 restoreLogScrollTop(scrollTop);
                               }}
-                              className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                              className={LOG_SEGMENT_ACTION_BTN}
                               title="Edit"
                             >
                               <Pencil size={11} />
@@ -5158,13 +5237,14 @@ export function GameNarration({
                       );
 
                       const actionButtons =
-                        deleteButton || branchButton || copyButton || editButtons ? (
+                        deleteButton || branchButton || peekPromptButton || copyButton || editButtons ? (
                           <div
                             onPointerDown={stopLogActionPointerDown}
                             onClick={(event) => event.stopPropagation()}
                             className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
                           >
                             {branchButton}
+                            {peekPromptButton}
                             {deleteButton}
                             {copyButton}
                             {editButtons}
@@ -5233,7 +5313,7 @@ export function GameNarration({
                               seg.partyType === "thought"
                                 ? "border-purple-400/10 bg-purple-950/15"
                                 : seg.partyType === "whisper"
-                                  ? "border-rose-400/10 bg-rose-950/15"
+                                  ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                                   : seg.partyType === "side" || seg.partyType === "extra"
                                     ? "border-sky-400/10 bg-sky-950/15"
                                     : "border-white/5 bg-black/20",
@@ -6150,7 +6230,7 @@ function formatSignedNumber(value: string): string {
 }
 
 export function formatNarration(content: string, boldDialogue = true): string {
-  let html = content
+  let html = escapeStandaloneGameNarrationAngleLines(content)
     .replace(/\[combat_result]\s*([\s\S]*?)\s*\[\/combat_result]/gi, (_match, recap: string) => {
       const cleaned = recap.trim();
       return `${commandBadge("bg-red-500/15 text-red-200 ring-1 ring-red-400/20", "⚔ Combat Result")}${

@@ -61,7 +61,8 @@ export type AgentResultType =
   | "game_map_update"
   | "game_state_transition"
   | "prompt_patch"
-  | "frontend_theme_update";
+  | "frontend_theme_update"
+  | "about_me_update";
 
 /** Configuration for a single agent. */
 export interface AgentConfig {
@@ -210,6 +211,18 @@ export function getAgentPromptTemplateOptions(input: {
   ];
 }
 
+export function resolveDefaultAgentPromptTemplateId(settingsValue: unknown): string {
+  const settings = parseAgentSettingsRecord(settingsValue);
+  const configuredId = normalizePromptTemplateId(
+    settings.defaultPromptTemplateId,
+    DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
+  );
+  if (configuredId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) return configuredId;
+  return normalizeAgentPromptTemplateOptions(settings.promptTemplates).some((option) => option.id === configuredId)
+    ? configuredId
+    : DEFAULT_AGENT_PROMPT_TEMPLATE_ID;
+}
+
 export function normalizeAgentPromptTemplateSelectionMap(value: unknown): Record<string, string> {
   if (!isRecord(value)) return {};
   const selections: Record<string, string> = {};
@@ -230,8 +243,9 @@ export function resolveAgentPromptTemplate(input: {
   settings?: unknown;
   selectedPromptTemplateId?: string | null;
 }): string {
-  const selectedId = normalizePromptTemplateId(input.selectedPromptTemplateId, "");
-  if (!selectedId || selectedId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
+  const explicitSelectedId = normalizePromptTemplateId(input.selectedPromptTemplateId, "");
+  const selectedId = explicitSelectedId || resolveDefaultAgentPromptTemplateId(input.settings);
+  if (selectedId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
     return input.promptTemplate?.trim() ? input.promptTemplate : (input.fallbackPromptTemplate ?? "");
   }
   const option = getAgentPromptTemplateOptions(input).find((entry) => entry.id === selectedId);
@@ -665,6 +679,7 @@ export const EDITABLE_CHARACTER_CARD_FIELDS = [
   "post_history_instructions",
   "backstory",
   "appearance",
+  "aboutMe",
 ] as const;
 
 export type EditableCharacterCardField = (typeof EDITABLE_CHARACTER_CARD_FIELDS)[number];

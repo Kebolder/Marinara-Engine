@@ -44,6 +44,8 @@ export const personas = sqliteTable("personas", {
   personaVersion: text("persona_version").notNull().default("1.0"),
   /** Private notes about intended use, quirks, or recommended settings */
   creatorNotes: text("creator_notes").notNull().default(""),
+  /** Pronunciation override used when sending this persona name to TTS */
+  phoneticName: text("phonetic_name").notNull().default(""),
   description: text("description").notNull().default(""),
   personality: text("personality").notNull().default(""),
   scenario: text("scenario").notNull().default(""),
@@ -67,6 +69,12 @@ export const personas = sqliteTable("personas", {
   tags: text("tags").notNull().default("[]"),
   /** Saved Conversation mode activity/status text options (JSON array of strings) */
   savedStatusOptions: text("saved_status_options").notNull().default("[]"),
+  /** Conversation mode ONLY: display name shown in Convo (empty = fall back to name) */
+  convoDisplayName: text("convo_display_name").notNull().default(""),
+  /** Conversation mode ONLY: public "about me" profile (cross-chat default) */
+  aboutMe: text("about_me").notNull().default(""),
+  /** Conversation mode ONLY: behavior directive + insertion strategy (JSON, empty = unset) */
+  convoBehavior: text("convo_behavior").notNull().default(""),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

@@ -20,6 +20,7 @@ import {
   normalizeTrackerPanelSizeProfile,
   normalizeTrackerTemperatureUnit,
   normalizeTrackerThoughtBubbleDisplay,
+  normalizeScenePromptPreferences,
   pickSyncedSettings,
   useUIStore,
 } from "../stores/ui.store";
@@ -197,6 +198,9 @@ export function useSettingsSync() {
               parsed.settings.quoteFormat = normalizeQuoteFormat(parsed.settings.quoteFormat);
               parsed.settings.imageStyleProfiles = normalizeImageStyleProfileSettings(
                 parsed.settings.imageStyleProfiles,
+              );
+              parsed.settings.scenePromptPreferences = normalizeScenePromptPreferences(
+                parsed.settings.scenePromptPreferences,
               );
 
               const serverUpdatedAt = parsed.updatedAt;

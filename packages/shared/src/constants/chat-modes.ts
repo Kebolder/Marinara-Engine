@@ -30,8 +30,8 @@ export const CHAT_MODES: Record<ChatMode, ChatModeDefinition> = {
   },
   visual_novel: {
     id: "visual_novel",
-    name: "Visual Novel",
-    description: "Visual novel experience with backgrounds, sprites, text boxes, and choices.",
+    name: "Roleplay (Legacy)",
+    description: "Legacy roleplay chats retained for import and existing conversation compatibility.",
     icon: "🎮",
     defaultAgents: [...CHAT_MODE_CAPABILITIES.visual_novel.defaultAgentIds],
   },

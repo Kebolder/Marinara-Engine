@@ -339,7 +339,8 @@ function scoreStructuredMusic(
 
 /**
  * Pick the best music tag for the current game context.
- * Returns `null` when the current music is already appropriate or no structured music exists for this state.
+ * Returns `null` only when there is no music or no structured candidates for this state; deliberately
+ * rotates off `currentMusic` when alternatives exist (the keep-current contract belongs to `scoreAmbient`).
  */
 export function scoreMusic(input: MusicScoreInput): string | null {
   const { state, weather, timeOfDay, currentMusic, recentMusic, availableMusic } = input;

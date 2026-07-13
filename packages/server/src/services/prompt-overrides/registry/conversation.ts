@@ -14,9 +14,9 @@ export interface ConversationSelfieCtx extends Record<string, string | number | 
   appearance: string;
   charName: string;
   /**
-   * Either an empty string (when the chat has no selfie tags) or
-   * a leading-newline-prefixed line, e.g.
-   * "\nAlways include these tags/modifiers in the prompt: masterpiece, best quality"
+   * Chat-level selfie tags to append to the meta-prompt. Currently always ""
+   * at runtime — none of the call sites (resolveConversationSelfieSystemPrompt
+   * callers) populate this field.
    */
   selfieTagsBlock: string;
 }

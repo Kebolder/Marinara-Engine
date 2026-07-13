@@ -65,8 +65,9 @@ export const lorebookPersonaLinks = sqliteTable(
 
 /**
  * Lorebook folders — collapsible containers that group entries to reduce
- * visual clutter in the editor. Folders are flat in v1; `parentFolderId` is
- * reserved (always null) for a future nested-folder PR. When a folder's
+ * visual clutter in the editor. Folders may nest via `parentFolderId`
+ * (`null` = a root-level folder; see `canReparentFolder` / `buildFolderForest`
+ * in shared for the tree rules). When a folder's
  * `enabled` flag is "false", every entry whose `folderId` matches is
  * excluded from activation regardless of the entry's own enabled flag —
  * gating happens at `listActiveEntries` time, not by mutating entry rows.
@@ -79,7 +80,7 @@ export const lorebookFolders = sqliteTable("lorebook_folders", {
   name: text("name").notNull(),
   /** SQLite-style "true"/"false" string, matches the rest of this schema. */
   enabled: text("enabled").notNull().default("true"),
-  /** Reserved for future nesting; always NULL in v1. */
+  /** Parent folder for nesting; NULL for a root-level folder. */
   parentFolderId: text("parent_folder_id"),
   /** Display order among sibling folders (lower = higher in the list). */
   order: integer("order").notNull().default(0),

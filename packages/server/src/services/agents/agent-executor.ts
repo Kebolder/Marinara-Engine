@@ -10,13 +10,18 @@ import type {
   AgentResultType,
   AgentCallDebugEvent,
   MacroContext,
+  PresentCharacter,
+  TrackerHiddenFields,
   WrapFormat,
 } from "@marinara-engine/shared";
 import {
+  characterTrackerLockKey,
   compactQuestProgressForContext,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
+  isTrackerFieldHidden,
   MIN_AGENT_MAX_TOKENS,
+  normalizeTrackerHiddenFields,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
   normalizeRpgStatPools,
@@ -25,6 +30,7 @@ import {
 import { getMaxToolRounds, isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
 import { wrapContent } from "../prompt/format-engine.js";
+import { sanitizePromptLeaf } from "../prompt/prompt-escaping.js";
 import { settleAgentJobsWithConcurrencyLimit } from "./agent-concurrency.js";
 import { getAssetManifest } from "../game/asset-manifest.service.js";
 
@@ -36,6 +42,7 @@ const CHARACTER_LORE_DESCRIPTION_LIMIT = 2000;
 const CHARACTER_LORE_FIELD_LIMIT = 1200;
 const DEFAULT_AGENT_TEMPERATURE = 0.3;
 const DEFAULT_AGENT_CALL_TIMEOUT_MS = 5 * 60_000;
+const ILLUSTRATOR_AGENT_CALL_TIMEOUT_MS = 30 * 60_000;
 const AGENT_BATCH_FALLBACK_MAX_CONCURRENT = 4;
 
 /** Strip HTML/XML-style tags (e.g. <div style="..."> <br> <speaker>) from text to save tokens. */
@@ -257,13 +264,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function shouldCompactQuestContext(agentTypes: string[]): boolean {
+function shouldIncludeQuestContext(agentTypes: string[]): boolean {
   return agentTypes.includes("quest");
 }
 
 function compactQuestPlayerStatsForContext(playerStats: unknown, agentTypes: string[]): unknown {
-  if (!shouldCompactQuestContext(agentTypes) || !isRecord(playerStats) || playerStats.activeQuests === undefined) {
+  if (!isRecord(playerStats) || playerStats.activeQuests === undefined) {
     return playerStats;
+  }
+
+  if (!shouldIncludeQuestContext(agentTypes)) {
+    return Object.fromEntries(Object.entries(playerStats).filter(([key]) => key !== "activeQuests"));
   }
 
   return {
@@ -272,15 +283,173 @@ function compactQuestPlayerStatsForContext(playerStats: unknown, agentTypes: str
   };
 }
 
-function compactQuestGameStateForContext(gameState: unknown, agentTypes: string[]): unknown {
-  if (!shouldCompactQuestContext(agentTypes) || !isRecord(gameState) || !isRecord(gameState.playerStats)) {
+function omitQuestFieldLocksForContext(fieldLocks: unknown): unknown {
+  if (!isRecord(fieldLocks)) return fieldLocks;
+
+  let changed = false;
+  const nextEntries = Object.entries(fieldLocks).filter(([key]) => {
+    const keep = !key.startsWith("quests.");
+    if (!keep) changed = true;
+    return keep;
+  });
+
+  return changed ? Object.fromEntries(nextEntries) : fieldLocks;
+}
+
+const HIDEABLE_CHARACTER_TRACKER_FIELDS = ["mood", "appearance", "outfit", "thoughts"] as const;
+
+function compactPresentCharactersForHiddenFields(
+  presentCharacters: unknown,
+  hiddenFields: TrackerHiddenFields,
+): unknown {
+  if (!Array.isArray(presentCharacters) || Object.keys(hiddenFields).length === 0) return presentCharacters;
+
+  let changed = false;
+  const compacted = presentCharacters.map((character, index) => {
+    if (!isRecord(character)) return character;
+    let next: Record<string, unknown> | null = null;
+
+    for (const field of HIDEABLE_CHARACTER_TRACKER_FIELDS) {
+      const key = characterTrackerLockKey(character as Pick<PresentCharacter, "characterId" | "name">, index, field);
+      if (field in character && isTrackerFieldHidden(hiddenFields, key)) {
+        next ??= { ...character };
+        delete next[field];
+        changed = true;
+      }
+    }
+
+    return next ?? character;
+  });
+
+  return changed ? compacted : presentCharacters;
+}
+
+function omitHiddenFieldLocksForContext(fieldLocks: unknown, hiddenFields: TrackerHiddenFields): unknown {
+  if (!isRecord(fieldLocks) || Object.keys(hiddenFields).length === 0) return fieldLocks;
+
+  let changed = false;
+  const nextEntries = Object.entries(fieldLocks).filter(([key]) => {
+    const keep = !isTrackerFieldHidden(hiddenFields, key);
+    if (!keep) changed = true;
+    return keep;
+  });
+
+  return changed ? Object.fromEntries(nextEntries) : fieldLocks;
+}
+
+export function compactGameStateForAgentContext(gameState: unknown, agentTypes: string[]): unknown {
+  if (!isRecord(gameState)) {
     return gameState;
   }
 
-  return {
-    ...gameState,
-    playerStats: compactQuestPlayerStatsForContext(gameState.playerStats, agentTypes),
-  };
+  const hiddenFields = normalizeTrackerHiddenFields(gameState.hiddenTrackerFields);
+  const presentCharacters = compactPresentCharactersForHiddenFields(gameState.presentCharacters, hiddenFields);
+  const playerStats = compactQuestPlayerStatsForContext(gameState.playerStats, agentTypes);
+  const visibleFieldLocks = omitHiddenFieldLocksForContext(gameState.fieldLocks, hiddenFields);
+  const fieldLocks = shouldIncludeQuestContext(agentTypes) ? visibleFieldLocks : omitQuestFieldLocksForContext(visibleFieldLocks);
+
+  if (
+    presentCharacters === gameState.presentCharacters &&
+    playerStats === gameState.playerStats &&
+    fieldLocks === gameState.fieldLocks &&
+    gameState.hiddenTrackerFields === undefined
+  ) {
+    return gameState;
+  }
+
+  const next = { ...gameState };
+  delete next.hiddenTrackerFields;
+  if (presentCharacters !== gameState.presentCharacters) next.presentCharacters = presentCharacters;
+  if (playerStats !== gameState.playerStats) next.playerStats = playerStats;
+  if (fieldLocks !== gameState.fieldLocks) next.fieldLocks = fieldLocks;
+  return next;
+}
+
+type RenderedAgentTemplateMap = Map<string, string>;
+
+function renderAgentTemplatesForOutput(
+  configs: AgentExecConfig[],
+  context: AgentContext,
+  options: { escapeValues?: boolean } = {},
+): RenderedAgentTemplateMap {
+  const templates: RenderedAgentTemplateMap = new Map();
+  const renderOptions = options.escapeValues === undefined ? {} : { escapeValues: options.escapeValues };
+  for (const config of configs) {
+    templates.set(
+      config.type,
+      renderAgentPromptTemplate(
+        config.promptTemplate || getDefaultPromptForAgent(config),
+        config.settings,
+        context,
+        renderOptions,
+      ),
+    );
+  }
+  return templates;
+}
+
+function getAgentOutputTemplate(
+  config: AgentExecConfig,
+  context: AgentContext,
+  renderedTemplates?: RenderedAgentTemplateMap,
+): string {
+  return (
+    renderedTemplates?.get(config.type) ??
+    renderAgentPromptTemplate(config.promptTemplate || getDefaultPromptForAgent(config), config.settings, context)
+  );
+}
+
+function buildAgentOutputFormatBody(
+  configs: AgentExecConfig[],
+  context: AgentContext,
+  renderedTemplates?: RenderedAgentTemplateMap,
+): string {
+  if (configs.length === 0) return "";
+
+  const parts: string[] = [];
+  if (configs.length > 1) {
+    const quotedAgentIds = configs.map((config) => JSON.stringify(config.type)).join(", ");
+    parts.push("Return ONLY one valid JSON object with one property per active agent ID.");
+    parts.push(`Active agent IDs in this request: ${quotedAgentIds}.`);
+    parts.push("Use this exact top-level property layout; replace each null with that agent's output:");
+    parts.push("{");
+    configs.forEach((config, index) => {
+      const comma = index === configs.length - 1 ? "" : ",";
+      parts.push(`  ${JSON.stringify(config.type)}: null${comma}`);
+    });
+    parts.push("}");
+    parts.push("When an agent asks for JSON, put that requested JSON directly as that agent property's value.");
+    parts.push("Do not add properties for agents not listed above.");
+  } else {
+    const config = configs[0]!;
+    const jsonInstruction = agentResponseIsJson(config)
+      ? "Return ONLY one valid JSON object"
+      : "Return ONLY the requested output";
+    parts.push(`${jsonInstruction} for active agent ${JSON.stringify(config.type)}.`);
+  }
+
+  parts.push("Do not include markdown fences, commentary, explanations, or any text outside the requested output.");
+  parts.push("");
+  parts.push("Active agent output contracts:");
+
+  for (const config of configs) {
+    const template = getAgentOutputTemplate(config, context, renderedTemplates).trim();
+    parts.push("");
+    parts.push(`Agent ${JSON.stringify(config.type)} (${config.name}):`);
+    parts.push(template || "Return the requested output for this agent.");
+  }
+
+  return parts.join("\n");
+}
+
+function buildAgentOutputFormatBlock(
+  configs: AgentExecConfig[],
+  context: AgentContext,
+  renderedTemplates?: RenderedAgentTemplateMap,
+): string {
+  const wrapFormat = normalizeAgentContextWrapFormat(context.wrapFormat);
+  const body = buildAgentOutputFormatBody(configs, context, renderedTemplates);
+  return wrapContent(sanitizePromptLeaf(body, wrapFormat), "Output Format", wrapFormat);
 }
 
 export function formatToolPayloadForLog(payload: string, maxLength = 400): string {
@@ -338,8 +507,9 @@ function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
   return controller.signal;
 }
 
-function agentCallSignal(parentSignal?: AbortSignal): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_AGENT_CALL_TIMEOUT_MS);
+function agentCallSignal(parentSignal?: AbortSignal, agentType?: "illustrator"): AbortSignal {
+  const timeoutMs = agentType === "illustrator" ? ILLUSTRATOR_AGENT_CALL_TIMEOUT_MS : DEFAULT_AGENT_CALL_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   return parentSignal ? combineAbortSignals([parentSignal, timeoutSignal]) : timeoutSignal;
 }
 
@@ -442,7 +612,7 @@ export async function executeAgent(
 
     const messages =
       config.type === "expression"
-        ? buildExpressionAgentMessages(template, context)
+        ? buildExpressionAgentMessages(config, template, context)
         : config.type === "knowledge-retrieval"
           ? buildKnowledgeRetrievalAgentMessages(config, template, context)
           : config.type === "spotify"
@@ -507,7 +677,7 @@ export async function executeAgent(
             responseText += chunk;
           }
         : undefined,
-      signal: agentCallSignal(context.signal),
+      signal: agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined),
     });
 
     if (!responseText && result.content) responseText = result.content;
@@ -553,7 +723,7 @@ export async function executeAgent(
               retryResponseText += chunk;
             }
           : undefined,
-        signal: agentCallSignal(context.signal),
+        signal: agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined),
       });
       totalTokens += retryResult.usage?.totalTokens ?? 0;
       if (!retryResponseText && retryResult.content) retryResponseText = retryResult.content;
@@ -626,7 +796,7 @@ async function executeAgentWithTools(
   let totalTokens = 0;
   const debugAgentsEnabled = isDebugAgentsEnabled() && logger.isLevelEnabled("debug");
   const customParameters = agentCustomParameters(config);
-  const toolLoopSignal = agentCallSignal(context.signal);
+  const toolLoopSignal = agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined);
 
   for (let round = 0; round < maxToolRounds; round++) {
     emitAgentDebug(context, {
@@ -850,7 +1020,8 @@ export async function executeAgentBatch(
 
   try {
     // Build merged system prompt (includes lore + agent extras)
-    const systemPrompt = buildBatchSystemPrompt(configs, context);
+    const renderedTemplates = renderAgentTemplatesForOutput(configs, context, { escapeValues: true });
+    const systemPrompt = buildBatchSystemPrompt(configs, context, renderedTemplates);
     // Batch uses the max contextSize among its members
     const batchContextSize = Math.max(...configs.map((c) => normalizeAgentContextSize(c.settings.contextSize)));
     const messages = buildAgentMessages(
@@ -859,6 +1030,7 @@ export async function executeAgentBatch(
       "__batch__",
       batchContextSize,
       configs.map((config) => config.type),
+      { outputFormatBlock: buildAgentOutputFormatBlock(configs, context, renderedTemplates) },
     );
 
     // Each agent reserves its own configured output budget. The context fitter
@@ -913,7 +1085,7 @@ export async function executeAgentBatch(
             responseText += chunk;
           }
         : undefined,
-      signal: agentCallSignal(context.signal),
+      signal: agentCallSignal(context.signal, configs.some((config) => config.type === "illustrator") ? "illustrator" : undefined),
     });
 
     // chatComplete also accumulates content, but streaming via onToken is
@@ -1010,7 +1182,11 @@ export async function executeAgentBatch(
  * Build a combined system prompt for a batch of agents.
  * Structure: <role> + <lore> + <agents> + extras
  */
-function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContext): string {
+function buildBatchSystemPrompt(
+  configs: AgentExecConfig[],
+  context: AgentContext,
+  renderedTemplates?: RenderedAgentTemplateMap,
+): string {
   const parts: string[] = [];
 
   // ── Role ──
@@ -1032,12 +1208,7 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   parts.push(`<agents>`);
   parts.push(`Fulfill each of the requested tasks here and return the outputs in the formats they're specified:`);
   for (const config of configs) {
-    const template = renderAgentPromptTemplate(
-      config.promptTemplate || getDefaultPromptForAgent(config),
-      config.settings,
-      context,
-      { escapeValues: true },
-    );
+    const template = getAgentOutputTemplate(config, context, renderedTemplates);
     parts.push(``);
     parts.push(`<agent_task id="${escapeXmlAttribute(config.type)}" name="${escapeXmlAttribute(config.name)}">`);
     parts.push(template);
@@ -1054,29 +1225,6 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
     parts.push(``);
     parts.push(extras);
   }
-
-  // ── Output format ──
-  parts.push(``);
-  parts.push(`─── REQUIRED OUTPUT FORMAT ───`);
-  parts.push(
-    `Return ONLY one valid JSON object using this property layout; replace each null with that agent's output:`,
-  );
-  parts.push(`{`);
-  configs.forEach((config, index) => {
-    const comma = index === configs.length - 1 ? "" : ",";
-    parts.push(`  ${JSON.stringify(config.type)}: null${comma}`);
-  });
-  parts.push(`}`);
-  parts.push(``);
-  const quotedAgentIds = configs.map((config) => JSON.stringify(config.type)).join(", ");
-  parts.push(
-    [
-      `CRITICAL: Output ALL ${configs.length} agent properties.`,
-      `Use exact JSON property names: ${quotedAgentIds}.`,
-      "When an agent asks for JSON, put that requested JSON directly as that agent property's value.",
-      "Do not use XML tags, markdown fences, commentary, explanations, or text outside the JSON object.",
-    ].join(" "),
-  );
 
   return parts.join("\n");
 }
@@ -1420,9 +1568,11 @@ function buildStandardAgentMessages(config: AgentExecConfig, template: string, c
   // Build multi-turn message array for this agent (sliced to its own contextSize)
   const agentContextSize = normalizeAgentContextSize(config.settings.contextSize);
   const resultType = resolveAgentResultType(config);
+  const renderedTemplates = new Map([[config.type, template]]);
   return buildAgentMessages(systemParts.join("\n"), context, config.type, agentContextSize, [config.type], {
     includeMessageIds: normalizeCustomAgentCapabilities(config.settings).edit_messages === true,
     preserveAssistantResponseMarkup: resultType === "text_rewrite",
+    outputFormatBlock: buildAgentOutputFormatBlock([config], context, renderedTemplates),
   });
 }
 
@@ -1473,6 +1623,8 @@ function buildKnowledgeRetrievalAgentMessages(
     `Use the conversation messages only to identify which source-material facts are relevant. Return a concise factual summary from <source_material>. If no source material is relevant, output: "No relevant information found."`,
   );
   userParts.push(`Now return the requested format.`);
+  userParts.push(``);
+  userParts.push(buildAgentOutputFormatBlock([config], context, new Map([[config.type, template]])));
 
   return [
     { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
@@ -1724,6 +1876,8 @@ function buildSpotifyAgentMessages(config: AgentExecConfig, template: string, co
     );
   }
   userParts.push(`Now return the requested format.`);
+  userParts.push(``);
+  userParts.push(buildAgentOutputFormatBlock([config], context, new Map([[config.type, template]])));
 
   return [
     { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
@@ -1731,7 +1885,7 @@ function buildSpotifyAgentMessages(config: AgentExecConfig, template: string, co
   ];
 }
 
-function buildExpressionAgentMessages(template: string, context: AgentContext): ChatMessage[] {
+function buildExpressionAgentMessages(config: AgentExecConfig, template: string, context: AgentContext): ChatMessage[] {
   const systemParts: string[] = [];
   systemParts.push(`<role>`);
   systemParts.push(`You are a specialized expression-selection agent. Keep the request compact and return only JSON.`);
@@ -1785,6 +1939,8 @@ function buildExpressionAgentMessages(template: string, context: AgentContext): 
   userParts.push(
     `Now return the requested format with exactly one expression entry for every owner listed in <available_sprites>.`,
   );
+  userParts.push(``);
+  userParts.push(buildAgentOutputFormatBlock([config], context, new Map([[config.type, template]])));
 
   return [
     { role: "system", content: systemParts.join("\n"), contextKind: "prompt" },
@@ -1811,7 +1967,7 @@ function buildCommittedTrackerStateContext(
   contextAgentTypes: string[],
   options: { includeMessageIds?: boolean },
 ): string | null {
-  const gs = msg.gameState;
+  const gs = msg.gameState ? (compactGameStateForAgentContext(msg.gameState, contextAgentTypes) as typeof msg.gameState) : null;
   if (!gs) return null;
 
   const trackerSummary: Record<string, unknown> = {};
@@ -1856,7 +2012,7 @@ function buildCommittedTrackerStateContext(
  *      last 3 assistant messages that have tracker snapshots)
  *
  *   FINAL USER MESSAGE:
- *     assistant_response (if post-processing) + "Now return the requested format(s)."
+ *     assistant_response (if post-processing) + "Now return..." + wrapped Output Format contract
  */
 function buildAgentMessages(
   systemPrompt: string,
@@ -1864,7 +2020,7 @@ function buildAgentMessages(
   agentType: string,
   contextSize = 5,
   contextAgentTypes: string[] = [agentType],
-  options: { includeMessageIds?: boolean; preserveAssistantResponseMarkup?: boolean } = {},
+  options: { includeMessageIds?: boolean; preserveAssistantResponseMarkup?: boolean; outputFormatBlock?: string } = {},
 ): ChatMessage[] {
   // ── 1. System message — already contains <role>, <lore>, <agents>, and extras ──
   const messages: ChatMessage[] = [{ role: "system", content: systemPrompt }];
@@ -1950,11 +2106,16 @@ function buildAgentMessages(
   // Echo Chamber prompts can be assembled from group-chat history that ends on
   // assistant. Anthropic treats a trailing assistant turn as prefill and rejects
   // some models, so add a terminal user instruction for that agent type too.
-  const requiresTerminalUserInstruction = finalParts.length > 0 || contextAgentTypes.includes("echo-chamber");
+  const outputFormatBlock = options.outputFormatBlock?.trim() ?? "";
+  const requiresTerminalUserInstruction =
+    finalParts.length > 0 || contextAgentTypes.includes("echo-chamber") || !!outputFormatBlock;
 
   if (requiresTerminalUserInstruction) {
     const instruction = "Now return the requested format(s).";
     finalParts.push(finalParts.length > 0 ? `\n${instruction}` : instruction);
+    if (outputFormatBlock) {
+      finalParts.push(`\n${outputFormatBlock}`);
+    }
     const finalContent = finalParts.join("\n");
     const last = messages[messages.length - 1]!;
     if (last.role === "user") {
@@ -2086,9 +2247,30 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`</character_cards>`);
   }
 
+  // About Me Keeper needs each participant's current public + chat-specific
+  // about-me so it can decide whether/what to update. Populated in the
+  // conversation branch as memory._aboutMeState (Convo mode only).
+  if (agentTypes.includes("about-me-keeper")) {
+    const state = context.memory?._aboutMeState;
+    if (Array.isArray(state) && state.length > 0) {
+      parts.push(`<about_me_state>`);
+      for (const raw of state as Array<Record<string, unknown>>) {
+        const id = typeof raw.characterId === "string" ? raw.characterId : "";
+        const name = typeof raw.name === "string" ? raw.name : "";
+        const publicAbout = typeof raw.publicAboutMe === "string" ? raw.publicAboutMe : "";
+        const chatAbout = typeof raw.chatAboutMe === "string" ? raw.chatAboutMe : "";
+        parts.push(`<character id="${escapeXml(id)}" name="${escapeXml(name)}">`);
+        parts.push(`<public_about_me>${escapeXml(publicAbout)}</public_about_me>`);
+        if (chatAbout) parts.push(`<chat_about_me>${escapeXml(chatAbout)}</chat_about_me>`);
+        parts.push(`</character>`);
+      }
+      parts.push(`</about_me_state>`);
+    }
+  }
+
   if (context.gameState) {
     parts.push(`<current_game_state>`);
-    parts.push(JSON.stringify(compactQuestGameStateForContext(context.gameState, agentTypes)));
+    parts.push(JSON.stringify(compactGameStateForAgentContext(context.gameState, agentTypes)));
     parts.push(`</current_game_state>`);
   }
 
@@ -2099,17 +2281,17 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
   if (agentTypes.includes("illustrator") && gameImageStylePrompt) {
     parts.push(`<game_image_instructions>`);
     parts.push(
-      `This chat is in Game Mode. Gallery -> Illustrate should produce one polished visual novel/game scene CG for the current beat, not a selfie, comic page, manga panel, or background-only plate.`,
+      `This chat is in Game Mode. Follow the selected Illustrator prompt mode exactly: Background stays an environment-only plate, Illustration produces a scene CG, and Selfie, Comic Page, or manga modes keep their requested framing and text behavior.`,
     );
     parts.push(`Required visual style prompt: ${escapeXml(gameImageStylePrompt)}`);
     parts.push(
       `Carry this visual style into both the JSON "style" field and the generated "prompt". Do not replace it with a generic art style.`,
     );
     parts.push(
-      `Prefer a landscape/16:9 full-frame scene composition unless the latest assistant message clearly calls for another framing.`,
+      `When the selected prompt mode does not specify another aspect ratio, prefer a landscape/16:9 full-frame scene composition.`,
     );
     parts.push(
-      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the user's game image instructions explicitly request text.`,
+      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the selected prompt mode or the user's game image instructions explicitly request them.`,
     );
     parts.push(`</game_image_instructions>`);
   }
@@ -2328,6 +2510,7 @@ const AGENT_RESULT_TYPE_MAP: Record<string, AgentResultType> = {
   "knowledge-retrieval": "context_injection",
   haptic: "haptic_command",
   cyoa: "cyoa_choices",
+  "about-me-keeper": "about_me_update",
 };
 
 const AGENT_RESULT_TYPES = new Set<AgentResultType>([
@@ -2358,6 +2541,7 @@ const AGENT_RESULT_TYPES = new Set<AgentResultType>([
   "game_state_transition",
   "prompt_patch",
   "frontend_theme_update",
+  "about_me_update",
 ]);
 
 const TEXT_RESULT_TYPES = new Set<AgentResultType>(["context_injection", "director_event"]);
@@ -2396,6 +2580,7 @@ const JSON_AGENTS = new Set([
   "character-tracker",
   "persona-stats",
   "custom-tracker",
+  "about-me-keeper",
   "html",
   "spotify",
   "haptic",

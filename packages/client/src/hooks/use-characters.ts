@@ -19,6 +19,7 @@ import {
 } from "../lib/tracker-card-colors";
 import {
   PROFESSOR_MARI_ID,
+  type AboutMeSourceConfig,
   type CharacterCardVersion,
   type Persona,
   type PersonaCardVersion,
@@ -962,6 +963,37 @@ export function useActivePersona(enabled = true) {
   });
 }
 
+export function useGenerateAboutMe() {
+  return useMutation({
+    mutationFn: (body: {
+      connectionId: string;
+      kind: "character" | "persona";
+      name?: string;
+      description?: string;
+      personality?: string;
+      scenario?: string;
+      backstory?: string;
+      appearance?: string;
+      convoBehavior?: string;
+      sources?: AboutMeSourceConfig;
+      characterId?: string;
+      chatId?: string;
+      instruction?: string;
+    }) => api.post<{ aboutMe: string }>("/characters/generate-about-me", body),
+  });
+}
+
+/** A character's linked lorebook entries (names only) for the AI-write source picker. */
+export function useCharacterLorebookEntries(characterId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["character-lorebook-entries", characterId],
+    queryFn: () =>
+      api.get<{ entries: Array<{ id: string; name: string }> }>(`/characters/${characterId}/lorebook-entries`),
+    enabled: !!characterId,
+    staleTime: 30_000,
+  });
+}
+
 export function useCreatePersona() {
   const qc = useQueryClient();
   return useMutation({
@@ -972,6 +1004,7 @@ export function useCreatePersona() {
       creator?: string;
       personaVersion?: string;
       creatorNotes?: string;
+      phoneticName?: string;
       personality?: string;
       scenario?: string;
       backstory?: string;
@@ -983,6 +1016,9 @@ export function useCreatePersona() {
       personaStats?: string;
       tags?: string;
       savedStatusOptions?: string;
+      convoDisplayName?: string;
+      aboutMe?: string;
+      convoBehavior?: string;
       avatarCrop?: string;
     }) => api.post("/characters/personas", data),
     onSuccess: () => {
@@ -999,14 +1035,17 @@ export function useUpdatePersona() {
   return useMutation({
     mutationFn: ({
       id,
+      keepalive,
       ...data
     }: {
       id: string;
+      keepalive?: boolean;
       name?: string;
       comment?: string;
       creator?: string;
       personaVersion?: string;
       creatorNotes?: string;
+      phoneticName?: string;
       description?: string;
       personality?: string;
       scenario?: string;
@@ -1019,8 +1058,11 @@ export function useUpdatePersona() {
       personaStats?: string;
       tags?: string;
       savedStatusOptions?: string;
+      convoDisplayName?: string;
+      aboutMe?: string;
+      convoBehavior?: string;
       avatarCrop?: string;
-    }) => api.patch(`/characters/personas/${id}`, data),
+    }) => api.patch(`/characters/personas/${id}`, data, keepalive ? { keepalive: true } : undefined),
     onSuccess: (updatedPersona, variables) => {
       const updatedId = (updatedPersona as { id?: string } | null)?.id ?? variables.id;
       qc.setQueryData<unknown[] | undefined>(characterKeys.personas, (old) => {

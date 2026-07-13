@@ -8,8 +8,34 @@
 // ──────────────────────────────────────────────
 import { normalizeTextForMatch } from "./text-matching.js";
 
+const ENCODED_SPEAKER_TAG_RE = /&(?:lt|#0*60|#x0*3c);([^<>]*?\bspeaker\b[^<>]*?)&(?:gt|#0*62|#x0*3e);/gi;
+export const CLOCK_TOKEN_SOURCE = String.raw`\d{1,2}[:.]\d{2}(?:\s*(?:am|pm))?`;
+export const FULL_DATE_TOKEN_SOURCE = String.raw`\d{1,2}\.\d{1,2}\.\d{2,4}`;
+export const DATE_TIME_TOKEN_SOURCE = String.raw`\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\s+${CLOCK_TOKEN_SOURCE}`;
+const CONVERSATION_TIMESTAMP_TOKEN_SOURCE = String.raw`\[(?:${DATE_TIME_TOKEN_SOURCE}|${CLOCK_TOKEN_SOURCE}|${FULL_DATE_TOKEN_SOURCE})\]`;
+const LEADING_CONVERSATION_TIMESTAMPS_RE = new RegExp(
+  String.raw`^([^\S\n]*(?:${CONVERSATION_TIMESTAMP_TOKEN_SOURCE})\s*)+`,
+  "gm",
+);
+
+function decodeSpeakerTagAttributeEntities(value: string): string {
+  return value.replace(/&quot;|&#0*34;|&#x0*22;/gi, '"').replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+}
+
+export function decodeEncodedSpeakerTags(value: string): string {
+  return value.replace(ENCODED_SPEAKER_TAG_RE, (match, tagBody: string) => {
+    const decoded = decodeSpeakerTagAttributeEntities(tagBody).trim();
+    if (/^\/\s*speaker\s*$/i.test(decoded)) return "</speaker>";
+
+    const open = decoded.match(/^speaker\s*=\s*(["'])([^"']*)\1\s*$/i);
+    if (!open?.[2]) return match;
+    return `<speaker="${open[2].trim()}">`;
+  });
+}
+
 /**
- * Strip leaked line-leading `[HH:MM]` / `[DD.MM.YYYY]` timestamp tokens — the
+ * Strip leaked line-leading `[HH:MM]`, `[DD.MM.YYYY]`, or combined
+ * `[DD.MM HH:MM]` / `[DD.MM.YYYY HH:MM]` timestamp tokens — the
  * display shape the conversation client renders and segments. The server strips
  * the same way before resolving reaction segment indexes, so both sides parse
  * identical content. Only line-leading tokens go; interior text is untouched
@@ -21,10 +47,7 @@ export function stripLeadingMessageTimestamps(text: string): string {
   // \s): with \s* every line start inside a long blank run re-scanned the rest
   // of the run before failing, going quadratic (~1s per call at 40KB of
   // newlines). Same-line whitespace fails in O(1) at non-timestamp lines.
-  return text
-    .replace(/^([^\S\n]*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
-    .replace(/^([^\S\n]*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
-    .trim();
+  return text.replace(LEADING_CONVERSATION_TIMESTAMPS_RE, "").trim();
 }
 
 /** One parsed speaker turn: the speaker's name (null = narration) + its text. */
@@ -58,17 +81,18 @@ export interface GroupedSegment {
  * `knownNames` holds normalizeTextForMatch()-normalized character names.
  */
 export function parseSpeakerTags(content: string, knownNames: Set<string>): SpeakerSegment[] | null {
+  const decodedContent = decodeEncodedSpeakerTags(content);
   const regex = /<speaker="([^"]*)">([\s\S]*?)<\/speaker>/g;
   let match: RegExpExecArray | null;
   const segments: SpeakerSegment[] = [];
   let lastIndex = 0;
   let foundTag = false;
-  while ((match = regex.exec(content)) !== null) {
+  while ((match = regex.exec(decodedContent)) !== null) {
     foundTag = true;
     const speakerName = match[1]!.trim();
     const knownSpeaker = knownNames.has(normalizeTextForMatch(speakerName));
     if (match.index > lastIndex) {
-      const before = content.slice(lastIndex, match.index).trim();
+      const before = decodedContent.slice(lastIndex, match.index).trim();
       if (before) segments.push({ speaker: null, text: before, start: lastIndex, end: match.index });
     }
     segments.push({
@@ -79,9 +103,9 @@ export function parseSpeakerTags(content: string, knownNames: Set<string>): Spea
     });
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < content.length) {
-    const after = content.slice(lastIndex).trim();
-    if (after) segments.push({ speaker: null, text: after, start: lastIndex, end: content.length });
+  if (lastIndex < decodedContent.length) {
+    const after = decodedContent.slice(lastIndex).trim();
+    if (after) segments.push({ speaker: null, text: after, start: lastIndex, end: decodedContent.length });
   }
   return foundTag ? segments : null;
 }
@@ -91,7 +115,11 @@ export function parseSpeakerTags(content: string, knownNames: Set<string>): Spea
  * tags are present). Returns null when no known name prefixes any line.
  * `knownNames` holds normalizeTextForMatch()-normalized character names.
  */
-export function parseNamePrefixFormat(content: string, knownNames: Set<string>): SpeakerSegment[] | null {
+export function parseNamePrefixFormat(
+  content: string,
+  knownNames: Set<string>,
+  leadingSpeaker?: string | null,
+): SpeakerSegment[] | null {
   if (!knownNames.size) return null;
   const lines = content.split("\n");
   // Start offset of each line in `content` (lines are separated by exactly "\n").
@@ -140,7 +168,12 @@ export function parseNamePrefixFormat(content: string, knownNames: Set<string>):
   }
   flush();
   if (!found) return null;
-  return segments.filter((s) => s.text.trim());
+  const visibleSegments = segments.filter((s) => s.text.trim());
+  const normalizedLeadingSpeaker = leadingSpeaker ? normalizeTextForMatch(leadingSpeaker) : "";
+  if (visibleSegments[0]?.speaker === null && normalizedLeadingSpeaker && knownNames.has(normalizedLeadingSpeaker)) {
+    visibleSegments[0] = { ...visibleSegments[0], speaker: leadingSpeaker!.trim() };
+  }
+  return visibleSegments;
 }
 
 /** Merge consecutive segments by the same speaker into one grouped segment. */
@@ -171,10 +204,14 @@ export function groupConsecutiveSegments(segments: SpeakerSegment[]): GroupedSeg
  * canonical definition of "segment index N" — both the client's grouped layout
  * and the server's reaction attribution must derive indexes through it.
  */
-export function parseGroupedSpeakerSegments(content: string, knownNames: Set<string>): GroupedSegment[] | null {
+export function parseGroupedSpeakerSegments(
+  content: string,
+  knownNames: Set<string>,
+  leadingSpeaker?: string | null,
+): GroupedSegment[] | null {
   const speakerSegs = parseSpeakerTags(content, knownNames);
   if (speakerSegs) return groupConsecutiveSegments(speakerSegs);
-  const nameSegs = parseNamePrefixFormat(content, knownNames);
+  const nameSegs = parseNamePrefixFormat(content, knownNames, leadingSpeaker);
   if (nameSegs) return groupConsecutiveSegments(nameSegs);
   return null;
 }

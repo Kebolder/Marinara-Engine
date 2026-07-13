@@ -205,7 +205,8 @@ export function GenerationParametersFields({
       enabledParameters: { ...enabledParametersFallback, ...(value.enabledParameters ?? {}), [key]: enabled },
     });
   };
-  const isSendEnabled = (key: GenerationParameterSendKey) => (value.enabledParameters ?? enabledParametersFallback)[key] !== false;
+  const isSendEnabled = (key: GenerationParameterSendKey) =>
+    (value.enabledParameters ?? enabledParametersFallback)[key] !== false;
 
   return (
     <div className="space-y-3">
@@ -332,7 +333,7 @@ export function GenerationParametersFields({
         <div>
           <ParameterHeader
             label="Reasoning Effort"
-            help="How much the model should 'think' before responding. Xhigh is used on supported models; unsupported models receive High instead."
+            help="How much reasoning work the provider should spend before responding. Unsupported tiers are lowered to the strongest compatible tier automatically."
             sendEnabled={isSendEnabled("reasoningEffort")}
             onSendChange={(enabled) => setSend("reasoningEffort", enabled)}
           />

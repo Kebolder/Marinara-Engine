@@ -44,15 +44,18 @@ import type {
   InventoryItem,
   PresentCharacter,
   QuestProgress,
+  WorldCustomField,
 } from "@marinara-engine/shared";
 import {
   characterStatTrackerLockKey,
+  characterCustomFieldTrackerLockKey,
   characterTrackerLockKey,
   characterTrackerLockPrefix,
   customTrackerFieldLockPrefix,
   customTrackerLockKey,
   inventoryItemTrackerLockPrefix,
   inventoryTrackerLockKey,
+  isTrackerFieldHidden,
   isTrackerFieldLocked,
   personaStatTrackerLockPrefix,
   personaStatTrackerLockKey,
@@ -64,9 +67,11 @@ import {
   removeTrackerFieldLockPrefix,
   removeTrackerQuestLocks,
   renameTrackerFieldLockPrefix,
+  worldCustomFieldTrackerLockKey,
   worldTrackerLockKey,
 } from "@marinara-engine/shared";
 import { useTrackerLockContext } from "../../features/tracker-panel/components/TrackerLockContext";
+import { WorldCustomFieldIcon } from "../../features/tracker-panel/lib/world-custom-field-icons";
 
 interface CombinedPlayerPanelProps {
   showPersona: boolean;
@@ -199,6 +204,11 @@ function useHudFieldLockResolver() {
   );
 }
 
+function useHudFieldHiddenResolver() {
+  const { hiddenTrackerFields } = useTrackerLockContext();
+  return useCallback((key: string) => isTrackerFieldHidden(hiddenTrackerFields, key), [hiddenTrackerFields]);
+}
+
 export function CombinedPlayerPanel({
   showPersona,
   showCharacters,
@@ -221,7 +231,7 @@ export function CombinedPlayerPanel({
   onRerunSingleTracker,
   isTrackerRetryBusy,
 }: CombinedPlayerPanelProps) {
-  const { onUpdateFieldLocks } = useTrackerLockContext();
+  const { onUpdateFieldLocks, onUpdateHiddenFields } = useTrackerLockContext();
   const updateBar = (idx: number, field: "value" | "max" | "name", val: number | string) => {
     const previous = personaStats[idx];
     const next = [...personaStats];
@@ -256,7 +266,10 @@ export function CombinedPlayerPanel({
   };
   const removeCharacter = (idx: number) => {
     const removed = characters[idx];
-    if (removed) onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+    if (removed) {
+      onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+      onUpdateHiddenFields?.((hiddenFields) => removeTrackerCharacterLocks(hiddenFields, removed, idx));
+    }
     onUpdateCharacters(characters.filter((_, i) => i !== idx));
   };
   const updateCharacter = (idx: number, updated: PresentCharacter) => {
@@ -265,6 +278,13 @@ export function CombinedPlayerPanel({
       onUpdateFieldLocks?.((locks) =>
         renameTrackerFieldLockPrefix(
           locks,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
+      onUpdateHiddenFields?.((hiddenFields) =>
+        renameTrackerFieldLockPrefix(
+          hiddenFields,
           characterTrackerLockPrefix(previous, idx),
           characterTrackerLockPrefix(updated, idx),
         ),
@@ -352,6 +372,7 @@ export function CombinedPlayerPanel({
     onUpdateCustomTracker(next);
   };
   const lockFor = useHudFieldLockResolver();
+  const hiddenFor = useHudFieldHiddenResolver();
   const personaStatusLock = lockFor(personaStatusTrackerLockKey());
 
   return (
@@ -446,6 +467,11 @@ export function CombinedPlayerPanel({
                 const appearanceLock = lockFor(characterTrackerLockKey(char, idx, "appearance"));
                 const outfitLock = lockFor(characterTrackerLockKey(char, idx, "outfit"));
                 const thoughtsLock = lockFor(characterTrackerLockKey(char, idx, "thoughts"));
+                const showMood = !hiddenFor(characterTrackerLockKey(char, idx, "mood"));
+                const showAppearance = !hiddenFor(characterTrackerLockKey(char, idx, "appearance"));
+                const showOutfit = !hiddenFor(characterTrackerLockKey(char, idx, "outfit"));
+                const showThoughts = !hiddenFor(characterTrackerLockKey(char, idx, "thoughts"));
+                const hasVisibleDefaultFields = showMood || showAppearance || showOutfit || showThoughts;
                 return (
                   <div key={char.characterId ?? idx} className="rounded-lg bg-[var(--muted)]/20 p-2 space-y-1">
                   <div className="group/field flex items-center gap-1.5">
@@ -472,36 +498,64 @@ export function CombinedPlayerPanel({
                       <X size="0.625rem" />
                     </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
-                    <LabeledEdit
-                      label="Mood"
-                      value={char.mood}
-                      onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
-                      locked={moodLock.locked}
-                      onToggleLock={moodLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Look"
-                      value={char.appearance ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
-                      locked={appearanceLock.locked}
-                      onToggleLock={appearanceLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Outfit"
-                      value={char.outfit ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
-                      locked={outfitLock.locked}
-                      onToggleLock={outfitLock.onToggle}
-                    />
-                    <LabeledEdit
-                      label="Thinks"
-                      value={char.thoughts ?? ""}
-                      onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
-                      locked={thoughtsLock.locked}
-                      onToggleLock={thoughtsLock.onToggle}
-                    />
-                  </div>
+                  {(hasVisibleDefaultFields || Object.keys(char.customFields ?? {}).length > 0) && (
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
+                      {showMood && (
+                        <LabeledEdit
+                          label="Mood"
+                          value={char.mood}
+                          onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
+                          locked={moodLock.locked}
+                          onToggleLock={moodLock.onToggle}
+                        />
+                      )}
+                      {showAppearance && (
+                        <LabeledEdit
+                          label="Look"
+                          value={char.appearance ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
+                          locked={appearanceLock.locked}
+                          onToggleLock={appearanceLock.onToggle}
+                        />
+                      )}
+                      {showOutfit && (
+                        <LabeledEdit
+                          label="Outfit"
+                          value={char.outfit ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
+                          locked={outfitLock.locked}
+                          onToggleLock={outfitLock.onToggle}
+                        />
+                      )}
+                      {showThoughts && (
+                        <LabeledEdit
+                          label="Thinks"
+                          value={char.thoughts ?? ""}
+                          onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
+                          locked={thoughtsLock.locked}
+                          onToggleLock={thoughtsLock.onToggle}
+                        />
+                      )}
+                      {Object.entries(char.customFields ?? {}).map(([name, value]) => {
+                        const valueLock = lockFor(characterCustomFieldTrackerLockKey(char, idx, name, "value"));
+                        return (
+                          <LabeledEdit
+                            key={name}
+                            label={name}
+                            value={value}
+                            onSave={(nextValue) =>
+                              updateCharacter(idx, {
+                                ...char,
+                                customFields: { ...(char.customFields ?? {}), [name]: nextValue },
+                              })
+                            }
+                            locked={valueLock.locked}
+                            onToggleLock={valueLock.onToggle}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                   {Array.isArray(char.stats) && char.stats.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                       {char.stats.map((stat, statIndex) => {
@@ -803,7 +857,7 @@ export function CharactersPanel({
   onRerunSingleTracker,
   isTrackerRetryBusy,
 }: CharactersPanelProps) {
-  const { onUpdateFieldLocks } = useTrackerLockContext();
+  const { onUpdateFieldLocks, onUpdateHiddenFields } = useTrackerLockContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadIdx, setUploadIdx] = useState<number | null>(null);
 
@@ -874,7 +928,10 @@ export function CharactersPanel({
 
   const removeCharacter = (idx: number) => {
     const removed = characters[idx];
-    if (removed) onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+    if (removed) {
+      onUpdateFieldLocks?.((locks) => removeTrackerCharacterLocks(locks, removed, idx));
+      onUpdateHiddenFields?.((hiddenFields) => removeTrackerCharacterLocks(hiddenFields, removed, idx));
+    }
     onUpdate(characters.filter((_, i) => i !== idx));
   };
 
@@ -888,12 +945,20 @@ export function CharactersPanel({
           characterTrackerLockPrefix(updated, idx),
         ),
       );
+      onUpdateHiddenFields?.((hiddenFields) =>
+        renameTrackerFieldLockPrefix(
+          hiddenFields,
+          characterTrackerLockPrefix(previous, idx),
+          characterTrackerLockPrefix(updated, idx),
+        ),
+      );
     }
     const next = [...characters];
     next[idx] = updated;
     onUpdate(next);
   };
   const lockFor = useHudFieldLockResolver();
+  const hiddenFor = useHudFieldHiddenResolver();
 
   return (
     <>
@@ -941,6 +1006,11 @@ export function CharactersPanel({
           const appearanceLock = lockFor(characterTrackerLockKey(char, idx, "appearance"));
           const outfitLock = lockFor(characterTrackerLockKey(char, idx, "outfit"));
           const thoughtsLock = lockFor(characterTrackerLockKey(char, idx, "thoughts"));
+          const showMood = !hiddenFor(characterTrackerLockKey(char, idx, "mood"));
+          const showAppearance = !hiddenFor(characterTrackerLockKey(char, idx, "appearance"));
+          const showOutfit = !hiddenFor(characterTrackerLockKey(char, idx, "outfit"));
+          const showThoughts = !hiddenFor(characterTrackerLockKey(char, idx, "thoughts"));
+          const hasVisibleDefaultFields = showMood || showAppearance || showOutfit || showThoughts;
           return (
             <div key={char.characterId ?? idx} className="rounded-lg bg-[var(--muted)]/20 p-2 space-y-1">
             <div className="group/field flex items-center gap-1.5">
@@ -992,36 +1062,64 @@ export function CharactersPanel({
                 <X size="0.625rem" />
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
-              <LabeledEdit
-                label="Mood"
-                value={char.mood}
-                onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
-                locked={moodLock.locked}
-                onToggleLock={moodLock.onToggle}
-              />
-              <LabeledEdit
-                label="Look"
-                value={char.appearance ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
-                locked={appearanceLock.locked}
-                onToggleLock={appearanceLock.onToggle}
-              />
-              <LabeledEdit
-                label="Outfit"
-                value={char.outfit ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
-                locked={outfitLock.locked}
-                onToggleLock={outfitLock.onToggle}
-              />
-              <LabeledEdit
-                label="Thinks"
-                value={char.thoughts ?? ""}
-                onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
-                locked={thoughtsLock.locked}
-                onToggleLock={thoughtsLock.onToggle}
-              />
-            </div>
+            {(hasVisibleDefaultFields || Object.keys(char.customFields ?? {}).length > 0) && (
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-1">
+                {showMood && (
+                  <LabeledEdit
+                    label="Mood"
+                    value={char.mood}
+                    onSave={(value) => updateCharacter(idx, { ...char, mood: value })}
+                    locked={moodLock.locked}
+                    onToggleLock={moodLock.onToggle}
+                  />
+                )}
+                {showAppearance && (
+                  <LabeledEdit
+                    label="Look"
+                    value={char.appearance ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, appearance: value || null })}
+                    locked={appearanceLock.locked}
+                    onToggleLock={appearanceLock.onToggle}
+                  />
+                )}
+                {showOutfit && (
+                  <LabeledEdit
+                    label="Outfit"
+                    value={char.outfit ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, outfit: value || null })}
+                    locked={outfitLock.locked}
+                    onToggleLock={outfitLock.onToggle}
+                  />
+                )}
+                {showThoughts && (
+                  <LabeledEdit
+                    label="Thinks"
+                    value={char.thoughts ?? ""}
+                    onSave={(value) => updateCharacter(idx, { ...char, thoughts: value || null })}
+                    locked={thoughtsLock.locked}
+                    onToggleLock={thoughtsLock.onToggle}
+                  />
+                )}
+                {Object.entries(char.customFields ?? {}).map(([name, value]) => {
+                  const valueLock = lockFor(characterCustomFieldTrackerLockKey(char, idx, name, "value"));
+                  return (
+                    <LabeledEdit
+                      key={name}
+                      label={name}
+                      value={value}
+                      onSave={(nextValue) =>
+                        updateCharacter(idx, {
+                          ...char,
+                          customFields: { ...(char.customFields ?? {}), [name]: nextValue },
+                        })
+                      }
+                      locked={valueLock.locked}
+                      onToggleLock={valueLock.onToggle}
+                    />
+                  );
+                })}
+              </div>
+            )}
             {Array.isArray(char.stats) && char.stats.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-[var(--border)]">
                 {char.stats.map((stat, statIndex) => {
@@ -1362,11 +1460,13 @@ interface CombinedWorldPanelProps {
   time: string;
   weather: string;
   temperature: string;
+  worldCustomFields: WorldCustomField[];
   onSaveLocation: (v: string) => void;
   onSaveDate: (v: string) => void;
   onSaveTime: (v: string) => void;
   onSaveWeather: (v: string) => void;
   onSaveTemperature: (v: string) => void;
+  onUpdateWorldCustomFields: (fields: WorldCustomField[]) => void;
   weatherEmoji: string;
   pinColor: string;
   dateColor: string;
@@ -1384,11 +1484,13 @@ export function CombinedWorldPanel({
   time,
   weather,
   temperature,
+  worldCustomFields,
   onSaveLocation,
   onSaveDate,
   onSaveTime,
   onSaveWeather,
   onSaveTemperature,
+  onUpdateWorldCustomFields,
   weatherEmoji,
   pinColor,
   dateColor,
@@ -1480,6 +1582,26 @@ export function CombinedWorldPanel({
           locked={temperatureLock.locked}
           onToggleLock={temperatureLock.onToggle}
         />
+        {worldCustomFields.map((field, index) => {
+          const name = field.name?.trim() || "Field";
+          const valueLock = lockFor(worldCustomFieldTrackerLockKey(field, "value", index));
+          return (
+            <WorldFieldRow
+              key={`${name}-${index}`}
+              icon={<WorldCustomFieldIcon icon={field.icon} />}
+              label={name}
+              value={field.value ?? ""}
+              onSave={(value) => {
+                const next = [...worldCustomFields];
+                next[index] = { ...field, value };
+                onUpdateWorldCustomFields(next);
+              }}
+              accent="text-[var(--foreground)]/80"
+              locked={valueLock.locked}
+              onToggleLock={valueLock.onToggle}
+            />
+          );
+        })}
       </div>
     </>
   );

@@ -105,9 +105,6 @@ export function getTextRewritePendingState(agents: ResolvedAgent[]): { agentType
   return { agentType: "prose-guardian", message: PROSE_GUARDIAN_PENDING_MESSAGE };
 }
 
-export function shouldHoldForProseGuardianRewrite(agents: ResolvedAgent[]): boolean {
-  return shouldHoldForTextRewrite(agents);
-}
 
 function readPositiveNumber(value: unknown): number | null {
   const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
@@ -135,7 +132,40 @@ function getRewritePromptLabel(agentType: string): string {
 function buildMergedRewritePrompt(agents: ResolvedAgent[]): string {
   const agentBlocks = agents.flatMap((agent) => {
     const label = getRewritePromptLabel(agent.type);
-    return [`<${label}>`, `Agent: ${agent.name}`, agent.promptTemplate, `</${label}>`, ``];
+    const parts = [`<${label}>`, `Agent: ${agent.name}`];
+    
+    // Include promptTemplate if non-empty
+    if (agent.promptTemplate) {
+      parts.push(agent.promptTemplate);
+    }
+    
+    // For prose-guardian, include settings-based rules (banned, avoid, prefer)
+    if (agent.type === "prose-guardian") {
+      const settings = agent.settings as Record<string, unknown>;
+      const rules: string[] = [];
+      
+      const banned = typeof settings.banned === "string" ? settings.banned : null;
+      if (banned) {
+        rules.push(`BANNED WORDS/PHRASES: ${banned}`);
+      }
+      
+      const avoid = typeof settings.avoid === "string" ? settings.avoid : null;
+      if (avoid) {
+        rules.push(`AVOID: ${avoid}`);
+      }
+      
+      const prefer = typeof settings.prefer === "string" ? settings.prefer : null;
+      if (prefer) {
+        rules.push(`PREFER: ${prefer}`);
+      }
+      
+      if (rules.length > 0) {
+        parts.push(rules.join("\n"));
+      }
+    }
+    
+    parts.push(`</${label}>`, ``);
+    return parts;
   });
 
   return [

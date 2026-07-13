@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Persona Editor — Full-page detail view
 // Replaces the chat area when editing a persona.
-// Sections: Metadata, Card, Lorebook, Sprites, Colors, Stats
+// Sections: Metadata, Card, Convo, Lorebook, Sprites, Gallery, Colors, Stats
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback, type ChangeEvent, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -60,6 +60,7 @@ import {
   RotateCcw,
   Crop,
   Library,
+  MessageCircle,
 } from "lucide-react";
 import { cn, generateClientId, getAvatarCropStyle, type AvatarCrop, type LegacyAvatarCrop } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
@@ -101,6 +102,7 @@ import {
   normalizeRpgStatPools,
   syncRpgHpFromPools,
   type CharacterData,
+  type ConvoBehaviorConfig,
   type PersonaCardSnapshot,
   type PersonaCardVersion,
   type RPGStatPool,
@@ -109,11 +111,13 @@ import {
 } from "@marinara-engine/shared";
 import { useQuoteFormatter } from "../../hooks/use-quote-formatter";
 import { LorebookAssignmentSection } from "../lorebooks/LorebookAssignmentSection";
+import { ConvoProfileFields } from "../characters/ConvoProfileFields";
 
 // ── Tabs ──
 const TABS = [
   { id: "metadata", label: "Metadata", icon: User },
   { id: "card", label: "Card", icon: IdCard },
+  { id: "convo", label: "Convo", icon: MessageCircle },
   { id: "lorebook", label: "Lorebook", icon: Library },
   { id: "sprites", label: "Sprites", icon: Image },
   { id: "gallery", label: "Gallery", icon: Camera },
@@ -173,6 +177,7 @@ const PERSONA_RPG_ATTRIBUTES_HELP =
 interface PersonaFormData {
   name: string;
   comment: string;
+  phoneticName: string;
   creator: string;
   personaVersion: string;
   creatorNotes: string;
@@ -188,6 +193,10 @@ interface PersonaFormData {
   personaStats: string;
   tags: string[];
   savedStatusOptions: string;
+  /** Conversation-mode-only fields. */
+  convoDisplayName: string;
+  aboutMe: string;
+  convoBehavior: ConvoBehaviorConfig | null;
   /** Avatar crop region (parsed from the persona row's JSON-encoded `avatarCrop`).
    *  May be the current source-relative shape, the legacy zoom+offset shape (held
    *  through until the user re-edits via the cropper), or null when unset. */
@@ -198,6 +207,7 @@ interface PersonaRow {
   id: string;
   name: string;
   comment?: string;
+  phoneticName?: string;
   creator?: string;
   personaVersion?: string;
   creatorNotes?: string;
@@ -217,6 +227,9 @@ interface PersonaRow {
   personaStats?: string;
   tags?: string;
   savedStatusOptions?: string;
+  convoDisplayName?: string;
+  aboutMe?: string;
+  convoBehavior?: string;
 }
 
 function appendNewTags(existingTags: string[], rawInput: string) {
@@ -408,7 +421,7 @@ function PersonaGalleryTab({ personaId, personaName }: { personaId: string; pers
                       <button
                         type="button"
                         onClick={() => void handleDelete(image)}
-                        className="rounded-lg bg-red-500/35 p-1.5 text-white transition-colors hover:bg-red-500/55"
+	                        className="rounded-lg bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                         title="Delete"
                       >
                         <Trash2 size="0.75rem" />
@@ -823,7 +836,7 @@ function PersonaClipCard({
                 type="button"
                 onClick={() => void onDelete(clip)}
                 disabled={deleting}
-                className="rounded-lg border border-red-500/25 bg-red-500/10 p-1.5 text-red-400 transition-colors hover:border-red-500/45 hover:bg-red-500/20 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+	                className="rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
                 title="Delete"
                 aria-label={`Delete ${clip.label || "clip"}`}
               >
@@ -880,10 +893,14 @@ function createCharacterDataFromPersona(formData: PersonaFormData): CharacterDat
       depth_prompt: { prompt: "", depth: 4, role: "system" },
       backstory: formData.backstory ?? "",
       appearance: formData.appearance ?? "",
+      phoneticName: formData.phoneticName.trim() || undefined,
       nameColor: formData.nameColor || undefined,
       dialogueColor: formData.dialogueColor || undefined,
       boxColor: formData.boxColor || undefined,
       trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
+      convoDisplayName: formData.convoDisplayName || undefined,
+      aboutMe: formData.aboutMe || undefined,
+      ...(formData.convoBehavior?.instruction?.trim() ? { convoBehavior: formData.convoBehavior } : {}),
       ...(rpgStats ? { rpgStats } : {}),
     },
   };
@@ -986,6 +1003,7 @@ export function PersonaEditor() {
     setFormData({
       name: rawPersona.name,
       comment: rawPersona.comment ?? "",
+      phoneticName: rawPersona.phoneticName ?? "",
       creator: rawPersona.creator ?? "",
       personaVersion: rawPersona.personaVersion ?? "1.0",
       creatorNotes: rawPersona.creatorNotes ?? "",
@@ -1007,6 +1025,17 @@ export function PersonaEditor() {
         }
       })(),
       savedStatusOptions: rawPersona.savedStatusOptions ?? "[]",
+      convoDisplayName: rawPersona.convoDisplayName ?? "",
+      aboutMe: rawPersona.aboutMe ?? "",
+      convoBehavior: (() => {
+        if (!rawPersona.convoBehavior?.trim()) return null;
+        try {
+          const parsed = JSON.parse(rawPersona.convoBehavior) as ConvoBehaviorConfig;
+          return parsed && typeof parsed.instruction === "string" ? parsed : null;
+        } catch {
+          return null;
+        }
+      })(),
       avatarCrop: parsedAvatarCrop,
     });
     setAvatarPreview(rawPersona.avatarPath);
@@ -1026,7 +1055,7 @@ export function PersonaEditor() {
     if (!personaId || !formData) return;
     setSaving(true);
     try {
-      const { tags, avatarCrop, ...rest } = formData;
+      const { tags, avatarCrop, convoBehavior, ...rest } = formData;
       await updatePersona.mutateAsync({
         id: personaId,
         ...rest,
@@ -1035,6 +1064,8 @@ export function PersonaEditor() {
         // Persist as JSON string; empty string means "no crop" so the row keeps
         // the legacy default in render sites.
         avatarCrop: avatarCrop ? JSON.stringify(avatarCrop) : "",
+        // convoBehavior is a JSON-string column; "" means unset.
+        convoBehavior: convoBehavior && convoBehavior.instruction?.trim() ? JSON.stringify(convoBehavior) : "",
       });
       setDirty(false);
     } finally {
@@ -1261,7 +1292,7 @@ export function PersonaEditor() {
       <button
         type="button"
         onClick={handleDelete}
-        className="mari-editor-action mari-editor-action--danger inline-flex"
+        className="mari-editor-action inline-flex"
         title="Delete persona"
       >
         <Trash2 size="1rem" />
@@ -1274,7 +1305,7 @@ export function PersonaEditor() {
       <ExportFormatDialog
         open={exportDialogOpen}
         title="Export Persona"
-        description="Native keeps Marinara persona metadata. Compatible exports simple persona JSON for other tools."
+        description="Native keeps Marinara persona metadata, sprites, and attached lorebooks. Compatible exports simple persona JSON for other tools."
         compatibleDescription="Exports persona fields directly without the Marinara wrapper."
         onClose={() => setExportDialogOpen(false)}
         onSelect={(format: ExportFormatChoice) => {
@@ -1414,6 +1445,16 @@ export function PersonaEditor() {
             )}
             {activeTab === "card" && (
               <PersonaCardTab formData={formData} updateField={updateField} setDirty={setDirty} />
+            )}
+            {activeTab === "convo" && (
+              // Key by the edited persona so the Convo fields' transient state resets on
+              // switch — the editor reuses this instance across personas.
+              <PersonaConvoTab
+                key={personaId ?? "new-persona"}
+                personaId={personaId}
+                formData={formData}
+                updateField={updateField}
+              />
             )}
             {activeTab === "lorebook" && personaId && (
               <PersonaLorebookTab personaId={personaId} personaName={formData.name} />
@@ -2107,7 +2148,7 @@ function PersonaSpritesTab({
                   <button
                     type="button"
                     onClick={() => setDeleteSpriteRequest(sprite)}
-                    className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+	                    className="rounded-lg p-1 text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                     title="Delete"
                   >
                     <Trash2 size="0.6875rem" />
@@ -2150,7 +2191,7 @@ function PersonaSpritesTab({
                   type="button"
                   onClick={() => void handleDeleteVisibleSprites()}
                   disabled={!!deletingSprites}
-                  className="mr-auto inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--destructive)] ring-1 ring-[var(--destructive)]/30 transition-colors hover:bg-[var(--destructive)]/10 disabled:opacity-50 sm:px-3 sm:text-sm"
+	                  className="mr-auto inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-xs font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50 sm:px-3 sm:text-sm"
                 >
                   {deletingSprites === "all" ? (
                     <Loader2 size="0.875rem" className="animate-spin" />
@@ -2756,6 +2797,18 @@ function PersonaMetadataTab({
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+            Phonetic name{" "}
+            <HelpTooltip text="Optional pronunciation override used only when your persona name is sent to text-to-speech." />
+          </span>
+          <input
+            value={formData.phoneticName}
+            onChange={(e) => updateField("phoneticName", e.target.value)}
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            placeholder={formData.name}
+          />
+        </label>
+        <label className="space-y-1.5">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
             Title / Comment{" "}
             <HelpTooltip text="A short private note shown under the persona name in the library, useful for variants or alternate versions." />
           </span>
@@ -2869,6 +2922,9 @@ const PERSONA_VERSION_COMPARE_FIELDS: Array<{ key: keyof PersonaCardSnapshot; la
   { key: "personaStats", label: "Persona Stats" },
   { key: "tags", label: "Tags" },
   { key: "savedStatusOptions", label: "Saved Status Options" },
+  { key: "convoDisplayName", label: "Convo Display Name" },
+  { key: "aboutMe", label: "About Me" },
+  { key: "convoBehavior", label: "Convo Behavior" },
 ];
 
 function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnapshot {
@@ -2890,6 +2946,12 @@ function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnap
     personaStats: formData.personaStats,
     tags: JSON.stringify(formData.tags),
     savedStatusOptions: formData.savedStatusOptions,
+    convoDisplayName: formData.convoDisplayName,
+    aboutMe: formData.aboutMe,
+    convoBehavior:
+      formData.convoBehavior && formData.convoBehavior.instruction?.trim()
+        ? JSON.stringify(formData.convoBehavior)
+        : "",
   };
 }
 
@@ -3028,7 +3090,7 @@ function PersonaVersionHistoryPanel({
                 type="button"
                 onClick={() => handleDeleteVersion(version)}
                 disabled={restoreVersion.isPending || deleteVersion.isPending}
-                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-50"
+	                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
                 title="Delete this saved version"
               >
                 {deleteVersion.isPending && deleteVersion.variables?.versionId === version.id ? (
@@ -3117,6 +3179,38 @@ function PersonaVersionHistoryPanel({
         )}
       </Modal>
     </div>
+  );
+}
+
+function PersonaConvoTab({
+  personaId,
+  formData,
+  updateField,
+}: {
+  personaId: string | null;
+  formData: PersonaFormData;
+  updateField: <K extends keyof PersonaFormData>(key: K, value: PersonaFormData[K]) => void;
+}) {
+  return (
+    <ConvoProfileFields
+      kind="persona"
+      entityKey={personaId ?? "new-persona"}
+      baseName={formData.name}
+      displayName={formData.convoDisplayName}
+      onDisplayNameChange={(v) => updateField("convoDisplayName", v)}
+      aboutMe={formData.aboutMe}
+      onAboutMeChange={(v) => updateField("aboutMe", v)}
+      behavior={formData.convoBehavior}
+      onBehaviorChange={(b) => updateField("convoBehavior", b)}
+      aiSource={{
+        name: formData.name,
+        description: formData.description,
+        personality: formData.personality,
+        scenario: formData.scenario,
+        backstory: formData.backstory,
+        appearance: formData.appearance,
+      }}
+    />
   );
 }
 

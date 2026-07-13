@@ -10,7 +10,7 @@ This is the canonical contributor guide for Marinara Engine. Use it with `README
 | Backend  | Fastify 5, file-backed storage, temporary SQL compatibility    |
 | PWA      | vite-plugin-pwa, Web App Manifest                              |
 | Shared   | TypeScript 5, Zod                                              |
-| Build    | Vite 6, pnpm workspaces                                        |
+| Build    | Vite 7, pnpm workspaces                                        |
 
 ## Development Setup
 
@@ -212,7 +212,7 @@ Android policy:
 Release-related behavior already in the repo:
 
 - Docker publishing is triggered by `v*` tags.
-- Tagged releases are published from `CHANGELOG.md` by the GitHub release workflow, with a temporary Android APK notice prepended so release-page downloaders know the APK still requires Termux.
+- Tagged releases are published from `CHANGELOG.md` by the GitHub release workflow, with a named versioned source ZIP and a temporary Android APK notice prepended so release-page downloaders know the APK still requires Termux.
 - The server update check reads the newest GitHub `v*` tag and uses matching release metadata when it exists.
 - Git-based installs can apply updates automatically; Docker installs are prompted with the pull command instead.
 - Pull request CI runs `pnpm check`, `pnpm version:check`, and the tracked-installer guard.
@@ -222,15 +222,17 @@ Standard release flow:
 
 1. Bump the canonical version in root `package.json`.
 2. Run `pnpm version:sync -- --android-version-code <next-code>` to sync all derived version fields.
-3. Update `CHANGELOG.md`.
-4. Merge the release-ready `staging` change to `main`.
-5. Create and push the tag `vX.Y.Z` from the `main` commit that contains that exact version bump.
-6. Let the release workflows publish or update the GitHub Release, Windows installer, Android WebView shell APK, and GHCR container images (`X.Y.Z`, `X.Y`, `X`, `latest`, plus `X.Y.Z-lite` / `lite`) from the matching changelog entry.
+3. Run `pnpm credits:check`; if it reports stale contributor credits, run `pnpm credits:sync` and include the Credits modal update in the release PR.
+4. Update `CHANGELOG.md`.
+5. Merge the release-ready `staging` change to `main`.
+6. Create and push the tag `vX.Y.Z` from the `main` commit that contains that exact version bump.
+7. Let the release workflows publish or update the GitHub Release, named source ZIP, Windows installer, Android WebView shell APK, and GHCR container images (`X.Y.Z`, `X.Y`, `X`, `latest`, plus `X.Y.Z-lite` / `lite`) from the matching changelog entry.
 
 Release helpers now in the repo:
 
 - `pnpm version:sync -- --android-version-code <next-code>` updates the derived version files and README release references from the root `package.json` version.
 - `pnpm version:check` fails when those derived files drift out of sync.
+- `pnpm credits:check` compares the in-app Credits modal with the GitHub contributors list, and `pnpm credits:sync` refreshes it.
 - `pnpm guard:installer-artifacts` fails when tracked installer binaries appear under `win/installer/*.exe`.
 - `pnpm release:notes -- <version>` renders the matching `CHANGELOG.md` entry for release publication and prepends the temporary Android APK / Termux notice.
 

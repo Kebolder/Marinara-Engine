@@ -108,6 +108,8 @@ export function LocalMusicPlayer({ mobile = false }: { mobile?: boolean } = {}) 
   const playerVolume = useUIStore((s) => s.localMusicPlayerVolume);
   const setPlayerVolume = useUIStore((s) => s.setLocalMusicPlayerVolume);
   const musicPlayerActive = useUIStore((s) => s.musicPlayerEnabled && s.musicPlayerSource === "custom");
+  // spotifyMobileWidget* is a shared mobile floating-widget slot, not Spotify-only: SpotifyMiniPlayer,
+  // YouTubePlayer, and LocalMusicPlayer all read/write the same collapsed/position state here.
   const collapsed = useUIStore((s) => s.spotifyMobileWidgetCollapsed);
   const setCollapsed = useUIStore((s) => s.setSpotifyMobileWidgetCollapsed);
   const mobilePosition = useUIStore((s) => s.spotifyMobileWidgetPosition);

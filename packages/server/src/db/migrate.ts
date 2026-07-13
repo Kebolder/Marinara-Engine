@@ -103,6 +103,7 @@ const CREATE_TABLES: string[] = [
     creator TEXT NOT NULL DEFAULT '',
     persona_version TEXT NOT NULL DEFAULT '1.0',
     creator_notes TEXT NOT NULL DEFAULT '',
+    phonetic_name TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     personality TEXT NOT NULL DEFAULT '',
     scenario TEXT NOT NULL DEFAULT '',
@@ -118,6 +119,9 @@ const CREATE_TABLES: string[] = [
     persona_stats TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
     saved_status_options TEXT NOT NULL DEFAULT '[]',
+    convo_display_name TEXT NOT NULL DEFAULT '',
+    about_me TEXT NOT NULL DEFAULT '',
+    convo_behavior TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -146,6 +150,63 @@ const CREATE_TABLES: string[] = [
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     persona_ids TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS noodle_accounts (
+    id TEXT PRIMARY KEY NOT NULL,
+    kind TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    handle TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    bio TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT,
+    invited TEXT NOT NULL DEFAULT 'false',
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS noodle_posts (
+    id TEXT PRIMARY KEY NOT NULL,
+    author_account_id TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    image_url TEXT,
+    image_prompt TEXT,
+    parent_post_id TEXT,
+    quote_post_id TEXT,
+    source TEXT NOT NULL DEFAULT 'manual',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    author_snapshot TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS noodle_interactions (
+    id TEXT PRIMARY KEY NOT NULL,
+    post_id TEXT NOT NULL,
+    parent_interaction_id TEXT,
+    actor_account_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    content TEXT,
+    image_url TEXT,
+    actor_snapshot TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS noodle_activity_digests (
+    id TEXT PRIMARY KEY NOT NULL,
+    account_ids TEXT NOT NULL DEFAULT '[]',
+    content TEXT NOT NULL DEFAULT '',
+    source_run_id TEXT,
+    source_post_id TEXT,
+    source_interaction_id TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS noodle_refresh_runs (
+    id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL,
+    active_account_ids TEXT NOT NULL DEFAULT '[]',
+    prompt TEXT NOT NULL DEFAULT '',
+    result TEXT,
+    error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
@@ -397,11 +458,13 @@ const CREATE_TABLES: string[] = [
     location TEXT,
     weather TEXT,
     temperature TEXT,
+    world_custom_fields TEXT NOT NULL DEFAULT '[]',
     present_characters TEXT NOT NULL DEFAULT '[]',
     recent_events TEXT NOT NULL DEFAULT '[]',
     player_stats TEXT,
     persona_stats TEXT,
     field_locks TEXT,
+    hidden_tracker_fields TEXT,
     committed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   )`,
@@ -774,6 +837,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     definition: "TEXT",
   },
   {
+    table: "game_state_snapshots",
+    column: "world_custom_fields",
+    definition: "TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
+    table: "game_state_snapshots",
+    column: "hidden_tracker_fields",
+    definition: "TEXT",
+  },
+  {
     table: "lorebooks",
     column: "max_recursion_depth",
     definition: "INTEGER NOT NULL DEFAULT 3",
@@ -864,6 +937,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     definition: "TEXT NOT NULL DEFAULT ''",
   },
   {
+    table: "personas",
+    column: "phonetic_name",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
     table: "lorebook_entries",
     column: "locked",
     definition: "TEXT NOT NULL DEFAULT 'false'",
@@ -942,6 +1020,21 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     table: "personas",
     column: "saved_status_options",
     definition: "TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
+    table: "personas",
+    column: "convo_display_name",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "personas",
+    column: "about_me",
+    definition: "TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: "personas",
+    column: "convo_behavior",
+    definition: "TEXT NOT NULL DEFAULT ''",
   },
   {
     table: "lorebooks",
@@ -1163,11 +1256,29 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "anchor_kind",
     definition: "TEXT NOT NULL DEFAULT ''",
   },
+  {
+    table: "noodle_interactions",
+    column: "parent_interaction_id",
+    definition: "TEXT",
+  },
+  {
+    table: "noodle_interactions",
+    column: "image_url",
+    definition: "TEXT",
+  },
+  {
+    table: "noodle_activity_digests",
+    column: "source_interaction_id",
+    definition: "TEXT",
+  },
 ];
 
 /**
  * Applies idempotent SQLite schema repairs on startup so upgraded installs can
  * use the current Drizzle schema before any routes or seeders touch the DB.
+ *
+ * Only runs for the legacy SQLite backend — app.ts gates this call behind
+ * `!isFileStorageBackend()`, so it never runs on the default file-native store.
  */
 export async function runMigrations(db: DB) {
   // 1. Create all tables if they don't exist
@@ -1374,6 +1485,42 @@ export async function runMigrations(db: DB) {
   await db.run(
     sql.raw(
       `CREATE INDEX IF NOT EXISTS idx_persona_card_versions ON persona_card_versions(persona_id, created_at DESC)`,
+    ),
+  );
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_accounts_entity ON noodle_accounts(kind, entity_id)`));
+  await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_posts_created ON noodle_posts(created_at DESC)`));
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_posts_author ON noodle_posts(author_account_id, created_at DESC)`),
+  );
+  await db.run(
+    sql.raw(`
+      UPDATE noodle_posts
+      SET image_prompt = NULL
+      WHERE image_url IS NULL
+        AND image_prompt IS NOT NULL
+        AND metadata LIKE '%"imageGenerationFailed":true%'
+    `),
+  );
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_interactions_post ON noodle_interactions(post_id, created_at ASC)`),
+  );
+  await db.run(sql.raw(`DROP INDEX IF EXISTS uniq_noodle_toggle_interactions`));
+  await db.run(
+    sql.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_noodle_root_toggle_interactions ON noodle_interactions(post_id, actor_account_id, type) WHERE type IN ('like', 'repost') AND parent_interaction_id IS NULL`,
+    ),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_noodle_reply_like ON noodle_interactions(post_id, actor_account_id, type, parent_interaction_id) WHERE type = 'like' AND parent_interaction_id IS NOT NULL`,
+    ),
+  );
+  await db.run(
+    sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_digests_created ON noodle_activity_digests(created_at DESC)`),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_noodle_digests_interaction ON noodle_activity_digests(source_interaction_id)`,
     ),
   );
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_custom_themes_active ON custom_themes(is_active)`));

@@ -1,6 +1,7 @@
 import { Clock } from "lucide-react";
 import { cn } from "../../../../lib/utils";
 import { getWorldDateDisplay, getWorldTimeDisplay, type WorldDateDisplay } from "../../lib/world-state-display";
+import { FittedText } from "../controls/InlineControls";
 import { useTrackerFieldLock } from "../TrackerLockContext";
 import { WorldRenderedEdit, WorldTileShell } from "./WorldEditableTile";
 
@@ -107,6 +108,7 @@ export function WorldTimeTile({
   const lock = useTrackerFieldLock(lockKey);
   const display = getWorldTimeDisplay(value);
   const isPhraseTime = display.kind === "phrase";
+  const clockLabel = `${display.main}${display.suffix ? ` ${display.suffix}` : ""}`;
 
   return (
     <WorldTileShell label="Time">
@@ -119,7 +121,7 @@ export function WorldTimeTile({
           "overflow-hidden text-center",
           isPhraseTime
             ? "flex flex-col items-center justify-center px-0.5 py-1"
-            : "grid grid-rows-[minmax(0,1fr)_0.625rem] px-1 pb-0.5 pt-0.5",
+            : "grid grid-rows-[minmax(0,1fr)_0.6875rem] px-0.5 pb-0.5 pt-0.5",
         )}
         inputClassName="text-center"
         showEditHint={false}
@@ -139,16 +141,14 @@ export function WorldTimeTile({
             <div className="flex min-h-0 items-center justify-center overflow-visible">
               <WorldClockFace hour={display.hour} minute={display.minute} />
             </div>
-            <div className="flex min-w-0 max-w-full translate-y-px items-baseline justify-center gap-0.5">
-              <span className="truncate text-[0.5625rem] font-black leading-[0.625rem] text-[var(--foreground)]">
-                {display.main}
-              </span>
-              {display.suffix && (
-                <span className="shrink-0 text-[0.4375rem] font-bold leading-none text-[var(--muted-foreground)]">
-                  {display.suffix}
-                </span>
-              )}
-            </div>
+            <FittedText
+              align="center"
+              minScale={0.62}
+              title={clockLabel}
+              className="w-full max-w-full translate-y-px text-[0.625rem] font-black leading-[0.6875rem] text-[var(--foreground)]"
+            >
+              {clockLabel}
+            </FittedText>
           </>
         )}
       </WorldRenderedEdit>

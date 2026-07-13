@@ -159,6 +159,18 @@ export interface SceneSegmentEffect {
   directions?: DirectionCommand[];
 }
 
+/** A provider-ready prompt for one named character in a multi-character scene illustration. */
+export interface SceneIllustrationCharacterPrompt {
+  /** Visible character name, matched against the scene's allowed character roster. */
+  name: string;
+  /** Character-only identity, appearance, pose, expression, and action prompt. */
+  prompt: string;
+  /** Optional character-only undesired-content prompt used by providers that support it. */
+  negativePrompt?: string;
+  /** Optional normalized subject center used by providers with spatial character prompting. */
+  position?: { x: number; y: number };
+}
+
 /** Rare request for a VN CG-style illustration background. */
 export interface SceneIllustrationRequest {
   /** 0-based narration segment where the illustration should replace the background. */
@@ -169,6 +181,8 @@ export interface SceneIllustrationRequest {
   prompt: string;
   /** Names of visible referenced characters, if known. */
   characters?: string[];
+  /** Optional provider-ready prompts that keep named characters visually distinct. */
+  characterPrompts?: SceneIllustrationCharacterPrompt[];
   /** Why this scene is important enough to spend an image generation. */
   reason?: string;
   /** Optional stable filename hint. */

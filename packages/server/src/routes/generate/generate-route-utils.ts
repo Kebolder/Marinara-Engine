@@ -6,10 +6,15 @@ import {
   SUMMARY_TAIL_MESSAGES,
   applyTrackerFieldLocksToGameStatePatch,
   generationParametersSchema,
+  localAuthProviderBaseUrl,
   normalizeTextForMatch,
+  normalizeWorldCustomFields,
   normalizeThinkingTagPairs,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   resolveMacros,
+  unwrapConversationInstructions,
+  wrapConversationInstructions,
   type CharacterStat,
   type GameState,
   type GenerationParameterSendMap,
@@ -17,6 +22,7 @@ import {
   type InventoryItem,
   type MacroContext,
   type PlayerStats,
+  type WrapFormat,
 } from "@marinara-engine/shared";
 import { LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
 import { sidecarModelService } from "../../services/sidecar/sidecar-model.service.js";
@@ -35,6 +41,24 @@ export type SpeakerPrefixMessage = SimpleMessage & {
   providerMetadata?: Record<string, unknown>;
 };
 export type StoredGenerationParameters = Partial<GenerationParameters>;
+
+/**
+ * Resolve the persona visible to a chat. An explicit chat persona always wins;
+ * non-game chats may fall back to the globally active persona, while Game Mode
+ * deliberately remains persona-less unless setup selected one.
+ */
+export function resolveActivePersonaCandidate<T extends { id: string; isActive?: unknown }>(
+  personas: readonly T[],
+  chatPersonaId: string | null | undefined,
+  chatMode: string | null | undefined,
+): T | null {
+  return (
+    (chatPersonaId ? personas.find((persona) => persona.id === chatPersonaId) : null) ??
+    (chatMode !== "game" ? personas.find((persona) => persona.isActive === "true") : null) ??
+    null
+  );
+}
+
 export type LocalSidecarGenerationConnection = {
   id: typeof LOCAL_SIDECAR_CONNECTION_ID;
   name: string;
@@ -70,6 +94,20 @@ export type LocalSidecarGenerationConnection = {
   createdAt: string;
   updatedAt: string;
 };
+
+const PROMPT_WRAP_FORMATS = new Set<WrapFormat>(["xml", "markdown", "none"]);
+
+export function normalizePromptWrapFormat(value: unknown): WrapFormat {
+  return typeof value === "string" && PROMPT_WRAP_FORMATS.has(value as WrapFormat) ? (value as WrapFormat) : "xml";
+}
+
+export function formatConversationInstructionsForWrap(prompt: string, wrapFormat: WrapFormat): string {
+  const body = unwrapConversationInstructions(prompt);
+  if (wrapFormat === "xml") return wrapConversationInstructions(body);
+  if (!body.trim()) return "";
+  if (wrapFormat === "markdown") return `## Instructions\n${body}`;
+  return body;
+}
 export type PromptAttachment = {
   type?: string | null;
   url?: string | null;
@@ -304,12 +342,8 @@ export function shouldAbortOnPassiveGenerationDisconnect(args: { impersonate?: b
   return args.impersonate === true;
 }
 
-export function resolveProviderTopK(provider: unknown, topK: number): number | undefined {
+export function resolveProviderTopK(topK: number): number | undefined {
   const normalized = Number.isFinite(topK) ? Math.max(0, Math.trunc(topK)) : 0;
-  const providerId = typeof provider === "string" ? provider.toLowerCase() : "";
-  if (providerId === "google" || providerId === "google_vertex") {
-    return normalized > 0 ? normalized : undefined;
-  }
   return normalized > 0 ? normalized : undefined;
 }
 
@@ -1112,8 +1146,8 @@ export function resolveBaseUrl(connection: { baseUrl: string | null; provider: s
   // Subscription/login-backed providers own their endpoint internally, but
   // downstream callers gate on a non-empty baseUrl. Return a sentinel so the
   // gate passes; the provider ignores the value.
-  if (connection.provider === "claude_subscription") return "claude-agent-sdk://local";
-  if (connection.provider === "openai_chatgpt") return "openai-chatgpt://codex-auth";
+  const localAuthBaseUrl = localAuthProviderBaseUrl(connection.provider);
+  if (localAuthBaseUrl) return localAuthBaseUrl;
   const providerDef = PROVIDERS[connection.provider as keyof typeof PROVIDERS];
   return providerDef?.defaultBaseUrl ?? "";
 }
@@ -1373,6 +1407,13 @@ export function preserveTrackerCharacterUiFields(
     const previousPortraitZoom = previous?.portraitZoom;
     const previousAvatarPath = previous?.avatarPath;
     const previousAvatarCrop = previous?.avatarCrop;
+    const previousCustomFields = isPlainRecord(previous?.customFields) ? previous.customFields : null;
+    const nextCustomFields = isPlainRecord(character.customFields) ? character.customFields : null;
+    if (previousCustomFields) {
+      // Character custom fields are user-defined tracker structure. Merge model
+      // values over it so an omitted field cannot erase the user's configuration.
+      character.customFields = { ...previousCustomFields, ...(nextCustomFields ?? {}) };
+    }
     if (
       (typeof character.avatarPath !== "string" || !character.avatarPath.trim()) &&
       isNpcTrackerAvatarPath(previousAvatarPath)
@@ -1420,6 +1461,7 @@ export function parseJsonField<T>(value: unknown, fallback: T): T {
 export function parseGameStateRow(row: Record<string, unknown>): GameState {
   const manualOverrides = parseJsonField<Record<string, string> | null>(row.manualOverrides, null);
   const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
+  const hiddenTrackerFields = parseTrackerHiddenFields(row.hiddenTrackerFields);
   return {
     id: row.id as string,
     chatId: row.chatId as string,
@@ -1430,12 +1472,14 @@ export function parseGameStateRow(row: Record<string, unknown>): GameState {
     location: row.location as string | null,
     weather: row.weather as string | null,
     temperature: row.temperature as string | null,
+    worldCustomFields: normalizeWorldCustomFields(parseJsonField<unknown[]>(row.worldCustomFields, [])),
     presentCharacters: parseJsonField<any[]>(row.presentCharacters, []),
     recentEvents: parseJsonField<string[]>(row.recentEvents, []),
     playerStats: parseJsonField<PlayerStats | null>(row.playerStats, null),
     personaStats: parseJsonField<any[] | null>(row.personaStats, null),
     manualOverrides,
     fieldLocks,
+    hiddenTrackerFields,
     createdAt: row.createdAt as string,
   };
 }

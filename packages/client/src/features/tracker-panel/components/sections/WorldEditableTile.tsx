@@ -21,7 +21,6 @@ export function WorldTileShell({
       title={label}
     >
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,color-mix(in_srgb,var(--foreground)_5%,transparent),transparent_42%,color-mix(in_srgb,var(--foreground)_7%,transparent))]" />
-      <div className="pointer-events-none absolute inset-x-1 top-1 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--foreground)_18%,transparent),transparent)]" />
       <div className="pointer-events-none absolute inset-x-1 bottom-1 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--foreground)_14%,transparent),transparent)] opacity-70" />
       <span className="sr-only">{label}</span>
       <div className="relative z-[1] h-full min-w-0">{children}</div>

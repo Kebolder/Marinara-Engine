@@ -24,9 +24,9 @@ const MODE_BADGE: Record<string, { icon: React.ReactNode; label: string; logoMod
       logoModeClass: "mari-chat-logo-mode--roleplay",
     },
     visual_novel: {
-      icon: <Theater size="0.375rem" />,
-      label: "Game",
-      logoModeClass: "mari-chat-logo-mode--game",
+      icon: <BookOpen size="0.375rem" />,
+      label: "Roleplay",
+      logoModeClass: "mari-chat-logo-mode--roleplay",
     },
     game: {
       icon: <Theater size="0.375rem" />,
@@ -75,7 +75,10 @@ export function RecentChats() {
   }, [characterSummaries]);
 
   return (
-    <div className="mari-chrome-token-scope flex w-full max-w-md flex-col items-center gap-1.5">
+    <div
+      className="mari-chrome-token-scope flex w-full max-w-md flex-col items-center gap-1.5"
+      data-component="RecentChats"
+    >
       {recentChats.length === 0 ? (
         <p className="rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
           No chats yet

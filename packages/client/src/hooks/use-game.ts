@@ -21,6 +21,7 @@ import { useUIStore } from "../stores/ui.store";
 import type {
   GameActiveState,
   GameMap,
+  GameInitialSetupLabels,
   GameSetupConfig,
   GameNpc,
   DiceRollResult,
@@ -174,8 +175,9 @@ export function useCreateGame() {
     mutationFn: (data: {
       name: string;
       setupConfig: GameSetupConfig;
+      preferences?: string;
+      shareLabels?: GameInitialSetupLabels;
       connectionId?: string;
-      characterConnectionId?: string;
       promptPresetId?: string;
       chatId?: string;
     }) => api.post<CreateGameResponse>("/game/create", data),
@@ -312,6 +314,14 @@ export function useConcludeSession() {
       });
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
       qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
+      // Game Lorebook Keeper finishes in the background after the conclusion
+      // response. Refresh the chat at bounded intervals so its running/failure
+      // state and retry action appear without requiring a page reload.
+      for (const delay of [1_500, 5_000, 15_000, 30_000, 60_000, 120_000]) {
+        window.setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
+        }, delay);
+      }
     },
     onError: (err, variables) => {
       console.error("[game/session/conclude] Error:", err);
@@ -840,15 +850,6 @@ export function useUpdateWeather() {
   });
 }
 
-export function useRollEncounter() {
-  return useMutation({
-    mutationFn: (data: { chatId: string; action: string; location?: string }) =>
-      api.post<{ encounter: { triggered: boolean; type: string | null; hint: string }; enemyCount: number }>(
-        "/game/encounter/roll",
-        data,
-      ),
-  });
-}
 
 export function useUpdateReputation() {
   const qc = useQueryClient();
@@ -864,16 +865,6 @@ export function useUpdateReputation() {
   });
 }
 
-export function useJournalEntry() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { chatId: string; type: string; data: Record<string, unknown> }) =>
-      api.post<{ journal: unknown }>("/game/journal/entry", data),
-    onSuccess: (_, variables) => {
-      qc.invalidateQueries({ queryKey: [...gameKeys.all, "journal", variables.chatId] });
-    },
-  });
-}
 
 export function useGameJournal(chatId: string | null) {
   return useQuery({

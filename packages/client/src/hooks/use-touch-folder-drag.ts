@@ -24,7 +24,6 @@ type TouchFolderDragState = {
 type TouchFolderDragOptions = {
   delayMs?: number;
   moveActivateThresholdPx?: number;
-  moveCancelThresholdPx?: number;
   autoScrollEdgePx?: number;
   autoScrollMaxSpeedPx?: number;
   onActivate: (id: string) => void;
@@ -171,7 +170,6 @@ function getAutoScrollTargets(sourceElement: HTMLElement) {
 export function useTouchFolderDrag({
   delayMs = DEFAULT_TOUCH_DRAG_DELAY_MS,
   moveActivateThresholdPx,
-  moveCancelThresholdPx,
   autoScrollEdgePx = DEFAULT_AUTO_SCROLL_EDGE_PX,
   autoScrollMaxSpeedPx = DEFAULT_AUTO_SCROLL_MAX_SPEED_PX,
   onActivate,
@@ -179,7 +177,7 @@ export function useTouchFolderDrag({
   onCancel,
 }: TouchFolderDragOptions) {
   const resolvedMoveActivateThresholdPx =
-    moveActivateThresholdPx ?? moveCancelThresholdPx ?? DEFAULT_TOUCH_DRAG_ACTIVATE_THRESHOLD_PX;
+    moveActivateThresholdPx ?? DEFAULT_TOUCH_DRAG_ACTIVATE_THRESHOLD_PX;
   const dragRef = useRef<TouchFolderDragState | null>(null);
   const optionsRef = useRef({
     delayMs,

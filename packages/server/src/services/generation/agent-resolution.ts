@@ -538,6 +538,7 @@ export async function resolveAgentPipelineAgents({
     agentConnectionWarnings.push(
       buildDefaultAgentConnectionWarning({
         agentNames: defaultAgentConnectionAgents,
+        connectionId: defaultAgentConn.id,
         connectionName: defaultAgentConn.name,
         model: String(defaultAgentConn.model ?? "").trim(),
       }),

@@ -7,7 +7,9 @@ import type { ChatMLMessage } from "@marinara-engine/shared";
  * Merge consecutive messages that share the same role, with a double-newline separator.
  *
  * Rules:
- * - Only merges when adjacent messages have the **exact same** role.
+ * - Only merges when adjacent messages share the **exact same** role, the same
+ *   `characterId` (including both unset), and a compatible `contextKind` (equal, or
+ *   one/both unset).
  * - Preserves the `name` of the first message if set.
  * - Skips empty messages entirely.
  *

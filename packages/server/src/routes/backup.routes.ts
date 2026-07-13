@@ -21,7 +21,7 @@ import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js
 import { createPromptsStorage } from "../services/storage/prompts.storage.js";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createThemesStorage } from "../services/storage/themes.storage.js";
-import type { ExportEnvelope } from "@marinara-engine/shared";
+import { canReparentFolder, type ExportEnvelope } from "@marinara-engine/shared";
 import { getDataDir } from "../utils/data-dir.js";
 import { getDatabaseFilePath, getFileStorageDir } from "../config/runtime-config.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
@@ -37,6 +37,8 @@ const BACKUP_DIRS = [
   "sprites",
   "backgrounds",
   "gallery",
+  "game-scene-videos",
+  "conversation-call-character-videos",
   "fonts",
   "knowledge-sources",
   "game-assets",
@@ -2044,6 +2046,9 @@ export async function backupRoutes(app: FastifyInstance) {
                     typeof p.savedStatusOptions === "string"
                       ? p.savedStatusOptions
                       : JSON.stringify(p.savedStatusOptions ?? []),
+                  convoDisplayName: typeof p.convoDisplayName === "string" ? p.convoDisplayName : "",
+                  aboutMe: typeof p.aboutMe === "string" ? p.aboutMe : "",
+                  convoBehavior: typeof p.convoBehavior === "string" ? p.convoBehavior : "",
                   avatarCrop: typeof p.avatarCrop === "string" ? p.avatarCrop : JSON.stringify(p.avatarCrop ?? null),
                 },
                 normalizeTimestampOverrides({ createdAt: p.createdAt, updatedAt: p.updatedAt }),
@@ -2100,6 +2105,7 @@ export async function backupRoutes(app: FastifyInstance) {
               );
               const folderIdMap = new Map<string, string>();
               if (created && Array.isArray(lb.folders)) {
+                // Pass 1: create all folders without parent references
                 for (const folder of lb.folders) {
                   const oldId = typeof folder.id === "string" ? folder.id : null;
                   const createdFolder = (await lbs.createFolder((created as any).id, {
@@ -2109,6 +2115,42 @@ export async function backupRoutes(app: FastifyInstance) {
                     order: folder.order ?? 0,
                   })) as { id?: string } | null;
                   if (oldId && createdFolder?.id) folderIdMap.set(oldId, createdFolder.id);
+                }
+                // Pass 2: restore nesting using the fully-populated map (same
+                // parent→child pattern as the preset group import below). lbs
+                // writes through storage without the PATCH route's validation,
+                // so each move is gated with canReparentFolder against a mirror
+                // of the applied state — a malformed export cannot persist a
+                // self-parent or cycle; an invalid link leaves that folder at root.
+                const folderRows = Array.from(folderIdMap.values()).map((id) => ({
+                  id,
+                  lorebookId: (created as any).id as string,
+                  parentFolderId: null as string | null,
+                }));
+                const rowById = new Map(folderRows.map((row) => [row.id, row]));
+                for (const folder of lb.folders) {
+                  const oldId = typeof folder.id === "string" ? folder.id : null;
+                  const oldParentId = typeof folder.parentFolderId === "string" ? folder.parentFolderId : null;
+                  if (!oldId || !oldParentId) continue;
+                  const newId = folderIdMap.get(oldId);
+                  const newParentId = folderIdMap.get(oldParentId);
+                  if (!newId || !newParentId) continue;
+                  const check = canReparentFolder(folderRows, newId, newParentId);
+                  if (!check.ok) {
+                    logger.warn(
+                      "[backup] Skipping invalid folder parent link in legacy import (folder %s): %s",
+                      oldId,
+                      check.reason,
+                    );
+                    continue;
+                  }
+                  try {
+                    await lbs.updateFolder(newId, { parentFolderId: newParentId }, (created as any).id);
+                    const row = rowById.get(newId);
+                    if (row) row.parentFolderId = newParentId;
+                  } catch (err) {
+                    logger.warn(err, "[backup] Failed to restore folder nesting during legacy import");
+                  }
                 }
               }
               if (created && Array.isArray(lb.entries)) {

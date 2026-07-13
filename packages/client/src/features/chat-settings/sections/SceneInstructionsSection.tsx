@@ -58,6 +58,7 @@ export function SceneInstructionsSection({
         value={value}
         onChange={onValueChange}
         placeholder="Scene system prompt..."
+        surface="chat"
       />
     </ChatSettingsSection>
   );

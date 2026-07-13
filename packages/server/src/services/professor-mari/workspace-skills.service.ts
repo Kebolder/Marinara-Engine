@@ -1,7 +1,6 @@
 import { rm, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { loadSkillsFromDir, type LoadSkillsResult } from "@earendil-works/pi-coding-agent";
+import { basename, join } from "node:path";
 import type {
   MariWorkspaceSkillDetail,
   MariWorkspaceSkillSummary,
@@ -165,10 +164,6 @@ function summarizeRecord(record: SkillRecord, content: string): MariWorkspaceSki
   };
 }
 
-function idFromSkillFile(path: string) {
-  return basename(dirname(path));
-}
-
 export class ProfessorMariWorkspaceSkillsService {
   async list(): Promise<MariWorkspaceSkillsResponse> {
     await this.ensureStorage();
@@ -253,17 +248,6 @@ export class ProfessorMariWorkspaceSkillsService {
     if (!record) throw new Error("Skill not found");
     await rm(skillDir(record.id), { recursive: true, force: true });
     await this.writeRecords(records.filter((entry) => entry.id !== record.id));
-  }
-
-  async loadPiSkills(): Promise<LoadSkillsResult> {
-    await this.ensureStorage();
-    const records = await this.readRecords();
-    const enabledIds = new Set(records.filter((record) => record.enabled).map((record) => record.id));
-    const result = loadSkillsFromDir({ dir: rootDir(), source: "user" });
-    return {
-      skills: result.skills.filter((skill) => enabledIds.has(idFromSkillFile(skill.filePath))),
-      diagnostics: result.diagnostics,
-    };
   }
 
   private async ensureStorage() {

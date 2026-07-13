@@ -15,3 +15,8 @@ export function sanitizePromptLeaf(value: string, wrapFormat: WrapFormat): strin
   if (wrapFormat === "markdown") return neutralizeMarkdownHeadings(value);
   return value;
 }
+
+export function sanitizeExampleDialoguePromptLeaf(value: string, wrapFormat: WrapFormat): string {
+  if (wrapFormat !== "xml") return sanitizePromptLeaf(value, wrapFormat);
+  return value.split("<START>").map(escapeXmlText).join("<START>");
+}

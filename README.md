@@ -101,9 +101,9 @@
 
 ## Latest Release
 
-Current stable release: **[v2.1.0](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.1.0)**.
+Current stable release: **[v2.2.0](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.2.0)**.
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device.
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page with a Windows installer, Android bootstrap APK, and named versioned source ZIP. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device.
 
 ---
 
@@ -133,7 +133,7 @@ More detailed public [roadmap](https://github.com/orgs/Pasta-Devs/projects/1).
 
 Each guide covers installation, updating, and LAN access for that platform. See [Configuration Reference](docs/CONFIGURATION.md) for environment variables setup. Having trouble? See [FAQ](docs/FAQ.md) and [Troubleshooting](docs/TROUBLESHOOTING.md).
 
-Upgrading from an older release? See [Upgrading to v2.0.0](docs/UPGRADING.md) for the platform-by-platform path from v1.6.1.
+Upgrading from an older release? See [Upgrading Marinara Engine](docs/UPGRADING.md) for the platform-by-platform upgrade path.
 
 Security defaults are intentionally local-first: loopback access works out of the box, ordinary LAN and public clients require Basic Auth unless you explicitly opt back in, and Tailscale (`100.64.0.0/10`) plus Docker bridge (`172.16.0.0/12`) traffic are trusted by default for easier private installs. Set `BYPASS_AUTH_TAILSCALE=false` or `BYPASS_AUTH_DOCKER=false` if you want those clients to authenticate too. `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true` restores unauthenticated access for other trusted private networks; public clients still require `ALLOW_UNAUTHENTICATED_REMOTE=true`. Powerful actions such as backups, bulk import, update apply, sidecar install/download/delete, haptics, and custom tool mutation also require `ADMIN_SECRET`; see [Access Control](docs/CONFIGURATION.md#access-control).
 
@@ -169,33 +169,39 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 
 ## Documentation
 
+The full guide library is browsable inside the app: open **Documentation** from the Home screen to search every guide, organized by category. Highlights:
+
 | Document                                             | Description                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
-| [docs/CONVERSATION.md](docs/CONVERSATION.md)         | Conversation Mode setup, DMs, groups, calls, selfies, and table games |
-| [docs/ROLEPLAY.md](docs/ROLEPLAY.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats  |
-| [docs/GAME_MODE.md](docs/GAME_MODE.md)               | Game Mode setup, world-gen, party play, storyboards, and troubleshooting |
-| [docs/GENERATION_PARAMETERS.md](docs/GENERATION_PARAMETERS.md) | Sampler and output-parameter reference across providers         |
+| [docs/conversation/getting-started.md](docs/conversation/getting-started.md)         | Conversation Mode setup, DMs, groups, profiles (display name, about me, behavior), calls, selfies, and table games |
+| [docs/roleplay/getting-started.md](docs/roleplay/getting-started.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats  |
+| [docs/game/getting-started.md](docs/game/getting-started.md)               | Game Mode setup, world-gen, party play, storyboards, and troubleshooting |
+| [docs/noodle/overview.md](docs/noodle/overview.md)   | Noodle social timeline: setup, posting, interactions, images, and chat carryover |
+| [docs/prompts/generation-parameters.md](docs/prompts/generation-parameters.md) | Sampler and output-parameter reference across providers         |
 | [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)       | Remote access, Basic Auth, IP allowlists, and admin access      |
-| [docs/CONVERSATION_CALLS.md](docs/CONVERSATION_CALLS.md) | Conversation audio-call setup, Local Whisper, TTS, and troubleshooting |
-| [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
-| [docs/SCENE_VIDEO_GENERATION.md](docs/SCENE_VIDEO_GENERATION.md) | Scene-video setup, Game Mode storyboards, Gallery animation workflow, and prompt templates |
-| [docs/STORYBOARD_ENGINE_GUIDE.md](docs/STORYBOARD_ENGINE_GUIDE.md) | Step-by-step guide to manual and automatic Game Mode storyboards |
-| [docs/AGENT_SYSTEM.md](docs/AGENT_SYSTEM.md)         | Built-in agents, custom agents, import/export, phases, and Agent Suite |
-| [docs/CUSTOM_TOOLS.md](docs/CUSTOM_TOOLS.md)         | Function calling, custom tools, webhooks, scripts, and agent tool enablement |
-| [docs/PRESETS.md](docs/PRESETS.md)                   | Preset editor, prompt sections, groups, ordering, and variables |
-| [docs/REGEX_SCRIPTS.md](docs/REGEX_SCRIPTS.md)       | Regex scripts, prompt/display scope, depth, order, and safety   |
-| [docs/KNOWLEDGE_SOURCES.md](docs/KNOWLEDGE_SOURCES.md) | Knowledge Sources, RAG, Retrieval vs Router, and embedder notes |
-| [docs/BOT_BROWSER.md](docs/BOT_BROWSER.md)           | Multi-site Bot Browser search and character import guide        |
-| [docs/CUSTOM_EMOJIS_STICKERS.md](docs/CUSTOM_EMOJIS_STICKERS.md) | Custom emoji/sticker uploads and selection modes                |
-| [docs/EXTENSIONS.md](docs/EXTENSIONS.md)             | Extension folder manifests, package format, and examples        |
+| [docs/conversation/calls.md](docs/conversation/calls.md) | Conversation audio-call setup, Local Whisper, TTS, and troubleshooting |
+| [docs/media/image-providers.md](docs/media/image-providers.md) | Image generation provider setup                                 |
+| [docs/media/style-profiles.md](docs/media/style-profiles.md) | Image style profiles and prompt grammar                         |
+| [docs/media/tts-setup.md](docs/media/tts-setup.md)   | Text to speech (TTS) setup and voices                           |
+| [docs/media/scene-video.md](docs/media/scene-video.md) | Scene-video provider setup and the Gallery animation workflow   |
+| [docs/game/storyboard.md](docs/game/storyboard.md) | Step-by-step guide to manual and automatic Game Mode storyboards |
+| [docs/agents/agents-overview.md](docs/agents/agents-overview.md)         | Agent system overview: phases, per-chat enablement, built-in and custom agents |
+| [docs/extending/custom-tools.md](docs/extending/custom-tools.md)         | Function calling, custom tools, webhooks, scripts, and agent tool enablement |
+| [docs/prompts/presets.md](docs/prompts/presets.md)                   | Preset editor, prompt sections, groups, ordering, and variables |
+| [docs/extending/regex-scripts.md](docs/extending/regex-scripts.md)       | Regex scripts, prompt/display scope, depth, order, and safety   |
+| [docs/agents/knowledge-sources.md](docs/agents/knowledge-sources.md) | Knowledge Sources, RAG, Retrieval vs Router, and embedder notes |
+| [docs/characters/bot-browser.md](docs/characters/bot-browser.md)           | Multi-site Bot Browser search and character import guide        |
+| [docs/conversation/emoji-stickers-gifs.md](docs/conversation/emoji-stickers-gifs.md) | Custom emoji/sticker uploads and selection modes                |
+| [docs/extending/extensions.md](docs/extending/extensions.md)             | Installing and managing browser and server extensions           |
+| [docs/development/writing-extensions.md](docs/development/writing-extensions.md) | Writing extensions: manifest format and the marinara API        |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)   | Common issues and fixes                                         |
 | [docs/FAQ.md](docs/FAQ.md)                           | Frequently asked questions (LAN access, etc.)                   |
-| [docs/MACROS.md](docs/MACROS.md)                     | Prompt macro syntax, including weighted random choices          |
-| [docs/PROFESSOR_MARI.md](docs/PROFESSOR_MARI.md)     | Built-in assistant capabilities, limits, and safety notes       |
-| [docs/FRONTEND.md](docs/FRONTEND.md)                 | Frontend architecture, components, hooks, and API reference     |
-| [docs/ARCHITECTURE_MAP.md](docs/ARCHITECTURE_MAP.md) | Code ownership map and module-boundary refactor groundwork      |
+| [docs/prompts/macros.md](docs/prompts/macros.md)                     | Prompt macro syntax, including weighted random choices          |
+| [docs/home/professor-mari.md](docs/home/professor-mari.md)     | Built-in assistant capabilities, limits, and safety notes       |
+| [docs/development/frontend.md](docs/development/frontend.md)                 | Frontend architecture, components, hooks, and API reference     |
+| [docs/development/architecture-map.md](docs/development/architecture-map.md) | Code ownership map and module-boundary refactor groundwork      |
 | [android/README.md](android/README.md)               | Android Termux bootstrap + WebView shell guide                  |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                   | Contributor workflow, validation, versioning, and release steps |
 | [CHANGELOG.md](CHANGELOG.md)                         | Release notes                                                   |

@@ -1,4 +1,6 @@
 import {
+  GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
+  normalizeAgentPromptTemplateOptions,
   normalizeTextForMatch,
   type GameActiveState,
   type GameCampaignPlan,
@@ -60,6 +62,29 @@ function parseMaybeJson(value: unknown): unknown {
   } catch {
     return null;
   }
+}
+
+export function resolveGameGmPromptTemplate(
+  chatMetadata: Record<string, unknown>,
+  setupConfig?: Record<string, unknown> | null,
+): string | null {
+  const explicitPrompt =
+    typeof chatMetadata.gameSystemPrompt === "string" ? chatMetadata.gameSystemPrompt.trim() : "";
+  if (explicitPrompt) return explicitPrompt;
+
+  const selectedId =
+    typeof chatMetadata.gameGmPromptTemplateId === "string" && chatMetadata.gameGmPromptTemplateId.trim()
+      ? chatMetadata.gameGmPromptTemplateId.trim()
+      : typeof setupConfig?.gameGmPromptTemplateId === "string"
+        ? setupConfig.gameGmPromptTemplateId.trim()
+        : "";
+  if (!selectedId) return null;
+
+  const options = [
+    ...GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
+    ...normalizeAgentPromptTemplateOptions(chatMetadata.gameGmPromptTemplates),
+  ];
+  return options.find((option) => option.id === selectedId)?.promptTemplate.trim() || null;
 }
 
 function appendGameCardDetails(parts: string[], card: Record<string, unknown> | undefined): void {
@@ -298,6 +323,7 @@ export async function injectGameGmPromptRuntime(args: {
     canGenerateBackgrounds:
       !!args.chatMetadata.enableSpriteGeneration &&
       args.chatMetadata.gameImageAutoGenerationEnabled !== false &&
+      args.chatMetadata.gameStoryboardViewerDisplayMode !== "background" &&
       !!args.chatMetadata.gameImageConnectionId,
     artStylePrompt: (setupConfig?.artStylePrompt as string) || undefined,
     gameTime,
@@ -319,8 +345,7 @@ export async function injectGameGmPromptRuntime(args: {
     })(),
     characterSprites: listPartySprites(partyIdNamePairs),
     language: (setupConfig?.language as string) || undefined,
-    gameSystemPrompt:
-      typeof args.chatMetadata.gameSystemPrompt === "string" ? args.chatMetadata.gameSystemPrompt.trim() : null,
+    gameSystemPrompt: resolveGameGmPromptTemplate(args.chatMetadata, setupConfig),
     gameSpecialInstructions:
       typeof args.chatMetadata.gameSpecialInstructions === "string"
         ? args.chatMetadata.gameSpecialInstructions.trim()

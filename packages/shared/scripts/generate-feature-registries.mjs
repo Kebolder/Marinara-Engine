@@ -42,6 +42,7 @@ const TOOL_ORDER = [
   "append-chat-summary",
   "read-chat-variable",
   "write-chat-variable",
+  "update-about-me",
   "spotify-get-current-playback",
   "spotify-get-playlists",
   "spotify-get-playlist-tracks",
@@ -115,7 +116,7 @@ async function writeRegistry({
   await writeFile(outputPath, `${lines.join("\n")}\n`, "utf8");
 }
 
-const TURN_GAME_ORDER = ["uno", "chess"];
+const TURN_GAME_ORDER = ["uno", "chess", "poker"];
 
 await writeRegistry({
   baseDir: join(srcDir, "features", "agents"),

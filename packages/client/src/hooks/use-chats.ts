@@ -976,7 +976,7 @@ export function useRollingSummaryBackfill() {
 export function useCreateMessage(chatId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { role: string; content: string; characterId?: string | null }) =>
+    mutationFn: (data: { role: string; content: string; characterId?: string | null; extra?: Record<string, unknown> }) =>
       api.post<Message>(`/chats/${chatId}/messages`, data),
     onSuccess: () => {
       if (chatId) {
@@ -1207,8 +1207,10 @@ function applyCachedSwipeToMessage(message: Message, swipe: MessageSwipe): Messa
 /** Peek at the assembled prompt for a chat */
 export function usePeekPrompt() {
   return useMutation({
-    mutationFn: (chatId: string) =>
-      api.post<{
+    mutationFn: (request: string | { chatId: string; messageId: string }) => {
+      const chatId = typeof request === "string" ? request : request.chatId;
+      const messageId = typeof request === "string" ? undefined : request.messageId;
+      return api.post<{
         messages: Array<{ role: string; content: string }>;
         parameters: unknown;
         source?: "cached" | "live_preview" | "raw_messages";
@@ -1230,7 +1232,8 @@ export function usePeekPrompt() {
           durationMs?: number | null;
           finishReason?: string | null;
         } | null;
-      }>(`/chats/${chatId}/peek-prompt`, {}),
+      }>(`/chats/${chatId}/peek-prompt`, messageId ? { messageId } : {});
+    },
   });
 }
 

@@ -1,4 +1,5 @@
-import type { AgentContext } from "@marinara-engine/shared";
+import type { AgentContext, LorebookEntry } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 
 export interface LorebookKeeperSettings {
@@ -304,16 +305,6 @@ export function mergeLorebookKeeperUpdateContent(args: {
   return baseContent ? `${baseContent}\n\n${addition}` : addition;
 }
 
-function getExplicitUpdateReplacementContent(update: Record<string, unknown>): string | null {
-  if (typeof update.action !== "string" || update.action.trim().toLowerCase() !== "update") return null;
-
-  const content = readKeeperUpdateContent(update);
-  if (!content.trim()) return null;
-
-  const replacement = dedupeKeeperContentParagraphs(content);
-  return replacement.length > 0 ? replacement : null;
-}
-
 function readNestedEntry(update: Record<string, unknown>): Record<string, unknown> {
   return update.entry && typeof update.entry === "object" && !Array.isArray(update.entry)
     ? (update.entry as Record<string, unknown>)
@@ -360,8 +351,10 @@ export async function persistLorebookKeeperUpdates(args: {
   preferredTargetLorebookId: string | null;
   writableLorebookIds: string[] | null;
   updates: Array<Record<string, unknown>>;
+  revectorizeEntry?: (entry: LorebookEntry) => Promise<void>;
 }): Promise<string | null> {
-  const { lorebooksStore, chatId, chatName, preferredTargetLorebookId, writableLorebookIds, updates } = args;
+  const { lorebooksStore, chatId, chatName, preferredTargetLorebookId, writableLorebookIds, updates, revectorizeEntry } =
+    args;
 
   let targetLorebookId = preferredTargetLorebookId ?? writableLorebookIds?.[0] ?? null;
   if (!targetLorebookId) {
@@ -407,20 +400,25 @@ export async function persistLorebookKeeperUpdates(args: {
     }
 
     if (existing) {
-      const mergedContent =
-        getExplicitUpdateReplacementContent(update) ??
-        mergeLorebookKeeperUpdateContent({
-          existingContent: existing.content,
-          replacementContent: content,
-          newFacts: update.newFacts,
-        });
+      const mergedContent = mergeLorebookKeeperUpdateContent({
+        existingContent: existing.content,
+        replacementContent: content,
+        newFacts: update.newFacts,
+      });
       const mergedKeys = mergeLorebookKeys(existing.keys, keys);
       const mergedTag = tag || existing.tag || "";
-      await lorebooksStore.updateEntry(existing.id, {
+      const updated = await lorebooksStore.updateEntry(existing.id, {
         content: mergedContent,
         keys: mergedKeys,
         tag: mergedTag,
       });
+      if (revectorizeEntry && updated) {
+        try {
+          await revectorizeEntry(updated as LorebookEntry);
+        } catch (err) {
+          logger.warn(err, "[lorebook-keeper] Failed to refresh embedding for updated entry %s", existing.id);
+        }
+      }
       entryByName.set(rawName.toLowerCase(), {
         ...existing,
         content: mergedContent,

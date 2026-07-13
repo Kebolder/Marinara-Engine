@@ -14,6 +14,7 @@ import {
   isAgentConfigDeleted,
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
+  normalizeWorldCustomFields,
   normalizeAgentPhaseValue,
   normalizeAgentPromptTemplateSelectionMap,
   resolveAgentPromptTemplate,
@@ -32,6 +33,7 @@ import { listCharacterSprites } from "../../services/game/sprite.service.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import {
   AGENT_PHASE_MAX_CONCURRENT_GROUPS,
+  getAgentBatchLane,
   normalizeAgentMaxParallelJobs,
   settleAgentJobsWithConcurrencyLimit,
   type ResolvedAgent,
@@ -282,6 +284,9 @@ function markRetryLorebookResultForApproval(args: {
       ? (agentContext.memory._lorebookKeeperTargetLorebookId as string)
       : null;
   const writableLorebookIds = agentContext.writableLorebookIds;
+  const existingEntries = Array.isArray(agentContext.memory._existingLorebookEntries)
+    ? (agentContext.memory._existingLorebookEntries as Array<{ name?: string | null; content?: string | null }>)
+    : undefined;
   return {
     ...result,
     data: {
@@ -294,6 +299,7 @@ function markRetryLorebookResultForApproval(args: {
         updates,
         preferredTargetLorebookId,
         writableLorebookIds,
+        existingEntries,
       }),
     },
   };
@@ -350,6 +356,31 @@ function buildSecretPlotStateFromMemory(memory: Record<string, unknown>): Record
 
 function normalizeWrapFormat(value: unknown): WrapFormat {
   return value === "markdown" || value === "none" || value === "xml" ? value : "xml";
+}
+
+function isChatAgentsEnabled(chatMeta: Record<string, unknown>): boolean {
+  if (chatMeta.enableAgents === true || chatMeta.enableAgents === "true") return true;
+  if (chatMeta.enableAgents === false || chatMeta.enableAgents === "false") return false;
+  return Array.isArray(chatMeta.activeAgentIds)
+    ? chatMeta.activeAgentIds.some((id) => typeof id === "string" && id.trim().length > 0)
+    : false;
+}
+
+function normalizeRetryAgentTypeId(agentType: string): string {
+  return agentType === "youtube" ? "spotify" : agentType;
+}
+
+function resolveActiveRetryAgentTypes(chatMode: ChatMode, chatMeta: Record<string, unknown>): Set<string> {
+  if (!isChatAgentsEnabled(chatMeta)) return new Set();
+  const activeAgentIds = Array.isArray(chatMeta.activeAgentIds)
+    ? chatMeta.activeAgentIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : [];
+  const normalizedActiveIds = activeAgentIds.map((agentType) => normalizeRetryAgentTypeId(agentType.trim()));
+  return new Set(
+    filterGameInternalAgentIds(chatMode, normalizedActiveIds).filter((agentType) =>
+      isAgentAvailableInChatMode(chatMode, agentType),
+    ),
+  );
 }
 
 async function resolveRetryAgentWrapFormat(args: {
@@ -971,11 +1002,12 @@ async function resolveRetryAgents(args: {
   const chatMode = ((chat as { mode?: ChatMode }).mode ?? "conversation") as ChatMode;
   const chatMeta = parseExtra((chat as { metadata?: unknown }).metadata);
   const agentPromptTemplateSelections = normalizeAgentPromptTemplateSelectionMap(chatMeta.agentPromptTemplateIds);
-  const normalizedAgentTypes = agentTypes.map((agentType) => (agentType === "youtube" ? "spotify" : agentType));
+  const activeAgentTypeSet = resolveActiveRetryAgentTypes(chatMode, chatMeta);
+  const normalizedAgentTypes = agentTypes.map(normalizeRetryAgentTypeId);
   const agentTypeSet = new Set(
-    filterGameInternalAgentIds(chatMode, normalizedAgentTypes).filter((agentType) =>
-      isAgentAvailableInChatMode(chatMode, agentType),
-    ),
+    filterGameInternalAgentIds(chatMode, normalizedAgentTypes)
+      .filter((agentType) => isAgentAvailableInChatMode(chatMode, agentType))
+      .filter((agentType) => activeAgentTypeSet.has(agentType)),
   );
   const configs = await agentsStore.list();
   const deletedBuiltInTypes = new Set(
@@ -1314,6 +1346,7 @@ async function resolveRetryAgents(args: {
     warnings.push(
       buildDefaultAgentConnectionWarning({
         agentNames: defaultAgentConnectionAgents,
+        connectionId: defaultAgentConn.id,
         connectionName: defaultAgentConn.name,
         model: String(defaultAgentConn.model ?? "").trim(),
       }),
@@ -1435,6 +1468,10 @@ async function attachRetryLorebookWriterToolContexts(args: {
           // proposal envelope (mirroring the structured lorebook_update gate) so the
           // user approves the write before it touches the lorebook DB.
           if (requireApproval) {
+            const existingEntries = await lorebooksStore
+              .listEntries(writableLorebookId)
+              .then((entries) => entries as Array<{ name?: string | null; content?: string | null }>)
+              .catch(() => [] as Array<{ name?: string | null; content?: string | null }>);
             return {
               requiresApproval: true,
               approval: buildLorebookWriteApprovalProposal({
@@ -1454,6 +1491,7 @@ async function attachRetryLorebookWriterToolContexts(args: {
                 ],
                 preferredTargetLorebookId: writableLorebookId,
                 writableLorebookIds: [writableLorebookId],
+                existingEntries,
               }),
             };
           }
@@ -2127,7 +2165,7 @@ async function executeRetryBatches(
     const context =
       preGenerationContext && entry.resolved.phase === "pre_generation" ? preGenerationContext : agentContext;
     const contextKind = context === preGenerationContext ? "pre_generation" : "default";
-    const key = `${retryProviderKey(entry.agentProvider)}::${entry.agentModel}::${contextKind}`;
+    const key = `${retryProviderKey(entry.agentProvider)}::${entry.agentModel}::${contextKind}::${getAgentBatchLane(entry.resolved)}`;
     if (!providerModelGroups.has(key)) {
       providerModelGroups.set(key, {
         agents: [],
@@ -2478,6 +2516,7 @@ async function applyRetryResultEffects(args: {
           if (originalText) {
             await chats.updateMessageExtra(retryMessageId, {
               proseGuardianOriginalText: originalText,
+              proseGuardianRewrittenText: editedText,
               proseGuardianRewrittenAt: new Date().toISOString(),
             });
           }
@@ -2513,6 +2552,8 @@ async function applyRetryResultEffects(args: {
         if (gs.location != null) worldStatePatch.location = gs.location as string;
         if (gs.weather != null) worldStatePatch.weather = gs.weather as string;
         if (gs.temperature != null) worldStatePatch.temperature = gs.temperature as string;
+        if (gs.worldCustomFields !== undefined)
+          worldStatePatch.worldCustomFields = normalizeWorldCustomFields(gs.worldCustomFields);
         const lockSnapshot = (await loadRetryTargetGameStateSnapshot()) ?? (await loadRetryBaseGameStateSnapshot());
         const lockedWorldStatePatch = applyTrackerFieldLocksToGameStatePatch(
           worldStatePatch,

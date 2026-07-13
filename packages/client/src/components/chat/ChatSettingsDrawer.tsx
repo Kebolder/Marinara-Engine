@@ -81,6 +81,7 @@ import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { Modal } from "../ui/Modal";
+import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
@@ -162,6 +163,7 @@ import type {
   ConversationCommandKey,
   ConversationNote,
   ExportEnvelope,
+  GameStoryboardViewerDisplayMode,
   HapticFeedbackSensitivity,
   HudWidget,
   KnowledgeAgentSourceSettings,
@@ -182,11 +184,21 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
+  GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
+  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE_ID,
   getChatModeCapabilities,
@@ -198,6 +210,8 @@ import {
   includesTextForMatch,
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
+  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
   isAgentAvailableInChatMode,
@@ -206,9 +220,11 @@ import {
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
   mergeBuiltInAgentSettings,
+  normalizeManualTrackerAgentTypes,
   normalizeAgentPromptTemplateOptions,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
+  resolveDefaultAgentPromptTemplateId,
   resolveAgentPromptTemplate,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
@@ -322,6 +338,31 @@ function getAgentSettingsMenuId(chatId: string, agentId: string): string {
 const GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS = new Set(
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.map((template) => template.id),
 );
+
+function normalizeGameStoryboardKeyframeCount(value: unknown): number {
+  if (value == null || value === "") return GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT;
+  return Math.max(
+    GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
+    Math.min(GAME_STORYBOARD_KEYFRAME_COUNT_MAX, Math.trunc(numeric)),
+  );
+}
+
+function hasGameStoryboardAnimationDuration(value: unknown): boolean {
+  if (value == null || value === "") return false;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric);
+}
+
+function normalizeGameStoryboardAnimationDuration(value: unknown): number {
+  if (!hasGameStoryboardAnimationDuration(value)) return GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Math.max(
+    GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+    Math.min(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX, Math.trunc(numeric)),
+  );
+}
 
 function normalizeGameStoryboardPromptTemplateId(value: unknown, fallback: string): string {
   const raw = typeof value === "string" ? value.trim() : "";
@@ -585,6 +626,16 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     label: "Chess",
     description: "Let characters accept a one-on-one chess challenge at the table.",
   },
+  {
+    id: "poker",
+    label: "Poker",
+    description: "Let characters sit down for a game of Texas Hold'em poker at the table.",
+  },
+  {
+    id: "eightball",
+    label: "8-Ball Pool",
+    description: "Let characters rack up a game of 8-ball pool at the table.",
+  },
 ];
 
 function normalizeSpotifySourceType(value: unknown): SpotifySourceType {
@@ -614,7 +665,7 @@ const MODE_INTROS: Record<ChatMode, string> = {
   roleplay:
     "Plain roleplay surface — no built-in dice, combat, or GM pipeline; sprites, world-state tracking, and other helpers are available as optional agents below.",
   visual_novel:
-    "Sprite- and background-driven roleplay — expressions, world state, and CYOA choices are available as optional agents below.",
+    "Legacy roleplay chat — expressions, world state, and CYOA choices are available as optional agents below.",
   game: "Full Game Master with built-in dice, combat, encounters, world state, and session/map tracking — the Scene Analysis toggle below adds optional cinematic visuals (backgrounds, music, weather).",
 };
 
@@ -843,6 +894,46 @@ export function ChatSettingsDrawer({
   const metadata = useMemo(
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
+  );
+  const noodleTimelineContextEnabled = metadata.noodleTimelineContextEnabled === true;
+  const renderNoodleTimelineContextToggle = () => (
+    <button
+      type="button"
+      onClick={() =>
+        updateMeta.mutate({
+          id: chat.id,
+          noodleTimelineContextEnabled: !noodleTimelineContextEnabled,
+        })
+      }
+      disabled={updateMeta.isPending}
+      className={cn(
+        "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60",
+        noodleTimelineContextEnabled
+          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <span className="text-[0.6875rem] font-medium">Allow Noodle references</span>
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          Timeline refreshes may include recent messages from this chat, with the chat name, mode, and participants
+          stated in the prompt.
+        </p>
+      </div>
+      <div
+        className={cn(
+          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+          noodleTimelineContextEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+        )}
+      >
+        <div
+          className={cn(
+            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+            noodleTimelineContextEnabled && "translate-x-3.5",
+          )}
+        />
+      </div>
+    </button>
   );
   const { data: currentPromptPresetFull } = usePresetFull(isRoleplayMode ? (chat.promptPresetId ?? null) : null);
   const promptPresetOptionsLoaded = Array.isArray(presets);
@@ -1295,6 +1386,13 @@ export function ChatSettingsDrawer({
     },
     [agentConfigsByType],
   );
+  const getDefaultPromptTemplateIdForAgent = useCallback(
+    (agentId: string) => {
+      const cfg = agentConfigsByType.get(agentId);
+      return resolveDefaultAgentPromptTemplateId(mergeBuiltInAgentSettings(agentId, cfg?.settings));
+    },
+    [agentConfigsByType],
+  );
   // Build the available agent list: built-in + custom agents from DB
   // Mode capabilities decide which built-ins are exposed for each chat mode.
   // Custom agents are user-authored and can be attached to any chat mode.
@@ -1339,6 +1437,36 @@ export function ChatSettingsDrawer({
   const visibleActiveAgentIds = useMemo(
     () => activeAgentIds.filter((agentId) => availableAgents.some((agent) => agent.id === agentId)),
     [activeAgentIds, availableAgents],
+  );
+  const activeTrackerAgents = useMemo(
+    () =>
+      availableAgents.filter(
+        (agent) => agent.category === "tracker" && activeAgentIds.includes(agent.id) && !agent.runtimeDisabled,
+      ),
+    [activeAgentIds, availableAgents],
+  );
+  const manualTrackerAgentTypes = useMemo(
+    () => normalizeManualTrackerAgentTypes(metadata.manualTrackerAgentTypes),
+    [metadata.manualTrackerAgentTypes],
+  );
+  const activeManualTrackerTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const agent of activeTrackerAgents) {
+      if (metadata.manualTrackers === true || manualTrackerAgentTypes[agent.id] === true) set.add(agent.id);
+    }
+    return set;
+  }, [activeTrackerAgents, manualTrackerAgentTypes, metadata.manualTrackers]);
+  const toggleManualTrackerAgent = useCallback(
+    (agentId: string) => {
+      const next = { ...manualTrackerAgentTypes };
+      if (next[agentId] === true) {
+        delete next[agentId];
+      } else {
+        next[agentId] = true;
+      }
+      updateMeta.mutate({ id: chat.id, manualTrackerAgentTypes: next });
+    },
+    [chat.id, manualTrackerAgentTypes, updateMeta],
   );
   const agentSuiteAgents = useMemo(
     () =>
@@ -1434,6 +1562,7 @@ export function ChatSettingsDrawer({
           phase: meta.phase,
           connectionId: cfg?.connectionId ?? null,
           promptTemplate,
+          resultType: typeof settings.resultType === "string" ? settings.resultType : undefined,
         },
       ];
     });
@@ -1525,6 +1654,40 @@ export function ChatSettingsDrawer({
   const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
+  const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
+  const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
+  const selectedGameGmPromptTemplateId = useMemo(() => {
+    const selected = typeof metadata.gameGmPromptTemplateId === "string" ? metadata.gameGmPromptTemplateId.trim() : "";
+    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected)
+      ? selected
+      : null;
+  }, [metadata.gameGmPromptTemplateId]);
+  const updateGameGmPromptTemplateSelection = useCallback(
+    (templateId: string | null) => {
+      updateMeta.mutate({ id: chat.id, gameGmPromptTemplateId: templateId });
+    },
+    [chat.id, updateMeta],
+  );
+  const gameStoryboardKeyframeCount = normalizeGameStoryboardKeyframeCount(metadata.gameStoryboardKeyframeCount);
+  const gameStoryboardAnimationDurationConfigured = hasGameStoryboardAnimationDuration(
+    metadata.gameStoryboardAnimationDurationSeconds,
+  );
+  const gameStoryboardAnimationDurationSeconds = normalizeGameStoryboardAnimationDuration(
+    metadata.gameStoryboardAnimationDurationSeconds,
+  );
+  const commitGameStoryboardAnimationDuration = useCallback(
+    (durationSeconds: number) => {
+      const normalized = normalizeGameStoryboardAnimationDuration(durationSeconds);
+      if (!gameStoryboardAnimationDurationConfigured && normalized === gameStoryboardAnimationDurationSeconds) return;
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardAnimationDurationSeconds: normalized,
+      });
+    },
+    [chat.id, gameStoryboardAnimationDurationConfigured, gameStoryboardAnimationDurationSeconds, updateMeta],
+  );
+  const gameStoryboardViewerDisplayMode: GameStoryboardViewerDisplayMode =
+    metadata.gameStoryboardViewerDisplayMode === "background" ? "background" : "floating";
   const gameStoryboardPromptTemplates = useMemo(
     () => normalizeGameStoryboardPromptTemplates(metadata.gameStoryboardPromptTemplates),
     [metadata.gameStoryboardPromptTemplates],
@@ -1637,6 +1800,15 @@ export function ChatSettingsDrawer({
     () => resolveSelectedGameVideoPromptTemplateId(metadata.gameVideoPromptTemplateId, gameVideoPromptOptions),
     [gameVideoPromptOptions, metadata.gameVideoPromptTemplateId],
   );
+  const selectedGameStoryboardVideoPromptTemplateId = useMemo(() => {
+    const selected =
+      typeof metadata.gameStoryboardVideoPromptTemplateId === "string"
+        ? metadata.gameStoryboardVideoPromptTemplateId.trim()
+        : "";
+    return selected && gameVideoPromptOptions.some((option) => option.id === selected)
+      ? selected
+      : selectedGameVideoPromptTemplateId;
+  }, [gameVideoPromptOptions, metadata.gameStoryboardVideoPromptTemplateId, selectedGameVideoPromptTemplateId]);
   const updateGameVideoPromptSelection = useCallback(
     (promptTemplateId: string) => {
       updateMeta.mutate({
@@ -1645,6 +1817,16 @@ export function ChatSettingsDrawer({
       });
     },
     [chat.id, updateMeta],
+  );
+  const updateGameStoryboardVideoPromptSelection = useCallback(
+    (promptTemplateId: string) => {
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardVideoPromptTemplateId:
+          promptTemplateId === selectedGameVideoPromptTemplateId ? null : promptTemplateId,
+      });
+    },
+    [chat.id, selectedGameVideoPromptTemplateId, updateMeta],
   );
   const updateGameVideoPromptTemplates = useCallback(
     (templates: AgentPromptTemplateOption[]) => {
@@ -1657,9 +1839,12 @@ export function ChatSettingsDrawer({
         id: chat.id,
         gameVideoPromptTemplates: normalized,
         ...(availableIds.has(selectedGameVideoPromptTemplateId) ? {} : { gameVideoPromptTemplateId: null }),
+        ...(availableIds.has(selectedGameStoryboardVideoPromptTemplateId)
+          ? {}
+          : { gameStoryboardVideoPromptTemplateId: null }),
       });
     },
-    [chat.id, selectedGameVideoPromptTemplateId, updateMeta],
+    [chat.id, selectedGameStoryboardVideoPromptTemplateId, selectedGameVideoPromptTemplateId, updateMeta],
   );
   const addGameVideoPromptTemplate = useCallback(
     (sourceTemplateId: string) => {
@@ -1922,6 +2107,9 @@ export function ChatSettingsDrawer({
   const availableTools = useMemo(() => {
     const tools: Array<{ id: string; name: string; description: string }> = [];
     for (const t of BUILT_IN_TOOLS) {
+      // update_about_me is Conversation-only (enforced server-side); hide the
+      // toggle in other modes so it doesn't look available where it can't run.
+      if (t.name === "update_about_me" && !isConversation) continue;
       tools.push({ id: t.name, name: t.name, description: t.description });
     }
     if (customTools) {
@@ -1932,7 +2120,7 @@ export function ChatSettingsDrawer({
       }
     }
     return tools;
-  }, [customToolCapabilities, customTools]);
+  }, [customToolCapabilities, customTools, isConversation]);
 
   // ── Helpers ──
   const characters = useMemo(
@@ -2507,14 +2695,14 @@ export function ChatSettingsDrawer({
   const updateAgentPromptTemplateSelection = useCallback(
     (agentId: string, promptTemplateId: string) => {
       const next = { ...readLatestAgentPromptTemplateSelections() };
-      if (!promptTemplateId || promptTemplateId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
+      if (!promptTemplateId || promptTemplateId === getDefaultPromptTemplateIdForAgent(agentId)) {
         delete next[agentId];
       } else {
         next[agentId] = promptTemplateId;
       }
       updateMeta.mutate({ id: chat.id, agentPromptTemplateIds: next });
     },
-    [chat.id, readLatestAgentPromptTemplateSelections, updateMeta],
+    [chat.id, getDefaultPromptTemplateIdForAgent, readLatestAgentPromptTemplateSelections, updateMeta],
   );
 
   const handleLorebookKeeperBackfill = useCallback(async () => {
@@ -2936,6 +3124,7 @@ export function ChatSettingsDrawer({
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+          defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
         }),
       });
       toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);
@@ -3389,7 +3578,9 @@ export function ChatSettingsDrawer({
                 </div>
                 <AgentPromptTemplateSelect
                   options={promptOptions}
-                  selectedId={agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                  selectedId={
+                    agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)
+                  }
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -3644,7 +3835,7 @@ export function ChatSettingsDrawer({
           </div>
 
           {/* Roleplay prompt preset */}
-          {modeCapabilities.supportsPromptPresets && isRoleplayMode && !metadata.sceneSystemPrompt && (
+          {modeCapabilities.supportsPromptPresets && isRoleplayMode && (
             <div style={{ order: CHAT_SETTINGS_ORDER.promptPreset }}>
               <PromptPresetSection
                 promptPresetId={chat.promptPresetId ?? null}
@@ -3687,6 +3878,8 @@ export function ChatSettingsDrawer({
                 promptPresets={promptPresetOptions}
                 selectedPresetName={selectedModePromptPreset?.name ?? null}
                 selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
+                gmPromptTemplateId={selectedGameGmPromptTemplateId}
+                gmPromptTemplates={GAME_GM_BUILT_IN_PROMPT_TEMPLATES}
                 onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
                 onSpecialInstructionsCommit={(gameSpecialInstructions) =>
                   updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
@@ -3695,6 +3888,7 @@ export function ChatSettingsDrawer({
                 onValueChange={setGamePromptDraft}
                 onSpecialInstructionsChange={setGameSpecialInstructionsDraft}
                 onPromptPresetChange={handleModePromptPresetChange}
+                onGmPromptTemplateChange={updateGameGmPromptTemplateSelection}
                 onOpenPromptPreset={openSelectedModePromptPreset}
               />
             </div>
@@ -4777,6 +4971,7 @@ export function ChatSettingsDrawer({
                     value={groupScenarioDraft}
                     onChange={setGroupScenarioDraft}
                     placeholder="Replace individual character scenarios with a shared scenario for this group chat or leave empty to keep them…"
+                    surface="chat"
                   />
                 </div>
               )}
@@ -5173,6 +5368,39 @@ export function ChatSettingsDrawer({
                           className={cn(
                             "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
                             metadata.conversationCallsEnabled === true && "translate-x-3.5",
+                          )}
+                        />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateMeta.mutate({
+                          id: chat.id,
+                          conversationCallVoiceCues: metadata.conversationCallVoiceCues === false ? true : false,
+                        });
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                          Generate voice cues in [tags]
+                        </span>
+                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                          Ask call models for cues like [whispering], [laughing], and [sighs] for TTS/video timing.
+                        </p>
+                      </div>
+                      <div
+                        className={cn(
+                          "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                          metadata.conversationCallVoiceCues !== false && "mari-chat-option-switch--active",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                            metadata.conversationCallVoiceCues !== false && "translate-x-3.5",
                           )}
                         />
                       </div>
@@ -5648,74 +5876,77 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this conversation to a roleplay or game. Recent messages from the linked chat are pulled into context here automatically. To send something the other direction, the character uses `<influence>` (steers the next linked turn, one-shot) or `<note>` (persists on every future linked turn until cleared)."
             >
-              {chat.connectedChatId ? (
-                (() => {
-                  const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
-                  return (
-                    <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
-                      <ArrowRightLeft size="0.875rem" className="text-[var(--primary)]" />
-                      <div className="flex-1 min-w-0">
-                        <span className="truncate text-xs font-medium">
-                          {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
-                        </span>
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          {linked ? (linked.mode === "roleplay" ? "Roleplay" : linked.mode) : "Deleted"}
-                        </p>
+              <div className="space-y-2">
+                {chat.connectedChatId ? (
+                  (() => {
+                    const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
+                    return (
+                      <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
+                        <ArrowRightLeft size="0.875rem" className="text-[var(--primary)]" />
+                        <div className="min-w-0 flex-1">
+                          <span className="truncate text-xs font-medium">
+                            {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
+                          </span>
+                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            {linked ? (linked.mode === "roleplay" ? "Roleplay" : linked.mode) : "Deleted"}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => disconnectChat.mutate(chat.id)}
+                          className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                          title="Disconnect"
+                        >
+                          <Unlink size="0.6875rem" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => disconnectChat.mutate(chat.id)}
-                        className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                        title="Disconnect"
-                      >
-                        <Unlink size="0.6875rem" />
-                      </button>
-                    </div>
-                  );
-                })()
-              ) : !showConnectionPicker ? (
-                <button
-                  onClick={() => {
-                    setShowConnectionPicker(true);
-                    setConnectionSearch("");
-                  }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                >
-                  <Plus size="0.75rem" /> Link to Roleplay or Game
-                </button>
-              ) : (
-                <PickerDropdown
-                  search={connectionSearch}
-                  onSearchChange={setConnectionSearch}
-                  onClose={() => setShowConnectionPicker(false)}
-                  placeholder="Search roleplay or game chats…"
-                >
-                  {((allChats ?? []) as Chat[])
-                    .filter(
-                      (c) =>
-                        c.id !== chat.id &&
-                        (c.mode === "roleplay" || c.mode === "game") &&
-                        !c.connectedChatId &&
-                        includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
-                    )
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
-                          setShowConnectionPicker(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
-                      >
-                        <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                        <span className="truncate">{getConnectedChatDisplayName(c)}</span>
-                      </button>
-                    ))}
-                </PickerDropdown>
-              )}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+                    );
+                  })()
+                ) : !showConnectionPicker ? (
+                  <button
+                    onClick={() => {
+                      setShowConnectionPicker(true);
+                      setConnectionSearch("");
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
+                  >
+                    <Plus size="0.75rem" /> Link to Roleplay or Game
+                  </button>
+                ) : (
+                  <PickerDropdown
+                    search={connectionSearch}
+                    onSearchChange={setConnectionSearch}
+                    onClose={() => setShowConnectionPicker(false)}
+                    placeholder="Search roleplay or game chats…"
+                  >
+                    {((allChats ?? []) as Chat[])
+                      .filter(
+                        (c) =>
+                          c.id !== chat.id &&
+                          (c.mode === "roleplay" || c.mode === "game") &&
+                          !c.connectedChatId &&
+                          includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
+                      )
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
+                            setShowConnectionPicker(false);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
+                        >
+                          <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                          <span className="truncate">{getConnectedChatDisplayName(c)}</span>
+                        </button>
+                      ))}
+                  </PickerDropdown>
+                )}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 
@@ -5757,6 +5988,8 @@ export function ChatSettingsDrawer({
                     No OOC conversation is linked. Direct-message commands can still create new Conversation DMs.
                   </p>
                 )}
+
+                {renderNoodleTimelineContextToggle()}
 
                 <button
                   type="button"
@@ -5813,31 +6046,34 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Linked to a conversation. `<influence>` tags from the conversation steer the next turn here (one-shot, then consumed). `<note>` tags persist on every turn until cleared. Raw conversation messages are not injected — use `<note>` for facts this chat should keep remembering."
             >
-              {(() => {
-                const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
-                return (
-                  <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
-                    <MessageCircle size="0.875rem" className="text-[var(--primary)]" />
-                    <div className="flex-1 min-w-0">
-                      <span className="truncate text-xs font-medium">
-                        {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
-                      </span>
-                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">Conversation</p>
+              <div className="space-y-2">
+                {(() => {
+                  const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
+                  return (
+                    <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
+                      <MessageCircle size="0.875rem" className="text-[var(--primary)]" />
+                      <div className="min-w-0 flex-1">
+                        <span className="truncate text-xs font-medium">
+                          {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
+                        </span>
+                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">Conversation</p>
+                      </div>
+                      <button
+                        onClick={() => disconnectChat.mutate(chat.id)}
+                        className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                        title="Disconnect"
+                      >
+                        <Unlink size="0.6875rem" />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => disconnectChat.mutate(chat.id)}
-                      className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                      title="Disconnect"
-                    >
-                      <Unlink size="0.6875rem" />
-                    </button>
-                  </div>
-                );
-              })()}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+                  );
+                })()}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 
@@ -5856,50 +6092,53 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this game to an OOC conversation. The conversation character uses `<influence>` (one-shot) or `<note>` (durable) to bridge content into the game; raw conversation messages are not injected. Game events and roleplay moments flow back into the conversation automatically."
             >
-              {!showConnectionPicker ? (
-                <button
-                  onClick={() => {
-                    setShowConnectionPicker(true);
-                    setConnectionSearch("");
-                  }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                >
-                  <Plus size="0.75rem" /> Link to Conversation
-                </button>
-              ) : (
-                <PickerDropdown
-                  search={connectionSearch}
-                  onSearchChange={setConnectionSearch}
-                  onClose={() => setShowConnectionPicker(false)}
-                  placeholder="Search conversation chats…"
-                >
-                  {((allChats ?? []) as Chat[])
-                    .filter(
-                      (c) =>
-                        c.id !== chat.id &&
-                        c.mode === "conversation" &&
-                        !c.connectedChatId &&
-                        includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
-                    )
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
-                          setShowConnectionPicker(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
-                      >
-                        <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                        <span className="truncate">{getConnectedChatDisplayName(c)}</span>
-                      </button>
-                    ))}
-                </PickerDropdown>
-              )}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+              <div className="space-y-2">
+                {!showConnectionPicker ? (
+                  <button
+                    onClick={() => {
+                      setShowConnectionPicker(true);
+                      setConnectionSearch("");
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
+                  >
+                    <Plus size="0.75rem" /> Link to Conversation
+                  </button>
+                ) : (
+                  <PickerDropdown
+                    search={connectionSearch}
+                    onSearchChange={setConnectionSearch}
+                    onClose={() => setShowConnectionPicker(false)}
+                    placeholder="Search conversation chats…"
+                  >
+                    {((allChats ?? []) as Chat[])
+                      .filter(
+                        (c) =>
+                          c.id !== chat.id &&
+                          c.mode === "conversation" &&
+                          !c.connectedChatId &&
+                          includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
+                      )
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
+                            setShowConnectionPicker(false);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
+                        >
+                          <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                          <span className="truncate">{getConnectedChatDisplayName(c)}</span>
+                        </button>
+                      ))}
+                  </PickerDropdown>
+                )}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 
@@ -6035,6 +6274,67 @@ export function ChatSettingsDrawer({
                       />
                     </div>
                   </button>
+                )}
+                {metadata.enableAgents && isRoleplayMode && activeTrackerAgents.length > 0 && (
+                  <div className="space-y-1.5 rounded-lg bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]">
+                    <div className="flex items-center justify-between gap-2 px-1">
+                      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                        Individual tracker schedule
+                      </span>
+                      {metadata.manualTrackers === true && (
+                        <span className="text-[0.5625rem] text-[var(--primary)]">All manual</span>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      {activeTrackerAgents.map((agent) => {
+                        const manuallyTriggered = activeManualTrackerTypes.has(agent.id);
+                        const globallyManual = metadata.manualTrackers === true;
+                        return (
+                          <button
+                            key={agent.id}
+                            type="button"
+                            onClick={() => toggleManualTrackerAgent(agent.id)}
+                            disabled={globallyManual}
+                            aria-pressed={manuallyTriggered}
+                            className={cn(
+                              "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                              manuallyTriggered
+                                ? "bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/25"
+                                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                              globallyManual && "cursor-not-allowed opacity-70",
+                            )}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              {renderRoleplayAgentMenuIcon(agent.id, "chip")}
+                              <span className="min-w-0">
+                                <span className="block truncate text-[0.625rem] font-medium">{agent.name}</span>
+                                <span className="block truncate text-[0.5625rem] text-[var(--muted-foreground)]">
+                                  {globallyManual
+                                    ? "Controlled by Manual Trackers"
+                                    : manuallyTriggered
+                                      ? "Runs only from HUD controls"
+                                      : "Runs automatically"}
+                                </span>
+                              </span>
+                            </span>
+                            <span
+                              className={cn(
+                                "h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
+                                manuallyTriggered ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "block h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                                  manuallyTriggered && "translate-x-3",
+                                )}
+                              />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
                 <button
                   onClick={() => setShowAgentSuiteModal(true)}
@@ -6937,7 +7237,10 @@ export function ChatSettingsDrawer({
                       >
                         <AgentPromptTemplateSelect
                           options={getPromptOptionsForAgent("echo-chamber")}
-                          selectedId={agentPromptTemplateSelections["echo-chamber"] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                          selectedId={
+                            agentPromptTemplateSelections["echo-chamber"] ??
+                            getDefaultPromptTemplateIdForAgent("echo-chamber")
+                          }
                           onChange={(promptTemplateId) =>
                             updateAgentPromptTemplateSelection("echo-chamber", promptTemplateId)
                           }
@@ -6972,7 +7275,10 @@ export function ChatSettingsDrawer({
                       >
                         <AgentPromptTemplateSelect
                           options={getPromptOptionsForAgent("illustrator")}
-                          selectedId={agentPromptTemplateSelections["illustrator"] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                          selectedId={
+                            agentPromptTemplateSelections["illustrator"] ??
+                            getDefaultPromptTemplateIdForAgent("illustrator")
+                          }
                           onChange={(promptTemplateId) =>
                             updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
                           }
@@ -7319,7 +7625,11 @@ export function ChatSettingsDrawer({
                       <div className="space-y-2">
                         <AgentSettingsToggle
                           label="Automatic Visuals"
-                          description="Let Game Mode automatically request backgrounds, NPC portraits, and scene illustrations. Manual buttons stay available when this is off."
+                          description={
+                            gameStoryboardViewerDisplayMode === "background"
+                              ? "Automatically request NPC portraits and scene illustrations. Location background generation is disabled while storyboard visuals are used as the background."
+                              : "Let Game Mode automatically request backgrounds, NPC portraits, and scene illustrations. Manual buttons stay available when this is off."
+                          }
                           enabled={gameImageAutoGenerationEnabled}
                           onToggle={() =>
                             updateMeta.mutate({
@@ -7481,6 +7791,13 @@ export function ChatSettingsDrawer({
                     title="Storyboards"
                     description="Create keyframe media for completed GM turns and follow the active narration section in the floating viewer."
                   >
+                    <div className="flex items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/60 px-3 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                      <Image size="0.75rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                      <p>
+                        Recommended: use a strong state-of-the-art image model for storyboard images, or something
+                        equivalent to Google Nano Banana 2 Lite.
+                      </p>
+                    </div>
                     <AgentSettingsToggle
                       label="Automatic Storyboard Illustrations"
                       description="Automatically create still keyframe illustrations after completed GM turns. Requires an Illustrator image connection."
@@ -7507,6 +7824,140 @@ export function ChatSettingsDrawer({
                         });
                       }}
                     />
+                    <AgentSettingsToggle
+                      label="Use Storyboard Prompt Directly"
+                      description="Send each illustrator imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses the Game Scene Illustration prompt override and prevents tag distillation."
+                      enabled={gameStoryboardUseDirectScenePrompt}
+                      onToggle={() =>
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardUseDirectScenePrompt: !gameStoryboardUseDirectScenePrompt,
+                        })
+                      }
+                    />
+                    <AgentSettingsToggle
+                      label="Use NovelAI Character Prompts"
+                      description="For official NovelAI V4/V4.5 storyboards, send visible characters through native Add Character captions and positions. Turn off to keep every character in the shared legacy prompt."
+                      enabled={gameStoryboardUseNovelAiCharacterPrompts}
+                      onToggle={() =>
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardUseNovelAiCharacterPrompts: !gameStoryboardUseNovelAiCharacterPrompts,
+                        })
+                      }
+                    />
+                    <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                            Keyframes per Turn
+                            <HelpTooltip text="Controls how many storyboard illustrations are planned for each completed GM turn. Animations are created from these keyframes when enabled." />
+                          </div>
+                          <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                            Used for automatic illustrations, manual storyboards, and animation source frames.
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] tabular-nums text-[var(--foreground)] ring-1 ring-[var(--border)]">
+                          {gameStoryboardKeyframeCount}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={GAME_STORYBOARD_KEYFRAME_COUNT_MIN}
+                        max={GAME_STORYBOARD_KEYFRAME_COUNT_MAX}
+                        step={1}
+                        value={gameStoryboardKeyframeCount}
+                        onChange={(event) =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            gameStoryboardKeyframeCount: normalizeGameStoryboardKeyframeCount(event.target.value),
+                          })
+                        }
+                        className="h-7 w-full cursor-pointer accent-[var(--primary)]"
+                        aria-label="Storyboard keyframes per turn"
+                      />
+                      <div className="flex justify-between text-[0.5625rem] text-[var(--muted-foreground)]">
+                        <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MIN}</span>
+                        <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MAX}</span>
+                      </div>
+                    </div>
+                    <div
+                      className={cn(
+                        "grid gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                        !gameStoryboardAutoAnimationsEnabled && "opacity-60",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                          Animation Clip Duration
+                          <HelpTooltip text="Controls the duration of each storyboard MP4 clip in this chat. Some video providers may clamp to a lower maximum." />
+                        </div>
+                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                          {gameStoryboardAnimationDurationConfigured
+                            ? "Used for each generated storyboard animation clip."
+                            : `Uses the ${GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT}-second storyboard default until set.`}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                        <div className="grid grid-cols-[minmax(0,4rem)_auto] items-center gap-1.5">
+                          <DraftNumberInput
+                            value={gameStoryboardAnimationDurationSeconds}
+                            min={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN}
+                            max={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX}
+                            disabled={!gameStoryboardAutoAnimationsEnabled}
+                            onCommit={commitGameStoryboardAnimationDuration}
+                            className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-70"
+                            ariaLabel="Storyboard animation clip duration in seconds"
+                          />
+                          <span className="text-[0.625rem] text-[var(--muted-foreground)]">s</span>
+                        </div>
+                        {gameStoryboardAnimationDurationConfigured ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameStoryboardAnimationDurationSeconds: null,
+                              })
+                            }
+                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Use storyboard default
+                          </button>
+                        ) : (
+                          <span className="rounded-md bg-[var(--secondary)]/70 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                            Storyboard default
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                        Viewer Display
+                        <HelpTooltip text="Floating keeps the draggable storyboard panel. Background places the active storyboard frame behind the game UI and disables generated location backgrounds." />
+                      </div>
+                      <AgentSettingsSegmentedControl<GameStoryboardViewerDisplayMode>
+                        value={gameStoryboardViewerDisplayMode}
+                        options={[
+                          {
+                            id: "floating",
+                            label: "Floating",
+                            description: "Draggable panel above the game.",
+                          },
+                          {
+                            id: "background",
+                            label: "Background",
+                            description: "Visual layer behind controls.",
+                          },
+                        ]}
+                        onChange={(mode) =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            gameStoryboardViewerDisplayMode: mode === "floating" ? null : mode,
+                          })
+                        }
+                      />
+                    </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       <GamePromptTemplateSelect
                         label="Illustration Prompt"
@@ -7535,6 +7986,14 @@ export function ChatSettingsDrawer({
                         }
                       />
                     </div>
+                    <GamePromptTemplateSelect
+                      label="Storyboard Video Prompt"
+                      description="Used only for storyboard keyframe clips. Manual scene videos keep the Game Video Prompt above."
+                      options={gameVideoPromptOptions}
+                      selectedId={selectedGameStoryboardVideoPromptTemplateId}
+                      fallbackId={selectedGameVideoPromptTemplateId}
+                      onChange={updateGameStoryboardVideoPromptSelection}
+                    />
                     <GameStoryboardPromptLibrary
                       customTemplates={gameStoryboardPromptTemplates}
                       onAddTemplate={addGameStoryboardPromptTemplate}
@@ -7630,7 +8089,8 @@ export function ChatSettingsDrawer({
                                       <AgentPromptTemplateSelect
                                         options={getPromptOptionsForAgent(agent.id)}
                                         selectedId={
-                                          agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID
+                                          agentPromptTemplateSelections[agent.id] ??
+                                          getDefaultPromptTemplateIdForAgent(agent.id)
                                         }
                                         onChange={(promptTemplateId) =>
                                           updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
@@ -9324,6 +9784,30 @@ function GameStoryboardPromptLibrary({
             </button>
             <button
               type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Comic Animation Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Episode Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add NovelAI Copy
+            </button>
+            <button
+              type="button"
               onClick={() => onAddTemplate(GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
             >
@@ -9457,10 +9941,26 @@ function GameVideoPromptLibrary({
               <Plus size="0.6875rem" />
               Add Video Copy
             </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Video Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Comic Video Copy
+            </button>
           </div>
           {customTemplates.length === 0 ? (
             <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Add a copy, edit it here, then choose it from the Game Video Prompt selector above.
+              Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above.
             </p>
           ) : (
             <div className="space-y-2">

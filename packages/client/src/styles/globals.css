@@ -865,6 +865,115 @@
   --mari-panel-gradient-text: #ecfdf5;
 }
 
+.mari-panel-gradient--settings {
+  --mari-panel-gradient-start: #9ca3af;
+  --mari-panel-gradient-end: #6b7280;
+  --mari-panel-gradient-text: #f9fafb;
+}
+
+.mari-suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  align-items: center;
+  overflow-x: auto;
+  margin-bottom: 0.375rem;
+  padding-bottom: 0.1875rem;
+}
+
+/*
+ * Suggestion chips intentionally do NOT reuse .mari-panel-gradient-button's solid-fill
+ * CTA treatment (that style is tuned for the handful of big panel-nav buttons in the
+ * sidebar/topbar). A row of 3-5 solid neon buttons above the chat input reads as loud
+ * UI chrome, not a quiet suggestion. Instead this mirrors the tinted-badge language
+ * Mari's own tool timeline and mode badge already use elsewhere on this screen
+ * (color-mix tint fill + colored border + soft glow) so chips read as chat-native.
+ * Color still comes from the shared --mari-panel-gradient-start token set by the
+ * .mari-panel-gradient--<entity> classes, so entity colors stay a single source of truth.
+ */
+.mari-suggestion-chip {
+  --chip-tint: var(--mari-panel-gradient-start, var(--marinara-app-accent-solid));
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.3125rem;
+  min-height: 2rem;
+  padding: 0.375rem 0.6875rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--chip-tint) 24%, var(--border) 76%);
+  background: color-mix(in srgb, var(--chip-tint) 7%, var(--card) 93%);
+  color: color-mix(in srgb, var(--chip-tint) 42%, var(--foreground) 58%);
+  font-weight: 600;
+  font-size: 0.75rem;
+  line-height: 1.1;
+  box-shadow: inset 0 1px color-mix(in srgb, var(--foreground) 7%, transparent);
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 120ms ease;
+}
+
+.mari-suggestion-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chip-tint) 12%, var(--card) 88%);
+  border-color: color-mix(in srgb, var(--chip-tint) 38%, var(--border) 62%);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 9%, transparent),
+    0 0.25rem 0.65rem color-mix(in srgb, var(--chip-tint) 12%, transparent);
+}
+
+.mari-suggestion-chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.mari-suggestion-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.mari-suggestion-chips--compact {
+  gap: 0.25rem;
+}
+
+.mari-suggestion-chips--compact .mari-suggestion-chip {
+  min-height: 1.75rem;
+  padding: 0.3125rem 0.5625rem;
+  font-size: 0.6875rem;
+}
+
+.mari-suggestion-chip--neutral {
+  --chip-tint: var(--muted-foreground);
+}
+
+.mari-suggestion-chip--danger {
+  --chip-tint: var(--destructive);
+}
+
+.mari-suggestion-chip--caution {
+  --chip-tint: #f59e0b;
+}
+
+.mari-suggestion-chip--success {
+  --chip-tint: #10b981;
+}
+
+/*
+ * Selected state for wizard single/multi-select pills (MariWizardCard). Same tinted-badge
+ * language as .mari-suggestion-chip, just intensified - deeper tint + persistent ring instead
+ * of only-on-hover, so a chosen option still reads as "chosen" once focus/hover moves away.
+ * Mirrors the tint+ring+colored-text pattern GameSetupWizard.tsx uses for its own selected
+ * option pills (bg-primary/20 + ring-1 ring-primary/40), generalized to any entity color.
+ */
+.mari-suggestion-chip--selected {
+  background: color-mix(in srgb, var(--chip-tint) 16%, var(--card) 84%);
+  border-color: color-mix(in srgb, var(--chip-tint) 48%, var(--border) 52%);
+  box-shadow:
+    inset 0 1px color-mix(in srgb, var(--foreground) 10%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--chip-tint) 18%, transparent);
+}
+
 .mari-panel-gradient--browser {
   --mari-panel-gradient-start: #a3e635;
   --mari-panel-gradient-end: #14b8a6;
@@ -2219,6 +2328,27 @@ input[type="range"].mari-local-music-volume-slider::-moz-range-thumb {
   background: var(--range-thumb-color);
 }
 
+input[type="range"].mari-tts-line-volume-slider {
+  --range-track-color: color-mix(in srgb, var(--marinara-chat-chrome-panel-muted) 28%, transparent);
+  --range-fill-color: var(--marinara-chat-chrome-accent);
+  --range-thumb-color: var(--marinara-chat-chrome-accent);
+  --range-thumb-size: 0.75rem;
+  --range-track-height: 0.25rem;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-chat-chrome-panel-bg);
+
+  accent-color: var(--range-fill-color);
+}
+
+input[type="range"].mari-tts-line-volume-slider::-webkit-slider-thumb {
+  background: var(--range-thumb-color);
+  opacity: 1;
+}
+
+input[type="range"].mari-tts-line-volume-slider::-moz-range-thumb {
+  background: var(--range-thumb-color);
+  opacity: 1;
+}
+
 @font-face {
   font-family: "Straight Quotes";
   src:
@@ -2249,6 +2379,11 @@ body {
   z-index: 0;
   display: none;
   overflow: hidden;
+}
+
+.home-viewport-fit-content {
+  transform: scale(var(--mari-home-fit-scale, 1));
+  transform-origin: top center;
 }
 
 :root:not([data-visual-theme]) .mari-home-starfield {
@@ -2519,6 +2654,18 @@ strong {
   color: #facc15;
 }
 
+/* Docs-viewer search-match highlight (injected marks + sidebar snippets).
+   Primary-tinted so it reads in both themes and stays visually distinct from
+   the markdown ==highlight== yellow above. Only the docs viewer emits this
+   class, so it can't leak into chat despite the shared .mari-message-content. */
+.docs-search-mark {
+  background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  color: var(--foreground);
+  border-radius: 2px;
+  padding: 0 0.1em;
+  font-weight: 500;
+}
+
 /* Task lists */
 .mari-message-content .mari-md-task-list {
   list-style: none;
@@ -2672,12 +2819,11 @@ strong {
 }
 
 .mari-tracker-panel-scroll {
-  scrollbar-gutter: stable;
   scrollbar-color: color-mix(in srgb, var(--primary) 42%, transparent) transparent;
 }
 
 .mari-tracker-panel-scroll::-webkit-scrollbar {
-  width: 0.5rem;
+  width: 0.25rem;
 }
 
 .mari-tracker-panel-scroll::-webkit-scrollbar-track {
@@ -2687,7 +2833,7 @@ strong {
 .mari-tracker-panel-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--primary) 44%, transparent);
   background-clip: padding-box;
-  border: 0.1875rem solid transparent;
+  border: 0.0625rem solid transparent;
   border-radius: 999px;
 }
 
@@ -2735,6 +2881,43 @@ strong {
 
 .mari-shell-panel-edge--right::after {
   right: 0;
+}
+
+.mari-shell-panel-enter-left {
+  animation: mari-shell-panel-enter-left 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.mari-shell-panel-enter-right {
+  animation: mari-shell-panel-enter-right 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes mari-shell-panel-enter-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-1.125rem, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes mari-shell-panel-enter-right {
+  from {
+    opacity: 0;
+    transform: translate3d(1.125rem, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mari-shell-panel-enter-left,
+  .mari-shell-panel-enter-right {
+    animation: none;
+  }
 }
 
 /* Firefox on Windows can rasterize text inside large blurred/translucent layout layers,
@@ -3116,8 +3299,9 @@ strong {
 }
 
 .pastel-gradient {
-  background: linear-gradient(90deg, #ff69b4, #ff8c42, #ff6b9d, #ff6f61, #ff69b4, #ff8c42, #ff6b9d, #ff6f61, #ff69b4) 0
-    0 / 400% 100%;
+  background-image: var(--marinara-app-accent-gradient);
+  background-position: 0;
+  background-size: 400% 100%;
   animation: pastel-gradient-cycle 25s linear infinite;
 }
 
@@ -3232,7 +3416,7 @@ strong {
 }
 
 .os-window-btn.close {
-  background: linear-gradient(135deg, #ff6b9d, #ff8fab);
+  background: var(--destructive);
 }
 .os-window-btn.minimize {
   background: linear-gradient(135deg, #ffd88a, #ffe4a8);
@@ -4499,25 +4683,6 @@ strong {
 /* ─────────────────────────────────────────────
    23. GAME MODE
    ───────────────────────────────────────────── */
-
-/* Dice roll animation */
-@keyframes dice-tumble {
-  0% {
-    transform: rotate(0deg) scale(0.5);
-    opacity: 0;
-  }
-  50% {
-    transform: rotate(360deg) scale(1.1);
-    opacity: 1;
-  }
-  100% {
-    transform: rotate(720deg) scale(1);
-    opacity: 1;
-  }
-}
-.game-dice-animate {
-  animation: dice-tumble 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
 
 /* State transition fade */
 @keyframes game-state-fade {

@@ -58,6 +58,7 @@ import { professorMariWorkspaceRoutes } from "./professor-mari-workspace.routes.
 import { discordBridgeRoutes } from "./discord-bridge.routes.js";
 import { chatParticipantsRoutes } from "./chat-participants.routes.js";
 import { chatEventsRoutes } from "./chat-events.routes.js";
+import { noodleRoutes } from "./noodle.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
@@ -115,6 +116,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(professorMariWorkspaceRoutes, { prefix: "/api/professor-mari/workspace" });
   await app.register(discordBridgeRoutes, { prefix: "/api/discord-bridge" });
   await app.register(chatEventsRoutes, { prefix: "/api/chat-events" });
+  await app.register(noodleRoutes, { prefix: "/api/noodle" });
   if (process.env.MARINARA_LITE !== "true" && process.env.MARINARA_LITE !== "1") {
     await app.register(sidecarRoutes, { prefix: "/api/sidecar" });
   }

@@ -21,6 +21,7 @@ import {
   type ComfyUiDefaults,
   type ImageGenerationDefaultsProfile,
   type NovelAiDefaults,
+  type SceneIllustrationCharacterPrompt,
 } from "@marinara-engine/shared";
 import { isImageLocalUrlsEnabled } from "../../config/runtime-config.js";
 import { generateRunPodComfyUI } from "./runpod-comfyui.service.js";
@@ -28,8 +29,9 @@ import { logger } from "../../lib/logger.js";
 import { assertInsideDir, normalizeLoopbackUrl, safeFetch, validateOutboundUrl } from "../../utils/security.js";
 
 // sharp is an optional native module (no prebuilds on some platforms like Termux).
-// Lazy-load so the server boots even when sharp is missing; the only callers that
-// need it (Draw Things img2img init resize) fall back to passing the original.
+// Lazy-load so the server boots even when sharp is missing. The Draw Things img2img
+// init resize falls back to passing the original; NovelAI director reference prep
+// (prepareNovelAiDirectorReferenceImages) hard-throws when sharp is unavailable.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SharpFn = any;
 let _sharp: SharpFn | null = null;
@@ -92,6 +94,8 @@ export interface ImageGenRequest {
   referenceImage?: string;
   /** Optional array of base64-encoded reference images (avatars). Providers that support multiple refs use all; others use the first. */
   referenceImages?: string[];
+  /** Optional structured per-character prompts. NovelAI V4/V4.5 maps these to native character captions. */
+  characterPrompts?: SceneIllustrationCharacterPrompt[];
   /** Request a transparent image background when the provider/model supports it. */
   transparentBackground?: boolean;
   /** Optional caller-owned abort signal for cancelling long image requests. */
@@ -1294,6 +1298,7 @@ const NOVELAI_SIZE_MULTIPLE = 64;
 const NOVELAI_MIN_DIMENSION = 64;
 const NOVELAI_MAX_DIMENSION = 2048;
 const NOVELAI_MAX_PIXELS = 1024 * 1024;
+const NOVELAI_MAX_CHARACTER_PROMPTS = 6;
 const NOVELAI_REFERENCE_MAX_INPUT_PIXELS = 32_000_000;
 const NOVELAI_DIRECTOR_REFERENCE_SIZES = [
   { width: 1024, height: 1536 },
@@ -1467,6 +1472,83 @@ function prepareNovelAiPrompt(value: string, fieldName: string, model: string): 
   return sanitized;
 }
 
+type PreparedNovelAiCharacterPrompt = {
+  prompt: string;
+  negativePrompt: string;
+  center: { x: number; y: number };
+};
+
+function clampNovelAiCharacterCoordinate(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(1, Math.max(0, numeric));
+}
+
+function defaultNovelAiCharacterCenter(index: number, total: number): { x: number; y: number } {
+  if (total <= 1) return { x: 0.5, y: 0.5 };
+  if (total <= 3) return { x: (index + 1) / (total + 1), y: 0.5 };
+
+  const columns = 3;
+  const rows = Math.ceil(total / columns);
+  const row = Math.floor(index / columns);
+  const rowStart = row * columns;
+  const rowCount = Math.min(columns, total - rowStart);
+  const column = index - rowStart;
+  return {
+    x: (column + 1) / (rowCount + 1),
+    y: (row + 1) / (rows + 1),
+  };
+}
+
+function prepareNovelAiCharacterPrompts(
+  prompts: SceneIllustrationCharacterPrompt[] | undefined,
+  model: string,
+): PreparedNovelAiCharacterPrompt[] {
+  const candidates = (prompts ?? [])
+    .filter((entry) => entry && typeof entry.prompt === "string" && entry.prompt.trim().length > 0)
+    .slice(0, NOVELAI_MAX_CHARACTER_PROMPTS);
+
+  return candidates
+    .map((entry, index) => {
+      const fallbackCenter = defaultNovelAiCharacterCenter(index, candidates.length);
+      const prompt = prepareNovelAiPrompt(entry.prompt, `character prompt ${index + 1}`, model);
+      if (!prompt) return null;
+      return {
+        prompt,
+        negativePrompt: prepareNovelAiPrompt(
+          typeof entry.negativePrompt === "string" ? entry.negativePrompt : "",
+          `character negative prompt ${index + 1}`,
+          model,
+        ),
+        center: {
+          x: clampNovelAiCharacterCoordinate(entry.position?.x, fallbackCenter.x),
+          y: clampNovelAiCharacterCoordinate(entry.position?.y, fallbackCenter.y),
+        },
+      };
+    })
+    .filter((entry): entry is PreparedNovelAiCharacterPrompt => Boolean(entry));
+}
+
+export function buildNovelAiV4CharacterPromptPayload(
+  prompts: SceneIllustrationCharacterPrompt[] | undefined,
+  model: string,
+): {
+  captions: Array<{ char_caption: string; centers: Array<{ x: number; y: number }> }>;
+  negativeCaptions: Array<{ char_caption: string; centers: Array<{ x: number; y: number }> }>;
+  useCoords: boolean;
+} {
+  if (!isNovelAiV4Model(model)) return { captions: [], negativeCaptions: [], useCoords: false };
+  const prepared = prepareNovelAiCharacterPrompts(prompts, model);
+  return {
+    captions: prepared.map((entry) => ({ char_caption: entry.prompt, centers: [entry.center] })),
+    negativeCaptions: prepared.map((entry) => ({
+      char_caption: entry.negativePrompt,
+      centers: [entry.center],
+    })),
+    useCoords: prepared.length > 1,
+  };
+}
+
 async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGenRequest): Promise<ImageGenResult> {
   // Only use the native NovelAI API format when hitting the actual NovelAI domain.
   // Proxies (linkapi.ai, etc.) expose OpenAI-compatible chat completions that return
@@ -1492,6 +1574,7 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
     throw new Error("NovelAI precise reference images require a V4.5 model such as nai-diffusion-4-5-full.");
   }
   const directorReferenceImages = await prepareNovelAiDirectorReferenceImages(referenceImages);
+  const characterPromptPayload = buildNovelAiV4CharacterPromptPayload(request.characterPrompts, model);
   const size = resolveNovelAiSize(request);
 
   const parameters: Record<string, unknown> = {
@@ -1515,13 +1598,13 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   if (isV4) {
     parameters.params_version = 3;
     parameters.v4_prompt = {
-      caption: { base_caption: prompt, char_captions: [] },
-      use_coords: false,
+      caption: { base_caption: prompt, char_captions: characterPromptPayload.captions },
+      use_coords: characterPromptPayload.useCoords,
       use_order: true,
     };
     parameters.v4_negative_prompt = {
-      caption: { base_caption: negativePrompt, char_captions: [] },
-      use_coords: false,
+      caption: { base_caption: negativePrompt, char_captions: characterPromptPayload.negativeCaptions },
+      use_coords: characterPromptPayload.useCoords,
       use_order: true,
     };
   }

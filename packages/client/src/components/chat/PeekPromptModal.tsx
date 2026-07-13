@@ -190,9 +190,7 @@ function splitPromptSegments(messages: Array<{ role: string; content: string }>)
 
       if (openIdx >= 0) {
         pushSegment(message.role, remaining.slice(0, openIdx), false);
-        const openMatch = remaining
-          .slice(openIdx)
-          .match(useXmlOpen ? /<chat_history>\n?/i : /^## Chat History\n?/i);
+        const openMatch = remaining.slice(openIdx).match(useXmlOpen ? /<chat_history>\n?/i : /^## Chat History\n?/i);
         remaining = remaining.slice(openIdx + (openMatch?.[0].length ?? 0));
         if (useXmlOpen) inXmlChatHistory = true;
         else inMarkdownChatHistory = true;

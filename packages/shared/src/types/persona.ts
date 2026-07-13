@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // User Persona Types
 // ──────────────────────────────────────────────
+import type { ConvoBehaviorConfig } from "./character.js";
 
 /** A user persona (the player's character/identity). */
 export interface Persona {
@@ -8,6 +9,8 @@ export interface Persona {
   name: string;
   /** Short comment shown under the name (for disambiguation) */
   comment: string;
+  /** Optional pronunciation override used when this persona name is sent to TTS. */
+  phoneticName?: string;
   description: string;
   personality: string;
   scenario: string;
@@ -35,6 +38,12 @@ export interface Persona {
   tags?: string[];
   /** Saved Conversation mode activity/status text options for this persona */
   savedStatusOptions?: string[];
+  /** Conversation mode ONLY: display name shown as the user's sender label in Convo. */
+  convoDisplayName?: string;
+  /** Conversation mode ONLY: public "about me" profile (cross-chat default). */
+  aboutMe?: string;
+  /** Conversation mode ONLY: behavior directive + insertion strategy for the persona. */
+  convoBehavior?: ConvoBehaviorConfig;
   createdAt: string;
   updatedAt: string;
 }

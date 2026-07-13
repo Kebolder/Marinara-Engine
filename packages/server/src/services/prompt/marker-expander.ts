@@ -19,7 +19,7 @@ import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createAgentsStorage } from "../storage/agents.storage.js";
 import { processLorebooks, type LorebookFinalContentResolver, type LorebookScanResult } from "../lorebook/index.js";
 import { wrapContent } from "./format-engine.js";
-import { sanitizePromptLeaf } from "./prompt-escaping.js";
+import { sanitizeExampleDialoguePromptLeaf, sanitizePromptLeaf } from "./prompt-escaping.js";
 import { agentRuns } from "../../db/schema/index.js";
 import { eq, and, desc } from "drizzle-orm";
 
@@ -164,8 +164,16 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
       if (field === "scenario" && ctx.groupScenarioOverrideText) continue;
       const value = cardPromptText(getCharacterField(data, field));
       if (value) {
+        const resolved = resolveMacros(value, characterMacroContext);
         charParts.push(
-          wrapContent(resolveSanitizedPromptLeaf(value, ctx, characterMacroContext), field, ctx.wrapFormat, 2),
+          wrapContent(
+            field === "mes_example" || field === "example_dialogue"
+              ? sanitizeExampleDialoguePromptLeaf(resolved, ctx.wrapFormat)
+              : sanitizePromptLeaf(resolved, ctx.wrapFormat),
+            field,
+            ctx.wrapFormat,
+            2,
+          ),
         );
       }
     }
@@ -174,9 +182,7 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
     if (!fields.includes("stats") && !fields.includes("rpg_attributes")) {
       const statsText = formatRpgStatsForPrompt(data.extensions?.rpgStats as RPGStatsConfig | undefined);
       if (statsText) {
-        charParts.push(
-          wrapContent(resolveSanitizedPromptLeaf(statsText, ctx), "rpg_attributes", ctx.wrapFormat, 2),
-        );
+        charParts.push(wrapContent(resolveSanitizedPromptLeaf(statsText, ctx), "rpg_attributes", ctx.wrapFormat, 2));
       }
     }
 
@@ -190,9 +196,7 @@ async function expandCharacter(config: MarkerConfig, ctx: MarkerContext): Promis
   // Append group scenario override (replaces individual character scenarios)
   const groupScenarioOverrideText = cardPromptText(ctx.groupScenarioOverrideText);
   if (groupScenarioOverrideText) {
-    parts.push(
-      wrapContent(resolveSanitizedPromptLeaf(groupScenarioOverrideText, ctx), "scenario", ctx.wrapFormat, 1),
-    );
+    parts.push(wrapContent(resolveSanitizedPromptLeaf(groupScenarioOverrideText, ctx), "scenario", ctx.wrapFormat, 1));
   }
 
   return { content: parts.join("\n") };
@@ -274,14 +278,10 @@ async function expandPersona(_config: MarkerConfig, ctx: MarkerContext): Promise
   const personaScenario = cardPromptText(ctx.personaFields?.scenario);
 
   if (personaDescription) {
-    parts.push(
-      wrapContent(resolveSanitizedPromptLeaf(personaDescription, ctx), "description", ctx.wrapFormat, 2),
-    );
+    parts.push(wrapContent(resolveSanitizedPromptLeaf(personaDescription, ctx), "description", ctx.wrapFormat, 2));
   }
   if (personaPersonality) {
-    parts.push(
-      wrapContent(resolveSanitizedPromptLeaf(personaPersonality, ctx), "personality", ctx.wrapFormat, 2),
-    );
+    parts.push(wrapContent(resolveSanitizedPromptLeaf(personaPersonality, ctx), "personality", ctx.wrapFormat, 2));
   }
   if (personaBackstory) {
     parts.push(wrapContent(resolveSanitizedPromptLeaf(personaBackstory, ctx), "backstory", ctx.wrapFormat, 2));
@@ -356,7 +356,7 @@ async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise
       ctx.lorebookDepthEntries ??= [];
       for (const de of result.depthEntries) {
         ctx.lorebookDepthEntries.push({
-          content: sanitizePromptLeaf(de.content, ctx.wrapFormat),
+          content: de.content,
           role: de.role,
           depth: de.depth,
         });
@@ -366,14 +366,14 @@ async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise
 
   switch (config.type) {
     case "world_info_before":
-      return { content: sanitizePromptLeaf(result.worldInfoBefore, ctx.wrapFormat) };
+      return { content: result.worldInfoBefore };
     case "world_info_after":
-      return { content: sanitizePromptLeaf(result.worldInfoAfter, ctx.wrapFormat) };
+      return { content: result.worldInfoAfter };
     case "lorebook":
     default: {
       // Combined lorebook — all world info
       const combined = [result.worldInfoBefore, result.worldInfoAfter].filter(Boolean).join("\n\n");
-      return { content: sanitizePromptLeaf(combined, ctx.wrapFormat) };
+      return { content: combined };
     }
   }
 }
@@ -450,13 +450,11 @@ async function expandDialogueExamples(_config: MarkerConfig, ctx: MarkerContext)
 
     const example = cardPromptText(data.mes_example);
     if (example) {
-      parts.push(
-        resolveSanitizedPromptLeaf(
-          example,
-          ctx,
-          macroContextForCharacterProfile(ctx.macroCtx, characterMacroProfileFromData(data)),
-        ),
+      const resolved = resolveMacros(
+        example,
+        macroContextForCharacterProfile(ctx.macroCtx, characterMacroProfileFromData(data)),
       );
+      parts.push(sanitizeExampleDialoguePromptLeaf(resolved, ctx.wrapFormat));
     }
   }
 
@@ -515,12 +513,7 @@ async function expandAgentData(config: MarkerConfig, ctx: MarkerContext): Promis
   try {
     resultData = JSON.parse(run.resultData);
   } catch (err) {
-    logger.warn(
-      err,
-      "[prompt] Skipping malformed agent result data for %s in chat %s",
-      agentType,
-      ctx.chatId,
-    );
+    logger.warn(err, "[prompt] Skipping malformed agent result data for %s in chat %s", agentType, ctx.chatId);
     return { content: "" };
   }
 

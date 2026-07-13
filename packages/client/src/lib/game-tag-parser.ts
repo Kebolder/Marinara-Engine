@@ -1077,6 +1077,26 @@ export function stripGmTags(content: string): string {
   return text.trim();
 }
 
+const GAME_NARRATION_EFFECT_TAG_RE =
+  /\{(shake|shout|whisper|glow|pulse|wave|flicker|drip|bounce|tremble|glitch|expand):([^}]+)\}/gi;
+const ALLOWED_STANDALONE_NARRATION_HTML_TAG_RE = /^\/?(?:strong|em|br|span)(?:\s|$)/i;
+
+/** Preserve model-authored `<CORE: SEALED>`-style readouts as literal narration. */
+export function escapeStandaloneGameNarrationAngleLines(content: string): string {
+  return content.replace(
+    /^([ \t]*)<([^<>\r\n]+)>([ \t]*)$/gm,
+    (match, leading: string, inner: string, trailing: string) => {
+      if (ALLOWED_STANDALONE_NARRATION_HTML_TAG_RE.test(inner.trim())) return match;
+      return `${leading}&lt;${inner.replace(/&/g, "&amp;")}&gt;${trailing}`;
+    },
+  );
+}
+
+/** True when a prepared narration segment will display at least one character. */
+export function hasVisibleGameNarrationText(content: string): boolean {
+  return content.replace(GAME_NARRATION_EFFECT_TAG_RE, "$2").trim().length > 0;
+}
+
 /**
  * Strip all GM tags EXCEPT [Note:] and [Book:] — these are kept inline
  * so the narration parser can create readable segments at the correct

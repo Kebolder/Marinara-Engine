@@ -1,119 +1,163 @@
-# Marinara Engine — Home Assistant Integration
+# Home Assistant Integration
 
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+This guide shows you how to connect Marinara Engine to Home Assistant. Once connected, your AI characters can control real smart home devices right from a chat. They can work lights, climate, covers, and media players. The connection also lets Home Assistant automations send messages into Marinara.
 
-Connects [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) to Home Assistant so your AI characters can control real-world devices — lights, climate, locks, covers, media players, and more — directly from chat, roleplay, and game sessions.
+Home Assistant is a free, open source platform for controlling smart home devices. If you do not run Home Assistant, you do not need this integration.
 
-## How it works
+## What this integration does
 
-Marinara Engine supports **custom webhook tools**: when the AI decides to call a tool during generation, it POSTs to a webhook URL and feeds the result back to the language model. This integration:
+The integration is a small piece of software that installs inside Home Assistant. It links a running Home Assistant to a running Marinara Engine server. Once installed, it does three things for you automatically:
 
-1. Registers a private webhook endpoint inside Home Assistant
-2. Creates all selected tool definitions in Marinara, pre-filled with that webhook URL
-3. Creates a **Home Assistant agent** in Marinara that lists every HA tool in its enabled tools — making them appear in the chat's Function Calling picker automatically
+- It creates smart home tools inside Marinara. These appear in the **Functions** section of the Presets panel. Marinara calls these "custom tools" or "Functions". See [Custom Tools](../extending/custom-tools.md) for how Functions work in general.
+- It creates one AI agent inside Marinara named **Home Assistant**. An agent is an AI helper that runs alongside your chat. See [Agents Overview](../agents/agents-overview.md).
+- It creates several Home Assistant entities so you can watch and control Marinara from the Home Assistant side. An entity is a device, sensor, or control in Home Assistant.
+
+You never copy tool addresses or set up tools by hand. The integration wires everything together on first setup.
+
+## Prerequisites
+
+Before you start, make sure you have all of the following.
+
+- A running Home Assistant, version 2024.1.0 or newer.
+- HACS installed in Home Assistant. HACS is the Home Assistant Community Store, a tool for installing custom integrations that are not built in.
+- Marinara Engine installed and running, and reachable from your Home Assistant machine. The default address is `localhost:7860`. If Home Assistant runs on a different device, read the note below about passwords.
+- The setting `WEBHOOK_LOCAL_URLS_ENABLED=true` added to Marinara's `.env` file.
+
+The `.env` file is the plain text settings file for the Marinara server. See [Server Configuration](../CONFIGURATION.md) to learn where it is and how to edit it.
+
+You need that last setting because the integration uses a webhook. A webhook is a web address that lets one app send data to another automatically. Home Assistant's webhook address is a local, plain `http` address. Marinara blocks calls to local `http` addresses by default for safety. Setting `WEBHOOK_LOCAL_URLS_ENABLED=true` allows them.
+
+Add this line to your `.env` file:
 
 ```
-Marinara AI  →  calls tool ha_turn_on  →  POST /api/webhook/<id>  →  HA turns on light
-Marinara AI  ←  {"result": "Turned on light.living_room"}          ←  HA responds
+WEBHOOK_LOCAL_URLS_ENABLED=true
 ```
 
-Everything happens on first startup. You never copy URLs or configure tools manually.
+This setting takes effect within a couple of seconds. You do not need to restart the Marinara server.
 
-## Requirements
+### If Home Assistant runs on a different device
 
-- Home Assistant 2024.1 or newer
-- [HACS](https://hacs.xyz) installed
-- [Marinara Engine](https://github.com/Pasta-Devs/Marinara-Engine) running locally (default: `localhost:7860`)
-- `WEBHOOK_LOCAL_URLS_ENABLED=true` in Marinara's `.env`, because Home Assistant webhook URLs are local plain-HTTP URLs and Marinara blocks those outbound calls by default
+The integration connects to Marinara without a username or password. There is no place to enter one in the setup form. Because of this, where Home Assistant runs matters:
 
-## Installation
+- If Home Assistant and Marinara run on the same machine, the connection works out of the box.
+- If Home Assistant runs on a different device, Marinara blocks the connection by default. You must allow the Home Assistant device to connect without a password. One way is to add that device's IP address to `IP_ALLOWLIST` in Marinara's `.env` file. An IP address is the number address of a device on your network. On a fully trusted home network, you can set `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true` instead.
+- If Marinara is protected with `BASIC_AUTH_USER` and `BASIC_AUTH_PASS`, the integration cannot log in. It then only works from the same machine, or from a device listed in `IP_ALLOWLIST`.
 
-### 1. Add to HACS
+See [Remote Access](../REMOTE_ACCESS.md) for how these settings work and which one to pick.
 
-1. Open HACS → three-dot menu → **Custom repositories**
-2. URL: `https://github.com/Pasta-Devs/Marinara-Engine`
-3. Category: **Integration**
-4. Click **Add**, then search for **Marinara Engine** and install it
-5. Restart Home Assistant
+## Install the integration in Home Assistant
 
-### 2. Add the integration
+You install the integration in two stages. First you add it to HACS, then you set it up.
 
-1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **Marinara Engine**
-3. Enter the host and port where Marinara Engine is running (default: `localhost` / `7860`)
-4. Click **Submit**
+### Add it to HACS
 
-On startup, the integration automatically:
+1. In Home Assistant, open **HACS**.
+2. Open the three-dot menu, then click **Custom repositories**.
+3. In the repository box, enter this address:
 
-- Registers a webhook inside Home Assistant
-- Creates all tool definitions in Marinara -> **Presets panel -> Functions**
-- Creates a **Home Assistant** agent in Marinara → **Agents** with every HA tool already enabled
+```
+https://github.com/Pasta-Devs/Marinara-Engine
+```
 
-### 3. Done
+4. Set the category to **Integration**, then click **Add**.
+5. Search for **Marinara Engine**, then install it.
+6. Restart Home Assistant.
 
-Open any chat in Marinara. Your AI characters can now turn on lights, adjust the thermostat, play music, and more — they'll do it naturally as the narrative calls for it, without you having to prompt for it explicitly.
+### Set it up
 
-## Configuration
+1. Go to **Settings**, then **Devices & Services**, then click **Add Integration**.
+2. Search for **Marinara Engine**.
+3. Enter the **Host** and **Port** where Marinara is running. The defaults are `localhost` and `7860`.
+4. Click **Submit**.
 
-After setup, open the integration's **Configure** menu to:
+If Marinara cannot be reached at that address, Home Assistant shows an error and does not finish. See Troubleshooting below.
 
-- Set a **Primary Chat** — the default target for `send_message` and `trigger_generation` HA services
-- Choose **Exposed Tool Categories** — select which categories of HA tools Marinara can use (locks are off by default)
+## What Marinara Engine creates automatically
 
-Changes to the category selection take effect after pressing **Marinara Sync HA Tools** or restarting Home Assistant.
+When setup succeeds, the integration builds everything for you.
 
-## Entities
+- It registers a private webhook inside Home Assistant.
+- It creates the smart home tools in Marinara's **Functions** section, each already pointed at that webhook.
+- It creates the **Home Assistant** agent in Marinara, listing every enabled tool.
+- It creates the Home Assistant entities described later in this guide.
 
-| Entity                      | Type   | Description                                        |
-| --------------------------- | ------ | -------------------------------------------------- |
-| Marinara Chat Count         | Sensor | Total number of chats                              |
-| Marinara Active Agent Count | Sensor | Number of globally enabled agents                  |
-| Marinara Active Chat        | Select | Choose which chat HA services target               |
-| Marinara Agent: _name_      | Switch | Enable / disable each AI agent globally            |
-| Marinara Abort Generation   | Button | Cancel any in-flight AI generation                 |
-| Marinara Sync HA Tools      | Button | Re-sync all tool definitions and agent to Marinara |
+## Add the Home Assistant agent to a chat
 
-## Tool categories
+Creating the agent does not attach it to every chat. You must add it to each chat where you want smart home control.
 
-You can choose which categories to expose in the integration's **Configure** menu. Locks are off by default.
+1. Open the chat you want.
+2. Open **Chat Settings**, then the **Agents** section.
+3. Add the **Home Assistant** agent to the chat.
 
-| Category                 | Tools                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------- |
-| Lights & Switches        | `ha_turn_on`, `ha_turn_off`, `ha_toggle`, `ha_set_brightness`, `ha_set_color`, `ha_set_color_temp` |
-| Climate                  | `ha_set_temperature`, `ha_set_hvac_mode`                                                           |
-| Covers (Blinds & Garage) | `ha_open_cover`, `ha_close_cover`, `ha_set_cover_position`                                         |
-| Locks                    | `ha_lock`, `ha_unlock`                                                                             |
-| Media Players            | `ha_media_play`, `ha_media_pause`, `ha_set_volume`                                                 |
-| Scenes & Scripts         | `ha_activate_scene`, `ha_run_script`                                                               |
-| Query                    | `ha_get_state`, `ha_list_areas`, `ha_list_entities`, `ha_notify`                                   |
-| Generic Service Calls    | `ha_call_service`                                                                                  |
+The Home Assistant agent runs in Roleplay, Conversation, and Game chats. Once it is added, the smart home tools become available to the AI in that chat automatically. You do not need to turn anything else on in the chat.
 
-## The Home Assistant agent
+## Verify the setup works
 
-On first sync the integration creates a **Home Assistant** agent in Marinara (visible under **Agents**). This agent:
+Test the connection with one simple request.
 
-- Runs in **parallel** during every generation turn
-- Has all enabled HA tools listed in its Function Calling settings
-- Carries a prompt that instructs the AI to act on smart home cues naturally — dimming lights when a character reaches for the switch, adjusting the thermostat when the temperature comes up in conversation, and so on
+1. Add the **Home Assistant** agent to a chat, as shown above.
+2. In that chat, type a plain request, for example: `Turn on the office lights`.
+3. Send the message.
 
-The agent is kept in sync automatically — pressing **Sync HA Tools** after changing the enabled categories will update the agent's tool list in place. No manual deletion needed.
+The AI should call a smart home tool, such as `ha_turn_on`, and the matching lights should turn on. The AI then confirms what it did. If nothing happens, check that `WEBHOOK_LOCAL_URLS_ENABLED=true` is set, and see Troubleshooting.
 
-## HA Services
+## Exposed tool categories
 
-Use these in automations to interact with Marinara from Home Assistant's side.
+The integration groups its smart home tools into eight categories. You choose which categories Marinara may use.
 
-### `marinara_engine.send_message`
+To change the categories, open **Settings**, then **Devices & Services**, click **Marinara Engine**, then click **Configure**. You will see two options:
 
-Send a message to a Marinara chat.
+- **Primary Chat**: the default chat that the Home Assistant services target. Those services are described later in this guide.
+- **Exposed Tool Categories**: the list of tool categories Marinara is allowed to use.
 
-| Field                | Required | Description                                  |
-| -------------------- | -------- | -------------------------------------------- |
-| `message`            | Yes      | Message content                              |
-| `chat_id`            | No       | Target chat ID (defaults to primary chat)    |
-| `role`               | No       | `user` / `assistant` / `system` / `narrator` |
-| `trigger_generation` | No       | Also trigger an AI response (default: false) |
+This table lists each category, its default state, and the tools it contains.
 
-**Example — notify the AI when someone arrives:**
+| Category | Default | Tools |
+|---|---|---|
+| Lights & Switches | On | ha_turn_on, ha_turn_off, ha_toggle, ha_set_brightness, ha_set_color, ha_set_color_temp |
+| Climate | On | ha_set_temperature, ha_set_hvac_mode |
+| Covers (Blinds & Garage) | On | ha_open_cover, ha_close_cover, ha_set_cover_position |
+| Locks | Off | ha_lock, ha_unlock |
+| Media Players | On | ha_media_play, ha_media_pause, ha_set_volume |
+| Scenes & Scripts | On | ha_activate_scene, ha_run_script |
+| Query | On | ha_get_state, ha_list_areas, ha_list_entities, ha_notify |
+| Generic Service Calls (Advanced) | Off | ha_call_service |
+
+Both **Locks** and **Generic Service Calls (Advanced)** are off by default. Turn them on only if you want them. **Generic Service Calls (Advanced)** lets the AI call any Home Assistant service, so treat it with care.
+
+Most tools accept either one specific device or a room name. If you give a room name, the tool acts on every matching device in that room at once.
+
+Changes to the categories only take effect after you press **Marinara Sync HA Tools** or restart Home Assistant. That button is described in the next section.
+
+## Home Assistant entities
+
+The integration creates these entities under a Home Assistant device named **Marinara Engine**.
+
+| Entity | Type | What it does |
+|---|---|---|
+| Marinara Chat Count | Sensor | Shows the total number of Marinara chats |
+| Marinara Active Agent Count | Sensor | Shows how many Marinara agents are enabled |
+| Marinara Active Chat | Select | Picks which chat the Home Assistant services target |
+| Marinara Agent: (name) | Switch | Turns one Marinara agent on or off. There is one switch per agent |
+| Marinara Abort Generation | Button | Cancels any AI response that is being generated |
+| Marinara Sync HA Tools | Button | Re-sends all tools and rebuilds the Home Assistant agent |
+
+The integration checks Marinara for new chats and agents every 30 seconds. A chat or agent you just made in Marinara may take up to 30 seconds to show up here.
+
+## Control Marinara from Home Assistant automations
+
+The integration adds two Home Assistant services. You use these inside Home Assistant automations, not inside Marinara. Both can target your **Primary Chat** by default.
+
+### Send Message (marinara_engine.send_message)
+
+This sends a message into a Marinara chat.
+
+- `message`: the message text. This field is required.
+- `chat_id`: which chat to send to. If you leave it blank, the Primary Chat is used.
+- `role`: who the message is from. It can be `user`, `assistant`, `system`, or `narrator`. The default is `user`.
+- `trigger_generation`: when true, the AI also replies after the message is sent. The default is false.
+
+Here is an automation that tells the AI when the front door opens:
 
 ```yaml
 automation:
@@ -128,41 +172,64 @@ automation:
       trigger_generation: true
 ```
 
-### `marinara_engine.trigger_generation`
+### Trigger Generation (marinara_engine.trigger_generation)
 
-Start an AI generation turn in a chat.
+This starts an AI reply in a chat without you sending a visible message.
 
-| Field          | Required | Description                               |
-| -------------- | -------- | ----------------------------------------- |
-| `chat_id`      | No       | Target chat ID (defaults to primary chat) |
-| `user_message` | No       | Optional user message to include          |
+- `chat_id`: which chat to use. If you leave it blank, the Primary Chat is used.
+- `user_message`: an optional message to include with the reply turn.
 
-## Re-syncing tools
+## Re-syncing after you change settings
 
-Press **Marinara Sync HA Tools** on the integration's device page to push tools and recreate the agent if it was deleted. Existing tools are updated in place so schema changes propagate; manual edits to HA-managed tool definitions are overwritten and re-enabled, and managed tools from deselected categories are disabled.
+When you change the enabled categories, press **Marinara Sync HA Tools** to apply the change. You can find this button on the **Marinara Engine** device page in Home Assistant.
+
+Pressing **Marinara Sync HA Tools** does the following:
+
+- It updates the existing tools in place, so any changes reach Marinara.
+- It rebuilds the **Home Assistant** agent if you deleted it in Marinara.
+- It disables any tool whose category you turned off. It does not delete those tools.
+
+Do not hand-edit the Home Assistant tools inside Marinara. The next sync overwrites your edits and turns the tools back on.
 
 ## Troubleshooting
 
-**Tools not appearing in Marinara's Functions list**
-Press **Marinara Sync HA Tools**, or restart Home Assistant. Verify under the **Functions** section of the Presets panel in Marinara.
+### The setup form says it cannot connect
 
-**Home Assistant agent not showing up in Marinara**
-Press **Marinara Sync HA Tools**. If it's already in the Agents list but not visible in a chat, add the Home Assistant custom agent to that chat from Chat Settings -> Agents.
+Make sure Marinara Engine is running. Check that the **Host** and **Port** you entered match where it is listening. The default is `localhost` and `7860`.
 
-**Tools not available in a chat's Function Calling picker**
-The **Home Assistant** custom agent must be synced in Marinara and added to the current chat. If it's missing entirely, press **Sync HA Tools** to recreate it, then add it from Chat Settings -> Agents and select the tools you want in the chat's Function Calling picker.
+If Home Assistant runs on a different device than Marinara, Marinara blocks it by default. The integration cannot send a password, so Marinara must accept that device without one. Add the Home Assistant device's IP address to `IP_ALLOWLIST` in Marinara's `.env` file. See [Remote Access](../REMOTE_ACCESS.md) for this and other options. A Marinara protected with `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` also rejects the integration, unless the device is listed in `IP_ALLOWLIST`.
 
-**Webhook calls failing**
-Set `WEBHOOK_LOCAL_URLS_ENABLED=true` in Marinara's `.env` and save; this hot-reloads within a couple of seconds. Without it, tool calls can fail with messages such as `protocol 'http' is not allowed` or a private-address refusal. Also check that Home Assistant is reachable from the machine running Marinara Engine. If they run on the same machine, the internal URL (`http://localhost:8123`) is used automatically. If Marinara runs on a different device, make sure HA's local network URL is accessible from that device.
+These rules still apply after setup. If Marinara later blocks the Home Assistant device, the sensors and the chat list quietly stop updating.
 
-**Cannot connect on setup**
-Make sure Marinara Engine is running (`pnpm dev` or the packaged app) and the host/port you entered match where it's actually listening (default: `localhost:7860`).
+### The AI tries a device tool but nothing happens
 
-**Finding the webhook URL manually**
-Go to **Settings → Devices & Services → Marinara Engine** in HA. The webhook ID is stored in the config entry. The full URL follows the pattern:
+The webhook call is most likely blocked. Add `WEBHOOK_LOCAL_URLS_ENABLED=true` to Marinara's `.env` file and save it. This takes effect within a couple of seconds. Without it, tool calls can fail with a message about `http` not being allowed, or about a private address being refused.
+
+If Marinara and Home Assistant run on the same machine, the integration uses the internal address for the webhook automatically. If Marinara runs on a different device, make sure Home Assistant's local network address is reachable from that device.
+
+### The tools do not appear in the Functions list
+
+Press **Marinara Sync HA Tools**, or restart Home Assistant. Then check the **Functions** section of the Presets panel in Marinara.
+
+### The Home Assistant agent is not in my chat
+
+First confirm the **Home Assistant** agent exists in Marinara under Agents. If it is missing, press **Marinara Sync HA Tools** to rebuild it. Then open **Chat Settings**, open the **Agents** section, and add the **Home Assistant** agent to that chat.
+
+### Finding the webhook address by hand
+
+You rarely need this, since each tool already has the address set. To find it, open **Settings**, then **Devices & Services**, then **Marinara Engine** in Home Assistant. The webhook uses this pattern, where 8123 is the default Home Assistant port:
 
 ```
 http://<homeassistant-ip>:8123/api/webhook/<webhook-id>
 ```
 
-Each tool in Marinara's Functions list already has this URL set.
+## Uninstalling
+
+To remove the integration, delete it from **Settings**, then **Devices & Services**, then **Marinara Engine** in Home Assistant. This removes the Home Assistant entities. The tools it created in Marinara's **Functions** section stay in Marinara. So does the **Home Assistant** agent. Delete both by hand in Marinara if you no longer want them.
+
+## Related guides
+
+- [Custom Tools](../extending/custom-tools.md)
+- [Agents Overview](../agents/agents-overview.md)
+- [Server Configuration](../CONFIGURATION.md)
+- [Remote Access](../REMOTE_ACCESS.md)

@@ -11,8 +11,9 @@ const SECURITY_HEADERS: Record<string, string> = {
 };
 
 const PERMISSIONS_POLICY = [
-  "camera=()",
-  "microphone=()",
+  "camera=(self)",
+  "microphone=(self)",
+  "display-capture=(self)",
   "geolocation=()",
   "payment=()",
   "usb=()",

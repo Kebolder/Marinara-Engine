@@ -48,6 +48,7 @@ import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-di
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { getChatCharacterIds } from "../../lib/chat-macros";
+import { buildLorebookDuplicateInput } from "../../lib/lorebook-duplicate";
 import {
   getNextUnnamedLibraryFolderName,
   useCreateLibraryFolder,
@@ -183,28 +184,22 @@ export function LorebooksPanel() {
   const openModal = useUIStore((s) => s.openModal);
   const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
 
-  const getCharacterNames = useCallback(
-    (lb: LorebookListItem) => {
-      if (Array.isArray(lb.characterNames) && lb.characterNames.length > 0) return lb.characterNames;
-      const ids =
-        Array.isArray(lb.characterIds) && lb.characterIds.length > 0
-          ? lb.characterIds
-          : lb.characterId
-            ? [lb.characterId]
-            : [];
-      return ids;
-    },
-    [],
-  );
-  const getPersonaNames = useCallback(
-    (lb: LorebookListItem) => {
-      if (Array.isArray(lb.personaNames) && lb.personaNames.length > 0) return lb.personaNames;
-      const ids =
-        Array.isArray(lb.personaIds) && lb.personaIds.length > 0 ? lb.personaIds : lb.personaId ? [lb.personaId] : [];
-      return ids;
-    },
-    [],
-  );
+  const getCharacterNames = useCallback((lb: LorebookListItem) => {
+    if (Array.isArray(lb.characterNames) && lb.characterNames.length > 0) return lb.characterNames;
+    const ids =
+      Array.isArray(lb.characterIds) && lb.characterIds.length > 0
+        ? lb.characterIds
+        : lb.characterId
+          ? [lb.characterId]
+          : [];
+    return ids;
+  }, []);
+  const getPersonaNames = useCallback((lb: LorebookListItem) => {
+    if (Array.isArray(lb.personaNames) && lb.personaNames.length > 0) return lb.personaNames;
+    const ids =
+      Array.isArray(lb.personaIds) && lb.personaIds.length > 0 ? lb.personaIds : lb.personaId ? [lb.personaId] : [];
+    return ids;
+  }, []);
 
   const parseTags = (lb: Lorebook): string[] => {
     const raw = lb.tags;
@@ -362,25 +357,22 @@ export function LorebooksPanel() {
     });
   }, []);
 
-  const handleExportSelected = useCallback(
-    async () => {
-      if (selectedLorebookIds.size === 0) return;
-      setExportingSelected(true);
-      try {
-        await api.downloadPost(
-          "/lorebooks/export-bulk",
-          { ids: [...selectedLorebookIds], format: "native" },
-          "marinara-lorebooks.zip",
-        );
-        toast.success(`Exported ${selectedLorebookIds.size} lorebook${selectedLorebookIds.size === 1 ? "" : "s"}`);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to export lorebooks");
-      } finally {
-        setExportingSelected(false);
-      }
-    },
-    [selectedLorebookIds],
-  );
+  const handleExportSelected = useCallback(async () => {
+    if (selectedLorebookIds.size === 0) return;
+    setExportingSelected(true);
+    try {
+      await api.downloadPost(
+        "/lorebooks/export-bulk",
+        { ids: [...selectedLorebookIds], format: "native" },
+        "marinara-lorebooks.zip",
+      );
+      toast.success(`Exported ${selectedLorebookIds.size} lorebook${selectedLorebookIds.size === 1 ? "" : "s"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to export lorebooks");
+    } finally {
+      setExportingSelected(false);
+    }
+  }, [selectedLorebookIds]);
 
   const handleDeleteSelected = useCallback(async () => {
     const ids = [...selectedLorebookIds];
@@ -429,29 +421,7 @@ export function LorebooksPanel() {
           api.get<LorebookFolder[]>(`/lorebooks/${lorebook.id}/folders`),
           api.get<LorebookEntry[]>(`/lorebooks/${lorebook.id}/entries`),
         ]);
-        const created = await createLorebook.mutateAsync({
-          name: `${lorebook.name} (Copy)`,
-          description: lorebook.description,
-          category: lorebook.category,
-          imagePath: lorebook.imagePath,
-          scanDepth: lorebook.scanDepth,
-          tokenBudget: lorebook.tokenBudget,
-          entryLimit: lorebook.entryLimit,
-          recursiveScanning: lorebook.recursiveScanning,
-          maxRecursionDepth: lorebook.maxRecursionDepth,
-          excludeFromVectorization: lorebook.excludeFromVectorization,
-          characterId: lorebook.characterId,
-          characterIds: lorebook.characterIds,
-          personaId: lorebook.personaId,
-          personaIds: lorebook.personaIds,
-          chatId: lorebook.chatId,
-          isGlobal: lorebook.isGlobal,
-          enabled: lorebook.enabled,
-          scope: lorebook.scope,
-          tags: lorebook.tags,
-          generatedBy: lorebook.generatedBy,
-          sourceAgentId: lorebook.sourceAgentId,
-        });
+        const created = await createLorebook.mutateAsync(buildLorebookDuplicateInput(lorebook));
         const createdId = created.id;
         const folderIdMap = new Map<string, string>();
         const pendingFolders = [...folders].sort((a, b) => a.order - b.order);
@@ -651,7 +621,6 @@ export function LorebooksPanel() {
           key={lb.id}
           lorebook={lb}
           characterName={combinedNames}
-          personaName={undefined}
           onClick={() => {
             if (suppressLorebookClickRef.current) return;
             if (selectionMode) toggleSelection(lb.id);
@@ -797,7 +766,9 @@ export function LorebooksPanel() {
             New Folder
           </button>
         </div>
-        {lorebookFolders.length > 0 && <p className="mari-folder-helper">Drag and drop lorebooks to folders, double-click or double-tap to rename</p>}
+        {lorebookFolders.length > 0 && (
+          <p className="mari-folder-helper">Drag and drop lorebooks to folders, double-click or double-tap to rename</p>
+        )}
       </div>
 
       {/* Filters */}
@@ -1034,10 +1005,10 @@ export function LorebooksPanel() {
                         if (expandedFolderId === folder.id) setExpandedFolderId(null);
                       });
                     }}
-	                    className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1"
-	                    title="Delete folder"
-	                  >
-                    <Trash2 size="0.6875rem" className="text-[var(--destructive)]" />
+                    className="mari-chrome-control mari-chrome-control--small p-1"
+                    title="Delete folder"
+                  >
+                    <Trash2 size="0.6875rem" />
                   </button>
                 </div>
               </div>
@@ -1147,7 +1118,6 @@ export function LorebooksPanel() {
 function LorebookRow({
   lorebook,
   characterName,
-  personaName,
   onClick,
   onDelete,
   onDuplicate,
@@ -1163,7 +1133,6 @@ function LorebookRow({
 }: {
   lorebook: Lorebook;
   characterName?: string;
-  personaName?: string;
   onClick: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -1238,10 +1207,10 @@ function LorebookRow({
             e.stopPropagation();
             onImagePick();
           }}
-	          className={cn(
-	            imageClasses,
-	            "transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]",
-	          )}
+          className={cn(
+            imageClasses,
+            "transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[var(--marinara-chat-chrome-focus-ring)]",
+          )}
           title={lorebook.imagePath ? "Replace lorebook picture" : "Upload lorebook picture"}
           aria-label={lorebook.imagePath ? "Replace lorebook picture" : "Upload lorebook picture"}
         >
@@ -1261,10 +1230,10 @@ function LorebookRow({
           )}
         </div>
         <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-          {characterName || personaName ? (
+          {characterName ? (
             <span className="inline-flex items-center gap-1">
               <UserRound size="0.625rem" className="shrink-0" />
-              {characterName ?? personaName}
+              {characterName}
               {lorebook.description ? ` · ${lorebook.description}` : ""}
             </span>
           ) : (
@@ -1289,10 +1258,10 @@ function LorebookRow({
               e.stopPropagation();
               onDelete();
             }}
-	            className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
-	            title="Delete"
-	          >
-            <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            title="Delete"
+          >
+            <Trash2 size="0.75rem" />
           </button>
         </div>
       )}

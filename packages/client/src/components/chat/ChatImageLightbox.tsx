@@ -70,6 +70,7 @@ export function ChatImageLightbox({
 
   return createPortal(
     <div
+      data-chat-floating-panel
       className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 max-md:pt-[env(safe-area-inset-top)]"
       role="dialog"
       aria-modal="true"
@@ -176,6 +177,7 @@ export function ChatVideoLightbox({
 
   return createPortal(
     <div
+      data-chat-floating-panel
       className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 max-md:pt-[env(safe-area-inset-top)]"
       role="dialog"
       aria-modal="true"

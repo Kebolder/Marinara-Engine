@@ -5,10 +5,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   ttsConfigSchema,
+  ttsSourceProfileFromConfig,
   TTS_SETTINGS_KEY,
   TTS_API_KEY_MASK,
   type TTSSource,
   type TTSConfig,
+  type TTSSourceProfiles,
   type TTSVoicesResponse,
 } from "@marinara-engine/shared";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
@@ -19,6 +21,17 @@ import { safeFetch } from "../utils/security.js";
 // OpenAI built-in voices used as fallback when the provider has no /audio/voices endpoint
 const OPENAI_FALLBACK_VOICES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
 const XAI_FALLBACK_VOICES = ["eve", "ara", "rex", "sal", "leo"];
+const ELEVENLABS_DEFAULT_VOICES: VoiceOption[] = [
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", category: "ElevenLabs default" },
+  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi", category: "ElevenLabs default" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella", category: "ElevenLabs default" },
+  { id: "ErXwobaYiN019PkySvjV", name: "Antoni", category: "ElevenLabs default" },
+  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli", category: "ElevenLabs default" },
+  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh", category: "ElevenLabs default" },
+  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold", category: "ElevenLabs default" },
+  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam", category: "ElevenLabs default" },
+  { id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam", category: "ElevenLabs default" },
+];
 
 const TTS_SOURCE_DEFAULTS: Record<TTSSource, { baseUrl: string; model: string }> = {
   openai: {
@@ -38,6 +51,7 @@ const TTS_SOURCE_DEFAULTS: Record<TTSSource, { baseUrl: string; model: string }>
     model: "grok-tts",
   },
 };
+const TTS_SOURCES: readonly TTSSource[] = ["openai", "elevenlabs", "pockettts", "xai"];
 
 const ELEVENLABS_NON_TTS_MODELS = new Set(["eleven_ttv_v3", "eleven_multilingual_ttv_v2"]);
 const ELEVENLABS_TTS_MODEL_ALIASES: Record<string, string> = {
@@ -123,6 +137,70 @@ function parseStoredConfig(raw: string | null) {
   }
 }
 
+function withActiveSourceProfile(config: TTSConfig): TTSConfig {
+  return {
+    ...config,
+    sourceProfiles: {
+      ...config.sourceProfiles,
+      [config.source]: ttsSourceProfileFromConfig(config),
+    },
+  };
+}
+
+/** Mask every stored provider key before returning TTS configuration to the browser. */
+export function maskTTSConfigForResponse(config: TTSConfig): TTSConfig {
+  const configWithProfiles = withActiveSourceProfile(config);
+  const sourceProfiles: TTSSourceProfiles = {};
+  for (const source of TTS_SOURCES) {
+    const profile = configWithProfiles.sourceProfiles[source];
+    if (!profile) continue;
+    sourceProfiles[source] = {
+      ...profile,
+      apiKey: profile.apiKey ? TTS_API_KEY_MASK : "",
+    };
+  }
+  return {
+    ...configWithProfiles,
+    apiKey: configWithProfiles.apiKey ? TTS_API_KEY_MASK : "",
+    sourceProfiles,
+  };
+}
+
+/**
+ * Preserve masked provider credentials, encrypt new keys, and keep the active
+ * provider fields synchronized with its source profile.
+ */
+export function prepareTTSConfigForStorage(
+  input: TTSConfig,
+  existing: TTSConfig,
+  encryptKey: (value: string) => string = encryptApiKey,
+): TTSConfig {
+  const existingProfiles = withActiveSourceProfile(existing).sourceProfiles;
+  const sourceProfiles: TTSSourceProfiles = { ...existingProfiles };
+
+  for (const source of TTS_SOURCES) {
+    const incomingProfile = input.sourceProfiles[source];
+    if (!incomingProfile) continue;
+    sourceProfiles[source] = {
+      ...incomingProfile,
+      apiKey:
+        incomingProfile.apiKey === TTS_API_KEY_MASK
+          ? (existingProfiles[source]?.apiKey ?? "")
+          : encryptKey(incomingProfile.apiKey),
+    };
+  }
+
+  const apiKey =
+    input.apiKey === TTS_API_KEY_MASK ? (existingProfiles[input.source]?.apiKey ?? "") : encryptKey(input.apiKey);
+  const storedConfig: TTSConfig = {
+    ...input,
+    apiKey,
+    sourceProfiles,
+  };
+  storedConfig.sourceProfiles[input.source] = ttsSourceProfileFromConfig(storedConfig);
+  return storedConfig;
+}
+
 /**
  * Resolve the stored config and decrypt the API key.
  * Returns config with the plain-text key (never sent to client).
@@ -149,7 +227,7 @@ function responseFromVoiceOptions(
 
 function fallbackVoices(source: TTSSource): TTSVoicesResponse {
   if (source === "elevenlabs") {
-    return responseFromVoiceOptions(source, [], false);
+    return responseFromVoiceOptions(source, ELEVENLABS_DEFAULT_VOICES, false);
   }
 
   if (source === "pockettts") {
@@ -229,6 +307,10 @@ function nanoGptV1BaseUrl(baseUrl: string) {
   return root.endsWith("/v1") ? root : `${root}/v1`;
 }
 
+function pocketTtsV1BaseUrl(baseUrl: string) {
+  return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+}
+
 function normalizeElevenLabsTtsModelId(model: string) {
   const trimmed = model.trim();
   return ELEVENLABS_TTS_MODEL_ALIASES[trimmed.toLowerCase()] ?? trimmed;
@@ -291,16 +373,24 @@ function parseVoiceOption(value: unknown): VoiceOption | null {
   if (!obj) return null;
 
   const id =
-    readString(obj["voice_id"]) ?? readString(obj["voiceId"]) ?? readString(obj["id"]) ?? readString(obj["name"]);
+    readString(obj["voice_id"]) ??
+    readString(obj["voiceId"]) ??
+    readString(obj["id"]) ??
+    readString(obj["name"]) ??
+    readString(obj["voice_url"]) ??
+    readString(obj["voiceUrl"]) ??
+    readString(obj["url"]) ??
+    readString(obj["path"]);
   if (!id) return null;
 
-  const name = readString(obj["name"]) ?? id;
+  const name = readString(obj["name"]) ?? readString(obj["display_name"]) ?? readString(obj["displayName"]) ?? id;
+  const providerType = readString(obj["type"]);
   return {
     id,
     name,
     description: readString(obj["description"]) ?? null,
     previewUrl: readString(obj["preview_url"]) ?? readString(obj["previewUrl"]) ?? null,
-    category: readString(obj["category"]) ?? null,
+    category: readString(obj["category"]) ?? providerType ?? null,
     labels: readLabels(obj["labels"]),
   };
 }
@@ -480,7 +570,19 @@ async function fetchProviderVoices(cfg: TTSConfig): Promise<TTSVoicesResponse> {
   const base = configuredBaseUrl(cfg);
 
   if (cfg.source === "pockettts") {
-    return fallbackVoices(cfg.source);
+    const res = await safeFetch(`${pocketTtsV1BaseUrl(base)}/voices`, {
+      headers: optionalBearerHeaders(cfg.apiKey),
+      signal: AbortSignal.timeout(10_000),
+      policy: {
+        allowLocal: true,
+        allowedProtocols: ["https:", "http:"],
+        flagName: "TTS_LOCAL_URLS_ENABLED",
+      },
+      maxResponseBytes: 2 * 1024 * 1024,
+    });
+    if (!res.ok) return fallbackVoices(cfg.source);
+    const voices = mergeVoiceOptions(parseVoiceOptions(await res.json()));
+    return voices.length > 0 ? responseFromVoiceOptions(cfg.source, voices, true) : fallbackVoices(cfg.source);
   }
 
   if (cfg.source === "elevenlabs") {
@@ -548,9 +650,7 @@ export async function ttsRoutes(app: FastifyInstance) {
   app.get("/config", async () => {
     const raw = await storage.get(TTS_SETTINGS_KEY);
     const cfg = parseStoredConfig(raw);
-    // Mask the stored (encrypted) key — just tell client whether one is saved
-    const hasKey = Boolean(cfg.apiKey);
-    return { ...cfg, apiKey: hasKey ? TTS_API_KEY_MASK : "" };
+    return maskTTSConfigForResponse(cfg);
   });
 
   /**
@@ -560,16 +660,9 @@ export async function ttsRoutes(app: FastifyInstance) {
    */
   app.put("/config", async (req, reply) => {
     const input = ttsConfigSchema.parse(req.body);
-
-    if (input.apiKey === TTS_API_KEY_MASK) {
-      // Client sent the mask back — preserve the existing encrypted key
-      const existing = parseStoredConfig(await storage.get(TTS_SETTINGS_KEY));
-      input.apiKey = existing.apiKey; // already encrypted blob
-    } else {
-      input.apiKey = encryptApiKey(input.apiKey);
-    }
-
-    await storage.set(TTS_SETTINGS_KEY, JSON.stringify(input));
+    const existing = parseStoredConfig(await storage.get(TTS_SETTINGS_KEY));
+    const storedConfig = prepareTTSConfigForStorage(input, existing);
+    await storage.set(TTS_SETTINGS_KEY, JSON.stringify(storedConfig));
     return reply.status(204).send();
   });
 

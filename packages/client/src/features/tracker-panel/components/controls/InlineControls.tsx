@@ -69,7 +69,7 @@ export function FittedText({
         {children}
       </span>
       <span
-        className="block min-w-0 max-w-full overflow-hidden whitespace-nowrap"
+        className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
         style={scale < 0.999 ? { fontSize: `calc(1em * ${scale.toFixed(3)})` } : undefined}
       >
         {children}
@@ -85,6 +85,7 @@ export function InlineEdit({
   className,
   style,
   title,
+  ariaLabel,
   fullPreview = false,
   scrollOnHover = false,
   showEditHint = true,
@@ -106,6 +107,7 @@ export function InlineEdit({
   className?: string;
   style?: CSSProperties;
   title?: string;
+  ariaLabel?: string;
   fullPreview?: boolean;
   scrollOnHover?: boolean;
   showEditHint?: boolean;
@@ -191,6 +193,7 @@ export function InlineEdit({
         )}
         style={style}
         placeholder={placeholder}
+        aria-label={ariaLabel}
       />
     );
   }
@@ -211,7 +214,9 @@ export function InlineEdit({
       onBlur={resetScrollOverflow}
       title={lockToggleActive ? (locked ? "Unlock field" : "Lock field") : (title ?? currentValue)}
       aria-label={
-        lockToggleActive ? `${locked ? "Unlock" : "Lock"} ${(title ?? currentValue) || placeholder}` : undefined
+        lockToggleActive
+          ? `${locked ? "Unlock" : "Lock"} ${(ariaLabel ?? title ?? currentValue) || placeholder}`
+          : ariaLabel
       }
       aria-pressed={lockToggleActive ? locked : undefined}
       className={cn(
@@ -315,7 +320,53 @@ export function InlineNumber({
   onToggleLock?: () => void;
 }) {
   const numericValue = coerceStatNumber(value);
-  const width = getNumberValueWidth(numericValue);
+  const [draft, setDraft] = useState(String(numericValue));
+  const [focused, setFocused] = useState(false);
+  const cancelledRef = useRef(false);
+  const pendingValueRef = useRef<number | null>(null);
+  const lastExternalValueRef = useRef(numericValue);
+  const displayedValue = pendingValueRef.current ?? numericValue;
+  const committedValue = String(displayedValue);
+  // Keep keystrokes as text until commit so clearing `0` does not immediately coerce back to `0`.
+  const width = getNumberValueWidth(focused ? draft : committedValue);
+
+  useEffect(() => {
+    const externalValueChanged = lastExternalValueRef.current !== numericValue;
+    lastExternalValueRef.current = numericValue;
+
+    if (pendingValueRef.current !== null) {
+      if (numericValue === pendingValueRef.current) {
+        pendingValueRef.current = null;
+      } else if (!externalValueChanged) {
+        return;
+      } else {
+        pendingValueRef.current = null;
+      }
+    }
+
+    if (!focused) setDraft(String(numericValue));
+  }, [numericValue, focused]);
+
+  const commit = () => {
+    setFocused(false);
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      setDraft(committedValue);
+      return;
+    }
+
+    const trimmed = draft.trim();
+    const parsed = trimmed ? Number(trimmed) : Number.NaN;
+    if (!Number.isFinite(parsed)) {
+      setDraft(committedValue);
+      return;
+    }
+
+    const next = min === undefined ? parsed : Math.max(min, parsed);
+    pendingValueRef.current = next === numericValue ? null : next;
+    setDraft(String(next));
+    if (next !== numericValue) onChange(next);
+  };
 
   if (lockMode && onToggleLock) {
     return (
@@ -343,13 +394,24 @@ export function InlineNumber({
   return (
     <input
       type="number"
-      value={numericValue}
-      onChange={(event) => {
-        const numeric = Number(event.target.value);
-        const next = Number.isFinite(numeric) ? numeric : 0;
-        onChange(min === undefined ? next : Math.max(min, next));
+      value={draft}
+      onFocus={(event) => {
+        cancelledRef.current = false;
+        setFocused(true);
+        event.currentTarget.select();
+      }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          cancelledRef.current = true;
+          setDraft(committedValue);
+          event.currentTarget.blur();
+        }
       }}
       title={title}
+      aria-label={title}
       style={{ width }}
       className={cn(
         "rounded bg-transparent px-1 py-0.5 text-right text-[0.625rem] tabular-nums text-[color:var(--tracker-inline-number,var(--tracker-inline-foreground,var(--foreground)))] outline-none transition-colors hover:bg-[var(--accent)]/45 focus:bg-[var(--background)] focus:ring-1 focus:ring-[var(--border)] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",

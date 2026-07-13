@@ -2,7 +2,7 @@
 // Routes: Browser — JannyAI provider
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { isAllowedImageBuffer, safeFetch } from "../utils/security.js";
+import { resolveValidatedImage, safeFetch } from "../utils/security.js";
 
 const JANNY_SEARCH_URL = "https://search.jannyai.com/multi-search";
 const JANNY_IMAGE_BASE = "https://image.jannyai.com/bot-avatars/";
@@ -22,12 +22,9 @@ async function fetchAvatarImage(url: string, signal: AbortSignal) {
   });
   if (!res.ok) return null;
   const buf = Buffer.from(await res.arrayBuffer());
-  const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
-  const imageInfo = isAllowedImageBuffer(buf);
-  if (!contentType.startsWith("image/") || !imageInfo) {
-    throw new Error("Unsupported avatar image content");
-  }
-  return { buf, mimeType: imageInfo.mimeType };
+  const image = resolveValidatedImage(buf);
+  if (!image) throw new Error("Unsupported avatar image content");
+  return { buf, mimeType: image.mimeType };
 }
 
 function jannySearchHeaders(token: string): Record<string, string> {
@@ -313,7 +310,6 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
     }
   });
 
-  // ── Proxy JannyAI avatar images ──
   // ── Fetch full character details by scraping JannyAI page ──
   app.get<{ Params: { id: string } }>("/janny/character/:id", async (req, reply) => {
     const charId = req.params.id;
@@ -456,6 +452,7 @@ export async function botBrowserJannyRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── Proxy JannyAI avatar images ──
   app.get<{ Params: { "*": string } }>("/janny/avatar/*", async (req, reply) => {
     const avatarPath = (req.params as Record<string, string>)["*"];
     if (!avatarPath) throw new Error("Missing avatar path");

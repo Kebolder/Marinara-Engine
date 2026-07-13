@@ -9,7 +9,7 @@ export const agentKeys = {
   all: ["agents"] as const,
   detail: (id: string) => ["agents", id] as const,
   customRuns: (chatId: string) => ["agents", "runs", "custom", chatId] as const,
-  // Same key shape SecretPlotPanel uses inline, so invalidations stay coherent.
+  // SecretPlotPanel also uses agentKeys.memory() directly, so invalidations stay coherent.
   memory: (agentType: string, chatId: string) => ["agent-memory", agentType, chatId] as const,
 };
 

@@ -1,7 +1,16 @@
 // ──────────────────────────────────────────────
 // Panel: API Connections (polished, with folders)
 // ──────────────────────────────────────────────
-import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent, type TouchEvent } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  type ChangeEvent,
+  type DragEvent,
+  type TouchEvent,
+} from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -78,7 +87,6 @@ import { SelectionActionBar } from "../ui/SelectionActionBar";
 import { SmoothFolderContent } from "../ui/SmoothFolderContent";
 import { TouchDragHandle } from "../ui/TouchDragHandle";
 
-/** Provider color pair for connection icons. Kept as one blue family by design. */
 const CONNECTION_ICON_COLORS = {
   from: "from-sky-400",
   to: "to-blue-500",
@@ -90,6 +98,7 @@ const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; 
   openai_chatgpt: CONNECTION_ICON_COLORS,
   anthropic: CONNECTION_ICON_COLORS,
   claude_subscription: CONNECTION_ICON_COLORS,
+  grok_subscription: CONNECTION_ICON_COLORS,
   google: CONNECTION_ICON_COLORS,
   google_vertex: CONNECTION_ICON_COLORS,
   mistral: CONNECTION_ICON_COLORS,
@@ -102,6 +111,12 @@ const PROVIDER_COLORS: Record<string, { from: string; to: string; ring: string; 
   video_generation: CONNECTION_ICON_COLORS,
 };
 const DEFAULT_COLOR = CONNECTION_ICON_COLORS;
+
+function getConnectionFallbackIcon(provider: string) {
+  if (provider === "image_generation") return <ImageIcon size="1rem" />;
+  if (provider === "video_generation") return <Film size="1rem" />;
+  return <Link size="1rem" />;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -145,6 +160,28 @@ function getNextUnnamedFolderName(existingFolders: Array<{ name: string }>): str
   let index = 2;
   while (names.has(`unnamed ${index}`)) index += 1;
   return `unnamed ${index}`;
+}
+
+function getDroppedConnectionIds(event: DragEvent<HTMLElement>, fallbackId: string | null): string[] {
+  const payload = event.dataTransfer.getData("application/x-marinara-connection-ids");
+  if (payload) {
+    try {
+      const parsed = JSON.parse(payload);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((id): id is string => typeof id === "string" && id.length > 0);
+      }
+    } catch {
+      // Fall through to single-id payloads. Some desktop drag providers can
+      // expose partial data while moving between native drop targets.
+    }
+  }
+
+  const singleId =
+    event.dataTransfer.getData("application/x-marinara-connection-id") ||
+    event.dataTransfer.getData("text/plain") ||
+    fallbackId ||
+    "";
+  return singleId ? [singleId] : [];
 }
 
 function SidecarCard() {
@@ -876,7 +913,7 @@ function ConnectionRow({
   const iconContent = conn.imagePath ? (
     <img src={conn.imagePath} alt="" className="h-full w-full object-cover" draggable={false} />
   ) : (
-    <Link size="1rem" />
+    getConnectionFallbackIcon(conn.provider)
   );
   const iconFrameClasses = cn(
     "relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br text-white shadow-sm",
@@ -998,10 +1035,10 @@ function ConnectionRow({
             }
             deleteConnection.mutate(conn.id);
           }}
-          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger p-1.5"
+          className="mari-chrome-control mari-chrome-control--small p-1.5"
           title="Delete"
         >
-          <Trash2 size="0.75rem" className="text-[var(--destructive)]" />
+          <Trash2 size="0.75rem" />
         </button>
       </div>
     </div>
@@ -1071,12 +1108,7 @@ function ConnectionFolderRow({
       onDrop={(event) => {
         if (!draggedConnectionId) return;
         event.preventDefault();
-        const connectionId =
-          event.dataTransfer.getData("application/x-marinara-connection-id") ||
-          event.dataTransfer.getData("text/plain") ||
-          draggedConnectionId;
-        const payload = event.dataTransfer.getData("application/x-marinara-connection-ids");
-        const connectionIds = payload ? (JSON.parse(payload) as string[]) : [connectionId];
+        const connectionIds = getDroppedConnectionIds(event, draggedConnectionId);
         if (connectionIds.length > 0) onDropConnection(connectionIds, folder.id);
         setIsDropTarget(false);
       }}
@@ -1156,7 +1188,7 @@ function ConnectionFolderRow({
             e.stopPropagation();
             onDelete(folder);
           }}
-          className="mari-chrome-control mari-chrome-control--small mari-chrome-control--danger shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
+          className="mari-chrome-control mari-chrome-control--small shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100"
           title="Delete folder"
         >
           <Trash2 size="0.75rem" />
@@ -1338,6 +1370,29 @@ export function ConnectionsPanel() {
       reorderConnectionsInFolder(connectionIds, folderId);
     },
     [reorderConnectionsInFolder],
+  );
+
+  const handleRootConnectionDragOver = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      if (!draggedConnectionId) return;
+      const target = event.target instanceof Element ? event.target.closest("[data-connection-id]") : null;
+      if (target) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    [draggedConnectionId],
+  );
+
+  const handleRootConnectionDrop = useCallback(
+    (event: DragEvent<HTMLElement>) => {
+      if (!draggedConnectionId) return;
+      const target = event.target instanceof Element ? event.target.closest("[data-connection-id]") : null;
+      if (target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleDropConnectionsToFolder(getDroppedConnectionIds(event, draggedConnectionId), null);
+    },
+    [draggedConnectionId, handleDropConnectionsToFolder],
   );
 
   const handleDropConnectionsOnRow = useCallback(
@@ -1539,15 +1594,7 @@ export function ConnectionsPanel() {
         onDropOnRow={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          const payload = event.dataTransfer.getData("application/x-marinara-connection-ids");
-          const fallbackId =
-            event.dataTransfer.getData("application/x-marinara-connection-id") ||
-            event.dataTransfer.getData("text/plain") ||
-            draggedConnectionId;
-          handleDropConnectionsOnRow(
-            payload ? (JSON.parse(payload) as string[]) : fallbackId ? [fallbackId] : [],
-            conn.id,
-          );
+          handleDropConnectionsOnRow(getDroppedConnectionIds(event, draggedConnectionId), conn.id);
         }}
         onTouchStart={(event) => {
           startConnectionTouchDrag(event, conn.id, {
@@ -1762,32 +1809,21 @@ export function ConnectionsPanel() {
       )}
 
       {/* Unfiled connections */}
-      {draggedConnectionId && (
-        <div
-          data-connection-folder-root
-          onDragOver={(event) => {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(event) => {
-            event.preventDefault();
-            const payload = event.dataTransfer.getData("application/x-marinara-connection-ids");
-            const fallbackId =
-              event.dataTransfer.getData("application/x-marinara-connection-id") ||
-              event.dataTransfer.getData("text/plain") ||
-              draggedConnectionId;
-            handleDropConnectionsToFolder(
-              payload ? (JSON.parse(payload) as string[]) : fallbackId ? [fallbackId] : [],
-              null,
-            );
-          }}
-          className="rounded-xl border border-dashed border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-3 py-2 text-[0.625rem] text-[var(--marinara-chat-chrome-button-text-active)]"
-        >
-          Drop here to move out of folder
-        </div>
-      )}
-
-      <div className="stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors">
+      <div
+        data-connection-folder-root
+        onDragOver={handleRootConnectionDragOver}
+        onDrop={handleRootConnectionDrop}
+        className={cn(
+          "stagger-children flex min-h-8 flex-col gap-1 rounded-xl transition-colors",
+          draggedConnectionId &&
+            "min-h-16 border border-dashed border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-highlight-bg)] p-1",
+        )}
+      >
+        {draggedConnectionId && (
+          <div className="pointer-events-none px-2 py-1 text-[0.625rem] text-[var(--marinara-chat-chrome-button-text-active)]">
+            Drop here to move out of folder
+          </div>
+        )}
         {unfiledConnections.map(renderConnectionRow)}
       </div>
 

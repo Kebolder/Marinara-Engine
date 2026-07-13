@@ -20,6 +20,8 @@ export function SettingsSection({
   description,
   help,
   icon,
+  headerAction,
+  anchorId,
   children,
   className,
   contentClassName,
@@ -29,6 +31,8 @@ export function SettingsSection({
   description?: ReactNode;
   help?: string;
   icon?: ReactNode;
+  headerAction?: ReactNode;
+  anchorId?: string;
   children: ReactNode;
   className?: string;
   contentClassName?: string;
@@ -36,6 +40,7 @@ export function SettingsSection({
 }) {
   return (
     <section
+      id={anchorId}
       className={cn(
         "overflow-hidden rounded-lg border bg-[var(--background)]/35 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--foreground)_8%,transparent)]",
         tone === "danger" ? "border-[var(--destructive)]/30 bg-[var(--destructive)]/5" : "border-[var(--border)]/70",
@@ -59,7 +64,7 @@ export function SettingsSection({
           <div
             className={cn(
               "inline-flex items-center gap-1 text-xs font-semibold",
-              tone === "danger" ? "text-[var(--destructive)]" : "text-[var(--foreground)]",
+              tone === "danger" ? "text-[var(--destructive)]" : "text-[var(--marinara-chat-chrome-panel-title)]",
             )}
           >
             {title}
@@ -71,6 +76,7 @@ export function SettingsSection({
             </div>
           )}
         </div>
+        {headerAction && <div className="shrink-0">{headerAction}</div>}
       </div>
       <div className={cn("border-t border-[var(--border)]/60 px-3 pb-3 pt-2.5", contentClassName)}>{children}</div>
     </section>
@@ -130,6 +136,7 @@ export function ConversationSoundSetting() {
         <HelpTooltip text="Play a notification ping when you receive a new message while on a different chat." />
       </div>
       <ToggleSetting
+        anchorId="settings-control-notification-conversation-sound"
         label="Conversation mode"
         checked={convoNotificationSound}
         onChange={(v) => {
@@ -138,6 +145,7 @@ export function ConversationSoundSetting() {
         }}
       />
       <ToggleSetting
+        anchorId="settings-control-notification-roleplay-sound"
         label="Roleplay mode"
         checked={rpNotificationSound}
         onChange={(v) => {
@@ -146,6 +154,7 @@ export function ConversationSoundSetting() {
         }}
       />
       <ToggleSetting
+        anchorId="settings-control-notification-game-sound"
         label="Game mode"
         checked={gameNotificationSound}
         onChange={(v) => {
@@ -154,6 +163,7 @@ export function ConversationSoundSetting() {
         }}
       />
       <ToggleSetting
+        anchorId="settings-control-notification-unfocused-only"
         label="Only when Marinara is unfocused"
         checked={notificationSoundsOnlyWhenUnfocused}
         onChange={setNotificationSoundsOnlyWhenUnfocused}
@@ -164,6 +174,7 @@ export function ConversationSoundSetting() {
         <HelpTooltip text="Show an operating-system browser notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
       </div>
       <ToggleSetting
+        anchorId="settings-control-browser-background-notifications"
         label="Background replies"
         checked={conversationBrowserNotifications && browserPermission === "granted"}
         onChange={handleBrowserNotificationToggle}
@@ -177,18 +188,23 @@ export function ToggleSetting({
   checked,
   onChange,
   help,
+  endAction,
   disabled = false,
+  anchorId,
   switchClassName,
 }: {
   label: ReactNode;
   checked: boolean;
   onChange: (v: boolean) => void;
   help?: string;
+  endAction?: ReactNode;
   disabled?: boolean;
+  anchorId?: string;
   switchClassName?: string;
 }) {
   return (
     <SettingsSwitch
+      anchorId={anchorId}
       label={label}
       checked={checked}
       onChange={onChange}
@@ -198,6 +214,7 @@ export function ToggleSetting({
       className="justify-between gap-3 p-1.5"
       labelClassName="text-xs"
       switchClassName={switchClassName}
+      endAction={endAction}
     />
   );
 }
@@ -211,6 +228,7 @@ export function SettingsCheckbox({
   disabled = false,
   tone = "default",
   align = "start",
+  anchorId,
   className,
   labelClassName,
 }: {
@@ -222,6 +240,7 @@ export function SettingsCheckbox({
   disabled?: boolean;
   tone?: "default" | "danger";
   align?: "start" | "between";
+  anchorId?: string;
   className?: string;
   labelClassName?: string;
 }) {
@@ -268,8 +287,9 @@ export function SettingsCheckbox({
 
   return (
     <label
+      id={anchorId}
       className={cn(
-        "flex cursor-pointer rounded-lg transition-colors hover:bg-[var(--secondary)]/50",
+        "flex scroll-mt-3 cursor-pointer rounded-lg transition-colors hover:bg-[var(--secondary)]/50",
         align === "between" ? "items-center justify-between gap-3 p-1.5" : "items-start gap-2.5 p-1.5",
         disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
         className,
@@ -298,8 +318,10 @@ type SettingsSwitchProps = SettingsSwitchAccessibleLabel & {
   title?: string;
   description?: ReactNode;
   help?: string;
+  endAction?: ReactNode;
   disabled?: boolean;
   labelPosition?: "start" | "end";
+  anchorId?: string;
   className?: string;
   labelClassName?: string;
   /** Appended last so callers can intentionally override checked-track visuals. */
@@ -314,8 +336,10 @@ export function SettingsSwitch({
   title,
   description,
   help,
+  endAction,
   disabled = false,
   labelPosition = "end",
+  anchorId,
   className,
   labelClassName,
   switchClassName,
@@ -356,6 +380,7 @@ export function SettingsSwitch({
     <span className="inline-flex shrink-0 items-center gap-1.5">
       {help && <HelpTooltip text={help} />}
       {switchControl}
+      {endAction}
     </span>
   );
   const text = label ? (
@@ -381,9 +406,10 @@ export function SettingsSwitch({
 
   return (
     <div
+      id={anchorId}
       title={title}
       className={cn(
-        "flex items-center gap-3 rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50",
+        "flex scroll-mt-3 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-[var(--secondary)]/50",
         disabled && "cursor-not-allowed opacity-60 hover:bg-transparent",
         className,
       )}

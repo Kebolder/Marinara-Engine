@@ -1,6 +1,6 @@
 // ──────────────────────────────────────────────
 // View: Browser (full-page, replaces chat area)
-// Multi-provider: ChubAI, JannyAI, CharacterTavern, Pygmalion, Wyvern
+// Multi-provider: ChubAI, JannyAI, CharacterTavern, Pygmalion, Wyvern, DataCat
 // With login modals for Pygmalion & CharacterTavern NSFW, PNG download for all providers
 // ──────────────────────────────────────────────
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
@@ -105,13 +105,10 @@ interface ProviderConfig {
   hasTokenFilters: boolean;
   extraToggles: { key: string; label: string; icon: string }[];
   nsfwAvailable: boolean;
-  /** "login" = show login modal, "wyvern" = show sort hint, true/false = normal */
+  /** "free" = NSFW toggle enabled; "login" = toggle enabled once logged in; "wyvern" = toggle rendered disabled (only sourceId "wyvern" pairs this with a sort-hint toast on click — other "wyvern"-mode providers, e.g. DataCat, get no toast) */
   nsfwMode: "free" | "login" | "wyvern";
   search: (params: SearchParams) => Promise<{ cards: BrowseCard[]; totalCount: number }>;
   fetchDetail: (card: BrowseCard) => Promise<CardDetail | null>;
-  importCard: (card: BrowseCard) => Promise<void>;
-  getAvatarUrl: (card: BrowseCard) => string;
-  getExternalUrl: (card: BrowseCard) => string;
   siteName: string;
 }
 
@@ -384,8 +381,6 @@ const chubProvider: ProviderConfig = {
   extraToggles: [],
   nsfwAvailable: true,
   nsfwMode: "free",
-  getAvatarUrl: (card) => `/api/bot-browser/chub/avatar/${encodeProxyPath(card.id)}`,
-  getExternalUrl: (card) => `https://chub.ai/characters/${card.id}`,
   search: async (p) => {
     const preset = CHUB_SORT_PRESETS.find((pr) => pr.value === p.sort) ?? CHUB_SORT_PRESETS[0];
     const isSearching = p.query.trim().length > 0;
@@ -462,7 +457,6 @@ const chubProvider: ProviderConfig = {
       extensions: optionalRecord(def.extensions),
     };
   },
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -489,15 +483,6 @@ const jannyProvider: ProviderConfig = {
   extraToggles: [{ key: "showLowQuality", label: "Show Low Quality", icon: "🚫" }],
   nsfwAvailable: true,
   nsfwMode: "free",
-  getAvatarUrl: (card) => `/api/bot-browser/janny/avatar/${encodeProxyPath((card._raw as any)?.avatar || "")}`,
-  getExternalUrl: (card) => {
-    const raw = card._raw as any;
-    const slug = card.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-    return `https://jannyai.com/characters/${raw?.id || card.id}_character-${slug}`;
-  },
   search: async (p) => {
     // Fetch a one-time search token from the server (token is scraped from JannyAI's
     // public Astro bundle). The actual MeiliSearch POST runs from the BROWSER so that
@@ -792,7 +777,7 @@ const jannyProvider: ProviderConfig = {
       /* fall through */
     }
 
-    // Strategy 2: server-side proxy (likely fails due to Cloudflare, but try anyway)
+    // Fall back to our server-side proxy (likely fails due to Cloudflare, but try anyway)
     try {
       const res = await fetch(`/api/bot-browser/janny/character/${charId}?slug=character-${slug}`);
       if (res.ok) {
@@ -813,7 +798,6 @@ const jannyProvider: ProviderConfig = {
     return null;
   },
 
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -840,8 +824,6 @@ const chartavernProvider: ProviderConfig = {
   extraToggles: [{ key: "isOC", label: "Original Character", icon: "⭐" }],
   nsfwAvailable: false,
   nsfwMode: "login",
-  getAvatarUrl: (card) => `/api/bot-browser/chartavern/avatar/${encodeProxyPath(card.id)}`,
-  getExternalUrl: (card) => `https://character-tavern.com/character/${card.id}`,
   search: async (p) => {
     const params = new URLSearchParams({
       q: p.query,
@@ -902,7 +884,6 @@ const chartavernProvider: ProviderConfig = {
       hasLorebook: !!c.lorebookId,
     };
   },
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -930,14 +911,6 @@ const pygmalionProvider: ProviderConfig = {
   extraToggles: [],
   nsfwAvailable: false,
   nsfwMode: "login",
-  getAvatarUrl: (card) => {
-    const raw = card._raw as any;
-    const av = raw?.avatarUrl;
-    if (!av) return "";
-    if (av.startsWith("http")) return `/api/bot-browser/pygmalion/avatar/${encodeURIComponent(av)}`;
-    return `/api/bot-browser/pygmalion/avatar/${encodeProxyPath(av)}`;
-  },
-  getExternalUrl: (card) => `https://pygmalion.chat/character/${card.id}`,
   search: async (p) => {
     const params = new URLSearchParams({
       q: p.query,
@@ -1013,7 +986,6 @@ const pygmalionProvider: ProviderConfig = {
       alternateGreetings: Array.isArray(p.alternateGreetings) ? p.alternateGreetings.filter(Boolean) : [],
     };
   },
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -1044,14 +1016,6 @@ const wyvernProvider: ProviderConfig = {
   extraToggles: [],
   nsfwAvailable: false,
   nsfwMode: "wyvern",
-  getAvatarUrl: (card) => {
-    const raw = card._raw as any;
-    const src = raw?.avatar_url || raw?.avatar;
-    if (!src) return "";
-    if (src.startsWith("http")) return `/api/bot-browser/wyvern/avatar/${encodeURIComponent(src)}`;
-    return `/api/bot-browser/wyvern/avatar/${encodeProxyPath(src)}/public`;
-  },
-  getExternalUrl: (card) => `https://app.wyvern.chat/characters/${card.id}`,
   search: async (p) => {
     const params = new URLSearchParams({ page: String(p.page), limit: "48", sort: p.sort });
     if (p.query) params.set("q", p.query);
@@ -1123,7 +1087,6 @@ const wyvernProvider: ProviderConfig = {
       hasLorebook: !!(c.lorebooks?.length > 0),
     };
   },
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -1198,18 +1161,6 @@ const datacatProvider: ProviderConfig = {
   // DataCat is NSFW-only — hide the toggle since every character is NSFW-tagged
   nsfwAvailable: false,
   nsfwMode: "wyvern",
-  getAvatarUrl: (card) => {
-    const raw = card._raw as any;
-    const av = raw?.avatar || "";
-    if (!av) return "";
-    if (av.startsWith("http")) return `/api/bot-browser/datacat/avatar/${encodeURIComponent(av)}`;
-    return `/api/bot-browser/datacat/avatar/${encodeProxyPath(av)}`;
-  },
-  getExternalUrl: (card) => {
-    const raw = card._raw as any;
-    const id = raw?.characterId || raw?.character_id || card.id;
-    return `https://datacat.run/characters/${id}`;
-  },
   search: async (p) => {
     await loadDatacatTags();
     const tagIds = p.includeTags.length > 0 ? datacatTagNamesToIds(p.includeTags) : [];
@@ -1358,7 +1309,6 @@ const datacatProvider: ProviderConfig = {
       return null;
     }
   },
-  importCard: async () => {},
 };
 
 // ════════════════════════════════════════════════
@@ -3133,10 +3083,6 @@ function DetailView({
 }
 
 // ════════════════════════════════════════════════
-// Definition Section
-// ════════════════════════════════════════════════
-
-// ════════════════════════════════════════════════
 // PNG Character Card Builder
 // ════════════════════════════════════════════════
 
@@ -3265,6 +3211,10 @@ function crc32(data: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 crc32.table = null as Uint32Array | null;
+
+// ════════════════════════════════════════════════
+// Definition Section
+// ════════════════════════════════════════════════
 
 function DefSection({ title, content }: { title: string; content: string }) {
   return (

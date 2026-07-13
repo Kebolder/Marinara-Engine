@@ -8,7 +8,7 @@ export function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function getNumberValueWidth(value: number) {
-  const text = Number.isFinite(value) ? String(value) : "0";
-  return `${Math.min(7, Math.max(1.15, text.length + 0.1))}ch`;
+export function getNumberValueWidth(value: number | string) {
+  const text = typeof value === "number" ? (Number.isFinite(value) ? String(value) : "0") : value.trim() || "0";
+  return `${Math.min(10, Math.max(1.35, text.length + 0.35))}ch`;
 }

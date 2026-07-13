@@ -35,6 +35,7 @@ import {
   Search,
   Send,
   ShieldAlert,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
@@ -44,11 +45,14 @@ import {
 import { toast } from "sonner";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
+  MARI_STARTER_CHIPS,
   PROFESSOR_MARI_ID,
   type APIConnection,
   type Chat,
   type MariDbHistoryEntry,
   type MariDbPendingApproval,
+  type MariGuidedPlanStep,
+  type MariSuggestionChip,
   type MariWorkspaceSkillDetail,
   type MariWorkspaceSkillsResponse,
   type MariWorkspaceStatus,
@@ -62,6 +66,7 @@ import { filterLanguageGenerationConnections } from "../../lib/connection-filter
 import { api, getPrivilegedActionErrorMessage } from "../../lib/api-client";
 import { formatGenerationParameterError } from "../../lib/generation-parameter-errors";
 import { useChatStore } from "../../stores/chat.store";
+import { useAgentStore } from "../../stores/agent.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore } from "../../stores/ui.store";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
@@ -76,6 +81,7 @@ import {
   dispatchProfessorMariFloatingEvent,
   rememberProfessorMariFloatingEnabled,
 } from "./professor-mari-floating-events";
+import { MariSuggestionChips } from "./MariSuggestionChips";
 
 const MARI_AVATAR_URL = "/sprites/mari/Mari_profile.png";
 const MARI_CHIBI_URL = "/sprites/mari/chibi-professor-mari.png";
@@ -181,10 +187,6 @@ function rememberConnectionId(id: string) {
 
 function isProfessorMariDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches;
-}
-
-function shouldExpandHomeFaqByDefault() {
-  return isProfessorMariDesktopViewport();
 }
 
 function getProfessorMariFileExtension(fileName: string): string {
@@ -1871,7 +1873,6 @@ export function HomeProfessorMariChat({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
-  const [faqExpanded, setFaqExpanded] = useState(shouldExpandHomeFaqByDefault);
   const [faqOpenItemId, setFaqOpenItemId] = useState<string | null>(null);
   const [internalChatWindowOpen, setInternalChatWindowOpen] = useState(
     () => floatingMode && isProfessorMariDesktopViewport(),
@@ -1890,6 +1891,8 @@ export function HomeProfessorMariChat({
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   const skillFileInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const embeddedTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const floatingTextareaRef = useRef<HTMLTextAreaElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
   const handledWorkspaceRefreshIdsRef = useRef<Set<string>>(new Set());
   const workspaceStatusErrorToastShownRef = useRef(false);
@@ -1899,6 +1902,17 @@ export function HomeProfessorMariChat({
 
   const hasActiveGeneration = useChatStore((state) => (chatId ? state.abortControllers.has(chatId) : false));
   const mariPhase = useChatStore((state) => (chatId ? (state.mariPhaseByChatId.get(chatId) ?? null) : null));
+  const mariChips = useAgentStore((state) => state.mariChips);
+  const mariChipsChatId = useAgentStore((state) => state.mariChipsChatId);
+  const setMariChips = useAgentStore((state) => state.setMariChips);
+  const clearMariChips = useAgentStore((state) => state.clearMariChips);
+  const mariPlan = useAgentStore((state) => state.mariPlan);
+  const mariPlanChatId = useAgentStore((state) => state.mariPlanChatId);
+  const mariPlanCursor = useAgentStore((state) => state.mariPlanCursor);
+  const setMariPlan = useAgentStore((state) => state.setMariPlan);
+  const recordMariPlanAnswer = useAgentStore((state) => state.recordMariPlanAnswer);
+  const clearMariPlan = useAgentStore((state) => state.clearMariPlan);
+  const professorMariSuggestionsEnabled = useUIStore((state) => state.professorMariSuggestionsEnabled);
 
   const languageConnections = useMemo<ProfessorMariConnectionOption[]>(
     () => filterLanguageGenerationConnections((connectionsRaw ?? []) as APIConnection[]),
@@ -1926,6 +1940,12 @@ export function HomeProfessorMariChat({
   const effectiveConnectionId = effectiveConnection?.id ?? null;
   const isBusy = sending || hasActiveGeneration || workspaceActive;
   const canSubmitMessage = (draft.trim().length > 0 || attachments.length > 0) && !isReadingAttachments;
+  const visibleSuggestionChips =
+    professorMariSuggestionsEnabled && mariChipsChatId === chatId && mariChips.length > 0
+      ? mariChips
+      : professorMariSuggestionsEnabled && messages.length === 0
+        ? MARI_STARTER_CHIPS
+        : [];
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === selectedSkillId) ?? null,
     [selectedSkillId, skills],
@@ -1940,6 +1960,12 @@ export function HomeProfessorMariChat({
     },
     [onChatWindowOpenChange],
   );
+
+  useEffect(() => {
+    if (professorMariSuggestionsEnabled) return;
+    clearMariChips();
+    clearMariPlan();
+  }, [clearMariChips, clearMariPlan, professorMariSuggestionsEnabled]);
 
   useEffect(() => {
     if (!floatingMode) return;
@@ -1966,10 +1992,14 @@ export function HomeProfessorMariChat({
     };
   }, [floatingMode]);
 
-  const loadMessages = useCallback(async (id: string) => {
-    const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
-    setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
-  }, []);
+  const loadMessages = useCallback(
+    async (id: string, options: { clearSuggestions?: boolean } = {}) => {
+      const items = await api.get<Message[]>(`/chats/${id}/messages?limit=80`);
+      setMessages(items.map((message) => ({ ...message, extra: toMessageExtra(message) })));
+      if (options.clearSuggestions) clearMariChips();
+    },
+    [clearMariChips],
+  );
 
   const loadChatHistory = useCallback(async () => {
     setChatHistoryLoading(true);
@@ -2367,6 +2397,7 @@ export function HomeProfessorMariChat({
     await api.post("/professor-mari/workspace/reset", { clearHistory: true });
     setMessages([]);
     setDraft("");
+    clearMariChips();
     setWorkspaceActive(false);
     setWorkspaceActivity(null);
     useChatStore.getState().clearStreamBuffer(chat.id);
@@ -2377,20 +2408,61 @@ export function HomeProfessorMariChat({
     if (chatHistoryOpen) await loadChatHistory();
     await qc.invalidateQueries({ queryKey: chatKeys.messages(chat.id) });
     toast.success("Professor Mari's previous chat was saved.");
-  }, [chatHistoryOpen, effectiveConnectionId, loadChatHistory, qc]);
+  }, [chatHistoryOpen, clearMariChips, effectiveConnectionId, loadChatHistory, qc]);
+
+  const guidedPlan = professorMariSuggestionsEnabled && mariPlanChatId === chatId ? mariPlan : null;
+  const guidedPlanStep = guidedPlan ? (guidedPlan[mariPlanCursor] ?? null) : null;
+  const chipRowChips = guidedPlanStep ? guidedPlanStep.chips : visibleSuggestionChips;
+  const chipRowHint = guidedPlanStep
+    ? `${guidedPlanStep.question} Suggestions only; you can type your own answer.`
+    : chipRowChips.length > 0
+      ? "Suggestions only. Pick one, or type your own."
+      : null;
+  const showSuggestionLoading =
+    professorMariSuggestionsEnabled &&
+    chipRowChips.length === 0 &&
+    workspaceActivity?.toLocaleLowerCase().includes("suggestion") === true;
+
+  const handleSuggestionSelect = useCallback(
+    (chip: MariSuggestionChip) => {
+      if (guidedPlanStep) {
+        const result = recordMariPlanAnswer(guidedPlanStep.fieldKey, chip.prompt);
+        if (result === "complete") {
+          const answers = useAgentStore.getState().mariPlanAnswers;
+          const summary = Object.entries(answers)
+            .map(([key, value]) => `${key}: ${value}`)
+            .join("; ");
+          clearMariPlan();
+          setDraft(`Create it - ${summary}`);
+          requestAnimationFrame(() => {
+            const textarea = floatingTextareaRef.current ?? embeddedTextareaRef.current;
+            textarea?.focus();
+          });
+        }
+        return;
+      }
+      setDraft((current) => (current.trim() ? `${current.trimEnd()} ${chip.prompt}` : chip.prompt));
+      requestAnimationFrame(() => {
+        const textarea = floatingTextareaRef.current ?? embeddedTextareaRef.current;
+        textarea?.focus();
+      });
+    },
+    [clearMariPlan, guidedPlanStep, recordMariPlanAnswer],
+  );
 
   const runRestart = useCallback(async () => {
     if (isBusy) return;
     setSending(true);
     try {
       await handleRestart();
+      clearMariPlan();
     } catch (error) {
       console.error("[Professor Mari] Failed to restart", error);
       toast.error("Professor Mari could not restart her notes.");
     } finally {
       setSending(false);
     }
-  }, [handleRestart, isBusy]);
+  }, [clearMariPlan, handleRestart, isBusy]);
 
   const keepWorkspaceChange = useCallback(
     async (id: string) => {
@@ -2689,6 +2761,7 @@ export function HomeProfessorMariChat({
       setWorkspaceActive(true);
       setWorkspaceActivity("Thinking...");
       setWorkspaceTimeline([]);
+      setMariChips(chat.id, []);
       useChatStore.getState().setAbortController(chat.id, controller);
       useChatStore.getState().clearStreamBuffer(chat.id);
       useChatStore.getState().clearThinkingBuffer(chat.id);
@@ -2759,6 +2832,16 @@ export function HomeProfessorMariChat({
             };
             setWorkspaceTimeline((current) => upsertToolTimeline(current, toolCall));
             setWorkspaceActivity(isError ? "Tool needs attention" : "Thinking...");
+          } else if (event.type === "suggestions") {
+            if (useUIStore.getState().professorMariSuggestionsEnabled) {
+              setMariChips(chat.id, Array.isArray(event.data) ? (event.data as MariSuggestionChip[]) : []);
+            }
+          } else if (event.type === "plan") {
+            if (useUIStore.getState().professorMariSuggestionsEnabled) {
+              const steps = Array.isArray(event.data) ? (event.data as MariGuidedPlanStep[]) : [];
+              if (steps.length > 0) setMariPlan(chat.id, steps);
+              else clearMariPlan();
+            }
           } else if (event.type === "done") {
             received = true;
           } else if (event.type === "error") {
@@ -2774,11 +2857,11 @@ export function HomeProfessorMariChat({
       }
       return received;
     },
-    [effectiveConnectionId],
+    [clearMariPlan, effectiveConnectionId, setMariChips, setMariPlan],
   );
 
-  const handleSubmit = async () => {
-    const text = draft.trim();
+  const handleSubmit = async (overrideText?: string) => {
+    const text = (overrideText ?? draft).trim();
     const submittedAttachments = attachments;
     const messageText = text || (submittedAttachments.length > 0 ? "Please inspect the attached file." : "");
     if (!messageText || isBusy || isReadingAttachments) return;
@@ -2799,6 +2882,8 @@ export function HomeProfessorMariChat({
     try {
       const chat = await ensureProfessorMariChat(effectiveConnectionId);
       setDraft("");
+      setMariChips(chat.id, []);
+      clearMariPlan();
       setAttachments([]);
       setMessages((current) => [...current, createLocalUserMessage(chat.id, messageText, submittedAttachments)]);
       trackAchievement.mutate("prof_mari_message_sent");
@@ -2865,7 +2950,7 @@ export function HomeProfessorMariChat({
       </div>
 
       <form
-        className="border-t border-[var(--border)]/60 p-2"
+        className="border-t border-[var(--border)]/60 px-2.5 py-2.5"
         onSubmit={(event) => {
           event.preventDefault();
           void handleSubmit();
@@ -2887,6 +2972,19 @@ export function HomeProfessorMariChat({
           isReading={isReadingAttachments}
           onRemove={(index) => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))}
         />
+        {chipRowHint && (
+          <p className="mb-1 flex items-center gap-1.5 px-0.5 text-xs text-[var(--muted-foreground)]">
+            <Sparkles size="0.75rem" className="shrink-0 text-[var(--primary)]" />
+            <span>{chipRowHint}</span>
+          </p>
+        )}
+        {showSuggestionLoading && (
+          <div className="mb-1 flex items-center gap-1.5 px-0.5 text-xs text-[var(--muted-foreground)]">
+            <Sparkles size="0.75rem" className="shrink-0 animate-pulse text-[var(--primary)]" />
+            Thinking up suggestions...
+          </div>
+        )}
+        <MariSuggestionChips chips={chipRowChips} onSelect={handleSuggestionSelect} disabled={isBusy} />
         <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
           <button
             type="button"
@@ -2972,6 +3070,7 @@ export function HomeProfessorMariChat({
           )}
 
           <textarea
+            ref={embeddedTextareaRef}
             value={draft}
             onChange={(event) => {
               setDraft(event.target.value);
@@ -3111,7 +3210,7 @@ export function HomeProfessorMariChat({
     <>
       <section
         className={cn(
-          "home-professor-mari-chat mt-10 w-full max-w-5xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
+          "home-professor-mari-chat mt-8 w-full max-w-5xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 md:mt-0",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
           (desktopChatWindowOpen || launchHidden) && "hidden",
           mobileFocusMode && "hidden",
@@ -3119,19 +3218,29 @@ export function HomeProfessorMariChat({
         data-paused={pageActive ? "false" : "true"}
       >
         <div className="grid gap-2.5 p-2 sm:p-2.5 md:grid-cols-2">
-          <div className="order-2 min-w-0 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 md:order-1 md:min-h-[24rem]">
+          <div
+            className="order-2 min-w-0 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 md:order-1 md:flex md:h-[24rem] md:min-h-0 md:flex-col"
+            data-component="HomeProfessorMariChat.FaqPanel"
+          >
             <HomeFaq
               compact
-              expanded={faqExpanded}
-              onExpandedChange={setFaqExpanded}
+              mobileModal
+              expanded
+              className="md:min-h-0 md:flex-1"
               openItemId={faqOpenItemId}
               onOpenItemIdChange={setFaqOpenItemId}
             />
           </div>
 
-          <div className="relative order-1 flex min-w-0 flex-col items-center gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 text-center sm:p-3 md:order-2 md:min-h-[24rem] md:justify-between md:gap-2.5">
+          <div
+            className="relative order-1 flex min-w-0 flex-col items-center gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 text-center sm:p-3 md:order-2 md:h-[24rem] md:min-h-0 md:justify-between"
+            data-component="HomeProfessorMariChat.MariPanel"
+          >
             <div className="flex w-full flex-col items-center gap-2">
-              <div className="w-full max-w-[10.5rem] [--mari-professor-sprite-bottom:5%] sm:max-w-[12rem] lg:max-w-[14rem] xl:max-w-[15rem]">
+              <div
+                className="relative z-[1] mt-7 w-full max-w-[10.5rem] [--mari-professor-sprite-bottom:5%] sm:max-w-[12rem] md:mt-0 md:max-w-[10rem] lg:max-w-[11rem] xl:max-w-[12rem]"
+                data-component="HomeProfessorMariChat.Scene"
+              >
                 <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
               </div>
               <div className="w-full min-w-0">
@@ -3141,7 +3250,10 @@ export function HomeProfessorMariChat({
                 </div>
               </div>
             </div>
-            <div className="hidden min-h-0 w-full flex-1 flex-col justify-center gap-1.5 overflow-hidden px-1 text-center text-[0.625rem] leading-snug text-[var(--muted-foreground)] sm:flex sm:text-[0.6875rem] lg:text-xs">
+            <div
+              className="hidden min-h-0 w-full flex-1 flex-col justify-center gap-1 px-1 text-center text-[0.6875rem] leading-[1.35] text-[var(--muted-foreground)] md:flex"
+              data-component="HomeProfessorMariChat.Welcome"
+            >
               {MARI_WELCOME.split("\n\n").map((paragraph, index) => (
                 <p key={paragraph} className={cn(index === 0 && "font-semibold text-[var(--foreground)]")}>
                   {paragraph}
@@ -3446,7 +3558,7 @@ export function HomeProfessorMariChat({
                       </div>
 
                       <form
-                        className="border-t border-[var(--border)]/60 p-2"
+                        className="border-t border-[var(--border)]/60 px-2.5 py-2.5"
                         onSubmit={(event) => {
                           event.preventDefault();
                           void handleSubmit();
@@ -3470,6 +3582,19 @@ export function HomeProfessorMariChat({
                             setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))
                           }
                         />
+                        {chipRowHint && (
+                          <p className="mb-1 flex items-center gap-1.5 px-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                            <Sparkles size="0.6875rem" className="shrink-0 text-[var(--primary)]" />
+                            <span>{chipRowHint}</span>
+                          </p>
+                        )}
+                        {showSuggestionLoading && (
+                          <div className="mb-1 flex items-center gap-1.5 px-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">
+                            <Sparkles size="0.6875rem" className="shrink-0 animate-pulse text-[var(--primary)]" />
+                            Thinking up suggestions...
+                          </div>
+                        )}
+                        <MariSuggestionChips chips={chipRowChips} onSelect={handleSuggestionSelect} disabled={isBusy} compact />
                         <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
                           <button
                             type="button"
@@ -3565,6 +3690,7 @@ export function HomeProfessorMariChat({
                           )}
 
                           <textarea
+                            ref={floatingTextareaRef}
                             value={draft}
                             onChange={(event) => {
                               setDraft(event.target.value);

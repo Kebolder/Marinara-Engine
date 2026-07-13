@@ -18,7 +18,7 @@ import type { TrackerPanelSection, TrackerSpriteLookup } from "../tracker-panel.
 import { SectionIconButton } from "./controls/SectionControls";
 import { CharacterTrackerPanel } from "./sections/CharacterTrackerPanel";
 import { CustomTrackerPanel } from "./sections/CustomTrackerPanel";
-import { PersonaInventoryPanel } from "./sections/PersonaTrackerPanel";
+import { PersonaInventoryPanel } from "./sections/PersonaInventoryPanel";
 import { QuestTrackerPanel } from "./sections/quest-tracker/QuestTrackerPanel";
 import { WorldStatePanel } from "./sections/WorldStatePanel";
 
@@ -49,6 +49,7 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed,
   deleteMode,
   addMode,
+  hideMode,
 }: {
   activeChatId: string;
   activePersona: Persona | null;
@@ -76,6 +77,7 @@ export function TrackerSectionList({
   toggleTrackerPanelSectionCollapsed: (section: TrackerPanelSection) => void;
   deleteMode: boolean;
   addMode: boolean;
+  hideMode: boolean;
 }) {
   const updateAgent = useUpdateAgent();
   const { featuredCharacterCards, removeFeaturedCharacterCard, toggleFeaturedCharacterCard } =
@@ -185,6 +187,8 @@ export function TrackerSectionList({
             trackerTemperatureUnit={trackerTemperatureUnit}
             action={renderRerunAction("world")}
             onSaveField={patchField}
+            deleteMode={deleteMode}
+            addMode={addMode}
             collapsed={isPanelCollapsed("world")}
             onToggleCollapsed={() => toggleTrackerPanelSectionCollapsed("world")}
           />
@@ -241,6 +245,7 @@ export function TrackerSectionList({
             onToggleFeatured={toggleFeaturedCharacterCard}
             deleteMode={deleteMode}
             addMode={addMode}
+            hideMode={hideMode}
             collapsed={isPanelCollapsed("characters")}
             onToggleCollapsed={() => toggleTrackerPanelSectionCollapsed("characters")}
           />

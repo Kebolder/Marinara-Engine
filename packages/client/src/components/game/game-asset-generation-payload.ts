@@ -19,6 +19,7 @@ type MissingSceneAssetGenerationPayload = {
 
 type MissingSceneAssetGenerationInput = {
   gameImageGenerationEnabled: boolean;
+  gameBackgroundGenerationEnabled?: boolean;
   activeChatId: string | null;
   currentBackground: string | null;
   savedSceneBackground: string | undefined;
@@ -45,6 +46,7 @@ export function getMissingBackgroundTag(
 
 export function buildMissingSceneAssetGenerationPayload({
   gameImageGenerationEnabled,
+  gameBackgroundGenerationEnabled = gameImageGenerationEnabled,
   activeChatId,
   currentBackground,
   savedSceneBackground,
@@ -57,7 +59,9 @@ export function buildMissingSceneAssetGenerationPayload({
   if (!gameImageGenerationEnabled) return null;
   if (!activeChatId) return null;
 
-  const unresolvedBackground = getMissingBackgroundTag(currentBackground || savedSceneBackground, assetMap);
+  const unresolvedBackground = gameBackgroundGenerationEnabled
+    ? getMissingBackgroundTag(currentBackground || savedSceneBackground, assetMap)
+    : null;
   const savedGeneratedBackgroundMissing =
     !!savedSceneBackground &&
     unresolvedBackground === savedSceneBackground &&

@@ -411,7 +411,6 @@ export function buildGmSystemPrompt(ctx: GmPromptContext): string {
   const partyNames = normalizePromptTextList(ctx.partyNames);
   const partyCards = Array.isArray(ctx.partyCards) ? ctx.partyCards : [];
   const sections: string[] = [];
-  const normalizedLanguage = normalizePromptLanguage(ctx.language);
 
   // ── Core Role ──
   if (ctx.gmCharacterCard) {

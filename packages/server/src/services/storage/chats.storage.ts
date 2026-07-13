@@ -232,6 +232,26 @@ async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: str
     );
 }
 
+/**
+ * Count swipes per message id. Avoids `inArray(messageSwipes.messageId, ids)`,
+ * which the file-native store evaluates as `ids.includes()` for every swipe row
+ * (re-materializing the ids array each row) — O(swipeRows * ids) = O(n^2) for a
+ * large chat and a prime cause of the post-generation stall (#3402). One scan of
+ * the swipes table + a Set of the wanted ids is O(totalSwipes) instead.
+ */
+async function countSwipesByMessageId(db: DB, ids: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  const wanted = new Set(ids);
+  const rows = await db.select({ messageId: messageSwipes.messageId }).from(messageSwipes);
+  for (const row of rows) {
+    if (wanted.has(row.messageId)) {
+      counts.set(row.messageId, (counts.get(row.messageId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 /** Create the chat storage facade used by routes and importers. */
 export function createChatsStorage(db: DB) {
   let chatLastMessageAtBackfilled = false;
@@ -804,17 +824,10 @@ export function createChatsStorage(db: DB) {
         .where(eq(messages.chatId, chatId))
         .orderBy(messages.createdAt, messages.id);
       const decorated = rows.map((m, index) => ({ ...m, rowid: index + 1 }));
-      const ids = decorated.map((m) => m.id);
-      const swipes = ids.length
-        ? await db
-            .select({ messageId: messageSwipes.messageId })
-            .from(messageSwipes)
-            .where(inArray(messageSwipes.messageId, ids))
-        : [];
-      const countMap = new Map<string, number>();
-      for (const swipe of swipes) {
-        countMap.set(swipe.messageId, (countMap.get(swipe.messageId) ?? 0) + 1);
-      }
+      const countMap = await countSwipesByMessageId(
+        db,
+        decorated.map((m) => m.id),
+      );
       return decorated.map((m) => ({ ...m, swipeCount: countMap.get(m.id) ?? 0 }));
     },
 
@@ -835,16 +848,10 @@ export function createChatsStorage(db: DB) {
         candidates = candidates.filter((m) => m.createdAt < before);
       }
       const reversed = candidates.slice(-limit);
-      const ids = reversed.map((m) => m.id);
-      if (ids.length === 0) return reversed;
-      const swipes = await db
-        .select({ messageId: messageSwipes.messageId })
-        .from(messageSwipes)
-        .where(inArray(messageSwipes.messageId, ids));
-      const countMap = new Map<string, number>();
-      for (const swipe of swipes) {
-        countMap.set(swipe.messageId, (countMap.get(swipe.messageId) ?? 0) + 1);
-      }
+      const countMap = await countSwipesByMessageId(
+        db,
+        reversed.map((m) => m.id),
+      );
       return reversed.map((m) => ({ ...m, swipeCount: countMap.get(m.id) ?? 0 }));
     },
 
@@ -864,6 +871,7 @@ export function createChatsStorage(db: DB) {
         content: input.content,
         activeSwipeIndex: 0,
         extra: JSON.stringify({
+          ...parseExtraRecord(input.extra),
           displayText: null,
           isGenerated: input.role !== "user",
           tokenCount: null,
@@ -877,7 +885,7 @@ export function createChatsStorage(db: DB) {
         messageId: id,
         index: 0,
         content: input.content,
-        extra: JSON.stringify({}),
+        extra: JSON.stringify(parseExtraRecord(input.extra)),
         createdAt: timestamp,
       });
       await db.update(chats).set({ lastMessageAt: timestamp, updatedAt: timestamp }).where(eq(chats.id, input.chatId));

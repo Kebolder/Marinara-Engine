@@ -7,12 +7,14 @@ import { cn } from "../../lib/utils";
 import { PendingTypingDots } from "./PendingTypingDots";
 import {
   HiddenFromAIConversationSummary,
+  DiceMessageContent,
   MessageContent,
   ConversationMessageEditForm,
   ConversationMessageAttachments,
   ConversationMessageTranslation,
   ConversationMessageSwipes,
   DiscordParticipantBadge,
+  ConversationMessageName,
   nameColorStyle,
   formatTimestamp,
   type MessageRenderContext,
@@ -110,21 +112,45 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
         <div className={cn("mari-message-avatar w-10 flex-shrink-0", shouldHideUserAvatar && "hidden")}>
           {!isGrouped && (
             <>
-              <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
-                {avatarUrl ? (
-                  <img
-                    src={avatarUrl}
-                    alt={displayName}
-                    loading="lazy"
-                    className="h-full w-full object-cover"
-                    style={avatarCropStyle}
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[var(--muted-foreground)]">
-                    {isUser ? <User size="1.125rem" /> : displayName[0]?.toUpperCase()}
-                  </div>
-                )}
-              </div>
+              {ctx.onOpenAboutMe ? (
+                <button
+                  type="button"
+                  onClick={(e) => ctx.onOpenAboutMe?.(e.currentTarget.getBoundingClientRect())}
+                  aria-label={`View ${displayName}'s about me`}
+                  title={`View ${displayName}'s about me`}
+                  className="relative block h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)] cursor-pointer transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50"
+                >
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={displayName}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                      style={avatarCropStyle}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[var(--muted-foreground)]">
+                      {isUser ? <User size="1.125rem" /> : displayName[0]?.toUpperCase()}
+                    </div>
+                  )}
+                </button>
+              ) : (
+                <div className="relative h-10 w-10 overflow-hidden rounded-full bg-[var(--accent)]">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={displayName}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                      style={avatarCropStyle}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-sm font-bold text-[var(--muted-foreground)]">
+                      {isUser ? <User size="1.125rem" /> : displayName[0]?.toUpperCase()}
+                    </div>
+                  )}
+                </div>
+              )}
               {(showActions || forceShowActions || showMessageNumbers) && messageIndex != null && (
                 <span className="mt-0.5 block text-center text-[0.5rem] font-medium text-[var(--muted-foreground)] select-none">
                   #{messageIndex}
@@ -151,12 +177,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
             >
               {hiddenFromAIHeader}
               {(!isUser || participantLabel) && (
-                <span
-                  className="mari-message-name text-[0.9375rem] font-semibold leading-tight hover:underline cursor-default"
-                  style={nameColorStyle(nameColor)}
-                >
-                  {displayName}
-                </span>
+                <ConversationMessageName displayName={displayName} nameColor={nameColor} onOpenAboutMe={ctx.onOpenAboutMe} />
               )}
               <DiscordParticipantBadge label={participantLabel} />
               {!hideTimestamp && !isUser && (
@@ -246,6 +267,8 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                     );
                   })}
                 </div>
+              ) : extra.diceRollResult ? (
+                <DiceMessageContent diceRollResult={extra.diceRollResult} createdAt={message.createdAt} />
               ) : (
                 <MessageContent
                   content={renderedContent}

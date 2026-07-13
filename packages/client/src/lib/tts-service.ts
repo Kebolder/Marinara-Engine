@@ -63,6 +63,67 @@ function waitForBlobWithAbort(promise: Promise<Blob>, signal?: AbortSignal): Pro
   });
 }
 
+function playbackAbortError(): DOMException {
+  return new DOMException("TTS playback aborted", "AbortError");
+}
+
+function shouldWaitForPlaybackReturn(error: unknown): boolean {
+  if (typeof document !== "undefined" && document.visibilityState === "hidden") return true;
+  if (!(error instanceof Error)) return false;
+  return error.name === "NotAllowedError";
+}
+
+function waitForPlaybackReturn(signal?: AbortSignal): Promise<void> {
+  if (typeof document === "undefined" || typeof window === "undefined") return Promise.resolve();
+  if (document.visibilityState === "visible" && document.hasFocus()) return Promise.resolve();
+  if (signal?.aborted) return Promise.reject(playbackAbortError());
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("focus", onReturn);
+      window.removeEventListener("pageshow", onReturn);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const finish = () => {
+      cleanup();
+      resolve();
+    };
+    const onReturn = () => {
+      if (document.visibilityState === "visible") finish();
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(playbackAbortError());
+    };
+
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("focus", onReturn);
+    window.addEventListener("pageshow", onReturn);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function playWhenAvailable(audio: HTMLAudioElement, signal?: AbortSignal): Promise<void> {
+  let waitBeforeRetry = typeof document !== "undefined" && document.visibilityState === "hidden";
+
+  while (true) {
+    if (signal?.aborted) throw playbackAbortError();
+    if (waitBeforeRetry) {
+      await waitForPlaybackReturn(signal);
+      waitBeforeRetry = false;
+    }
+
+    try {
+      await audio.play();
+      return;
+    } catch (err) {
+      if (!shouldWaitForPlaybackReturn(err)) throw err;
+      waitBeforeRetry = true;
+    }
+  }
+}
+
 class TTSService {
   private audio: HTMLAudioElement | null = null;
   private currentObjectUrl: string | null = null;
@@ -73,6 +134,8 @@ class TTSService {
   /** ID of the entity (e.g. message id) currently being spoken */
   private activeId: string | null = null;
   private listeners = new Set<StateListener>();
+  private livePlaybackVolume: number | null = null;
+  private livePlaybackMuted: boolean | null = null;
 
   // ── Listeners ─────────────────────────────────
 
@@ -121,13 +184,25 @@ class TTSService {
 
   // ── Playback ──────────────────────────────────
 
+  private beginPlaybackOptions(options: Pick<TTSSpeakOptions, "volume" | "muted">): void {
+    this.livePlaybackVolume = typeof options.volume === "number" ? clampPlaybackVolume(options.volume) : null;
+    this.livePlaybackMuted = typeof options.muted === "boolean" ? options.muted : null;
+  }
+
+  private clearPlaybackOptions(): void {
+    this.livePlaybackVolume = null;
+    this.livePlaybackMuted = null;
+  }
+
   private applyPlaybackOptions(audio: HTMLAudioElement, options: Pick<TTSSpeakOptions, "volume" | "muted">): void {
-    const volume = clampPlaybackVolume(options.volume);
+    const volume = this.livePlaybackVolume ?? clampPlaybackVolume(options.volume);
     audio.volume = volume;
-    audio.muted = options.muted === true || volume <= 0;
+    audio.muted = (this.livePlaybackMuted ?? options.muted) === true || volume <= 0;
   }
 
   setCurrentPlaybackVolume(volume: number, muted = false): void {
+    this.livePlaybackVolume = clampPlaybackVolume(volume);
+    this.livePlaybackMuted = muted;
     if (!this.audio) return;
     this.applyPlaybackOptions(this.audio, { volume, muted });
   }
@@ -165,6 +240,7 @@ class TTSService {
   /** Speak the given text. `id` is an optional caller-supplied key (e.g. message id) so callers can track which item is active. */
   async speak(text: string, id?: string, options: TTSSpeakOptions = {}): Promise<void> {
     this.stop();
+    this.beginPlaybackOptions(options);
     const sequence = ++this.sequence;
     this.lastError = null;
 
@@ -189,9 +265,6 @@ class TTSService {
     }
 
     if (!this.isCurrentSequence(sequence)) return;
-    if (this.abortController === abortController) {
-      this.abortController = null;
-    }
 
     const objectUrl = URL.createObjectURL(blob);
     if (!this.isCurrentSequence(sequence)) {
@@ -206,20 +279,30 @@ class TTSService {
 
     audio.onended = () => {
       if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+      if (this.abortController === abortController) {
+        this.abortController = null;
+      }
       this.cleanup();
       this.setState("idle");
     };
     audio.onerror = () => {
       if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+      if (this.abortController === abortController) {
+        this.abortController = null;
+      }
       this.cleanup();
       this.setState("error");
     };
 
-    this.setState("playing", id ?? null);
     try {
-      await audio.play();
+      await playWhenAvailable(audio, abortController.signal);
+      if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+      this.setState("playing", id ?? null);
     } catch (err) {
       if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+      if (this.abortController === abortController) {
+        this.abortController = null;
+      }
       this.cleanup();
       const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
       this.lastError = error.message;
@@ -232,15 +315,12 @@ class TTSService {
    * Generate every request first, then play the resulting clips in order.
    * This keeps multi-speaker dialogue from starting until the whole spoken queue is ready.
    */
-  async speakSequence(
-    requests: TTSSpeakRequest[],
-    id?: string,
-    options: TTSSpeakSequenceOptions = {},
-  ): Promise<void> {
+  async speakSequence(requests: TTSSpeakRequest[], id?: string, options: TTSSpeakSequenceOptions = {}): Promise<void> {
     const playableRequests = requests.filter((request) => request.text.trim().length > 0);
     if (playableRequests.length === 0) return;
 
     this.stop();
+    this.beginPlaybackOptions(options);
     const sequence = ++this.sequence;
     this.lastError = null;
 
@@ -352,9 +432,13 @@ class TTSService {
           }
         };
 
-        runChunkStart();
-        this.setState("playing", request.activeId ?? id ?? null);
-        void audio.play().catch((err) => fail(toError(err, "Browser blocked audio playback")));
+        void playWhenAvailable(audio, abortController.signal)
+          .then(() => {
+            if (!this.isCurrentSequence(sequence) || this.audio !== audio) return;
+            runChunkStart();
+            this.setState("playing", request.activeId ?? id ?? null);
+          })
+          .catch((err) => fail(toError(err, "Browser blocked audio playback")));
       });
     };
 
@@ -454,6 +538,7 @@ class TTSService {
     this.sequence += 1;
     this.abortController?.abort();
     this.abortController = null;
+    this.clearPlaybackOptions();
 
     if (this.audio) {
       this.audio.pause();
@@ -478,14 +563,18 @@ class TTSService {
   resume(): void {
     if (this.state !== "paused" || !this.audio) return;
     const audio = this.audio;
-    this.setState("playing");
-    void audio.play().catch((err) => {
-      if (this.audio !== audio) return;
-      this.cleanup();
-      const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
-      this.lastError = error.message;
-      this.setState("error");
-    });
+    void playWhenAvailable(audio, this.abortController?.signal)
+      .then(() => {
+        if (this.audio !== audio) return;
+        this.setState("playing");
+      })
+      .catch((err) => {
+        if (this.audio !== audio) return;
+        this.cleanup();
+        const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
+        this.lastError = error.message;
+        this.setState("error");
+      });
   }
 
   /** Restart the current generated audio from the beginning. */
@@ -493,14 +582,18 @@ class TTSService {
     if (!this.audio || (this.state !== "playing" && this.state !== "paused")) return;
     const audio = this.audio;
     audio.currentTime = 0;
-    this.setState("playing");
-    void audio.play().catch((err) => {
-      if (this.audio !== audio) return;
-      this.cleanup();
-      const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
-      this.lastError = error.message;
-      this.setState("error");
-    });
+    void playWhenAvailable(audio, this.abortController?.signal)
+      .then(() => {
+        if (this.audio !== audio) return;
+        this.setState("playing");
+      })
+      .catch((err) => {
+        if (this.audio !== audio) return;
+        this.cleanup();
+        const error = err instanceof Error ? err : new Error("Browser blocked audio playback");
+        this.lastError = error.message;
+        this.setState("error");
+      });
   }
 
   private cleanup(): void {

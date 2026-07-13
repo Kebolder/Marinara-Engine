@@ -160,6 +160,11 @@ export const FILE_BACKED_TABLES = [
   "persona_card_versions",
   "character_groups",
   "persona_groups",
+  "noodle_accounts",
+  "noodle_posts",
+  "noodle_interactions",
+  "noodle_activity_digests",
+  "noodle_refresh_runs",
   "lorebooks",
   "lorebook_character_links",
   "lorebook_persona_links",
@@ -213,7 +218,10 @@ const TABLES_REVERSE = [...FILE_BACKED_TABLES].reverse();
 const isWindows = process.platform === "win32";
 const warnedFlushFailures = new Set<string>();
 
-const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
+// Parent→child delete graph. Exported as the single source of truth: the Mari
+// DB CLI (services/mari-db) consumes it for cascade deletes and its
+// dangling-reference validator, so every new relation added here reaches both.
+export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
   { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
@@ -242,6 +250,14 @@ const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentK
     parentKey: "id",
     childKey: "bindingId",
   },
+  // Game rows must not outlive their message: mirrors the application-level
+  // cleanup in chats.storage.ts deleteGameStateForMessages(), which deletes
+  // checkpoints (by snapshotId and messageId), snapshots, and engine state
+  // whenever messages are removed.
+  { parent: "messages", child: "game_state_snapshots", parentKey: "id", childKey: "messageId" },
+  { parent: "messages", child: "game_checkpoints", parentKey: "id", childKey: "messageId" },
+  { parent: "messages", child: "game_engine_state", parentKey: "id", childKey: "messageId" },
+  { parent: "game_state_snapshots", child: "game_checkpoints", parentKey: "id", childKey: "snapshotId" },
   { parent: "conversation_call_sessions", child: "conversation_call_messages", parentKey: "id", childKey: "callId" },
   { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
   { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },

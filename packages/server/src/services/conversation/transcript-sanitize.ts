@@ -1,9 +1,10 @@
 // ──────────────────────────────────────────────
 // Conversation: Transcript Sanitizers
 // ──────────────────────────────────────────────
+import { CLOCK_TOKEN_SOURCE, DATE_TIME_TOKEN_SOURCE, FULL_DATE_TOKEN_SOURCE } from "@marinara-engine/shared";
 
 const DATE_TAG_RE = /<\/?date(?:="[^"]*")?>/gi;
-const TIMESTAMP_TOKEN = String.raw`\[(?:\d{1,2}[:.]\d{2}(?:\s*(?:am|pm))?|\d{1,2}\.\d{1,2}\.\d{2,4})\]`;
+const TIMESTAMP_TOKEN = String.raw`\[(?:${DATE_TIME_TOKEN_SOURCE}|${CLOCK_TOKEN_SOURCE}|${FULL_DATE_TOKEN_SOURCE})\]`;
 const LEADING_TIMESTAMP_RE = new RegExp(`^(\\s*(?:[-*]\\s*)?)(?:${TIMESTAMP_TOKEN}\\s*)+`, "gim");
 const SPEAKER_TIMESTAMP_RE = new RegExp(`^(\\s*(?:[-*]\\s*)?[^:\\n]{1,80}:\\s*)(?:${TIMESTAMP_TOKEN}\\s*)+`, "gim");
 
@@ -19,4 +20,25 @@ export function stripConversationPromptTimestamps(content: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * Remove model-leaked Conversation metadata before persistence. Merged group
+ * replies keep their `Name:` boundaries because the client uses them to split
+ * speakers; single and individual replies already have a server-owned speaker.
+ */
+export function stripConversationResponseEnvelope(
+  content: string,
+  options: { speakerName?: string | null; preserveSpeakerPrefix?: boolean } = {},
+): string {
+  let cleaned = stripConversationPromptTimestamps(content);
+  const speakerName = options.speakerName?.trim();
+  if (!speakerName || options.preserveSpeakerPrefix) return cleaned;
+
+  const escapedName = speakerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  cleaned = cleaned
+    .replace(new RegExp(`^\\s*${escapedName}\\s*:\\s*`, "i"), "")
+    .replace(new RegExp(`^\\s*${escapedName}\\s*\\n+`, "i"), "")
+    .trim();
+  return cleaned;
 }

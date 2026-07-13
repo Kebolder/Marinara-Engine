@@ -18,6 +18,7 @@ import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { stripConversationPromptTimestamps } from "../services/conversation/transcript-sanitize.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import type { ChatCompletionResult, ChatMessage } from "../services/llm/base-provider.js";
+import { localAuthProviderBaseUrl } from "@marinara-engine/shared";
 import type {
   SceneCreateRequest,
   SceneCreateResponse,
@@ -27,8 +28,10 @@ import type {
   SceneForkResponse,
   ScenePlanRequest,
   ScenePlanResponse,
+  ScenePromptPreferences,
   SceneFullPlan,
 } from "@marinara-engine/shared";
+import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
 
 const BG_DIR = join(DATA_DIR, "backgrounds");
 const ALLOWED_BG_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
@@ -42,6 +45,43 @@ const SCENE_GUIDELINES = [
   `    - Portray violence in gory detail, blood squirting around like in a slasher movie.`,
   `</guidelines>`,
 ].join("\n");
+
+function normalizeScenePromptPreferences(value: unknown): ScenePromptPreferences | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const pov =
+    record.pov === "first_person" || record.pov === "second_person" || record.pov === "third_person"
+      ? record.pov
+      : null;
+  const tense =
+    record.tense === "past" || record.tense === "present" || record.tense === "future" ? record.tense : null;
+  if (!pov || !tense) return null;
+  const extraInstructions =
+    typeof record.extraInstructions === "string" ? record.extraInstructions.trim().slice(0, 2000) : "";
+  return { pov, tense, extraInstructions };
+}
+
+function formatScenePromptPreferences(preferences: ScenePromptPreferences | null): string {
+  if (!preferences) return "";
+  const povLabel: Record<ScenePromptPreferences["pov"], string> = {
+    first_person: "First Person",
+    second_person: "Second Person",
+    third_person: "Third Person",
+  };
+  const tenseLabel: Record<ScenePromptPreferences["tense"], string> = {
+    past: "Past",
+    present: "Present",
+    future: "Future",
+  };
+  return [
+    `User scene-writing preferences:`,
+    `- POV: ${povLabel[preferences.pov]}`,
+    `- Tense: ${tenseLabel[preferences.tense]}`,
+    preferences.extraInstructions ? `- Extra instructions: ${preferences.extraInstructions}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 // ──────────────────────────────────────────────
 // Helpers (reused from encounter pattern)
@@ -68,10 +108,8 @@ async function resolveConnection(
     const providerDef = PROVIDERS[conn.provider as keyof typeof PROVIDERS];
     baseUrl = providerDef?.defaultBaseUrl ?? "";
   }
-  // Claude (Subscription) uses the local Claude Agent SDK and has no HTTP
-  // endpoint — return a sentinel so the gate passes. The provider ignores it.
-  if (!baseUrl && conn.provider === "claude_subscription") baseUrl = "claude-agent-sdk://local";
-  if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
+  const localAuthBaseUrl = localAuthProviderBaseUrl(conn.provider);
+  if (!baseUrl && localAuthBaseUrl) baseUrl = localAuthBaseUrl;
   if (!baseUrl) throw new Error("No base URL configured for this connection");
 
   return { conn, baseUrl };
@@ -94,16 +132,27 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
   return ctx;
 }
 
-async function buildPersonaContext(chars: ReturnType<typeof createCharactersStorage>) {
+/**
+ * Build persona context. Prefers the chat-scoped persona (`chat.personaId`)
+ * before falling back to the globally active persona — the same resolution
+ * order used elsewhere (see `chats.routes.ts`). Game mode skips the fallback:
+ * persona must be explicitly selected in the setup wizard, so a persona-less
+ * game stays persona-less in scene prompts too.
+ */
+async function buildPersonaContext(
+  chars: ReturnType<typeof createCharactersStorage>,
+  chatPersonaId?: string | null,
+  chatMode?: string | null,
+) {
   const allPersonas = await chars.listPersonas();
-  const active = allPersonas.find((p) => p.isActive === "true");
-  if (!active) return { personaName: "User", personaCtx: "No persona information available." };
-  let ctx = `Name: ${active.name}\n`;
-  if (active.description) ctx += `${active.description}\n`;
-  if (active.personality) ctx += `${active.personality}\n`;
-  if (active.backstory) ctx += `${active.backstory}\n`;
-  if (active.appearance) ctx += `${active.appearance}\n`;
-  return { personaName: active.name, personaCtx: ctx };
+  const persona = resolveActivePersonaCandidate(allPersonas, chatPersonaId, chatMode);
+  if (!persona) return { personaName: "User", personaCtx: "No persona information available." };
+  let ctx = `Name: ${persona.name}\n`;
+  if (persona.description) ctx += `${persona.description}\n`;
+  if (persona.personality) ctx += `${persona.personality}\n`;
+  if (persona.backstory) ctx += `${persona.backstory}\n`;
+  if (persona.appearance) ctx += `${persona.appearance}\n`;
+  return { personaName: persona.name, personaCtx: ctx };
 }
 
 /** Get recent messages from a chat for context. */
@@ -259,7 +308,7 @@ export async function sceneRoutes(app: FastifyInstance) {
     if (!sceneChat) return reply.status(500).send({ error: "Failed to create scene chat" });
 
     // Build conversation transcript as hidden context (NOT displayed)
-    const { personaName } = await buildPersonaContext(chars);
+    const { personaName } = await buildPersonaContext(chars, originChat.personaId, originChat.mode);
     const initiatorName = initiatorCharId ? await getCharacterName(chars, initiatorCharId) : "User";
     const recentMsgs = await getRecentMessages(chats, originChatId, 30);
     const historyText = recentMsgs
@@ -339,6 +388,9 @@ export async function sceneRoutes(app: FastifyInstance) {
 
     const originChatId = typeof sceneMeta.sceneOriginChatId === "string" ? sceneMeta.sceneOriginChatId : null;
     if (!originChatId) return reply.status(400).send({ error: "Not a scene chat (no origin)" });
+    // Fetched only for the persona game guard — step 4 below re-fetches the
+    // origin fresh, since this snapshot is stale by the time the LLM returns.
+    const sceneOriginChat = await chats.getById(originChatId);
 
     // Resolve connection
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, sceneChat.connectionId);
@@ -351,10 +403,11 @@ export async function sceneRoutes(app: FastifyInstance) {
       conn.maxTokensOverride,
     );
 
-    // Build context
+    // Build context — the scene chat inherits its personaId from the origin;
+    // the game guard has to come from the origin since scene chats are "roleplay"
     const characterIds = parseCharacterIds(sceneChat.characterIds);
     const characterCtx = await buildCharacterContext(chars, characterIds);
-    const { personaName, personaCtx } = await buildPersonaContext(chars);
+    const { personaName, personaCtx } = await buildPersonaContext(chars, sceneChat.personaId, sceneOriginChat?.mode);
 
     // Get all scene messages for the summary
     const sceneMessages = await getRecentMessages(chats, sceneChatId, 100);
@@ -705,6 +758,8 @@ export async function sceneRoutes(app: FastifyInstance) {
   // including system prompt, first message, background, rating, etc.
   app.post<{ Body: ScenePlanRequest }>("/plan", async (req, reply) => {
     const { chatId, prompt, connectionId } = req.body;
+    const promptPreferences = normalizeScenePromptPreferences(req.body.promptPreferences);
+    const promptPreferencesText = formatScenePromptPreferences(promptPreferences);
 
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
@@ -722,7 +777,7 @@ export async function sceneRoutes(app: FastifyInstance) {
     const characterIds: string[] =
       typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds as string[]);
     const characterCtx = await buildCharacterContext(chars, characterIds);
-    const { personaName, personaCtx } = await buildPersonaContext(chars);
+    const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId, chat.mode);
 
     // Get available backgrounds
     const availableBackgrounds = listAvailableBackgrounds();
@@ -770,6 +825,7 @@ export async function sceneRoutes(app: FastifyInstance) {
           prompt
             ? `Plan a complete roleplay scene based on this request: "${prompt}"`
             : `Plan a complete roleplay scene based purely on the recent conversation above. Invent a compelling scenario that naturally extends the current situation, characters, and mood.`,
+          promptPreferencesText ? `\n${promptPreferencesText}` : "",
           ``,
           `Return ONLY a JSON object with ALL of the following fields:`,
           `{`,
@@ -779,7 +835,7 @@ export async function sceneRoutes(app: FastifyInstance) {
           `  "firstMessage": "The first in-character message from the main character that kicks off the scene. Write 2-4 paragraphs of immersive roleplay prose. This should feel like the opening of a story — set the scene through the character's actions, dialogue, and inner thoughts.",`,
           `  "background": "Pick a background filename from the available list that best matches the scene, or null if none fit.",`,
           `  "characterIds": ["array of character IDs to include in the scene — use the IDs from available_character_ids"],`,
-          `  "systemPrompt": "A custom system prompt for this specific scene. Include: writing style (e.g. literary, casual, poetic), narration POV, tense (past, present), and what the AI should focus on. Tailor it to the mood and genre of the scene. Choose ONE POV and use it consistently in both this prompt AND the firstMessage: first-person (from character's perspective, using 'I'), second-person (from user's perspective, addressing the user as 'you'), or third-person limited (from user's or character's perspective, using 'he/she/they'). 3-6 sentences.",`,
+          `  "systemPrompt": "A custom system prompt for this specific scene. Include: writing style (e.g. literary, casual, poetic), narration POV, tense (past, present, future), and what the AI should focus on. Tailor it to the mood and genre of the scene. Use the user's selected POV and tense when provided; otherwise choose ONE POV and use it consistently in both this prompt AND the firstMessage: first-person (from character's perspective, using 'I'), second-person (from user's perspective, addressing the user as 'you'), or third-person limited (from user's or character's perspective, using 'he/she/they'). 3-6 sentences.",`,
           `  "rating": "sfw" or "nsfw" — based on whether the scene's themes require mature content`,
           `  "relationshipHistory": "A concise 2-4 sentence summary of who the characters are to each other and their shared history so far — their dynamic, rapport, tensions, and key events. This gives the scene writer awareness of the relationship context.",`,
           `  "participationGuide": "A short (1-3 sentence), fun, second-person note telling the USER how to play this scene. Examples: 'This is freeform — do whatever feels right!', 'You will face tough choices. Think carefully before you act.', 'Try to keep your cool — one wrong word could set them off.', 'Explore the environment. There are secrets to find.' Be creative and match the scene tone."`,
@@ -791,6 +847,9 @@ export async function sceneRoutes(app: FastifyInstance) {
           `- The "background" must be an EXACT filename from the available backgrounds list (case-sensitive, including extension). If no background fits, set it to null. Do NOT invent or modify filenames.`,
           `- The "firstMessage" should be written in character, not as a narrator. Make it engaging.`,
           `- The "systemPrompt" defines HOW the roleplay is written. Be specific about style.`,
+          promptPreferences
+            ? `- The user's selected POV and tense are mandatory. Use them consistently in both "systemPrompt" and "firstMessage".`
+            : "",
           `- The POV chosen in "systemPrompt" MUST match the POV used in "firstMessage". Do not say "third-person limited" in the prompt and then write "firstMessage" in second-person.`,
           `- Do NOT use asterisks or markdown formatting in any field. Write plain prose.`,
           `- Only return the JSON object, no other text.`,

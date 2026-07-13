@@ -305,6 +305,23 @@ function isTokenPrefix(prefix: string[], candidate: string[]): boolean {
 function hasPolynomialBacktrackingRisk(source: string, maxRepetition: number): boolean {
   let broadUnboundedCount = 0;
   let adjacentBroadUnboundedCount = 0;
+  let pendingNegatedClassBoundary: string | null = null;
+  let countBeforePendingNegatedClass = 0;
+
+  const consumeRequiredLiteralBoundary = (literal: string | null) => {
+    adjacentBroadUnboundedCount = 0;
+    if (
+      literal !== null &&
+      pendingNegatedClassBoundary !== null &&
+      !characterClassMatchesLiteral(pendingNegatedClassBoundary, literal)
+    ) {
+      // A required delimiter excluded by the preceding negated class fixes the
+      // field boundary. Earlier broad fields cannot overlap this one, so they
+      // do not form the polynomial chain this global counter guards against.
+      broadUnboundedCount = countBeforePendingNegatedClass;
+      pendingNegatedClassBoundary = null;
+    }
+  };
 
   for (let i = 0; i < source.length; ) {
     const c = source[i]!;
@@ -316,11 +333,13 @@ function hasPolynomialBacktrackingRisk(source: string, maxRepetition: number): b
       if (consumed === INVALID_QUANTIFIER) return true;
       const broadUnbounded = consumed?.unbounded === true && isBroadEscapedAtom(source[i + 1]);
       if (broadUnbounded) {
+        pendingNegatedClassBoundary = null;
+        countBeforePendingNegatedClass = broadUnboundedCount;
         broadUnboundedCount += 1;
         adjacentBroadUnboundedCount += 1;
         if (adjacentBroadUnboundedCount >= 2 || broadUnboundedCount >= 3) return true;
       } else if (isRequiredLiteralAtom(consumed)) {
-        adjacentBroadUnboundedCount = 0;
+        consumeRequiredLiteralBoundary(readRequiredLiteral(source.slice(i, atomEnd)));
       }
       i = consumed?.end ?? atomEnd;
       continue;
@@ -334,11 +353,14 @@ function hasPolynomialBacktrackingRisk(source: string, maxRepetition: number): b
       if (consumed === INVALID_QUANTIFIER) return true;
       const broadUnbounded = consumed?.unbounded === true && isBroadCharacterClass(source.slice(i, atomEnd));
       if (broadUnbounded) {
+        const characterClass = source.slice(i, atomEnd);
+        countBeforePendingNegatedClass = broadUnboundedCount;
+        pendingNegatedClassBoundary = characterClass.startsWith("[^") ? characterClass : null;
         broadUnboundedCount += 1;
         adjacentBroadUnboundedCount += 1;
         if (adjacentBroadUnboundedCount >= 2 || broadUnboundedCount >= 3) return true;
       } else if (isRequiredLiteralAtom(consumed)) {
-        adjacentBroadUnboundedCount = 0;
+        consumeRequiredLiteralBoundary(null);
       }
       i = consumed?.end ?? atomEnd;
       continue;
@@ -349,11 +371,13 @@ function hasPolynomialBacktrackingRisk(source: string, maxRepetition: number): b
       const consumed = consumeQuantifier(source, atomEnd, maxRepetition);
       if (consumed === INVALID_QUANTIFIER) return true;
       if (consumed?.unbounded) {
+        pendingNegatedClassBoundary = null;
+        countBeforePendingNegatedClass = broadUnboundedCount;
         broadUnboundedCount += 1;
         adjacentBroadUnboundedCount += 1;
         if (adjacentBroadUnboundedCount >= 2 || broadUnboundedCount >= 3) return true;
       } else if (isRequiredLiteralAtom(consumed)) {
-        adjacentBroadUnboundedCount = 0;
+        consumeRequiredLiteralBoundary(".");
       }
       i = consumed?.end ?? atomEnd;
       continue;
@@ -367,11 +391,26 @@ function hasPolynomialBacktrackingRisk(source: string, maxRepetition: number): b
     const atomEnd = i + 1;
     const consumed = consumeQuantifier(source, atomEnd, maxRepetition);
     if (consumed === INVALID_QUANTIFIER) return true;
-    if (isRequiredLiteralAtom(consumed)) adjacentBroadUnboundedCount = 0;
+    if (isRequiredLiteralAtom(consumed)) consumeRequiredLiteralBoundary(c);
     i = consumed?.end ?? atomEnd;
   }
 
   return false;
+}
+
+function readRequiredLiteral(atom: string): string | null {
+  if (atom.length === 1) return atom;
+  if (/^\\[\\^$.*+?()[\]{}|/-]$/.test(atom)) return atom[1] ?? null;
+  return null;
+}
+
+function characterClassMatchesLiteral(characterClass: string, literal: string): boolean {
+  try {
+    return new RegExp(`^(?:${characterClass})$`).test(literal);
+  } catch {
+    // Invalid classes are rejected by the main walker. Stay conservative here.
+    return true;
+  }
 }
 
 function isRequiredLiteralAtom(consumed: ConsumedQuantifier | null): boolean {

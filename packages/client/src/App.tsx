@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { Component, lazy, Suspense, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { CustomThemeInjector } from "./components/layout/CustomThemeInjector";
@@ -92,6 +92,28 @@ function formatRecoveryError(error: unknown) {
   }
 }
 
+function getRecoveryChromeStyle(): CSSProperties {
+  const { appAccentColor, chatChromeTextColor, theme } = useUIStore.getState();
+  const defaultAccent = getDefaultAppAccentColor(theme);
+  const accentSource = appAccentColor.trim() || defaultAccent;
+  const accent = getCssColorFallback(accentSource, defaultAccent);
+  const accentGradient = isCssGradient(accentSource) ? accentSource : getSolidAccentGradient(accent);
+  const textColor = chatChromeTextColor.trim();
+  const chromeText = textColor
+    ? getCssColorFallback(textColor, getDefaultChatChromeTextColor(theme))
+    : getDefaultChatChromeTextColor(theme);
+
+  return {
+    "--primary": accent,
+    "--ring": accent,
+    "--marinara-app-accent-solid": accent,
+    "--marinara-app-accent-gradient": accentGradient,
+    "--marinara-chat-chrome-accent": accent,
+    "--marinara-chat-chrome-accent-gradient": accentGradient,
+    "--marinara-chat-chrome-text": chromeText,
+  } as CSSProperties;
+}
+
 export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { error: unknown; hasError: boolean }> {
   state: { error: unknown; hasError: boolean } = { error: null, hasError: false };
 
@@ -118,9 +140,13 @@ export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { er
   render() {
     if (!this.state.hasError) return this.props.children;
     const errorMessage = formatRecoveryError(this.state.error);
+    const recoveryChromeStyle = getRecoveryChromeStyle();
 
     return (
-      <div className="mari-chrome-token-scope flex min-h-screen items-center justify-center bg-[var(--background)] px-4 text-[var(--marinara-chat-chrome-panel-text)]">
+      <div
+        className="mari-chrome-token-scope flex min-h-screen items-center justify-center bg-[var(--background)] px-4 text-[var(--marinara-chat-chrome-panel-text)]"
+        style={recoveryChromeStyle}
+      >
         <div className="w-full max-w-lg rounded-xl border border-[var(--marinara-chat-chrome-accent)] bg-[var(--marinara-chat-chrome-panel-bg)] p-5 shadow-2xl ring-1 ring-[var(--marinara-chat-chrome-focus-ring)]">
           <h1 className="text-lg font-semibold text-[var(--marinara-chat-chrome-panel-title)]">
             Marinara hit a recoverable UI error.
@@ -129,7 +155,7 @@ export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { er
             The app shell crashed while rendering. Reload first; reset local UI state only if the same screen keeps
             returning after restart.
           </p>
-          <pre className="mt-3 max-h-32 overflow-auto rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] p-2 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
+          <pre className="mt-3 max-h-32 overflow-auto rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] p-2 text-xs text-[var(--marinara-chat-chrome-accent)]">
             {errorMessage}
           </pre>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -266,7 +292,7 @@ function resolveCursorColor(color: string, fallback: string) {
 }
 
 function getAccentCursorColors(accent: string, theme: "dark" | "light") {
-  const fill = resolveCursorColor(accent, theme === "light" ? "#e0709a" : "#d4acfb");
+  const fill = resolveCursorColor(accent, getDefaultAppAccentColor(theme));
   const stroke = theme === "light" ? "#1a1025" : "#050312";
 
   return { fill, stroke };

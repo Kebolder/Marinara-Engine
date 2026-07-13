@@ -5,7 +5,7 @@
 // - Party members (left/bottom) vs. Enemies (right/top)
 // - HP/MP bars with animated depletion
 // - Turn order timeline
-// - Action menu (Attack, Skill, Defend, Item, Flee)
+// - Action menu (Attack, Skill, Special, Defend, Item, Flee)
 // - Floating damage numbers
 // - Status effect icons
 // - Victory / defeat overlays
@@ -438,7 +438,7 @@ interface GameCombatUIProps {
   /** Suggested sprite focus for the full-body overlay. */
   onSpriteSuggestionChange?: (suggestion: { name: string; pose: string } | null) => void;
   /** Whether we're waiting for a GM response. */
-  _isStreaming?: boolean;
+  isStreaming?: boolean;
 }
 
 // ── Constants ──
@@ -649,7 +649,7 @@ export function GameCombatUI({
   gameVoiceVolume = 1,
   combatControlsSlot,
   onSpriteSuggestionChange,
-  _isStreaming,
+  isStreaming,
 }: GameCombatUIProps) {
   useRenderTimer("game-combat"); // [#3104 diagnostic]
   // Combat state
@@ -1543,7 +1543,7 @@ export function GameCombatUI({
 
   useEffect(() => {
     if (!customInstructionPending) return;
-    if (_isStreaming) {
+    if (isStreaming) {
       setCustomInstructionSawStreaming(true);
       return;
     }
@@ -1553,7 +1553,7 @@ export function GameCombatUI({
     setSelectedAction(null);
     setSelectedItemName(null);
     setPhase("player-turn");
-  }, [_isStreaming, customInstructionPending, customInstructionSawStreaming]);
+  }, [isStreaming, customInstructionPending, customInstructionSawStreaming]);
 
   const handleItemSelect = useCallback(
     (itemName: string) => {
@@ -3077,7 +3077,9 @@ function CombatantCard({
                 title={`${effect.name} (${effect.turnsLeft} turns)`}
                 className={cn(
                   "relative flex h-5 min-w-5 items-center justify-center rounded-full border px-0.5 text-[0.65rem] shadow-[0_4px_12px_rgba(0,0,0,0.35)] backdrop-blur-sm",
-                  effect.modifier > 0 ? "border-emerald-300/35 bg-emerald-500/25" : "border-rose-300/35 bg-rose-500/25",
+                  effect.modifier > 0
+                    ? "border-emerald-300/35 bg-emerald-500/25"
+                    : "border-[color-mix(in_srgb,var(--destructive)_35%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_25%,transparent)]",
                 )}
               >
                 <span aria-hidden="true">{getStatusEffectEmoji(effect)}</span>

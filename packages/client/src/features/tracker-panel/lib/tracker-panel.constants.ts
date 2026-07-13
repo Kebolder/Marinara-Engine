@@ -25,7 +25,6 @@ export const TRACKER_FEATURED_CHARACTER_META_KEY = "trackerFeaturedCharacterKeys
 export const TRACKER_TEXT_ROW = "text-[0.6875rem] leading-[0.875rem]";
 export const TRACKER_TEXT_MICRO = "text-[0.625rem] leading-[0.75rem]";
 export const TRACKER_BAR = "h-[3px] rounded-[1px]";
-export const TRACKER_SPLIT_WIDTH = 260;
 export const TRACKER_PROFILE_PORTRAIT_COLUMN_RIGHT_CLASS =
   "grid-cols-[minmax(0,1fr)_clamp(5.25rem,38cqw,6.75rem)] @min-[380px]:grid-cols-[minmax(0,1fr)_9.25rem]";
 export const TRACKER_PROFILE_PORTRAIT_COLUMN_LEFT_CLASS =

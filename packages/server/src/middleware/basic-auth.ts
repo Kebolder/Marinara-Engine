@@ -34,6 +34,14 @@
 //     you don't need a password.
 //   • Any IP that matches IP_ALLOWLIST is also exempt — if you've already
 //     vouched for a network, requiring a second factor would be noise.
+//   • Traffic from a trusted Tailscale or Docker bridge interface is also
+//     exempt (see isTrustedInterfaceRequest() in ip-allowlist.ts), but only
+//     when the corresponding bypass flag is enabled (both default to on):
+//     BYPASS_AUTH_TAILSCALE (100.64.0.0/10) or BYPASS_AUTH_DOCKER
+//     (172.16.0.0/12). Set either flag to false to require authentication.
+//     Docker traffic carrying proxy-
+//     forwarding headers stays exempt only if REQUIRE_AUTH_FOR_DOCKER_PROXY
+//     is not set to true.
 //   • Use a strong, random password — Basic Auth sends credentials on
 //     every request, only base64-encoded. Always pair with HTTPS in
 //     production (see SSL_CERT / SSL_KEY).

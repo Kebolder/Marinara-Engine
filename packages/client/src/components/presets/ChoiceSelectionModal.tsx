@@ -10,6 +10,7 @@ import { usePresetFull, useUpdatePreset } from "../../hooks/use-presets";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { CheckCircle2, Circle, CheckSquare2, Square, ListChecks, Shuffle, Save } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { arePresetChoiceSelectionsComplete } from "../../lib/preset-choice-selection";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 
 interface ChoiceSelectionModalProps {
@@ -174,13 +175,7 @@ export function ChoiceSelectionModal({
   // Merged view: base + user overrides
   const selections = useMemo(() => ({ ...baseSelections, ...overrides }), [baseSelections, overrides]);
 
-  const allSelected = variables.every((v) => {
-    const sel = selections[v.variableName];
-    if (v.multiSelect) return Array.isArray(sel) && sel.length > 0;
-    // Single-option variables are boolean toggles — both ON and OFF are valid
-    if (v.options.length === 1) return sel !== undefined;
-    return sel !== undefined && sel !== "";
-  });
+  const allSelected = arePresetChoiceSelectionsComplete(variables, selections);
 
   const handleConfirm = useCallback(() => {
     // Save selections to chat metadata

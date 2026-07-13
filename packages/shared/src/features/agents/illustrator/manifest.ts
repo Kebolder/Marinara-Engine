@@ -13,7 +13,7 @@ const illustratorOutputFormat = `Return valid JSON only:
 
 const baseDecisionRules = `Anchor the decision to <assistant_response>, the latest assistant turn. Use recent context only for continuity.
 Generate only for a visually important moment: dramatic action, key emotion, major reveal, transformation, important location, or newly described character. If not worth illustrating, set shouldGenerate false and keep prompt empty.
-Describe every visible character/persona directly in the prompt. The image model has no memory. Put all visible names in characters.`;
+Describe every visible character/persona directly in the prompt. Include available body build (chubby, slim, muscular, etc.), clothing/outfit, hair, face, distinguishing features, and other appearance details from context. Do not invent missing traits. The image model has no memory. Put all visible names in characters.`;
 
 function createIllustratorPrompt(style: string, rules: string): string {
   return `${baseDecisionRules}

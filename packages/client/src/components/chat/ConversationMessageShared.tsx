@@ -19,7 +19,10 @@ import { renderWithStickerBlocks } from "../../lib/sticker-render";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { ImagePromptPanel } from "./ImagePromptPanel";
 import { SwipeJumpControl } from "./SwipeJumpControl";
+import { AnimatedDiceRoll, isDiceRollResult, shouldAnimateDiceRollMessage } from "../dice/AnimatedDiceRoll";
 import type { CharacterMap } from "./chat-area.types";
+
+const EMPTY_INLINE_EMOJI_MAP = new Map<string, string>();
 
 // ── Types ────────────────────────────────────────
 
@@ -43,6 +46,7 @@ export interface MessageData {
     thinking?: string | null;
     generationReplay?: MessageExtra["generationReplay"];
     participantSnapshot?: ChatParticipantSnapshot | null;
+    diceRollResult?: MessageExtra["diceRollResult"];
     attachments?: Array<{
       type: string;
       url?: string;
@@ -54,6 +58,11 @@ export interface MessageData {
     }>;
   };
   createdAt: string;
+}
+
+export function DiceMessageContent({ diceRollResult, createdAt }: { diceRollResult: unknown; createdAt?: string | null }) {
+  if (!isDiceRollResult(diceRollResult)) return null;
+  return <AnimatedDiceRoll {...diceRollResult} mode="chat" animate={shouldAnimateDiceRollMessage(createdAt)} />;
 }
 
 /** Everything the layout sub-components (Bubble, Line, Grouped) need, pre-resolved by the shell. */
@@ -127,6 +136,8 @@ export interface MessageRenderContext {
   onTranslate: () => void;
   onStartEdit: () => void;
   onImageOpen: (url: string, prompt?: string | null) => void;
+  /** Open the Convo about-me profile popout, anchored to the clicked avatar (undefined when unresolvable). */
+  onOpenAboutMe?: (anchor: DOMRect) => void;
   onRemoveAttachment: (index: number) => void;
   onSetActiveSwipe?: (id: string, index: number) => void;
   onRegenerate?: (id: string) => void;
@@ -245,6 +256,61 @@ export function highlightMentions(nodes: ReactNode[], names: string[], keyPrefix
 
 // ── Small shared components ───────────────────────
 
+/**
+ * Message sender name. When `onOpenAboutMe` is provided (Convo, with a resolvable
+ * character/persona target) the name becomes clickable and opens the about-me
+ * popout anchored to itself — matching the clickable avatar. Kept as a `span`
+ * with `role="button"` (not a `<button>`) so it stays inline and baseline-aligned
+ * with the timestamp beside it. Falls back to a plain, non-interactive label.
+ */
+export function ConversationMessageName({
+  displayName,
+  nameColor,
+  onOpenAboutMe,
+  className,
+}: {
+  displayName: string;
+  nameColor?: string;
+  onOpenAboutMe?: (anchor: DOMRect) => void;
+  className?: string;
+}) {
+  const baseClass = "mari-message-name text-[0.9375rem] font-semibold leading-tight";
+  if (!onOpenAboutMe) {
+    return (
+      <span className={cn(baseClass, "cursor-default", className)} style={nameColorStyle(nameColor)}>
+        {displayName}
+      </span>
+    );
+  }
+  const open = (e: React.SyntheticEvent<HTMLSpanElement>) => {
+    e.stopPropagation();
+    onOpenAboutMe(e.currentTarget.getBoundingClientRect());
+  };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open(e);
+        }
+      }}
+      aria-label={`View ${displayName}'s about me`}
+      title={`View ${displayName}'s about me`}
+      className={cn(
+        baseClass,
+        "cursor-pointer rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/50",
+        className,
+      )}
+      style={nameColorStyle(nameColor)}
+    >
+      {displayName}
+    </span>
+  );
+}
+
 export function HiddenFromAIConversationButton({
   canCollapse,
   onExpand,
@@ -335,10 +401,8 @@ export function MessageContent({
   const baseInline = mentionNames?.length
     ? (text: string, kp: string) => highlightMentions(applyInlineMarkdown(text, kp), mentionNames, kp)
     : applyInlineMarkdown;
-  const renderInline =
-    emojiMap && emojiMap.size > 0
-      ? (text: string, kp: string) => renderInlineWithCustomEmojis(text, kp, emojiMap, baseInline)
-      : baseInline;
+  const renderInline = (text: string, kp: string) =>
+    renderInlineWithCustomEmojis(text, kp, emojiMap ?? EMPTY_INLINE_EMOJI_MAP, baseInline);
   const renderTextBlock = (text: string, kp: string) => (
     <Fragment key={kp}>{renderMarkdownBlocks(text, renderInline)}</Fragment>
   );

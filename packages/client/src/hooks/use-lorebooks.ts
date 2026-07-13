@@ -80,7 +80,8 @@ export function useLorebookPages(options: {
       if (sort) params.set("sort", sort);
       if (options.active) {
         params.set("active", "true");
-        if (options.active.lorebookIds.length > 0) params.set("activeLorebookIds", options.active.lorebookIds.join(","));
+        if (options.active.lorebookIds.length > 0)
+          params.set("activeLorebookIds", options.active.lorebookIds.join(","));
         if (options.active.characterIds.length > 0) params.set("characterIds", options.active.characterIds.join(","));
         if (options.active.personaId) params.set("personaId", options.active.personaId);
         if (options.active.chatId) params.set("chatId", options.active.chatId);
@@ -96,17 +97,19 @@ export function flattenLorebookPages(data: { pages?: Array<PaginatedList<Loreboo
   return flattenPaginatedItems(data?.pages);
 }
 
-export function fetchAllLorebookPages(options: {
-  category?: string;
-  search?: string;
-  sort?: string;
-  active?: {
-    lorebookIds: string[];
-    characterIds: string[];
-    personaId?: string | null;
-    chatId?: string | null;
-  };
-} = {}) {
+export function fetchAllLorebookPages(
+  options: {
+    category?: string;
+    search?: string;
+    sort?: string;
+    active?: {
+      lorebookIds: string[];
+      characterIds: string[];
+      personaId?: string | null;
+      chatId?: string | null;
+    };
+  } = {},
+) {
   const category = options.category ?? "";
   const search = (options.search ?? "").trim();
   const sort = options.sort ?? "";
@@ -153,15 +156,37 @@ export function useCreateLorebook() {
   });
 }
 
+export function useEmbedLorebook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ characterId, lorebookId }: { characterId: string; lorebookId: string }) =>
+      api.post<{
+        success: boolean;
+        lorebookId: string;
+        entriesEmbedded: number;
+        refreshed: boolean;
+        characterBook: unknown;
+      }>(`/characters/${characterId}/embedded-lorebook/embed`, { lorebookId }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: lorebookKeys.all });
+      qc.invalidateQueries({ queryKey: lorebookKeys.active() });
+      qc.invalidateQueries({ queryKey: characterKeys.detail(variables.characterId) });
+    },
+  });
+}
+
 export function useUpdateLorebook() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
       api.patch<Lorebook>(`/lorebooks/${id}`, data),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: lorebookKeys.all });
+    onSuccess: (data, variables) => {
+      // The PATCH response is the authoritative updated row. Prime the detail
+      // cache before the editor marks its form clean so it never reloads the
+      // pre-save snapshot for one frame and remounts conditional sections.
+      qc.setQueryData(lorebookKeys.detail(variables.id), data);
       qc.invalidateQueries({ queryKey: lorebookKeys.list() });
-      qc.invalidateQueries({ queryKey: lorebookKeys.detail(variables.id) });
+      qc.invalidateQueries({ queryKey: [...lorebookKeys.all, "category"] });
       qc.invalidateQueries({ queryKey: lorebookKeys.active() });
     },
   });
@@ -190,7 +215,7 @@ export function useDeleteLorebook() {
       // marking them stale. `useLorebook`/`useLorebookEntries` set
       // staleTime to 5 minutes, and TanStack returns cached `data` even
       // after a refetch errors — so without explicit removal the next
-      // "Edit Linked Lorebook" click would render a ghost editor with
+      // "Edit Embedded Lorebook" click would render a ghost editor with
       // the deleted lorebook's name and metadata while the entries
       // query reports 0 entries from the server.
       qc.removeQueries({ queryKey: lorebookKeys.detail(id) });
@@ -202,7 +227,7 @@ export function useDeleteLorebook() {
       // characterId client-side (the detail cache may already be gone
       // by this point), so blanket-invalidate character queries —
       // missing this lets the character editor keep rendering stale
-      // entries and a broken "Edit Linked Lorebook" button.
+      // entries and a broken "Edit Embedded Lorebook" button.
       qc.invalidateQueries({ queryKey: characterKeys.all });
     },
   });
@@ -284,6 +309,25 @@ export function useUpdateLorebookEntry() {
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: lorebookKeys.entries(variables.lorebookId) });
       qc.invalidateQueries({ queryKey: lorebookKeys.entry(variables.entryId) });
+      qc.invalidateQueries({ queryKey: lorebookKeys.active() });
+    },
+  });
+}
+
+export function useBulkUpdateLorebookEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      lorebookId,
+      entryIds,
+      changes,
+    }: {
+      lorebookId: string;
+      entryIds: string[];
+      changes: Record<string, boolean>;
+    }) => api.patch<{ updated: number }>(`/lorebooks/${lorebookId}/entries/bulk`, { entryIds, changes }),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: lorebookKeys.entries(variables.lorebookId) });
       qc.invalidateQueries({ queryKey: lorebookKeys.active() });
     },
   });

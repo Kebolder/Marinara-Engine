@@ -6,14 +6,16 @@ import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
 import { useUnoGameStore } from "../stores/uno-game.store";
 import { useChessGameStore } from "../stores/chess-game.store";
+import { usePokerGameStore } from "../stores/poker-game.store";
+import { useEightBallGameStore } from "../stores/eightball-game.store";
 import { useGalleryStore } from "../stores/gallery.store";
 import { toast } from "sonner";
+import { startSceneWithPromptPreferences } from "./scene-generation";
 import {
   SUPPORTED_MACROS,
+  buildGuidedGenerationInstructionMessage,
   buildNarratorInstructionMessage,
   normalizeTextForMatch,
-  type SceneCreateResponse,
-  type ScenePlanResponse,
 } from "@marinara-engine/shared";
 
 export interface SlashCommand {
@@ -38,6 +40,8 @@ export interface SlashCommandContext {
     generationGuide?: string;
     generationGuideSource?: "narrator" | "guide" | "game_start";
     continueMessageId?: string;
+    mentionedCharacterNames?: string[];
+    forCharacterId?: string;
     impersonate?: boolean;
     attachments?: { type: string; data: string }[];
     impersonatePresetId?: string;
@@ -46,13 +50,22 @@ export interface SlashCommandContext {
     impersonatePromptTemplate?: string;
   }) => Promise<boolean | void>;
   /** Insert a message directly into the chat (no LLM) */
-  createMessage: (data: { role: string; content: string; characterId?: string | null }) => void | Promise<void>;
+  createMessage: (data: {
+    role: string;
+    content: string;
+    characterId?: string | null;
+    extra?: Record<string, unknown>;
+  }) => void | Promise<void>;
   /** Invalidate chat queries to refresh the UI */
   invalidate: () => void;
   /** Character names in the current chat */
   characterNames: string[];
   /** Characters available in the current roleplay scene */
   characters?: Array<{ id: string; name: string }>;
+  /** Manual individual group replies need a target character instead of an auto-selected responder. */
+  requiresManualGuideTarget?: boolean;
+  /** Clears a pending smart-response badge for a character after an explicit targeted command. */
+  removeQueuedResponse?: (characterId: string) => void;
   /** Latest assistant message, used when /continue appends to an unfinished reply */
   latestAssistantMessageId?: string | null;
   /** Role of the last message in the chat. /continue only appends to a trailing
@@ -88,6 +101,64 @@ function buildStatusCommandHelp(characters: Array<{ id: string; name: string }>)
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatGuidedTargetHelp(characters: Array<{ name: string }>): string {
+  const available = formatAvailableCharacterList(characters);
+  return `Use /guided respond for <character> <direction>${available ? `\nAvailable: ${available}` : ""}`;
+}
+
+function trimGuideSeparator(value: string): string {
+  return value.replace(/^\s*[:;,-]\s*/u, "").trim();
+}
+
+function guidedTargetRemainder(args: string): string | null {
+  const trimmed = args.trim();
+  const match =
+    trimmed.match(/^(?:respond|reply|answer)\s+(?:for|as|from)\s+/iu) ?? trimmed.match(/^(?:for|as|from)\s+/iu);
+  return match ? trimmed.slice(match[0].length).trim() : null;
+}
+
+function splitLeadingQuotedTarget(value: string): { targetName: string; rest: string } | null {
+  const match = value.match(/^["']([^"']+)["']([\s\S]*)$/u);
+  if (!match) return null;
+  return { targetName: match[1]!.trim(), rest: match[2] ?? "" };
+}
+
+function resolveGuidedCharacterTarget(
+  args: string,
+  characters: Array<{ id: string; name: string }> = [],
+): { character: { id: string; name: string }; guideText: string } | null {
+  const remainder = guidedTargetRemainder(args);
+  if (!remainder) return null;
+
+  const quotedTarget = splitLeadingQuotedTarget(remainder);
+  if (quotedTarget) {
+    const quotedName = normalizeTextForMatch(quotedTarget.targetName);
+    const character = characters.find((candidate) => normalizeTextForMatch(candidate.name) === quotedName);
+    return character ? { character, guideText: trimGuideSeparator(quotedTarget.rest) } : null;
+  }
+
+  const sortedCharacters = [...characters].sort(
+    (a, b) => normalizeTextForMatch(b.name).length - normalizeTextForMatch(a.name).length,
+  );
+  for (const character of sortedCharacters) {
+    const normalizedName = normalizeTextForMatch(character.name);
+    if (!normalizedName) continue;
+
+    const words = Array.from(remainder.matchAll(/\S+/gu));
+    for (const word of words) {
+      const end = (word.index ?? 0) + word[0].length;
+      const prefix = remainder.slice(0, end);
+      const normalizedPrefix = normalizeTextForMatch(prefix.replace(/[:;,-]+$/u, ""));
+      if (normalizedPrefix === normalizedName) {
+        return { character, guideText: trimGuideSeparator(remainder.slice(end)) };
+      }
+      if (!normalizedName.startsWith(normalizedPrefix)) break;
+    }
+  }
+
+  return null;
 }
 
 export interface SlashCommandResult {
@@ -474,7 +545,11 @@ const COMMANDS: SlashCommand[] = [
       const modStr = parsed.modifier > 0 ? `+${parsed.modifier}` : parsed.modifier < 0 ? `${parsed.modifier}` : "";
       const detail = parsed.count > 1 ? ` [${rolls.join(", ")}]${modStr}` : modStr ? ` (${rolls[0]}${modStr})` : "";
       const text = `🎲 **${notation}** → **${sum}**${detail}`;
-      await ctx.createMessage({ role: "narrator", content: text });
+      await ctx.createMessage({
+        role: "narrator",
+        content: text,
+        extra: { diceRollResult: { notation, rolls, modifier: parsed.modifier, total: sum } },
+      });
       return { handled: true };
     },
   },
@@ -505,6 +580,33 @@ const COMMANDS: SlashCommand[] = [
     },
   },
   {
+    name: "poker",
+    description: "Start a game of Texas Hold'em poker with the characters in this chat",
+    usage: "/poker",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "Poker can only be played in conversation chats." };
+      }
+      usePokerGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
+    name: "8ball",
+    aliases: ["pool"],
+    description: "Start a game of 8-ball pool with a character in this chat",
+    usage: "/8ball",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "8-ball pool can only be played in conversation chats." };
+      }
+      useEightBallGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
     name: "sys",
     aliases: ["system"],
     description: "Insert a system message",
@@ -520,9 +622,30 @@ const COMMANDS: SlashCommand[] = [
     name: "guided",
     aliases: ["narrator", "narrate", "nar"],
     description: "Steer the narrative — the AI will narrate events in the direction you describe",
-    usage: "/guided <direction>",
+    usage: "/guided [respond for <character>] <direction>",
     async execute(args, ctx) {
       if (!args.trim()) return { handled: true, feedback: "Usage: /guided <direction to steer the narrative>" };
+      const characters = ctx.characters ?? [];
+      const targetedResponse = resolveGuidedCharacterTarget(args, characters);
+      if (targetedResponse) {
+        const generationGuide = targetedResponse.guideText
+          ? buildGuidedGenerationInstructionMessage(targetedResponse.guideText)
+          : undefined;
+        ctx.removeQueuedResponse?.(targetedResponse.character.id);
+        await ctx.generate({
+          chatId: ctx.chatId,
+          connectionId: null,
+          forCharacterId: targetedResponse.character.id,
+          mentionedCharacterNames: [targetedResponse.character.name],
+          ...(generationGuide ? { generationGuide, generationGuideSource: "guide" as const } : {}),
+        });
+        return { handled: true };
+      }
+
+      if (guidedTargetRemainder(args) !== null || ctx.requiresManualGuideTarget) {
+        return { handled: true, feedback: formatGuidedTargetHelp(characters) };
+      }
+
       await ctx.generate({
         chatId: ctx.chatId,
         connectionId: null,
@@ -979,50 +1102,17 @@ const COMMANDS: SlashCommand[] = [
         }
       }
 
-      // Step 1: Ask the LLM to plan the scene (comprehensive plan)
-      const planToastId = toast.loading("Planning scene...", { icon: "🎬" });
-      let planRes: ScenePlanResponse;
-      try {
-        planRes = await api.post<ScenePlanResponse>("/scene/plan", {
-          chatId: ctx.chatId,
-          prompt,
-          connectionId: null,
-        });
-      } catch {
-        toast.dismiss(planToastId);
-        return { handled: true, feedback: "Failed to plan scene. Check your API connection." };
-      }
-
-      if (!planRes.plan) {
-        toast.dismiss(planToastId);
-        return { handled: true, feedback: planRes.error || "Scene planning returned empty result. Try again." };
-      }
-
-      // Step 2: Create the scene chat using the full plan
-      toast.loading("Creating scene...", { id: planToastId, icon: "🎬" });
-      try {
-        const res = await api.post<SceneCreateResponse>("/scene/create", {
-          originChatId: ctx.chatId,
-          initiatorCharId: null, // user-initiated
-          plan: planRes.plan,
-          connectionId: null,
-        });
-
-        // Invalidate chats so the new scene appears + navigate to it
-        ctx.invalidate();
-        useChatStore.getState().setActiveChatId(res.chatId);
-
-        // Apply background if the plan chose one
-        if (res.background) {
-          useUIStore.getState().setChatBackground(`/api/backgrounds/file/${encodeURIComponent(res.background)}`);
-        }
-
-        toast.success(`Scene created: ${res.chatName}`, { id: planToastId, icon: "🎬" });
-        return { handled: true };
-      } catch {
-        toast.dismiss(planToastId);
-        return { handled: true, feedback: "Failed to create scene chat." };
-      }
+      await startSceneWithPromptPreferences({
+        chatId: ctx.chatId,
+        prompt,
+        initiatorCharId: null,
+        connectionId: null,
+        onCreated: () => {
+          // Invalidate chats so the new scene appears in the sidebar.
+          ctx.invalidate();
+        },
+      });
+      return { handled: true };
     },
   },
   {
@@ -1186,6 +1276,11 @@ export function matchSlashCommand(input: string): { command: SlashCommand; args:
     }
   }
   return null;
+}
+
+/** Keep Quick Replies' Post Only action from saving a real slash command as plain chat text. */
+export function shouldExecuteQuickPostAsCommand(input: string): boolean {
+  return matchSlashCommand(input.trim()) !== null;
 }
 
 /** Get all commands that match a partial prefix (for autocomplete). */

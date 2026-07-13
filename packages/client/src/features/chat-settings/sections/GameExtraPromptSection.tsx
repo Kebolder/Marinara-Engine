@@ -1,5 +1,5 @@
 import { ExternalLink, Pencil, Sliders, Trash2 } from "lucide-react";
-import { DEFAULT_GAME_SYSTEM_PROMPT } from "@marinara-engine/shared";
+import { DEFAULT_GAME_SYSTEM_PROMPT, type AgentPromptTemplateOption } from "@marinara-engine/shared";
 import { ExpandedTextarea } from "../../../components/ui/ExpandedTextarea";
 import { ChatSettingsSection } from "../ChatSettingsSection";
 
@@ -18,12 +18,15 @@ interface GameExtraPromptSectionProps {
   promptPresets: PromptPresetOption[];
   selectedPresetName: string | null;
   selectedPresetPrompt: string;
+  gmPromptTemplateId: string | null;
+  gmPromptTemplates: AgentPromptTemplateOption[];
   onCommit: (value: string | null) => void;
   onSpecialInstructionsCommit: (value: string | null) => void;
   onExpandedChange: (expanded: boolean) => void;
   onValueChange: (value: string) => void;
   onSpecialInstructionsChange: (value: string) => void;
   onPromptPresetChange: (presetId: string | null) => void;
+  onGmPromptTemplateChange: (templateId: string | null) => void;
   onOpenPromptPreset: () => void;
 }
 
@@ -36,15 +39,20 @@ export function GameExtraPromptSection({
   promptPresets,
   selectedPresetName,
   selectedPresetPrompt,
+  gmPromptTemplateId,
+  gmPromptTemplates,
   onCommit,
   onSpecialInstructionsCommit,
   onExpandedChange,
   onValueChange,
   onSpecialInstructionsChange,
   onPromptPresetChange,
+  onGmPromptTemplateChange,
   onOpenPromptPreset,
 }: GameExtraPromptSectionProps) {
-  const basePrompt = selectedPresetPrompt.trim() || DEFAULT_GAME_SYSTEM_PROMPT;
+  const selectedGmPromptTemplate = gmPromptTemplates.find((template) => template.id === gmPromptTemplateId) ?? null;
+  const basePrompt =
+    selectedGmPromptTemplate?.promptTemplate.trim() || selectedPresetPrompt.trim() || DEFAULT_GAME_SYSTEM_PROMPT;
 
   const openPromptEditor = () => {
     onValueChange(storedValue || basePrompt);
@@ -100,19 +108,39 @@ export function GameExtraPromptSection({
               </button>
             </div>
           </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">GM prompt style</span>
+            <select
+              value={gmPromptTemplateId ?? ""}
+              onChange={(event) => onGmPromptTemplateChange(event.target.value || null)}
+              className="mari-preset-native-select w-full truncate rounded-lg bg-[var(--secondary)] px-3 py-2 pr-8 text-xs text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] transition-shadow focus:ring-[var(--primary)]/40"
+            >
+              <option value="">Use selected prompt source</option>
+              {gmPromptTemplates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
+              A selected GM style replaces only the Game prompt. A chat-local edit still takes priority.
+            </span>
+          </label>
           <div className="flex items-center justify-between gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 ring-1 ring-[var(--border)]">
             <div className="min-w-0">
               <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">Game Prompt</span>
               <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
                 {storedValue
                   ? "Using chat-local edit"
-                  : promptPresetId
+                  : selectedGmPromptTemplate
+                    ? `Using ${selectedGmPromptTemplate.name}`
+                    : promptPresetId
                     ? `From ${selectedPresetName ?? "selected preset"}`
                     : "Using default game prompt"}
               </span>
             </div>
             <span className="shrink-0 rounded-full bg-[var(--background)] px-2 py-0.5 text-[0.5625rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              {storedValue ? "Custom" : promptPresetId ? "Preset" : "Default"}
+              {storedValue ? "Custom" : selectedGmPromptTemplate ? "Style" : promptPresetId ? "Preset" : "Default"}
             </span>
           </div>
           <div className="flex gap-1.5">

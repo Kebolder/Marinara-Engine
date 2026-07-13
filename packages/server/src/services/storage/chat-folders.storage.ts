@@ -69,7 +69,7 @@ export function createChatFoldersStorage(db: DB) {
       // Atomic: a partial failure mid-loop would leave the folder list with
       // mixed sort orders. Folder counts are O(dozens) per user, well below
       // the loop size that triggers the libSQL Windows transaction
-      // use-after-free noted in chats.storage.ts:449.
+      // use-after-free noted in chats.storage.ts:984-986.
       const timestamp = now();
       await db.transaction(async (tx) => {
         for (let i = 0; i < orderedIds.length; i++) {

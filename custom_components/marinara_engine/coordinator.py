@@ -188,7 +188,9 @@ class MarinaraCoordinator(DataUpdateCoordinator[dict]):
         """Upsert HA tool definitions into Marinara for the given categories.
 
         Creates missing tools and updates existing ones so schema changes propagate.
-        Returns (created, updated) counts.
+        Also PATCHes enabled=false on previously-synced tools whose category was
+        deselected, without deleting them; those disables are counted in `updated`
+        too. Returns (created, updated) counts.
         """
         from .const import TOOL_DEFINITIONS, tools_for_categories
 

@@ -5,7 +5,7 @@
 // state snapshots — no LLM summarization needed.
 // ──────────────────────────────────────────────
 
-import type { GameNpc, SessionSummary, GameMap } from "@marinara-engine/shared";
+import type { GameNpc } from "@marinara-engine/shared";
 
 // ── Types ──
 
@@ -380,49 +380,3 @@ export function buildStructuredRecap(journal: Journal, sessionNumber: number): s
   return sections.join("\n");
 }
 
-/**
- * Build a deterministic session summary from journal + game state.
- * Can replace the LLM-based conclude session in many cases.
- */
-export function buildDeterministicSummary(
-  journal: Journal,
-  sessionNumber: number,
-  npcs: GameNpc[],
-  map: GameMap | null,
-): Omit<SessionSummary, "timestamp"> {
-  const combatEntries = journal.entries.filter((e) => e.type === "combat");
-  const questEntries = journal.quests;
-  const npcEntries = journal.npcLog;
-
-  // Key discoveries = completed quests + new locations + key events
-  const keyDiscoveries: string[] = [
-    ...questEntries.filter((q) => q.status === "completed").map((q) => `Completed: ${q.name}`),
-    ...journal.locations.map((l) => `Visited: ${l}`),
-  ];
-
-  // NPC updates
-  const npcUpdates = npcEntries.map((n) => {
-    const npc = npcs.find((np) => np.name === n.npcName);
-    return `${n.npcName}: ${n.interactions.length} interactions${npc ? ` (reputation: ${npc.reputation})` : ""}`;
-  });
-
-  // Party dynamics from combat and interaction patterns
-  const partyDynamics =
-    combatEntries.length > 0
-      ? `The party fought ${combatEntries.length} encounter(s) this session.`
-      : "A peaceful session focused on exploration and dialogue.";
-  const latestLocation = journal.locations[journal.locations.length - 1] ?? map?.name ?? "the party's current position";
-
-  return {
-    sessionNumber,
-    summary: buildStructuredRecap(journal, sessionNumber),
-    resumePoint: `The next session should resume from ${latestLocation}.`,
-    partyDynamics,
-    partyState: `${journal.locations.length} locations explored, ${questEntries.filter((q) => q.status === "active").length} active quests`,
-    keyDiscoveries,
-    characterMoments: [],
-    littleDetails: [],
-    statsSnapshot: {},
-    npcUpdates,
-  };
-}

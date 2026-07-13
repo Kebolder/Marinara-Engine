@@ -15,22 +15,30 @@ import {
   ChevronUp,
   Plus,
   X,
+  Download,
 } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { toast } from "sonner";
 import { useTTSConfig, useUpdateTTSConfig, useTTSVoices } from "../../../hooks/use-tts";
 import { useCharacters } from "../../../hooks/use-characters";
 import { ttsService } from "../../../lib/tts-service";
+import {
+  listCachedTTSAudioEntries,
+  listCachedTTSAudioMeta,
+  type CachedTTSAudioExportEntry,
+} from "../../../lib/tts-audio-cache";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
 import type {
   TTSConfig,
   TTSSource,
+  TTSSourceProfile,
+  TTSSourceProfiles,
   TTSVoiceAssignment,
   TTSVoiceMode,
   TTSAudioFormat,
   TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
-import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "@marinara-engine/shared";
+import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK, ttsSourceProfileFromConfig } from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
 
@@ -92,12 +100,45 @@ const TTS_SOURCE_OPTIONS: Array<{ value: TTSSource; label: string }> = [
   { value: "xai", label: "xAI Voice" },
 ];
 
+function defaultSourceProfile(source: TTSSource): TTSSourceProfile {
+  const defaults = TTS_SOURCE_DEFAULTS[source];
+  return {
+    baseUrl: defaults.baseUrl,
+    apiKey: "",
+    voice: defaults.voice,
+    model: defaults.model,
+    speed: 1,
+    elevenLabsStability: 0.5,
+    elevenLabsLanguageCode: "",
+    voiceMode: "single",
+    voiceAssignments: [],
+    narratorVoiceEnabled: false,
+    narratorVoice: defaults.voice,
+    npcDefaultVoicesEnabled: false,
+    npcDefaultMaleVoices: [],
+    npcDefaultFemaleVoices: [],
+    audioFormat: "mp3",
+  };
+}
+
 const ELEVENLABS_TTS_MODELS = [
   "eleven_v3",
   "eleven_multilingual_v2",
   "eleven_flash_v2_5",
   "eleven_turbo_v2_5",
   "eleven_flash_v2",
+];
+
+const ELEVENLABS_DEFAULT_VOICE_OPTIONS: VoiceOption[] = [
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", category: "ElevenLabs default" },
+  { id: "AZnzlk1XvdvUeBnXmlld", name: "Domi", category: "ElevenLabs default" },
+  { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella", category: "ElevenLabs default" },
+  { id: "ErXwobaYiN019PkySvjV", name: "Antoni", category: "ElevenLabs default" },
+  { id: "MF3mGyEYCl7XYWbV9V6O", name: "Elli", category: "ElevenLabs default" },
+  { id: "TxGEqnHWrfWFTfGW9XjX", name: "Josh", category: "ElevenLabs default" },
+  { id: "VR6AewLTigWG4xSOukaG", name: "Arnold", category: "ElevenLabs default" },
+  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam", category: "ElevenLabs default" },
+  { id: "yoZ06aMxZJJ28mfd3POQ", name: "Sam", category: "ElevenLabs default" },
 ];
 
 type CharacterOption = {
@@ -123,6 +164,49 @@ function addSavedVoiceOption(options: VoiceOption[], voiceId: string): VoiceOpti
 function formatVoiceOptionLabel(option: VoiceOption): string {
   if (option.category === "saved") return `${option.id} (saved; not in current voice list)`;
   return option.name === option.id ? option.id : `${option.name} (${option.id})`;
+}
+
+function formatCacheBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function extensionForTTSBlob(blob: Blob): string {
+  const type = blob.type.toLowerCase();
+  if (type.includes("mpeg") || type.includes("mp3")) return "mp3";
+  if (type.includes("wav")) return "wav";
+  if (type.includes("ogg")) return "ogg";
+  if (type.includes("webm")) return "webm";
+  if (type.includes("mp4") || type.includes("m4a")) return "m4a";
+  return "audio";
+}
+
+function safeTTSFileStem(value: string): string {
+  return (
+    value
+      .replace(/[^a-z0-9._-]+/gi, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "tts-clip"
+  );
+}
+
+function downloadTTSClip(entry: CachedTTSAudioExportEntry, index: number): void {
+  const url = URL.createObjectURL(entry.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${String(index + 1).padStart(3, "0")}-${safeTTSFileStem(entry.key)}.${extensionForTTSBlob(entry.blob)}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 const ELEVENLABS_DEFAULT_MALE_VOICE_NAMES = new Set([
@@ -350,8 +434,11 @@ export function TTSConfigCard() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourceProfilesRef = useRef<TTSSourceProfiles>({});
   const [ttsState, setTTSState] = useState(ttsService.getState());
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [ttsCacheSummary, setTtsCacheSummary] = useState({ count: 0, bytes: 0 });
+  const [exportingTtsCache, setExportingTtsCache] = useState(false);
 
   // Voice fetch — keyed on the *saved* baseUrl so it only refetches when saved
   const savedSource = savedConfig?.source ?? "openai";
@@ -397,6 +484,7 @@ export function TTSConfigCard() {
     setCallCharacterVideoEnabled(savedConfig.callCharacterVideoEnabled ?? false);
     setCallAutomaticVideoClipsEnabled(savedConfig.callAutomaticVideoClipsEnabled ?? false);
     setCallCustomVideoClipsEnabled(savedConfig.callCustomVideoClipsEnabled ?? false);
+    sourceProfilesRef.current = savedConfig.sourceProfiles ?? {};
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -421,6 +509,21 @@ export function TTSConfigCard() {
     [],
   );
 
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    void listCachedTTSAudioMeta().then((entries) => {
+      if (cancelled) return;
+      setTtsCacheSummary({
+        count: entries.length,
+        bytes: entries.reduce((total, entry) => total + Math.max(0, entry.size || 0), 0),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, ttsState]);
+
   const buildPayload = (overrides?: Partial<TTSConfig>): TTSConfig => ({
     enabled,
     source,
@@ -444,8 +547,6 @@ export function TTSConfigCard() {
     progressivePlayback,
     dialogueOnly,
     audioFormat,
-    dialogueScope: "all",
-    dialogueCharacterName: "",
     callAudioEnabled,
     callSttConnectionId: "",
     callSttModel: "",
@@ -456,6 +557,7 @@ export function TTSConfigCard() {
     callCustomVideoClipsEnabled,
     // Soundboard is intentionally always-on for Conversation Calls. Saving this card also migrates old false values.
     callSoundboardEnabled: true,
+    sourceProfiles: sourceProfilesRef.current,
     ...overrides,
   });
 
@@ -490,36 +592,35 @@ export function TTSConfigCard() {
   };
 
   const handleSourceChange = (nextSource: TTSSource) => {
-    const defaults = TTS_SOURCE_DEFAULTS[nextSource];
-    const nextApiKey = apiKey === TTS_API_KEY_MASK ? "" : apiKey;
+    if (nextSource === source) return;
+    const currentProfile = ttsSourceProfileFromConfig(buildPayload());
+    const sourceProfiles: TTSSourceProfiles = {
+      ...sourceProfilesRef.current,
+      [source]: currentProfile,
+    };
+    const nextProfile = sourceProfiles[nextSource] ?? defaultSourceProfile(nextSource);
+    sourceProfilesRef.current = sourceProfiles;
 
     setSource(nextSource);
-    setBaseUrl(defaults.baseUrl);
-    setApiKey(nextApiKey);
-    setModel(defaults.model);
-    setVoice(defaults.voice);
-    setVoiceMode("single");
-    setVoiceAssignments([]);
-    setNarratorVoiceEnabled(false);
-    setNarratorVoice(defaults.voice);
-    setNpcDefaultVoicesEnabled(false);
-    setNpcDefaultMaleVoices([]);
-    setNpcDefaultFemaleVoices([]);
-    setElevenLabsLanguageCode("");
+    setBaseUrl(nextProfile.baseUrl);
+    setApiKey(nextProfile.apiKey);
+    setModel(nextProfile.model);
+    setVoice(nextProfile.voice);
+    setVoiceMode(nextProfile.voiceMode);
+    setVoiceAssignments(nextProfile.voiceAssignments);
+    setNarratorVoiceEnabled(nextProfile.narratorVoiceEnabled);
+    setNarratorVoice(nextProfile.narratorVoice);
+    setNpcDefaultVoicesEnabled(nextProfile.npcDefaultVoicesEnabled);
+    setNpcDefaultMaleVoices(nextProfile.npcDefaultMaleVoices);
+    setNpcDefaultFemaleVoices(nextProfile.npcDefaultFemaleVoices);
+    setSpeed(nextProfile.speed);
+    setElevenLabsStability(nextProfile.elevenLabsStability);
+    setElevenLabsLanguageCode(nextProfile.elevenLabsLanguageCode);
+    setAudioFormat(nextProfile.audioFormat);
     mark({
       source: nextSource,
-      baseUrl: defaults.baseUrl,
-      apiKey: nextApiKey,
-      model: defaults.model,
-      voice: defaults.voice,
-      voiceMode: "single",
-      voiceAssignments: [],
-      narratorVoiceEnabled: false,
-      narratorVoice: defaults.voice,
-      npcDefaultVoicesEnabled: false,
-      npcDefaultMaleVoices: [],
-      npcDefaultFemaleVoices: [],
-      elevenLabsLanguageCode: "",
+      ...nextProfile,
+      sourceProfiles,
     });
   };
 
@@ -559,10 +660,36 @@ export function TTSConfigCard() {
     })();
   };
 
+  const handleExportCachedClips = async () => {
+    setExportingTtsCache(true);
+    try {
+      const entries = await listCachedTTSAudioEntries();
+      if (entries.length === 0) {
+        toast.info("No cached TTS clips to export yet.");
+        setTtsCacheSummary({ count: 0, bytes: 0 });
+        return;
+      }
+
+      entries.forEach((entry, index) => downloadTTSClip(entry, index));
+      setTtsCacheSummary({
+        count: entries.length,
+        bytes: entries.reduce((total, entry) => total + Math.max(0, entry.size || entry.blob.size), 0),
+      });
+      toast.success(`Exported ${entries.length} cached TTS clip${entries.length === 1 ? "" : "s"}.`);
+    } catch {
+      toast.error("Failed to export cached TTS clips.");
+    } finally {
+      setExportingTtsCache(false);
+    }
+  };
+
   const voices = voicesData?.voices ?? [];
   const fetchedVoiceOptions = voicesData?.voiceOptions ?? voices.map((v) => ({ id: v, name: v }));
   const voiceOptions = useMemo(() => {
-    let nextOptions = fetchedVoiceOptions;
+    let nextOptions = fetchedVoiceOptions.length > 0 ? fetchedVoiceOptions : [];
+    if (source === "elevenlabs" && nextOptions.length === 0) {
+      nextOptions = ELEVENLABS_DEFAULT_VOICE_OPTIONS;
+    }
     for (const savedVoice of [
       voice,
       narratorVoice,
@@ -573,7 +700,15 @@ export function TTSConfigCard() {
       nextOptions = addSavedVoiceOption(nextOptions, savedVoice);
     }
     return nextOptions;
-  }, [fetchedVoiceOptions, narratorVoice, npcDefaultFemaleVoices, npcDefaultMaleVoices, voice, voiceAssignments]);
+  }, [
+    fetchedVoiceOptions,
+    narratorVoice,
+    npcDefaultFemaleVoices,
+    npcDefaultMaleVoices,
+    source,
+    voice,
+    voiceAssignments,
+  ]);
   const voicesFromProvider = voicesData?.fromProvider ?? false;
   const elevenLabsMatchedMaleVoiceOptions = useMemo(
     () =>
@@ -950,7 +1085,7 @@ export function TTSConfigCard() {
                 source === "elevenlabs"
                   ? "ElevenLabs voices are fetched by name and saved by voice ID."
                   : source === "pockettts"
-                    ? "PocketTTS built-in voice name or a voice URL/path accepted by your PocketTTS server."
+                    ? "PocketTTS built-in or custom voice from your server, or a voice URL/path accepted by PocketTTS."
                     : source === "xai"
                       ? "xAI Voice ID. Built-ins include eve, ara, rex, sal, and leo; custom xAI voice IDs can be typed after saving."
                       : "Voice to use for synthesis. Fetched from your configured provider when available."
@@ -1023,7 +1158,8 @@ export function TTSConfigCard() {
               )}
               {!voicesFromProvider && source === "pockettts" && voices.length > 0 && (
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  Showing PocketTTS built-in voices. You can type a custom voice URL or path accepted by your server.
+                  Showing PocketTTS built-in fallbacks. Save and refresh to load built-in and custom voices from your
+                  server.
                 </p>
               )}
               {!voicesFromProvider && source === "xai" && voices.length > 0 && (
@@ -1094,7 +1230,7 @@ export function TTSConfigCard() {
                 <button
                   type="button"
                   onClick={handleAddVoiceAssignment}
-                  disabled={voiceOptions.length === 0 || characterOptions.length === 0 || allCharactersAssigned}
+                  disabled={characterOptions.length === 0 || allCharactersAssigned}
                   className="mari-chrome-control w-full text-xs"
                 >
                   <Plus size="0.75rem" />
@@ -1353,9 +1489,28 @@ export function TTSConfigCard() {
               checked={dialogueOnly}
               onChange={(v) => {
                 setDialogueOnly(v);
-                mark({ dialogueOnly: v, dialogueScope: "all", dialogueCharacterName: "" });
+                mark({ dialogueOnly: v });
               }}
             />
+          </div>
+
+          <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 px-2.5 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium">Cached clips</div>
+              <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                {ttsCacheSummary.count} clip{ttsCacheSummary.count === 1 ? "" : "s"} ·{" "}
+                {formatCacheBytes(ttsCacheSummary.bytes)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleExportCachedClips()}
+              disabled={exportingTtsCache || ttsCacheSummary.count === 0}
+              className="mari-chrome-control mari-chrome-control--small shrink-0 text-xs"
+              title="Export cached TTS clips"
+            >
+              {exportingTtsCache ? <Loader2 size="0.75rem" className="animate-spin" /> : <Download size="0.75rem" />}
+            </button>
           </div>
 
           {/* Actions */}

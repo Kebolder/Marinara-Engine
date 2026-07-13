@@ -13,11 +13,9 @@ function getDialogTitle(kind: "alert" | "confirm" | "prompt" | "choice", title?:
 export function AppDialogRenderer() {
   const dialog = useDialogStore((state) => state.dialog);
   const [promptValue, setPromptValue] = useState("");
-  const [checked, setChecked] = useState(false);
   const promptInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setChecked(false);
     if (dialog?.kind !== "prompt") {
       setPromptValue("");
       return;
@@ -102,17 +100,6 @@ export function AppDialogRenderer() {
 
         {dialog.kind === "confirm" && (
           <div className="space-y-4">
-            {dialog.checkboxLabel && (
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--foreground)]">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(event) => setChecked(event.target.checked)}
-                  className="h-4 w-4 shrink-0 accent-[var(--primary)]"
-                />
-                <span>{dialog.checkboxLabel}</span>
-              </label>
-            )}
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
@@ -123,7 +110,7 @@ export function AppDialogRenderer() {
               </button>
               <button
                 type="button"
-                onClick={() => resolveActiveDialog(dialog.checkboxLabel && checked ? "checked" : true)}
+                onClick={() => resolveActiveDialog(true)}
                 className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${confirmToneClass}`}
               >
                 {dialog.confirmLabel ?? "Confirm"}

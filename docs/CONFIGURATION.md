@@ -1,297 +1,284 @@
-# Configuration
+# Server Configuration Reference
 
-Marinara Engine is configured through environment variables. Copy `.env.example` to `.env` in the project root to get started:
+This guide explains how to change server-level settings for Marinara Engine using environment variables. An environment variable is a setting you write in a plain text file that the server reads. Most users never need this page. The full variable list is near the bottom.
 
-```bash
-cp .env.example .env
-```
+## When would you configure Marinara?
 
-The example file uses safe, active `KEY=value` defaults. To change a setting, edit the value after `=`; lines that start with `#` are explanatory comments and are ignored by the launchers.
+Marinara Engine works out of the box with no configuration. You only need this page for a small number of tasks. Most of them involve running the server for more than one device.
 
-Official Docker/Podman images keep runtime configuration in `/app/data/.env` so it lives in the same persistent volume as user data. Non-container installs keep using the project-root `.env` by default.
+You might edit configuration when you want to:
 
-## Environment Variables
+- Let other devices on your network reach the server (access control).
+- Protect a shared server with a password or an IP allowlist.
+- Change where your data is stored on disk.
+- Turn up logging to help diagnose a problem.
+- Give slow image, video, or embedding jobs more time to finish (timeouts).
+- Unlock privileged actions like backups or updates from a remote device.
 
-| Variable                                    | Default                                                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                                      | `7860`                                                   | Server port. Keep Android builds, launchers, Docker, and Termux on the same value. The Android APK is a Termux bootstrap + WebView shell and must point at the same port as the running Termux server.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `HOST`                                      | `127.0.0.1` (`pnpm start`) / `0.0.0.0` (shell launchers) | Bind address. Set to `0.0.0.0` to allow access from other devices on your network.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `AUTO_OPEN_BROWSER`                         | `true`                                                   | Whether the shell launchers auto-open the local app URL. Set to `false`, `0`, `no`, or `off` to disable. Does not apply to the Android WebView wrapper.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `AUTO_CREATE_DEFAULT_CONNECTION`            | `true`                                                   | Legacy compatibility flag for the old bundled starter connection. Current builds do not bundle an OpenRouter API key or auto-create a usable OpenRouter Free connection; add your own connection in Settings. Requires restart.                                                                                                                                                                                                                                                                                                                                                                        |
-| `MARINARA_ENV_FILE`                         | Project-root `.env` / `/app/data/.env` in containers     | Optional override for the runtime `.env` path. Relative paths resolve from the repository root. Set this as an environment variable before startup; it cannot relocate the file from inside the `.env` it points to.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `TZ`                                        | _(system default; containers are often `UTC`)_           | Optional IANA timezone used for time-based features like character schedules.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `DATA_DIR`                                  | `./data`                                                 | Root folder for user data. Relative paths resolve from `packages/server`, so the effective native default is `packages/server/data`; official containers set `/app/data`. File-native storage lives under `DATA_DIR/storage`, and downloaded runtimes such as the background remover live beneath `DATA_DIR`. Requires restart.                                                                                                                                                                                                                                                                         |
-| `STORAGE_BACKEND`                           | `files`                                                  | Durable storage backend. `files` stores user data under `DATA_DIR/storage`; `sqlite` opts into the legacy persistent SQLite database.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `FILE_STORAGE_DIR`                          | `<DATA_DIR>/storage`                                     | Override for file-native storage. Relative paths resolve from `packages/server`; official containers set `/app/data/storage` so file storage stays inside the persistent volume.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `DATABASE_URL`                              | `file:./data/marinara-engine.db`                         | Legacy SQLite import/source path. In default file-native mode this is only used to import old data when `DATA_DIR/storage` does not exist.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `ENCRYPTION_KEY`                            | _(empty)_                                                | AES key for API key encryption. Generate one with `openssl rand -hex 32`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `ADMIN_SECRET`                              | _(empty)_                                                | Required shared secret for privileged APIs such as admin cleanup, backups, bulk import, update apply, theme and extension writes, sidecar install/download/delete, custom tool mutation, and haptics. Send as `X-Admin-Secret`.                                                                                                                                                                                                                                                                                                                                                                          |
-| `MARINARA_REQUIRE_ADMIN_SECRET_ON_LOOPBACK` | `false`                                                  | When `true`, loopback/local requests to privileged APIs must also provide `ADMIN_SECRET`. By default loopback keeps desktop backup/export flows convenient while non-loopback privileged requests still require the secret.                                                                                                                                                                                                                                                                                                                                                                             |
-| `LOG_PRESET`                                | `default`                                                | Optional logging preset. Set to `prompt-connections` to show prompt/model/connection debug diagnostics while suppressing routine Fastify request access logs.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `LOG_LEVEL`                                 | `warn`                                                   | Logging verbosity (`debug`, `info`, `warn`, `error`). See [Logging Levels](#logging-levels) below for details.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `LOG_DISABLE_REQUEST_LOGGING`               | `false`                                                  | When `true`, disables Fastify's automatic per-request access logs (`GET /api/... completed`) without changing the rest of the server log level. The `prompt-connections` preset enables this automatically. Requires restart (Fastify binds this option once at boot).                                                                                                                                                                                                                                                                                                                                                                                             |
-| `DISCORD_BRIDGE_ENABLED`                    | `false`                                                  | Default auto-start value for the optional private Discord bridge bot when set to `true`, `1`, `yes`, or `on`. Only used until the "Auto-start bot with Marinara" toggle in Settings → Discord Bot is set explicitly, after which the in-app setting takes over. The bot is spawned and managed by the Marinara server itself; it can also be started manually from Settings → Discord Bot without restarting Marinara.                                                                                                                                                                              |
-| `DISCORD_BOT_TOKEN`                         | _(empty)_                                                | Discord bot token. Required only when `DISCORD_BRIDGE_ENABLED=true`; never share or commit this value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `DISCORD_CLIENT_ID`                         | _(empty)_                                                | Discord application/client ID used to register the guild-scoped `/mari` command. Required only when the Discord bridge is enabled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `DISCORD_GUILD_ID`                          | _(empty)_                                                | Discord server/guild ID where the private bridge commands are registered. Required only when the Discord bridge is enabled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `DISCORD_OWNER_ID`                          | _(empty)_                                                | Discord user ID allowed to run the private bridge commands. Required only when the Discord bridge is enabled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `DISCORD_BRIDGE_SERVER_URL`                 | `http://127.0.0.1:<PORT>`                                | Base URL the Discord bot uses to query Marinara's local API. Leave unset for the same-machine default, or set when the bot process must reach Marinara through another URL.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `EMBEDDING_TIMEOUT_MS`                      | `300000`                                                 | Timeout for embedding provider requests in milliseconds. The default is 5 minutes so slower CPU-only local embedding servers have time to finish lorebook vectorization. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `MAX_TOOL_ROUNDS`                           | `100`                                                    | Maximum LLM tool-call rounds before Marinara asks for a final tool-free response. Applies to main chat tools and agent tool loops. Takes effect on the next generation.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `CUSTOM_TOOL_TIMEOUT_MS`                    | `60000`                                                  | Timeout for one custom tool execution in milliseconds. Applies to custom webhook requests and custom script tool VM execution. Takes effect on the next custom tool call.                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `IMAGE_GEN_TIMEOUT_MS`                      | `1800000`                                                | Timeout for image generation provider requests in milliseconds. The default is 30 minutes so slower Game Mode backgrounds, NPC portraits, scene illustrations, and image edits have time to finish. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                    |
-| `VIDEO_GEN_TIMEOUT_MS`                      | `1800000`                                                | Timeout for scene video generation provider requests in milliseconds. The default is 30 minutes so slower Gemini Omni, Google Veo, xAI Imagine, OpenRouter, and Seedance video jobs can finish. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                         |
-| `VIDEO_GEN_MAX_RESPONSE_BYTES`              | `167772160`                                              | Maximum response/download size for one generated scene video payload, in bytes. The default is 160 MiB. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `GOOGLE_VEO_VIDEO_POLL_INTERVAL_MS`         | `10000`                                                  | Polling interval for Google AI Studio Veo video generation jobs, in milliseconds. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `XAI_VIDEO_POLL_INTERVAL_MS`                | `5000`                                                   | Polling interval for xAI Imagine scene video jobs, in milliseconds. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `OPENROUTER_VIDEO_POLL_INTERVAL_MS`         | `10000`                                                  | Polling interval for OpenRouter video generation jobs, in milliseconds. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `SEEDANCE_VIDEO_POLL_INTERVAL_MS`           | `10000`                                                  | Polling interval for Seedance 2.0 video generation jobs, in milliseconds. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `VIDEO_REFERENCE_PUBLIC_BASE_URL`           | _(empty)_                                                | Public HTTPS base URL for this Marinara server when a video provider, such as Seedance, needs to fetch a first/last-frame reference image by URL. Example: `https://marinara.example.com`. Takes effect on the next video request. Local Seedance users can alternatively enable **Upload Seedance reference frames temporarily** in the Seedance Video Generation connection.                                                                                                                                                                                                                                |
-| `COMFYUI_GEN_TIMEOUT`                       | `2400`                                                   | ComfyUI polling limit in seconds after a workflow is queued. The default is 40 minutes and can be raised for slow local or remote ComfyUI workflows. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `MARI_WIKI_CONTENT_MAX_BYTES`               | `50000`                                                  | Maximum UTF-8 bytes returned by one `mari wiki` page-content read before truncation. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `MARI_WIKI_REQUEST_TIMEOUT_MS`              | `30000`                                                  | Timeout for one upstream Fandom/MediaWiki request made by `mari wiki`. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `MARI_WIKI_CACHE_TTL_MS`                    | `300000`                                                 | Default in-process cache TTL for `mari wiki` reads in milliseconds. Requires restart.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `CORS_ORIGINS`                              | `http://localhost:5173,http://127.0.0.1:5173`            | Allowed CORS origins. Set `*` for allow-all without credentials; explicit origin lists keep credentialed CORS support.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `SSL_CERT`                                  | _(empty)_                                                | Path to the TLS certificate. Set both `SSL_CERT` and `SSL_KEY` to enable HTTPS.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `SSL_KEY`                                   | _(empty)_                                                | Path to the TLS private key.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `IP_ALLOWLIST`                              | _(empty)_                                                | Comma-separated IPs or CIDRs to allow. Loopback is always allowed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `IP_ALLOWLIST_ENABLED`                      | `true`                                                   | Master switch for `IP_ALLOWLIST`. Set to `false`, `0`, `no`, or `off` to keep the list configured but disable enforcement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `BASIC_AUTH_USER`                           | _(empty)_                                                | Username for HTTP Basic Auth. Set both `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` to require a password on every request. Leave either empty to disable auth.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `BASIC_AUTH_PASS`                           | _(empty)_                                                | Password for HTTP Basic Auth. Use a strong, random value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `BASIC_AUTH_REALM`                          | `Marinara Engine`                                        | Realm string shown in the browser password prompt.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK`     | `false`                                                  | Restores legacy unauthenticated LAN/Docker/Tailscale/private-network access when Basic Auth is unset. Leave `false` unless the network itself is trusted.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `ALLOW_UNAUTHENTICATED_REMOTE`              | `false`                                                  | Allows unauthenticated public-internet IPs when Basic Auth is unset. NOT recommended.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `TRUSTED_PRIVATE_NETWORKS`                  | _(built-in defaults)_                                    | Comma-separated IPs / CIDRs treated as private-network clients. This does not bypass auth by itself; it only scopes `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true`. When set, it **replaces** the defaults (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `100.64.0.0/10`, `fc00::/7`, `fe80::/10`) — include any defaults you still want. Public internet clients require `ALLOW_UNAUTHENTICATED_REMOTE=true`.                                                                                                                                                                      |
-| `REQUIRE_AUTH_FOR_DOCKER_PROXY`             | `false`                                                  | When `true`, Docker bridge requests (source IP in `172.16.0.0/12`) carrying reverse-proxy forwarding headers use normal Basic Auth/IP allowlist handling instead of the Docker auth bypass. Direct container-to-container traffic still follows `BYPASS_AUTH_DOCKER`. **Scope:** only matches the legacy default Docker bridge CIDR; proxies on Swarm overlays (`10.0.0.0/8`), Kubernetes pod networks, or compose user-defined networks with custom IPAM won't match — use `BASIC_AUTH_USER`/`BASIC_AUTH_PASS` + `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=false`, or add the proxy IP to `IP_ALLOWLIST`. |
-| `CSRF_TRUSTED_ORIGINS`                      | _(empty)_                                                | Extra trusted origins for unsafe browser-origin API requests. The first-party client automatically sends `X-Marinara-CSRF`. For Docker/LAN access, use the browser-visible origin such as `http://192.168.1.10:3004`; `*` is supported only when every browser origin that can reach the server is trusted.                                                                                                                                                                                                                                                                                             |
-| `UPDATES_APPLY_ENABLED`                     | `false`                                                  | Enables server-side update application. Update apply also requires `ADMIN_SECRET`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `UPDATES_ALLOW_REMOTE_APPLY`                | `false`                                                  | Allows update apply from non-loopback clients when paired with auth, `ADMIN_SECRET`, and `UPDATES_APPLY_ENABLED=true` (for example an iPhone/iPad PWA updating the host server).                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `PROVIDER_LOCAL_URLS_ENABLED`               | `false` (`true` by default on Android when unset)        | Allows user-configured LLM/provider test/model URLs to call private/LAN/reserved addresses. Loopback provider URLs (`127.0.0.1`, `::1`, `localhost`) are allowed by default for local model servers. Needed for remote-hosted access to self-hosted provider endpoints on non-loopback addresses. Android defaults this on when the env var is absent because editing `.env` is not practical there; set it to `false`/`off` to opt out.                                                                                                                                                                  |
-| `IMAGE_LOCAL_URLS_ENABLED`                  | `false`                                                  | Allows image providers and returned image downloads to call local/private addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `TTS_LOCAL_URLS_ENABLED`                    | `false`                                                  | Allows TTS provider URLs to call local/private addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `DEEPLX_LOCAL_URLS_ENABLED`                 | `false`                                                  | Allows DeepLX URLs to call local/private addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `WEBHOOK_LOCAL_URLS_ENABLED`                | `false`                                                  | Allows custom tool webhooks to call local/private addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `CUSTOM_TOOL_SCRIPT_ENABLED`                | `false`                                                  | Enables custom script tool execution for trusted tools only. Scripts run in an in-process VM realm with no host globals such as `process`, `require`, or `Buffer`, but this is not OS-level sandboxing; keep it disabled for untrusted/imported tools.                                                                                                                                                                                                                                                                                                                                                      |
-| `SIDECAR_RUNTIME_INSTALL_ENABLED`           | `false` (`start.bat` sets `true` when unset)             | Enables sidecar runtime installation/reinstallation from the API without requiring an explicit Admin Access header on loopback. The Windows launcher enables this by default so one-click installer users can install the local runtime without finding or editing `.env`; set `SIDECAR_RUNTIME_INSTALL_ENABLED=false` in `.env` to opt back out. You can also leave this disabled and enter the matching `ADMIN_SECRET` in Settings -> Advanced -> Admin Access before installing the runtime. Sidecar model downloads and deletion require `ADMIN_SECRET`.                                                                                                                     |
-| `BACKGROUNDREMOVER_AUTO_INSTALL`            | `false`                                                  | When `true`, `start.sh` / `start.bat` run `pnpm backgroundremover:install -- --if-missing` on launch. This installs the optional open-source `backgroundremover` Python runtime under `DATA_DIR/background-remover` for AI sprite background cleanup.                                                                                                                                                                                                                                                                                                                                                   |
-| `SPRITE_BACKGROUND_REMOVAL_ENGINE`          | `auto`                                                   | Sprite cleanup engine. `auto` uses local `backgroundremover` when installed and falls back to built-in matte cleanup; `builtin` forces the built-in cleanup; `backgroundremover` requires the local AI remover and fails cleanup if it is unavailable.                                                                                                                                                                                                                                                                                                                                                  |
-| `BACKGROUNDREMOVER_COMMAND`                 | _(empty)_                                                | Optional path to a system `backgroundremover` executable. Leave empty to use Marinara's local venv installed by `pnpm backgroundremover:install`, or a `backgroundremover` executable on `PATH`.                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `BACKGROUNDREMOVER_PYTHON`                  | _(empty)_                                                | Optional path to a Python interpreter where `backgroundremover` is installed. Marinara calls it as `python -m backgroundremover.cmd.cli`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `BACKGROUNDREMOVER_TIMEOUT_MS`              | `600000`                                                 | Timeout for one AI background-removal call. First run may download U2Net models, so keep this high enough for slower networks.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `HAPTICS_ALLOW_REMOTE`                      | `false`                                                  | Allows haptic privileged actions from non-loopback clients when paired with auth and `ADMIN_SECRET`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `INTIFACE_URL`                              | `ws://127.0.0.1:12345`                                   | Default Intiface Central WebSocket URL used when a haptic connect request does not provide a URL. Docker or remote-browser installs can set this to `ws://CLIENT_IP:12345`; the chat haptics panel can also override it per chat.                                                                                                                                                                                                                                                                                                                                                                       |
-| `IMPORT_ALLOWED_ROOTS`                      | _(empty)_                                                | Comma-separated filesystem roots that bulk import may use without a picker-issued folder token.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `GIPHY_API_KEY`                             | _(empty)_                                                | Optional Giphy API key. GIF search is unavailable when unset.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `SPOTIFY_REDIRECT_URI`                      | _(empty; derived from request)_                          | Override for the Spotify OAuth callback URL. Leave empty to derive from the incoming request (HTTPS hosts and `127.0.0.1` auto-handled). Set explicitly when TLS is terminated upstream. Must match a Redirect URI registered in the Spotify Developer Dashboard.                                                                                                                                                                                                                                                                                                                                       |
-| `CLAUDE_CONFIG_DIR`                         | `~/.claude` (native) / `/app/data/claude-config` (Docker) | Directory the Claude Agent SDK and the `claude_subscription` provider use for credentials and synthetic session JSONL scratch files. Official Docker images point this at the data volume so the SDK has a writable location after Docker's `node`/`nonroot` privilege drop (the inherited `HOME=/root` would otherwise be unreadable). Override on native installs only when `$HOME/.claude` isn't usable (read-only homedirs, NFS, sandboxed deployments).                                                                                                                                            |
-| `CLAUDE_CODE_OAUTH_TOKEN`                   | _(empty)_                                                | OAuth token for Claude subscription auth. When set, the Agent SDK uses it directly instead of reading credentials from `CLAUDE_CONFIG_DIR/.credentials.json`. Generate one on a workstation with `claude setup-token` (from `@anthropic-ai/claude-code`) and inject the resulting value via env var — recommended pattern for containerized or headless deployments where an interactive login flow isn't practical.                                                                                                                                                                                    |
+Almost everything else, like your AI provider keys, characters, and chat options, is set inside the app, not here. To add an AI provider, see [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
 
-## Scene Videos and Storyboards
+## Where the .env file is
 
-Scene-video provider settings are saved as connections, not environment variables. Create a **Video Generation** connection in **Settings -> Connections**, then choose it per chat:
+Configuration lives in a file named `.env`. This is a plain text file with one setting per line, in the form `KEY=value`. Lines that start with `#` are comments and the server ignores them.
 
-- Game Mode: **Chat Settings -> Agents -> Scene Videos**.
-- Roleplay: **Chat Settings -> Agents -> Scene Videos**.
+Marinara creates an empty `.env` for you the first time it starts, so you do not have to make one by hand.
 
-Game Mode storyboard automation is also per chat. **Automatic Storyboard Illustrations** turn on automatically when Visual Generation is enabled for the game; they stay off when Visual Generation is off, which is the wizard default. **Automatic Storyboard Animations** are off by default so ordinary Game Mode turns do not automatically spend extra video calls. Enable them under **Chat Settings -> Agents -> Storyboards** when you want completed GM narration turns to become storyboard keyframes automatically. Animations add MP4 clips and require a Video Generation connection. Manual **Storyboard turn** generation remains available from the Gallery when the toggles are off.
+- On normal installs, the `.env` file sits in the project root folder.
+- On official Docker or Podman images, it sits at `/app/data/.env`, inside the same storage volume as your data.
 
-Chat-local media prompt choices are also metadata, not environment variables. **Storyboards -> Illustration Prompt** controls manual and still-only storyboards, **Storyboards -> Animation Prompt** controls video-enabled storyboard keyframe images, and **Storyboards -> Edit Storyboard Presets** saves custom copies of built-in presets such as Still Keyframes, Comic Page, Colored Manga, and B&W Manga. **Scene Videos -> Game Video Prompt** controls how generated scene/storyboard images are animated, and **Edit Video Presets** saves custom copies of the Cinematic Scene Video preset.
+A file named `.env.example` in the same folder lists every setting with its default. To change a setting, copy the line from `.env.example` into `.env`, then edit the value after the `=` sign.
 
-The environment variables in the table above still control the underlying provider work. `IMAGE_GEN_TIMEOUT_MS` applies to storyboard keyframe illustrations, `VIDEO_GEN_TIMEOUT_MS` applies to storyboard clips and other scene videos, `GOOGLE_VEO_VIDEO_POLL_INTERVAL_MS` controls Google Veo polling, `XAI_VIDEO_POLL_INTERVAL_MS` controls xAI Imagine polling, `OPENROUTER_VIDEO_POLL_INTERVAL_MS` controls OpenRouter video polling, and `SEEDANCE_VIDEO_POLL_INTERVAL_MS` controls Seedance polling. Seedance first/last-frame references require the provider to fetch an HTTPS image URL; set `VIDEO_REFERENCE_PUBLIC_BASE_URL` when Marinara is reachable at a public HTTPS origin, or use the Seedance connection's temporary public reference upload toggle for local installs.
-
-## Logging Levels
-
-All server-side logging goes through [Pino](https://getpino.io/) via a shared logger instance (`packages/server/src/lib/logger.ts`). The `LOG_LEVEL` environment variable controls the minimum severity that gets printed — anything below the configured level is silently discarded. `LOG_PRESET=prompt-connections` overrides the effective level to `debug` and disables Fastify's routine request logs so prompt/model/connection diagnostics are easier to read.
-
-| Level   | What it shows                             | Typical use                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `error` | Fatal and unrecoverable failures only.    | Database errors (readonly, locked), fatal agent failures that abort generation, image generation crashes, command processing exceptions.                                                                                                                                                                                                                                                                  |
-| `warn`  | Errors **plus** non-fatal warnings.       | Context trimming, non-critical agent failures, empty model responses, expression/background corrections, decrypt failures, missing connections, non-fatal catch blocks.                                                                                                                                                                                                                                   |
-| `info`  | Warnings **plus** operational milestones. | Server startup, seed results, Fastify per-request logs (method / URL / status / duration), agent resolution counts, character commands executed, game session lifecycle (create / start / conclude), abort requests, haptic device connections.                                                                                                                                                           |
-| `debug` | Everything — full verbose output.         | Complete LLM prompts (every message role + content), full LLM responses with duration, thinking/reasoning tokens (useful in game mode where no brain icon exists), token usage breakdowns, generation timing traces, game state patches, agent pipeline details (batch composition, prompt content, parse results), scene post-processing decisions, memory recall injection, asset generation decisions. |
-
-### Recommended settings
-
-- **Production** — `warn` (the default). Clean output, surfaces only problems worth investigating.
-- **Debugging a specific issue** — `info`. Adds request logs and operational milestones without flooding the terminal.
-- **Debugging prompts or model behavior** — `debug`. Logs every message sent to every LLM call and every response received. Expect high volume.
-- **Debugging prompts or outside connections without request noise** — `LOG_PRESET=prompt-connections`. Shows the same prompt/model/connection diagnostics as debug logging, but suppresses Fastify access logs such as repeated `GET /api/chats`, `GET /api/extensions`, or `GET /api/themes` completions.
-
-### Example
-
-```bash
-# Docker Compose
-LOG_LEVEL=debug docker compose up
-
-# .env file
-LOG_LEVEL=info
-
-# Prompt/connection troubleshooting preset
-LOG_PRESET=prompt-connections
-
-# Disable only Fastify's routine per-request logs
-LOG_DISABLE_REQUEST_LOGGING=true
-
-# Inline
-LOG_LEVEL=debug pnpm start
-```
-
-> **Note:** Client-side (browser) logging uses the standard `console.*` API and is not controlled by `LOG_LEVEL`. Production client builds automatically strip `console.log` calls; only `console.warn` and `console.error` survive in the browser.
-
-## Backups, Profiles, And Bulk Import
-
-Use **Settings -> Advanced -> Backups** before upgrades, machine moves, or experiments with imports. Backups capture Marinara's local data so it can be restored on the same install or another install.
-
-Profile export/import is the broader portability flow for moving an install between machines. Profile exports redact obvious secret, token, password, and API-key fields by default. After importing a profile, open **Settings -> Connections** and re-enter any missing provider keys or subscription credentials.
-
-SillyTavern bulk import lives in the same data-portability area. Use it when migrating many characters, chats, lorebooks, presets, or backgrounds at once. If you are importing from a folder outside the normal picker flow, configure `IMPORT_ALLOWED_ROOTS` or use the folder picker from a trusted local browser.
-
-Backup, restore, profile import/export, and SillyTavern bulk import are privileged operations. Remote browsers need `ADMIN_SECRET` set on the server and saved in **Settings -> Advanced -> Admin Access**.
-
-## Image Captioning
-
-Image Captioning lets a chat use a text-only main model while still accepting image attachments. Enable **Image Captioning** in a chat's **Advanced Parameters**, choose a vision-capable language connection, and Marinara will describe image attachments through that connection before building the main prompt.
-
-The original image stays attached to the chat. When captioning is enabled, the main model receives the generated description instead of needing native image-reading support. When captioning is off, image attachments are sent normally to providers that support them.
-
-## Access Control
-
-Marinara Engine ships with layered access-control mechanisms designed for users who expose the server beyond their local machine.
-
-> Looking for a step-by-step walkthrough rather than a reference? See [Remote Access — Setting Up Basic Auth or an IP Allowlist](REMOTE_ACCESS.md).
-
-> **Hot reload:** changes to access-control variables (`BASIC_AUTH_*`, `IP_ALLOWLIST`, `IP_ALLOWLIST_ENABLED`, `ALLOW_UNAUTHENTICATED_*`, `TRUSTED_PRIVATE_NETWORKS`, `BYPASS_AUTH_*`, `REQUIRE_AUTH_FOR_DOCKER_PROXY`, `ADMIN_SECRET`, `CSRF_TRUSTED_ORIGINS`, `CORS_ORIGINS`) take effect within a couple of seconds of saving `.env` — no restart required. The server logs an `[env-watcher]` line for each change. A short list of low-level variables (`PORT`, `HOST`, `SSL_CERT`/`SSL_KEY`, storage paths, `ENCRYPTION_KEY`, `TZ`, embedding/image generation timeouts) still need a restart; see [Remote Access § When a restart is required](REMOTE_ACCESS.md#when-a-restart-is-required). For `CORS_ORIGINS` specifically, only the rare transition between an explicit list and `*` (which flips the credentials behavior) requires a restart.
-
-### Safe-by-default lockdown
-
-By default, when no Basic Auth credentials are configured, the server only accepts connections from a small set of trusted sources:
-
-- Loopback (`127.0.0.1`, `::1`) — always allowed.
-- Anything in `IP_ALLOWLIST` — allowed.
-- Tailscale (`100.64.0.0/10`) and Docker bridge (`172.16.0.0/12`) — allowed by default; see [Trusted-interface bypass](#trusted-interface-bypass-tailscale--docker) to disable.
-
-Everything else — your home LAN's regular `192.168.x.x` / `10.x.x.x` addresses, public-internet callers, Kubernetes pod networks, ULA — requires Basic Auth or `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true`.
-
-Locked-out callers receive a `403 Forbidden` with a message describing the ways out:
-
-1. Set `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` (recommended for internet-facing servers).
-2. Add the public IP / network to `IP_ALLOWLIST`.
-3. Set `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=true` to opt back into legacy unauthenticated private-network access.
-4. Set `ALLOW_UNAUTHENTICATED_REMOTE=true` only when unauthenticated public access is intentional.
-
-> Note: even with Basic Auth credentials configured, traffic from the loopback, `IP_ALLOWLIST`, Tailscale, and Docker bridge sources above is still exempt — they're all treated as "already trusted." Set `BYPASS_AUTH_TAILSCALE=false` and/or `BYPASS_AUTH_DOCKER=false` if you want the password from those clients too. Public-internet and ordinary LAN callers always have to authenticate.
-
-#### Customising the private-network list
-
-The seven default ranges above cover the vast majority of LAN / Docker / Kubernetes / Tailscale setups. If they don't match your network — for example, you have a publicly-routable corporate `/16` that is technically outside RFC 1918 but you trust it, or you want to _drop_ a range you consider hostile — set `TRUSTED_PRIVATE_NETWORKS` to a comma-separated list of IPs / CIDRs. This **replaces** the defaults entirely, so include any of them you still want:
+Here is a sample `.env` that changes the port and enables a password:
 
 ```
-# Trust only my office subnet and a single specific home IP
-TRUSTED_PRIVATE_NETWORKS=10.42.0.0/16,203.0.113.7
-
-# Strip 10.0.0.0/8 from the defaults but keep the rest
-TRUSTED_PRIVATE_NETWORKS=172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,100.64.0.0/10,fc00::/7,fe80::/10
-```
-
-When unset, the built-in defaults are used.
-
-### IP Allowlist
-
-Restricts access at the network level. Set `IP_ALLOWLIST` to a comma-separated list of IPs or CIDR ranges:
-
-```
-IP_ALLOWLIST=192.168.1.0/24,203.0.113.42
-```
-
-When set, requests from any other address receive a `403 Forbidden`. Loopback addresses (`127.0.0.1`, `::1`) are **always** allowed so you cannot lock yourself out of local access.
-
-Set `IP_ALLOWLIST_ENABLED=false` to keep the list configured while temporarily disabling enforcement (useful when troubleshooting from a new IP).
-
-### HTTP Basic Auth
-
-Requires a username and password on every request. Set both `BASIC_AUTH_USER` and `BASIC_AUTH_PASS`:
-
-```
+PORT=8080
 BASIC_AUTH_USER=alice
 BASIC_AUTH_PASS=correct-horse-battery-staple
 ```
 
-The browser will show a native password prompt the first time you visit the server and remember the credentials for the session. Leaving either variable empty disables auth.
+The server reads `.env` by itself, no matter how you start it. This includes running `pnpm start` directly. The shell launchers (`start.bat`, `start.sh`, `start-termux.sh`) add two extras. They set `HOST=0.0.0.0` so other devices can reach the server, and they open the browser for you. With bare `pnpm start`, the server listens only on this computer unless you set `HOST` yourself.
 
-The following requests are **exempt** from Basic Auth so you cannot lock yourself or trusted networks out:
+## Restart or hot reload
 
-- Loopback (`127.0.0.1`, `::1`) — if you're on the box itself, no password is needed.
-- Any IP listed in `IP_ALLOWLIST` — if you've already vouched for a network at the IP layer, no second factor is required.
-- Tailscale or Docker traffic when their bypass flag is on — see [Trusted-interface bypass](#trusted-interface-bypass-tailscale--docker) below.
-- The `/api/health` endpoint — so external uptime monitors and load balancers can probe the server without credentials.
+Marinara watches the `.env` file while it runs. When you save a change, most settings take effect within about 2 seconds, with no restart. The server writes a log line starting with `[env-watcher]` each time it applies a change.
 
-> **Always pair Basic Auth with HTTPS** when exposing the server to the public internet — Basic Auth credentials are only base64-encoded, not encrypted. Set `SSL_CERT` and `SSL_KEY`, or front Marinara with a TLS-terminating reverse proxy (nginx, Caddy, Traefik, Cloudflare Tunnel).
+A small group of low-level settings are locked in when the server starts. Changing them needs a full restart. These settings are:
 
-For sensitive deployments, also consider Tailscale or Cloudflare Access — they avoid exposing the port to the open internet entirely.
+- `PORT`, `HOST`
+- `SSL_CERT`, `SSL_KEY`
+- `DATA_DIR`, `STORAGE_BACKEND`, `FILE_STORAGE_DIR`, `DATABASE_URL`
+- `ENCRYPTION_KEY`
+- `MARINARA_ENV_FILE`
+- `TZ`
+- `AUTO_OPEN_BROWSER`, `AUTO_CREATE_DEFAULT_CONNECTION`
+- `LOG_DISABLE_REQUEST_LOGGING`
+- The image, video, sprite, and ComfyUI timeout and poll settings (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, `VIDEO_GEN_MAX_RESPONSE_BYTES`, `SPRITE_GENERATION_TIMEOUT_MS`, `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS`, `COMFYUI_GEN_TIMEOUT`, and the four `*_VIDEO_POLL_INTERVAL_MS` settings)
 
-### Trusted-interface bypass (Tailscale / Docker)
+When one of these changes, the log warns that a restart is required. Access-control settings and secrets like `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, `IP_ALLOWLIST`, `ADMIN_SECRET`, and `CSRF_TRUSTED_ORIGINS` do not need a restart.
 
-Two flags trust traffic from a specific virtual interface, skipping both the IP allowlist and Basic Auth the same way loopback does. **Both default to `true`** — a fresh install with no `.env` file is reachable over Tailscale and from Docker containers on the same host without any setup.
+## Access control
+
+Access control decides who is allowed to reach a running server. This section is a quick reference. For a step-by-step walkthrough with examples, read [Remote Access: Basic Auth and IP Allowlist](REMOTE_ACCESS.md).
+
+A few terms used below:
+
+- Loopback means the same computer the server runs on. You reach it at `127.0.0.1` or `localhost`.
+- A CIDR range is a short way to write a whole block of IP addresses, like `192.168.1.0/24`. CIDR stands for Classless Inter-Domain Routing.
+- RFC 1918 ranges are the standard private address ranges used inside home and office networks, such as `10.x.x.x` and `192.168.x.x`.
+
+By default, when you set no password, the server accepts connections only from trusted sources. Those are loopback, any address in `IP_ALLOWLIST`, Tailscale, and the Docker bridge. Every other caller, including your normal home network, gets a `403 Forbidden` until you pick one of the options below.
+
+The main access-control settings are:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `BASIC_AUTH_USER` | empty | Username for a password prompt. Set with `BASIC_AUTH_PASS` to require a login. |
+| `BASIC_AUTH_PASS` | empty | Password for the login prompt. Leave either field empty to turn login off. |
+| `BASIC_AUTH_REALM` | `Marinara Engine` | Text shown in the browser's password box. |
+| `IP_ALLOWLIST` | empty | Comma-separated IPs or CIDR ranges that are always allowed. Loopback is always allowed. |
+| `IP_ALLOWLIST_ENABLED` | `true` | Set to `false` to keep the list but pause enforcement. |
+| `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK` | `false` | Restores passwordless access from private networks when no login is set. |
+| `ALLOW_UNAUTHENTICATED_REMOTE` | `false` | Allows passwordless access from any address, including the public internet. Not recommended. |
+| `TRUSTED_PRIVATE_NETWORKS` | built-in defaults | Replaces the default private-network ranges. Include any defaults you still want. |
+| `BYPASS_AUTH_TAILSCALE` | `true` | Lets Tailscale traffic skip the login and allowlist. |
+| `BYPASS_AUTH_DOCKER` | `true` | Lets Docker bridge traffic skip the login and allowlist. |
+| `REQUIRE_AUTH_FOR_DOCKER_PROXY` | `false` | Forces normal login for Docker traffic that looks reverse-proxied. |
+| `SSL_CERT` | empty | Path to a TLS certificate file. Set with `SSL_KEY` to serve HTTPS directly. |
+| `SSL_KEY` | empty | Path to the TLS private key file. |
+| `CSRF_TRUSTED_ORIGINS` | empty | Extra browser origins allowed to save changes. Use for a public domain or an unusual port. |
+
+Basic Auth is short for HTTP Basic Authentication, a simple username and password prompt. Its credentials are only encoded, not encrypted, so always pair it with HTTPS when your server faces the public internet. HTTPS is the secure, encrypted version of HTTP. To turn it on directly, set both `SSL_CERT` and `SSL_KEY`, or put a reverse proxy in front of Marinara.
+
+To let other devices reach the server at all, the server must bind to a reachable interface. Set `HOST=0.0.0.0`. The shell launchers do this for you, but `pnpm start` binds to loopback only.
+
+## Storage
+
+Storage settings control where your local data lives. Your data includes chats, characters, avatars, and generated media.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DATA_DIR` | `packages/server/data` | Root folder for all user data. Docker images set `/app/data`. |
+| `STORAGE_BACKEND` | `files` | Storage engine. `files` stores data as files under `DATA_DIR/storage`. Use `sqlite` for the legacy database. |
+| `FILE_STORAGE_DIR` | the `storage` folder inside `DATA_DIR` | Overrides the file-storage folder. |
+| `DATABASE_URL` | `file:./data/marinara-engine.db` | Legacy SQLite source path. Used only to import old data on first run. |
+| `ENCRYPTION_KEY` | empty | Key used to encrypt saved API keys. Generate one with the command below. |
+
+The default `files` backend keeps your data as plain files. This makes backups easy to copy and inspect. You do not need to change `STORAGE_BACKEND` unless you are migrating an older SQLite install.
+
+To generate an encryption key, run this command and paste the result into `ENCRYPTION_KEY`:
 
 ```
-BYPASS_AUTH_TAILSCALE=true   # trusts 100.64.0.0/10 (Tailscale CGNAT range)
-BYPASS_AUTH_DOCKER=true      # trusts 172.16.0.0/12 (Docker bridge networks)
+openssl rand -hex 32
 ```
 
-These are safe defaults because:
+To learn what each data folder holds, see [Where Your Data Is Stored](data/where-data-is-stored.md).
 
-- A peer in your tailnet already authenticated via your Tailscale account to be there. That's a stronger trust signal than "this packet came from your LAN."
-- Docker bridge IPs are unreachable from outside the host. External traffic NATs through the bridge gateway and arrives with a different source, so a request with `172.16.x.x` / `172.17.x.x` actually came from a container on this host.
+## Logging levels
 
-Combines cleanly with `BASIC_AUTH_*`: Tailscale and Docker traffic skips the prompt, everything else (LAN, public internet) still has to authenticate. The server logs an `[auth-bypass]` line the first time a request actually exercises one of these flags.
+Logging controls how much detail the server prints to its console. The main control is `LOG_LEVEL`. The server hides anything below the level you pick.
 
-**Set to `false` if:**
+| Level | What it shows |
+| --- | --- |
+| `error` | Only serious, unrecoverable failures. |
+| `warn` | Errors plus non-fatal warnings. This is the default. |
+| `info` | Warnings plus startup and per-request logs. |
+| `debug` | Everything, including full prompts and model replies. Very verbose. |
 
-- Your server's public uplink is itself behind a CGNAT'd ISP that uses `100.64.0.0/10`. An internet client could appear with a Tailscale-shaped source IP and the bypass would let them in. Set `BYPASS_AUTH_TAILSCALE=false`, or bind `HOST` to your `tailscale0` IP so the public NIC never sees the connection.
-- Your non-Docker LAN uses `172.16.x.x` / `172.20.x.x` addresses. Set `BYPASS_AUTH_DOCKER=false` so non-Docker hosts in that range still hit the auth gate.
-- You want a password from your Tailnet / Docker containers too.
+Recommended choices:
 
-If Marinara is behind a Docker reverse proxy or tunnel container on the default Docker bridge (`172.16.0.0/12`) and you expect Marinara's own Basic Auth/IP allowlist to protect forwarded clients, set `REQUIRE_AUTH_FOR_DOCKER_PROXY=true`. Docker bridge requests with forwarding headers such as `Forwarded`, `X-Forwarded-For`, or `X-Real-IP` will use normal auth handling; direct Docker container traffic still follows `BYPASS_AUTH_DOCKER`. Note that the flag is keyed on the same CIDR `BYPASS_AUTH_DOCKER` covers — proxies on Swarm overlays or other non-`172.16/12` networks won't match; for those, combine `BASIC_AUTH_*` with `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK=false` or use `IP_ALLOWLIST`.
+- Keep the default `warn` for normal use. It is quiet and shows only real problems.
+- Use `info` when you want to see requests and milestones without flooding the console.
+- Use `debug` when you need to see the exact prompt sent to the model and the reply. Expect a lot of output.
 
-For the broader "trust every private network" toggle (RFC 1918 + CGNAT + ULA + link-local), see `ALLOW_UNAUTHENTICATED_PRIVATE_NETWORK` under [Safe-by-default lockdown](#safe-by-default-lockdown). That one is _off_ by default and stays off — it's much broader than these interface-scoped flags.
+To read prompt and connection details without the routine request logs, set a preset instead of a level:
 
-### Privileged APIs
+```
+LOG_PRESET=prompt-connections
+```
 
-Destructive or high-risk features require `ADMIN_SECRET` in addition to the global network/auth checks. Set it on the server, then send the same value in the `X-Admin-Secret` header:
+That preset shows the same prompt and model detail as `debug`, but hides repeated request lines like `GET /api/chats`. To silence only those routine request lines while keeping your current level, set this and restart:
 
-```env
+```
+LOG_DISABLE_REQUEST_LOGGING=true
+```
+
+Browser logging is separate and is not controlled by `LOG_LEVEL`.
+
+## Timeouts
+
+A timeout is the longest time the server waits for a slow job before giving up. Media jobs like image and video generation can be slow, so their timeouts are generous by default. All timeout values are in milliseconds unless the name says otherwise.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `EMBEDDING_TIMEOUT_MS` | `300000` (5 minutes) | Time allowed for one embedding request. Higher helps slow local embedding servers. |
+| `IMAGE_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one image generation request. |
+| `VIDEO_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one scene video generation request. |
+| `VIDEO_GEN_MAX_RESPONSE_BYTES` | `167772160` (160 MiB) | Largest scene video download the server will accept. |
+| `COMFYUI_GEN_TIMEOUT` | `2400` (40 minutes, in seconds) | Time allowed for one ComfyUI workflow after it is queued. |
+| `SPRITE_GENERATION_TIMEOUT_MS` | falls back to `IMAGE_GEN_TIMEOUT_MS` | Time allowed for one AI sprite generation job. |
+| `CUSTOM_TOOL_TIMEOUT_MS` | `60000` (1 minute) | Time allowed for one custom tool call. |
+| `MAX_TOOL_ROUNDS` | `100` | Most tool-call rounds before the model must give a final answer. |
+
+The image, video, sprite, and ComfyUI timeouts are locked in at startup, so a change to them needs a restart. The embedding and custom-tool timeouts take effect on the next request, with no restart. Raise a media timeout when large or high-quality jobs fail partway through. To learn more about video jobs, see [Scene Video](media/scene-video.md).
+
+## Privileged APIs (ADMIN_SECRET)
+
+Some actions are destructive or high-risk, so they need an extra secret on top of the normal access checks. Examples are backups, clearing data, applying updates, and installing themes or extensions.
+
+Set a long, random value for `ADMIN_SECRET` on the server:
+
+```
 ADMIN_SECRET=replace-this-with-a-long-random-secret
 ```
 
-The official client sends that header for you after you paste the same value in **Settings -> Advanced -> Admin Access**. For raw API calls, include it yourself:
+On the machine running the server (loopback), these actions usually work without the secret. From another device, the app must send the secret. Paste the same value into the app under **Settings**, then **Advanced**, then **Admin Access**. After that, the app sends it for you.
 
-```bash
-curl -H "X-Admin-Secret: replace-this-with-a-long-random-secret" http://127.0.0.1:7860/api/...
-```
+Related privileged settings:
 
-These APIs fail closed when `ADMIN_SECRET` is unset or wrong:
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `ADMIN_SECRET` | empty | Shared secret required for privileged actions from remote devices. |
+| `MARINARA_REQUIRE_ADMIN_SECRET_ON_LOOPBACK` | `false` | When `true`, requires the secret even on the local machine. |
+| `UPDATES_APPLY_ENABLED` | `false` | Allows the browser to apply ordinary same-channel updates. A deliberate release-channel switch from a browser on the server machine works without this flag. Git-based installs only. |
+| `UPDATES_ALLOW_REMOTE_APPLY` | `false` | Allows a remote device to apply updates, with a valid secret. |
+| `HAPTICS_ALLOW_REMOTE` | `false` | Allows haptic device actions from a remote device, with a valid secret. |
+| `CUSTOM_TOOL_SCRIPT_ENABLED` | `false` | Enables custom script tools. Keep off for untrusted or imported tools. |
+| `IMPORT_ALLOWED_ROOTS` | empty | Filesystem folders that bulk import may read without a picker token. |
+| `PROFILE_EXPORT_JSON_LIMIT_BYTES` | `268435456` (256 MiB) | Largest single JSON profile export the server will build. |
 
-- Admin data clearing and expunge.
-- Backup create/download/delete, profile export, and profile import. Profile exports redact obvious secret/token/password/API-key fields by default.
-- SillyTavern bulk import scan/run and folder picker/browser.
-- Theme install/update/delete and setting the active theme.
-- Extension install/update/delete.
-- Update apply. Update check remains read-only.
-- Sidecar runtime install/reinstall, restart, model download/cancel/delete, unload, and Local Whisper speech-model download/delete.
-- Custom music folder picker and serving files from the picked folder.
-- Professor Mari workspace operations; trusted loopback, IP-allowlist, Tailscale, and Docker clients have a narrower exemption for this workspace.
-- Custom tool create/update/delete/reorder; script tools also require `CUSTOM_TOOL_SCRIPT_ENABLED=true`.
-- Haptic connect/disconnect/scan/command/stop-all.
+If `ADMIN_SECRET` is not set on the server, privileged actions fail from any device except the local machine. The error tells you to set the secret and paste it into **Admin Access**.
 
-### Local URL Opt-Ins
+## Local address opt-ins
 
-Outbound provider, image, TTS, DeepLX, and webhook requests reject private/LAN/metadata destinations by default to prevent SSRF. Provider calls allow loopback endpoints (`127.0.0.1`, `::1`, `localhost`) so local OpenAI-compatible servers keep working on single-machine installs. Explicit ComfyUI, AUTOMATIC1111, and Draw Things image connections may use loopback or LAN/private-network hosts because those backends are normally self-hosted. Enable only the feature-specific switch you need for other non-loopback self-hosted services, such as `PROVIDER_LOCAL_URLS_ENABLED=true` for a LAN OpenAI-compatible endpoint or `IMAGE_LOCAL_URLS_ENABLED=true` for a custom image proxy on another private-network host.
+By default, outbound requests to providers, image services, and webhooks refuse to reach private or local addresses. This blocks a class of attack called SSRF (server-side request forgery), where a request is tricked into reaching an internal address. Loopback provider addresses stay allowed so local model servers keep working.
 
-Security headers and API rate limits are enabled by default. Chat HTML is sanitized after rendering transforms; SVG uploads/proxies are not accepted for avatar/background/image upload paths.
+Turn on only the switch you need for a self-hosted service on another private-network machine.
 
-## Notes
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PROVIDER_LOCAL_URLS_ENABLED` | `false` | Allows AI provider URLs to reach private or LAN addresses. On by default on Android. |
+| `IMAGE_LOCAL_URLS_ENABLED` | `false` | Allows image provider URLs to reach private or LAN addresses. |
+| `TTS_LOCAL_URLS_ENABLED` | `false` | Allows text-to-speech URLs to reach private or LAN addresses. |
+| `DEEPLX_LOCAL_URLS_ENABLED` | `false` | Allows DeepLX translation URLs to reach private or LAN addresses. |
+| `WEBHOOK_LOCAL_URLS_ENABLED` | `false` | Allows custom tool webhooks to reach private or LAN addresses. |
 
-- The shell launchers (`start.bat`, `start.sh`, `start-termux.sh`) source `.env` automatically. If you run `pnpm start` directly, make sure the variables are set in your environment or `.env` file.
-- The Android APK can ask Termux to run the setup/start command after the user grants Android and Termux permissions. The server still runs in Termux, so keep the APK build port aligned with `PORT`.
-- Container deployments can pass variables via `docker run -e` flags or a `docker-compose.yml` `environment` block instead of a `.env` file.
-- `HOST=0.0.0.0` is required for LAN access. The shell launchers default to this, but `pnpm start` binds to `127.0.0.1` unless overridden.
+To connect a local or self-hosted model, see [Connecting a Local or Self-Hosted Model](connections/local-self-hosted.md).
+
+## Full environment variable reference
+
+This section lists the remaining settings, grouped by purpose. The tables above already cover access control, storage, logging, timeouts, privileged actions, and local address opt-ins.
+
+### Server and startup
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `7860` | The port the server listens on. Keep Android, Docker, and Termux on the same value. |
+| `HOST` | `127.0.0.1` (`0.0.0.0` in the shell launchers) | The network interface to bind. Use `0.0.0.0` for LAN access. |
+| `AUTO_OPEN_BROWSER` | `true` | Whether the shell launchers open the app URL for you. Set `false` to stop this. |
+| `MARINARA_ENV_FILE` | project-root `.env` | Optional path override for the `.env` file. Set it before startup. |
+| `TZ` | system default | IANA timezone used by time-based features like character schedules. |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Browser origins allowed to make cross-origin requests. |
+| `AUTO_CREATE_DEFAULT_CONNECTION` | `true` | Legacy flag. Current builds bundle no starter key, so this creates nothing. Add your own connection in the app. |
+
+`AUTO_CREATE_DEFAULT_CONNECTION` is kept only for older installs. New builds no longer ship a bundled starter connection, so leaving it on does nothing. To start chatting, add a connection under [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
+
+### Media and sprite tools
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `FFMPEG_PATH` | empty | Path to an `ffmpeg` program. Used for animated expression GIFs. Falls back to `ffmpeg` on your PATH. |
+| `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS` | `180000` (3 minutes) | Time allowed to convert one animated expression clip. |
+| `SPRITE_BACKGROUND_REMOVAL_ENGINE` | `auto` | Sprite cleanup engine. `auto`, `builtin`, or `backgroundremover`. |
+| `BACKGROUNDREMOVER_AUTO_INSTALL` | `false` | When `true`, installs the optional AI background remover on launch. |
+| `BACKGROUNDREMOVER_COMMAND` | empty | Path to a system `backgroundremover` program. |
+| `BACKGROUNDREMOVER_PYTHON` | empty | Path to a Python program where `backgroundremover` is installed. |
+| `BACKGROUNDREMOVER_TIMEOUT_MS` | `600000` (10 minutes) | Time allowed for one AI background-removal call. |
+
+### Scene video providers
+
+Scene video providers are set up as connections inside the app, not as environment variables. The settings below only tune the underlying jobs. All values are in milliseconds.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `GOOGLE_VEO_VIDEO_POLL_INTERVAL_MS` | `10000` | How often the server checks a Google Veo job. |
+| `XAI_VIDEO_POLL_INTERVAL_MS` | `5000` | How often the server checks an xAI Imagine job. |
+| `OPENROUTER_VIDEO_POLL_INTERVAL_MS` | `10000` | How often the server checks an OpenRouter video job. |
+| `SEEDANCE_VIDEO_POLL_INTERVAL_MS` | `10000` | How often the server checks a Seedance job. |
+| `VIDEO_REFERENCE_PUBLIC_BASE_URL` | empty | Public HTTPS address of this server, used when a provider must fetch a reference image by URL. |
+
+### Integrations and extras
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `GIPHY_API_KEY` | empty | Giphy key for GIF search in Conversation mode. Search is off when unset. |
+| `INTIFACE_URL` | `ws://127.0.0.1:12345` | Default address for the Intiface haptic app. |
+| `SPOTIFY_REDIRECT_URI` | derived from request | Override for the Spotify login callback URL. Set it when TLS is handled upstream. |
+| `MARI_WIKI_CONTENT_MAX_BYTES` | `50000` | Largest wiki page content Professor Mari reads before trimming. |
+| `MARI_WIKI_REQUEST_TIMEOUT_MS` | `30000` | Time allowed for one wiki request by Professor Mari. |
+| `MARI_WIKI_CACHE_TTL_MS` | `300000` | How long Professor Mari caches a wiki read. |
+| `SIDECAR_RUNTIME_INSTALL_ENABLED` | `false` (the Windows launcher sets `true`) | Allows installing the local model runtime without an admin header on loopback. |
+| `SSL_CERT` | empty | Path to a TLS certificate. See Access control above. |
+| `SSL_KEY` | empty | Path to a TLS private key. See Access control above. |
+
+For a Giphy key, note that GIF search stays unavailable until you set `GIPHY_API_KEY` and restart. For the built-in local model, see [Local Model Setup](connections/local-model.md).
+
+### Discord bridge bot
+
+The optional private Discord bridge bot is spawned and managed by the Marinara server. These settings are only needed when you enable it; the bot can also be started from Settings → Discord Bot without a restart.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DISCORD_BRIDGE_ENABLED` | `false` | Default auto-start value for the bridge bot. The "Auto-start bot with Marinara" toggle in Settings → Discord Bot takes over once set. |
+| `DISCORD_BOT_TOKEN` | empty | Discord bot token. Required when the bridge is enabled. Never share or commit it. |
+| `DISCORD_CLIENT_ID` | empty | Discord application/client ID used to register the guild-scoped `/mari` command. |
+| `DISCORD_GUILD_ID` | empty | Discord server/guild ID where the bridge commands are registered. |
+| `DISCORD_OWNER_ID` | empty | Discord user ID allowed to run the bridge commands. |
+| `DISCORD_BRIDGE_SERVER_URL` | `http://127.0.0.1:<PORT>` | Base URL the bot uses to reach Marinara's local API. Leave unset for the same-machine default. |
+
+## Related guides
+
+- [Remote Access: Basic Auth and IP Allowlist](REMOTE_ACCESS.md)
+- [Where Your Data Is Stored](data/where-data-is-stored.md)
+- [Connecting to an AI Provider](connections/connecting-to-a-provider.md)
+- [Scene Video](media/scene-video.md)
+- [Troubleshooting Marinara Engine](TROUBLESHOOTING.md)

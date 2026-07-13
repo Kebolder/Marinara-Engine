@@ -57,11 +57,11 @@ One rule: critique code and contracts only. Never personalize or address the aut
    - `git diff --name-only <base>...HEAD`.
 2. Read `AGENTS.md`.
 3. Load only guidance that matches touched areas:
-   - Package boundaries or architecture changes: `docs/ARCHITECTURE_MAP.md`.
-   - Frontend (`packages/client`) changes: `packages/client/.instructions.md` and `docs/FRONTEND.md`.
+   - Package boundaries or architecture changes: `docs/development/architecture-map.md`.
+   - Frontend (`packages/client`) changes: `packages/client/.instructions.md` and `docs/development/frontend.md`.
    - Server (`packages/server`) changes, including logging and route/service boundaries: `CLAUDE.md` and `CONTRIBUTING.md`.
-   - Chat, roleplay, or game mode changes: `docs/ARCHITECTURE_MAP.md` (Mode Ownership), `docs/GAME_MODE.md`, `docs/ROLEPLAY.md`, `docs/CONVERSATION.md`.
-   - Storage, migration, or import/export changes: `docs/FILE_STORAGE_MIGRATION.md`.
+   - Chat, roleplay, or game mode changes: `docs/development/architecture-map.md` (Mode Ownership), `docs/game/getting-started.md`, `docs/roleplay/getting-started.md`, `docs/conversation/getting-started.md`.
+   - Storage, migration, or import/export changes: `docs/development/file-storage-migration.md`.
    - Build, container, or CI changes: `docs/installation/containers.md` and `CONTRIBUTING.md`.
 4. Read the changed patch overview, per-file patch context, Bunny path rules, and focused guidance included in the packet.
 5. Inspect callers, contracts, tests, and adjacent implementations from the packet before reporting a finding. If a concrete suspected issue needs missing caller, schema, or contract context, request that focused context once. If context remains missing after the extra batch, say so instead of inventing certainty.

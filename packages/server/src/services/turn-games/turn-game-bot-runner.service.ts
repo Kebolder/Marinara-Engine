@@ -14,18 +14,24 @@
 // Invoked from the /api/generate handler ONLY when input.turnGameBots is set,
 // so it can never affect a normal conversation/roleplay generation.
 import type { FastifyReply } from "fastify";
+import { BUILT_IN_THINKING_TAG_PAIRS } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
-import { logger } from "../../lib/logger.js";
+import { logDebugOverride, logger } from "../../lib/logger.js";
+import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import type { BaseLLMProvider, ChatMessage, LLMToolDefinition } from "../llm/base-provider.js";
 import { createLLMProvider } from "../llm/provider-registry.js";
+import { extractLeadingThinkingBlocks } from "../llm/inline-thinking.js";
 import { trySendSseEvent } from "../../routes/generate/sse.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import { createGameEngineStateStorage } from "../storage/game-engine-state.storage.js";
-import { getActiveTurnGame } from "./turn-game-runner.service.js";
+import { getActiveTurnGame, loadTurnGameForDrain } from "./turn-game-runner.service.js";
 
 const MAX_BOT_TURNS = 100;
 const HUMAN_FALLBACK_SEAT = "human";
+
+/** The non-null shape `getActiveTurnGame` / `loadTurnGameForDrain` resolve to. */
+type ActiveTurnGame = NonNullable<Awaited<ReturnType<typeof getActiveTurnGame>>>;
 
 interface RunBotTurnsArgs {
   db: DB;
@@ -114,6 +120,135 @@ async function buildRecentContext(
 }
 
 /**
+ * Drain any dealer-narration events an engine has queued on `active.state` (e.g.
+ * poker's hand-start / street-deal / showdown / blinds-up / game-over milestones)
+ * and persist the queue-cleared snapshot. Game-agnostic: engines that don't
+ * implement `drainAnnouncements` (UNO, chess) make this a no-op via the optional-
+ * method guard below, so nothing about their behavior changes.
+ *
+ * When the engine names a dealer character (`announcerCharacterId`), the queued
+ * events are voiced as ONE short in-character line and persisted as a real
+ * assistant message (mirroring the move loop's narration persistence exactly,
+ * including its message-save-failure fallback). A silent "house" dealer
+ * (`announcerCharacterId` returns null) still drains + persists the state and
+ * pushes the board patch — it just never creates a message.
+ *
+ * STALL-GUARD NOTE: this is called at the very top of every loop iteration,
+ * before the loop's `lastSignature` stall-detection signature is computed. That
+ * is safe from a live-lock: draining clears `pendingAnnouncements`, which is
+ * itself part of the state the signature hashes, so the FIRST drain after a
+ * move always changes the signature (queue: [...] -> []) and the loop proceeds
+ * normally. `drainAnnouncements` is idempotent once the queue is empty — it
+ * returns `null` and this function no-ops — so a second consecutive iteration
+ * on the same (already-drained) state reproduces the SAME signature as before,
+ * which is exactly what should trip the stall guard for a genuinely stuck seat.
+ * Draining can therefore never itself be the cause of an infinite loop; it can
+ * only ever make the existing stall guard fire one iteration later than before.
+ */
+async function drainAndVoiceAnnouncements(args: {
+  chatId: string;
+  active: ActiveTurnGame;
+  humanSeatId: string;
+  chats: ReturnType<typeof createChatsStorage>;
+  characters: ReturnType<typeof createCharactersStorage>;
+  engineStorage: ReturnType<typeof createGameEngineStateStorage>;
+  provider: BaseLLMProvider;
+  model: string;
+  reply: FastifyReply;
+  turnIndex: number;
+  signal?: AbortSignal;
+}): Promise<{ state: unknown } | null> {
+  const { chatId, active, humanSeatId, chats, characters, engineStorage, provider, model, reply, turnIndex, signal } = args;
+  const { engine, state } = active;
+
+  if (typeof engine.drainAnnouncements !== "function") return null;
+  const drained = engine.drainAnnouncements(state);
+  if (!drained) return null;
+
+  const { state: nextState, announcements } = drained;
+  const eventSummary = announcements
+    .map((e: { message?: string }) => e.message)
+    .filter(Boolean)
+    .join(" ");
+
+  const dealerCharId =
+    typeof engine.announcerCharacterId === "function" ? engine.announcerCharacterId(nextState) : null;
+
+  let dealerLine = "";
+  if (dealerCharId && eventSummary) {
+    const seatNames = (nextState as { seatNames?: Record<string, string> }).seatNames ?? {};
+    let fallbackName = seatNames[dealerCharId] ?? dealerCharId;
+    if (!seatNames[dealerCharId]) {
+      try {
+        const row = await characters.getById(dealerCharId);
+        if (row?.data) {
+          const data = JSON.parse(row.data) as { name?: unknown };
+          if (typeof data.name === "string" && data.name.trim()) fallbackName = data.name.trim();
+        }
+      } catch {
+        // best-effort — fall back to the id
+      }
+    }
+
+    // Whose-turn marker before the voiced dealer line, matching the loop's
+    // existing group_turn marker for bot moves.
+    trySendSseEvent(reply, {
+      type: "group_turn",
+      data: { characterId: dealerCharId, characterName: fallbackName, index: turnIndex },
+    });
+
+    const persona = await buildPersonaBlock(characters, dealerCharId, fallbackName);
+    dealerLine = await narrateAnnouncements(provider, model, persona, engine.label, eventSummary, signal);
+  }
+  if (!dealerLine) dealerLine = eventSummary;
+
+  if (dealerCharId && dealerLine) {
+    const saved = await chats.createMessage({ chatId, role: "assistant", characterId: dealerCharId, content: dealerLine });
+    if (saved) {
+      await engineStorage.create({
+        chatId,
+        messageId: saved.id,
+        swipeIndex: saved.activeSwipeIndex ?? 0,
+        gameType: engine.gameType,
+        schemaVersion: engine.schemaVersion,
+        state: JSON.stringify(nextState),
+        committed: true,
+      });
+      trySendSseEvent(reply, { type: "message_saved", data: saved });
+    } else {
+      // Persistence of the dealer message failed — still advance engine state so
+      // the queue doesn't grow unbounded and the game keeps moving.
+      await engineStorage.create({
+        chatId,
+        messageId: "",
+        swipeIndex: 0,
+        gameType: engine.gameType,
+        schemaVersion: engine.schemaVersion,
+        state: JSON.stringify(nextState),
+        committed: true,
+      });
+    }
+  } else {
+    // Silent house dealer (or nothing worth saying) — persist the drained state
+    // with no message, single-live-row idiom.
+    await engineStorage.create({
+      chatId,
+      messageId: "",
+      swipeIndex: 0,
+      gameType: engine.gameType,
+      schemaVersion: engine.schemaVersion,
+      state: JSON.stringify(nextState),
+      committed: true,
+    });
+  }
+
+  // Push the redacted human-perspective board so the client clears
+  // hasPendingAnnouncements and sees the drained state live.
+  trySendSseEvent(reply, { type: "turn_game_state_patch", data: engine.publicView(nextState, humanSeatId) });
+  return { state: nextState };
+}
+
+/**
  * Run every pending bot seat for the chat's active turn-game. No-ops if there
  * is no active game or it is currently the human's turn.
  */
@@ -146,8 +281,31 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
   for (; turn < MAX_BOT_TURNS; turn++) {
     if (signal?.aborted) break;
 
-    const active = await getActiveTurnGame(db, chatId);
+    let active = await getActiveTurnGame(db, chatId);
     if (!active) break; // no game, or game finished
+
+    // Drain + voice any dealer announcements queued on this state BEFORE deciding
+    // whose turn it is. This must run even when control is about to go straight
+    // back to the human — e.g. a street-closing move BY the human queues a
+    // "Flop: ..." announcement but leaves currentSeat pointed at the human, so
+    // draining here (not after the human-turn break below) is what gets it
+    // voiced. See drainAndVoiceAnnouncements' doc comment for why this can't
+    // create a live-lock with the stall guard below.
+    const drained = await drainAndVoiceAnnouncements({
+      chatId,
+      active,
+      humanSeatId,
+      chats,
+      characters,
+      engineStorage,
+      provider,
+      model,
+      reply,
+      turnIndex: turn,
+      signal,
+    });
+    if (drained) active = { ...active, state: drained.state };
+
     const { engine, state } = active;
     const seatId = engine.currentSeat(state);
     if (!seatId || seatId === humanSeatId) break; // hand control back to the human
@@ -280,6 +438,30 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
     trySendSseEvent(reply, { type: "turn_game_state_patch", data: engine.publicView(nextState, humanSeatId) });
   }
 
+  // Final drain: a showdown/game_over (or any other) announcement queued by the
+  // LAST bot move in the loop above never gets its own top-of-loop iteration —
+  // once the game finishes, `getActiveTurnGame` returns null and the loop breaks
+  // BEFORE draining; an aborted signal can likewise break the loop right after a
+  // queueing move was persisted. Load unconditionally (finished games included,
+  // via loadTurnGameForDrain) and drain once more so nothing is left stranded in
+  // the queue. Idempotent/cheap when there's nothing to drain.
+  const finalActive = await loadTurnGameForDrain(db, chatId);
+  if (finalActive) {
+    await drainAndVoiceAnnouncements({
+      chatId,
+      active: finalActive,
+      humanSeatId,
+      chats,
+      characters,
+      engineStorage,
+      provider,
+      model,
+      reply,
+      turnIndex: turn,
+      signal,
+    });
+  }
+
   // Reaching the cap (rather than handing control back / finishing / aborting)
   // means a bot is still on seat after MAX_BOT_TURNS consecutive bot moves —
   // effectively unreachable in real UNO (a finite deck can't skip the human that
@@ -294,6 +476,23 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
       chatId,
     );
   }
+}
+
+/**
+ * Reasoning models can emit their chain-of-thought inline in `content` (e.g. a
+ * leading `<think>` block) instead of a provider-native thinking channel. The
+ * generation pipeline strips these before persisting; narration must too, or
+ * the reasoning gets saved verbatim as the character's table talk. When the
+ * closing tag never arrived (maxTokens ran out mid-thought), extraction leaves
+ * the opening tag at the front — everything after it is reasoning, so the line
+ * is unusable and we return "" to let the caller's fallback run.
+ * Exported for tests.
+ */
+export function stripInlineThinking(raw: string): string {
+  const trimmed = extractLeadingThinkingBlocks(raw).content.trim();
+  const lower = trimmed.toLocaleLowerCase();
+  if (BUILT_IN_THINKING_TAG_PAIRS.some((pair) => lower.startsWith(pair.open.toLocaleLowerCase()))) return "";
+  return trimmed;
 }
 
 async function narrateOutcome(
@@ -316,13 +515,56 @@ async function narrateOutcome(
           `${persona}\n\n` +
           `You are playing ${gameLabel} with friends. Speak ONE short, natural line as ${name}, fully in character. ` +
           `You may react to the table talk and/or to your own move — like a real person at the table (a quip, a taunt, a groan, a little flourish). ` +
-          `Hard rules: do NOT reveal your hand or any hidden information, do NOT recite the board state, and do NOT explain the rules or your strategy. Just talk.`,
+          `Hard rules: do NOT reveal your hand or any hidden information, do NOT recite the board state, and do NOT explain the rules or your strategy. ` +
+          `Reply with the spoken line ONLY — no reasoning, no preamble, no notes about what you are doing. Just talk.`,
       },
       ...(recent ? [{ role: "user" as const, content: `Recent table talk:\n${recent}` }] : []),
       { role: "user", content: `(You just ${did}.) Say your one line.` },
     ];
-    const res = await provider.chatComplete(messages, { model, temperature: 0.9, maxTokens: 100, ...(signal ? { signal } : {}) });
-    return (res.content ?? "").trim();
+    // maxTokens leaves headroom for reasoning models that think before the line;
+    // stripInlineThinking removes what they emit inline.
+    const res = await provider.chatComplete(messages, { model, temperature: 0.9, maxTokens: 300, ...(signal ? { signal } : {}) });
+    return stripInlineThinking(res.content ?? "");
+  } catch {
+    return "";
+  }
+}
+
+/** Voice a batch of queued dealer-announcement events as ONE short in-character line. */
+async function narrateAnnouncements(
+  provider: BaseLLMProvider,
+  model: string,
+  persona: string,
+  gameLabel: string,
+  eventSummary: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content:
+          `${persona}\n\n` +
+          `You are the dealer at this table's game of ${gameLabel}. Announce the following to the table in ONE ` +
+          `short line, fully in character — you may add flourish, teasing, or ceremony, but every fact below must ` +
+          `come through accurately. Reply with the announcement ONLY — no reasoning, no preamble. Facts: ${eventSummary}`,
+      },
+    ];
+    // Prompt visibility for the new dealer-narration call: honors DEBUG_AGENTS
+    // (elevated via logDebugOverride so it shows even at the default warn level).
+    logDebugOverride(
+      isDebugAgentsEnabled(),
+      "[turn-game] dealer announcement prompt (model %s): %s",
+      model,
+      messages[0]?.content ?? "",
+    );
+    const res = await provider.chatComplete(messages, {
+      model,
+      temperature: 0.85,
+      maxTokens: 300,
+      ...(signal ? { signal } : {}),
+    });
+    return stripInlineThinking(res.content ?? "");
   } catch {
     return "";
   }
