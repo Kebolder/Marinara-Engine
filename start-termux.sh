@@ -121,6 +121,22 @@ run_pnpm() {
     fi
 }
 
+prune_pnpm_store() {
+    # The Android install deliberately keeps its pnpm store inside the checkout.
+    # Old releases otherwise accumulate there indefinitely and can consume several
+    # gigabytes even though the built application itself is comparatively small.
+    echo "  [..] Reclaiming dependency cache space from older releases..."
+    if ! run_pnpm store prune >/dev/null 2>&1; then
+        echo "  [WARN] Could not prune the pnpm store; continuing without removing cached packages."
+    fi
+}
+
+install_workspace_dependencies() {
+    # Avoid --force here. On constrained Android devices it recreates the entire
+    # virtual store and may download optional binaries for platforms we cannot run.
+    run_pnpm install --frozen-lockfile --prefer-offline
+}
+
 if command -v corepack &> /dev/null; then
     echo "  [..] Aligning pnpm to ${PNPM_VERSION} via Corepack..."
     CURRENT_PNPM_VERSION=$(corepack "pnpm@${PNPM_VERSION}" --version 2>/dev/null || true)
@@ -241,8 +257,9 @@ elif [ -d ".git" ]; then
                 echo "  [WARN] Update did not land on ${TARGET_REF}. Continuing with current version."
             else
                 echo "  [OK] Updated to $(git log -1 --format='%h %s' 2>/dev/null)"
-                echo "  [..] Reinstalling dependencies and refreshing native packages..."
-                run_pnpm install --force
+                prune_pnpm_store
+                echo "  [..] Refreshing dependencies..."
+                install_workspace_dependencies
                 rm -rf packages/shared/dist packages/server/dist packages/client/dist
                 rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
             fi
@@ -276,17 +293,17 @@ if [ -f "packages/shared/dist/constants/defaults.js" ]; then
     DIST_VER=$(node -e "try{const m=require('./packages/shared/dist/constants/defaults.js');console.log(m.APP_VERSION)}catch{}" 2>/dev/null || true)
     SOURCE_COMMIT=$(git rev-parse --short=12 HEAD 2>/dev/null || true)
     DIST_COMMIT=$(node -e "try{const m=require('./packages/server/dist/config/build-meta.json');console.log(m.commit || '')}catch{}" 2>/dev/null || true)
+    TERMUX_REBUILD_REQUIRED=0
     if [ -n "$SOURCE_VER" ] && [ -n "$DIST_VER" ] && [ "$SOURCE_VER" != "$DIST_VER" ]; then
         echo "  [WARN] Version mismatch: source v$SOURCE_VER but dist has v$DIST_VER"
-        echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install --force
-        rm -rf packages/shared/dist packages/server/dist packages/client/dist
-        rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
+        TERMUX_REBUILD_REQUIRED=1
     fi
     if [ -n "$SOURCE_COMMIT" ] && [ "$SOURCE_COMMIT" != "$DIST_COMMIT" ]; then
         echo "  [WARN] Build commit mismatch: source $SOURCE_COMMIT but dist has ${DIST_COMMIT:-<missing>}"
-        echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install --force
+        TERMUX_REBUILD_REQUIRED=1
+    fi
+    if [ "$TERMUX_REBUILD_REQUIRED" = "1" ]; then
+        echo "  [..] Rebuilding once to apply the update..."
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
@@ -298,7 +315,8 @@ if [ ! -d "node_modules" ] || [ "$TERMUX_FORCE_INSTALL" = "1" ] || ! node script
     echo "  [..] Installing dependencies${TERMUX_FORCE_INSTALL:+ (refreshing for platform fix)}..."
     echo "       This may take several minutes on mobile."
     echo ""
-    run_pnpm install --force
+    prune_pnpm_store
+    install_workspace_dependencies
 fi
 
 # ── Build if needed ──
