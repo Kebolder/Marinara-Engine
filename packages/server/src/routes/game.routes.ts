@@ -131,6 +131,7 @@ import {
   applyAction as applyTacticalAction,
   runEnemyPhase as runTacticalEnemyPhase,
   isTerminal as isTacticalTerminal,
+  TERRAIN_DATA,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { mergeCustomParameters, parseGameStateRow, resolveBaseUrl } from "./generate/generate-route-utils.js";
@@ -8731,25 +8732,64 @@ export async function gameRoutes(app: FastifyInstance) {
     })
     .passthrough();
 
+  // Known terrain keys, derived at runtime from the shared engine's own data
+  // so this list can never drift from what `terrainInfoAt` actually handles.
+  const KNOWN_TERRAIN_TYPES = new Set(Object.keys(TERRAIN_DATA));
+
   // The persisted TacticalCombatState blob. Validated defensively at the
   // envelope level only — the shared engine owns the full invariants and never
-  // throws on unexpected shapes.
+  // throws on unexpected shapes. Dimensions/array sizes are bounded and the
+  // grid is cross-checked against its declared width/height so a malformed
+  // round-tripped state fails fast with a 400 instead of crashing the engine
+  // (see `terrainInfoAt` in shared/tactical-combat/math.ts, which indexes
+  // TERRAIN_DATA unconditionally).
   const tacticalStateSchema = z
     .object({
       schemaVersion: z.literal(1),
       grid: z
         .object({
-          width: z.number().int().positive(),
-          height: z.number().int().positive(),
+          width: z.number().int().min(1).max(64),
+          height: z.number().int().min(1).max(64),
           tiles: z.array(z.array(z.string())),
         })
-        .passthrough(),
-      units: z.array(z.record(z.unknown())),
+        .passthrough()
+        .superRefine((grid, ctx) => {
+          if (grid.tiles.length !== grid.height) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["tiles"],
+              message: "grid.tiles does not match declared dimensions",
+            });
+            return;
+          }
+          for (let y = 0; y < grid.tiles.length; y++) {
+            const row = grid.tiles[y];
+            if (!row || row.length !== grid.width) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tiles", y],
+                message: "grid.tiles does not match declared dimensions",
+              });
+              continue;
+            }
+            for (let x = 0; x < row.length; x++) {
+              const cell = row[x];
+              if (cell === undefined || !KNOWN_TERRAIN_TYPES.has(cell)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: ["tiles", y, x],
+                  message: "unknown terrain type",
+                });
+              }
+            }
+          }
+        }),
+      units: z.array(z.record(z.unknown())).max(40),
       phase: z.enum(["player", "enemy"]),
-      round: z.number().int().min(1),
+      round: z.number().int().min(1).max(10000),
       seed: z.number().int(),
-      actionCounter: z.number().int().min(0),
-      log: z.array(z.record(z.unknown())),
+      actionCounter: z.number().int().min(0).max(1_000_000),
+      log: z.array(z.record(z.unknown())).max(2000),
       difficulty: z.string(),
       outcome: z.enum(["victory", "defeat", "fled"]).optional(),
     })
@@ -8819,27 +8859,36 @@ export async function gameRoutes(app: FastifyInstance) {
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
 
-    const applied = applyTacticalAction(
-      state as unknown as TacticalCombatState,
-      action as unknown as TacticalAction,
-    );
-    if (!applied.ok) {
-      return reply.status(400).send({ error: applied.error });
+    // The schema only validates the envelope; the engine assumes further
+    // internal invariants that a hand-crafted round-tripped state could still
+    // violate. Guard against that so a malformed request fails cleanly with a
+    // 400 instead of an unhandled 500.
+    try {
+      const applied = applyTacticalAction(
+        state as unknown as TacticalCombatState,
+        action as unknown as TacticalAction,
+      );
+      if (!applied.ok) {
+        return reply.status(400).send({ error: applied.error });
+      }
+
+      let nextState = applied.state;
+      const events = [...applied.events];
+
+      // The player action auto-advances the phase once every party unit has acted.
+      // Resolve the enemy phase in the same round-trip and append its events after
+      // the player's, so the client animates one continuous sequence.
+      if (nextState.phase === "enemy" && !isTacticalTerminal(nextState)) {
+        const enemyResult = runTacticalEnemyPhase(nextState);
+        nextState = enemyResult.state;
+        events.push(...enemyResult.events);
+      }
+
+      return { state: nextState, events };
+    } catch (err) {
+      logger.warn(err, "Tactical action failed on round-tripped state for chat %s", chatId);
+      return reply.status(400).send({ error: "Invalid tactical combat state" });
     }
-
-    let nextState = applied.state;
-    const events = [...applied.events];
-
-    // The player action auto-advances the phase once every party unit has acted.
-    // Resolve the enemy phase in the same round-trip and append its events after
-    // the player's, so the client animates one continuous sequence.
-    if (nextState.phase === "enemy" && !isTacticalTerminal(nextState)) {
-      const enemyResult = runTacticalEnemyPhase(nextState);
-      nextState = enemyResult.state;
-      events.push(...enemyResult.events);
-    }
-
-    return { state: nextState, events };
   });
 
   // ── POST /game/combat/loot ──

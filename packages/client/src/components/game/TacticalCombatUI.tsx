@@ -781,18 +781,37 @@ export function TacticalCombatUI({
     (s: TacticalCombatState) => {
       if (!s.outcome || endedRef.current) return;
       endedRef.current = true;
-      // Clear the persisted snapshot so a refresh doesn't re-enter the finished battle.
-      persistSnapshot(null);
+      // Terminal snapshots stay persisted (not cleared here) so a refresh mid-flight
+      // restores the outcome screen instead of soft-locking or re-launching a fresh
+      // battle. The snapshot is only cleared atomically with the handoff moment
+      // (inside the setTimeout below, or on the defeat screen's Continue button).
       // Defeat: do NOT auto-hand off. The defeat outcome screen offers Retry / Continue
       // so the player can restart the fight instead of being dropped back to the story.
       if (s.outcome === "defeat") return;
       const summary = buildTacticalSummary(s);
       // buildTacticalSummary already maps to classic outcome values ("victory"|"defeat"|"flee").
-      const t = setTimeout(() => onCombatEnd(summary.outcome, summary), 1400);
+      const t = setTimeout(() => {
+        persistSnapshot(null);
+        onCombatEnd(summary.outcome, summary);
+      }, 1400);
       timersRef.current.push(t);
     },
     [onCombatEnd, persistSnapshot],
   );
+
+  // ── Restored-terminal-mount handoff ──
+  // A snapshot restored with an outcome already set (victory/fled/defeat) never
+  // went through playEvents' maybeEnd call on this mount. Without this, a
+  // restored victory/fled battle would soft-lock (outcome screen shows, but
+  // onCombatEnd/handoff never fires); a restored defeat just needs endedRef set
+  // so its Retry / Continue buttons work normally. Runs once per mount.
+  const restoredEndCheckedRef = useRef(false);
+  useEffect(() => {
+    if (restoredEndCheckedRef.current) return;
+    if (!initialState?.outcome) return;
+    restoredEndCheckedRef.current = true;
+    maybeEnd(initialState);
+  }, [initialState, maybeEnd]);
 
   // ── Event animation player ──
   // Plays the server-returned events sequentially over a working copy of the
@@ -1760,6 +1779,7 @@ export function TacticalCombatUI({
                 type="button"
                 onClick={() => {
                   const summary = buildTacticalSummary(liveState);
+                  persistSnapshot(null);
                   onCombatEnd(summary.outcome, summary);
                 }}
                 className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white/80 transition-colors hover:bg-white/10"
