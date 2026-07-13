@@ -29,6 +29,8 @@ export const DEFAULT_NOODLE_SETTINGS = {
   allowGalleryImageAttachments: false,
   imageCaptioningEnabled: false,
   imageCaptioningConnectionId: null,
+  enableLorebookContext: false,
+  enableEnhancedTimelineWriting: false,
   allowRandomUsers: false,
   invitedCharacterGroupIds: [],
   carryoverMode: "off",
@@ -72,6 +74,8 @@ export const noodleSettingsSchema = z.object({
     .min(1)
     .nullable()
     .default(DEFAULT_NOODLE_SETTINGS.imageCaptioningConnectionId),
+  enableLorebookContext: z.boolean().default(DEFAULT_NOODLE_SETTINGS.enableLorebookContext),
+  enableEnhancedTimelineWriting: z.boolean().default(DEFAULT_NOODLE_SETTINGS.enableEnhancedTimelineWriting),
   allowRandomUsers: z.boolean().default(DEFAULT_NOODLE_SETTINGS.allowRandomUsers),
   invitedCharacterGroupIds: z
     .array(z.string().min(1))

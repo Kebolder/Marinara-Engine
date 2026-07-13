@@ -46,7 +46,7 @@ import { generateImage, saveImageToDisk } from "../services/image/image-generati
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
-import { loadPrompt, NOODLE_IMAGE_POST } from "../services/prompt-overrides/index.js";
+import { loadPrompt, NOODLE_IMAGE_POST, NOODLE_TIMELINE_VOICE } from "../services/prompt-overrides/index.js";
 import { parseGameJsonish } from "../services/game/jsonish.js";
 import { resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
@@ -62,14 +62,21 @@ import {
   canGenerateNoodleActivityForAccountKind,
   collectNoodlePromptImageCandidates,
   formatNoodleTimelineForPrompt,
+  noodleLorebookTokenBudget,
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
   noodlePersonaCommentPostIds,
-  NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
+  NOODLE_LEGACY_PAST_MEMORY_INCLUSION_CHANCE,
+  NOODLE_LEGACY_PAST_MEMORY_MAX_ITEMS,
+  NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION,
   NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
+  NOODLE_RECALLED_MEMORY_INSTRUCTION,
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
+  sampleNoodlePastMemoriesWeighted,
 } from "../services/noodle/noodle-prompt.js";
+import { processLorebooks } from "../services/lorebook/index.js";
+import type { DB } from "../db/connection.js";
 import {
   generateImageCaptionForDataUrl,
   resolveImageCaptioningRuntime,
@@ -137,6 +144,26 @@ function parseStringArray(value: unknown): string[] {
 
 function escapePromptAttribute(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Reads the chat's already-derived `conversationCharacterStatuses` (updated on each generation in
+ * that chat), keyed by characterId. This is a plain metadata read, not a schedule recomputation —
+ * cheap enough to attach to every opted-in chat_context block without a separate token budget.
+ */
+function parseConversationCharacterStatuses(metadata: unknown): Record<string, { status: string; activity: string }> {
+  const raw = parseRecord(metadata).conversationCharacterStatuses;
+  if (!raw || typeof raw !== "object") return {};
+  const result: Record<string, { status: string; activity: string }> = {};
+  for (const [characterId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const status = (value as Record<string, unknown>).status;
+    const activity = (value as Record<string, unknown>).activity;
+    if (typeof status === "string" && typeof activity === "string") {
+      result[characterId] = { status, activity };
+    }
+  }
+  return result;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -600,6 +627,17 @@ async function buildOptedInChatContext(
       `- User persona: ${personaName}${chat.personaId ? ` (id=${chat.personaId})` : " (no persona id)"}`,
       ...characterNames.map((character) => `- Character: ${character.name} (id=${character.id})`),
     ];
+    // Attach each character's current status/activity from this chat's own schedule, if this chat
+    // has one. Read-only metadata lookup already updated by that chat's own generation — no new
+    // schedule computation and no attempt to reconcile a character's status across multiple chats;
+    // each opted-in chat's status stays scoped to its own <chat_context> block, same as messages.
+    const characterStatuses = parseConversationCharacterStatuses(chat.metadata);
+    const statusLines = characterNames
+      .map((character) => {
+        const status = characterStatuses[character.id];
+        return status ? `- ${character.name}: currently ${status.status} (${status.activity})` : null;
+      })
+      .filter((line): line is string => Boolean(line));
     const messageLines = await Promise.all(
       messages.map(async (message) => {
         const role = messageRoleLabel(message.role);
@@ -624,6 +662,7 @@ async function buildOptedInChatContext(
         )}" name="${escapePromptAttribute(chat.name)}">`,
         "Participants:",
         ...participantLines,
+        ...(statusLines.length > 0 ? ["Current status in this story:", ...statusLines] : []),
         "Recent messages:",
         ...messageLines,
         `</chat_context>`,
@@ -636,9 +675,11 @@ async function buildOptedInChatContext(
 }
 
 async function buildRefreshPrompt(input: {
+  db: DB;
   noodle: ReturnType<typeof createNoodleStorage>;
   characters: ReturnType<typeof createCharactersStorage>;
   chats: ReturnType<typeof createChatsStorage>;
+  promptOverrides: ReturnType<typeof createPromptOverridesStorage>;
   activeAccounts: NoodleAccount[];
   personaAccount: NoodleAccount | null;
   settings: NoodleSettings;
@@ -664,12 +705,36 @@ async function buildRefreshPrompt(input: {
   const recentPosts = [...recentPostById.values()].sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
-  const pastMemorySampleSize = noodlePastMemorySampleSize();
+  const enhancedTimelineWriting = input.settings.enableEnhancedTimelineWriting;
+  const pastMemorySampleSize = enhancedTimelineWriting
+    ? noodlePastMemorySampleSize()
+    : noodlePastMemorySampleSize(Math.random, NOODLE_LEGACY_PAST_MEMORY_INCLUSION_CHANCE, NOODLE_LEGACY_PAST_MEMORY_MAX_ITEMS);
   const olderPosts =
     pastMemorySampleSize > 0
       ? (await input.noodle.listPostsBefore(noodlePastMemoryCutoff())).filter((post) => !recentPostById.has(post.id))
       : [];
-  const recalledPosts = sampleNoodlePastMemories(olderPosts, pastMemorySampleSize);
+  let recalledPosts: NoodlePost[];
+  if (enhancedTimelineWriting) {
+    const activeAccountIds = new Set(input.activeAccounts.map((account) => account.id));
+    const activeAccountHandles = new Set(
+      input.activeAccounts
+        .map((account) => account.handle?.toLowerCase())
+        .filter((handle): handle is string => Boolean(handle)),
+    );
+    const recentAuthorIds = new Set(recentPosts.map((post) => post.authorAccountId));
+    const recalledPostRelevanceWeight = (post: NoodlePost): number => {
+      let weight = 0.25;
+      if (activeAccountIds.has(post.authorAccountId)) weight += 2;
+      for (const handle of extractNoodleMentionHandles(post.content ?? "")) {
+        if (activeAccountHandles.has(handle)) weight += 1;
+      }
+      if (recentAuthorIds.has(post.authorAccountId)) weight += 1;
+      return weight;
+    };
+    recalledPosts = sampleNoodlePastMemoriesWeighted(olderPosts, pastMemorySampleSize, recalledPostRelevanceWeight);
+  } else {
+    recalledPosts = sampleNoodlePastMemories(olderPosts, pastMemorySampleSize);
+  }
   const [chatContext, recentInteractions, recalledInteractions] = await Promise.all([
     buildOptedInChatContext(input.chats, input.characters, selectedCharacterIds),
     input.noodle.listInteractions(recentPosts.map((post) => post.id)),
@@ -698,18 +763,57 @@ async function buildRefreshPrompt(input: {
     )
     .join("\n");
 
+  // Reuse the engine's existing multi-character lorebook system (already used by group chats) so
+  // character lore/backstory can surface in Noodle refreshes. Off by default (Settings ->
+  // Lorebook context) so existing timelines are unaffected until a user opts in. Oldest-first scan
+  // messages from recent timeline text give keyword-scoped entries real content to match against;
+  // character context is appended last so entries keyed to a character's own traits stay in scan depth.
+  const lorebookResult = input.settings.enableLorebookContext
+    ? await processLorebooks(
+        input.db,
+        [
+          ...recentPosts
+            .slice()
+            .reverse()
+            .map((post) => ({ role: "user", content: post.content })),
+          ...recentInteractions
+            .filter((interaction) => interaction.type === "reply" && interaction.content)
+            .map((interaction) => ({ role: "user", content: interaction.content ?? "" })),
+          ...(characterContext ? [{ role: "user", content: characterContext }] : []),
+        ],
+        null,
+        {
+          characterIds: selectedCharacterIds,
+          personaId: input.personaAccount?.entityId ?? null,
+          tokenBudget: noodleLorebookTokenBudget(activeCharacters.length),
+          generationTriggers: ["noodle"],
+          previewOnly: true,
+        },
+      )
+    : null;
+  const loreContext = lorebookResult
+    ? [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter].filter(Boolean).join("\n")
+    : "";
+
+  // Tone/creative-freedom instructions are user-editable via Settings -> Generations -> Image
+  // Generation Prompt Overrides -> Noodle Timeline Voice & Tone. Everything else in `system`
+  // below is schema-critical (structured action limits, target field rules, persona authorship,
+  // adult platform policy, "Return JSON only") and stays hardcoded so a rewritten voice/tone text
+  // can never break the noodleGeneratedRefreshSchema output contract.
+  const timelineVoiceText = await loadPrompt(input.promptOverrides, NOODLE_TIMELINE_VOICE, {
+    enhanced: String(enhancedTimelineWriting),
+  });
+
   const system = [
     "You write a fake social media timeline for Marinara Engine's in-app parody site called Noodle.",
     NOODLE_ADULT_PLATFORM_POLICY,
-    "- Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, vulgar, or casual as fits them.",
-    "- Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.",
+    timelineVoiceText,
     "- Structured actions are limited to posts, polls, follows, likes, reposts, replies, and poll votes.",
     "- Generated interactions may target existing posts included in this prompt or posts you create in this response.",
     "- To respond directly to an existing comment, create a reply interaction for its post and set parentInteractionId to that comment's exact replyId.",
     "- Do not make an account interact with the same existing post again when it has already liked, reposted, voted, or replied there, unless that account was tagged or is answering a direct response to its own comment. Never make an account reply to its own comment.",
     "- Avoid repeating an account's recent post topic or phrasing. Continue an existing thread only when new activity gives the account a reason to return.",
     NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
-    ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
     "- For each interaction, set either targetTempId or targetPostId and set the unused target field to null.",
     "- pollOptionIndex must be a zero-based integer for votes and null for every other interaction.",
     "- An exact @handle in post or reply text tags that active account. Preserve the @handle exactly when mentioning someone.",
@@ -763,6 +867,7 @@ async function buildRefreshPrompt(input: {
       "# Character Profiles",
       characterContext || "No character profiles.",
       "",
+      ...(loreContext ? ["# World / Lore", loreContext, ""] : []),
       "# Random User Profiles",
       randomUserContext || "Random users are disabled for this refresh.",
       "",
@@ -781,7 +886,7 @@ async function buildRefreshPrompt(input: {
         ? [
             "",
             "# Randomly Recalled Older Noodle Activity",
-            "These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.",
+            enhancedTimelineWriting ? NOODLE_RECALLED_MEMORY_INSTRUCTION : NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION,
             formatNoodleTimelineForPrompt(recalledPosts, recalledInteractions, {
               emptyMessage: "No older Noodle activity was recalled.",
               includeTimestamp: true,
@@ -869,6 +974,7 @@ async function buildRefreshPrompt(input: {
     visionAttachmentCount: visionAttachments.length,
     captionedImageCount: captionedImages.size,
     recalledPostIds: recalledPosts.map((post) => post.id),
+    lorebookActivatedEntryIds: lorebookResult?.activatedEntryIds ?? [],
   };
 }
 
@@ -1648,10 +1754,13 @@ export async function noodleRoutes(app: FastifyInstance) {
         visionAttachmentCount,
         captionedImageCount,
         recalledPostIds,
+        lorebookActivatedEntryIds,
       } = await buildRefreshPrompt({
+        db: app.db,
         noodle,
         characters,
         chats,
+        promptOverrides,
         activeAccounts: selectedParticipants,
         personaAccount,
         settings,
@@ -1670,6 +1779,14 @@ export async function noodleRoutes(app: FastifyInstance) {
           debugMode,
           "[debug/noodle] Added %d generated timeline image caption(s) to the refresh prompt",
           captionedImageCount,
+        );
+      }
+      if (lorebookActivatedEntryIds.length > 0) {
+        logDebugOverride(
+          debugMode,
+          "[debug/noodle] Activated %d lorebook entr(ies) for this refresh: %s",
+          lorebookActivatedEntryIds.length,
+          lorebookActivatedEntryIds.join(", "),
         );
       }
       run = await noodle.createRefreshRun({

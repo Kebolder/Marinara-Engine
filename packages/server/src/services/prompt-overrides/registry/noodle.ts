@@ -2,6 +2,7 @@
 // Registered prompt-override keys: Noodle social feed
 // ──────────────────────────────────────────────
 import type { PromptOverrideKeyDef } from "../types.js";
+import { noodleTimelineVoiceDefaultText } from "../../noodle/noodle-prompt.js";
 
 export interface NoodleImagePostCtx extends Record<string, string | number | undefined> {
   authorName: string;
@@ -66,4 +67,20 @@ export const NOODLE_IMAGE_POST: PromptOverrideKeyDef<NoodleImagePostCtx> = {
     characterDescription:
       "Character appearance notes:\nDottore's Appearance: tall, slim build, blue hair, red eyes, mask.",
   },
+};
+
+export interface NoodleTimelineVoiceCtx extends Record<string, string | number | undefined> {
+  /** Mirrors the Noodle setting `enableEnhancedTimelineWriting` ("true"/"false"). Only affects the
+   *  unedited default text — once a user customizes this override, their text always wins. */
+  enhanced: string;
+}
+
+export const NOODLE_TIMELINE_VOICE: PromptOverrideKeyDef<NoodleTimelineVoiceCtx> = {
+  key: "noodle.timelineVoice",
+  label: "Noodle Timeline Voice & Tone",
+  description:
+    "Tone and creative-freedom instructions for Noodle timeline refreshes: how much personality/attitude each account's voice should carry, and how much accounts may banter, joke, or clash with each other. This does not control which structured actions (posts, replies, likes, polls) are allowed or their JSON shape — those rules always stay enforced regardless of this text, so editing it cannot break refresh generation.",
+  variables: [],
+  defaultBuilder: (ctx) => noodleTimelineVoiceDefaultText(ctx.enhanced === "true"),
+  exampleContext: { enhanced: "false" },
 };

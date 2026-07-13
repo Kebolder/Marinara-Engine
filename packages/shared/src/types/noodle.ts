@@ -40,6 +40,8 @@ export interface NoodleSettings {
   allowGalleryImageAttachments: boolean;
   imageCaptioningEnabled: boolean;
   imageCaptioningConnectionId: string | null;
+  enableLorebookContext: boolean;
+  enableEnhancedTimelineWriting: boolean;
   allowRandomUsers: boolean;
   invitedCharacterGroupIds: string[];
   carryoverMode: NoodleCarryoverMode;

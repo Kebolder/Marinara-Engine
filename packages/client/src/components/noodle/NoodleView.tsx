@@ -3032,6 +3032,36 @@ export function NoodleView() {
           </Section>
 
           <Section
+            title="Timeline Writing"
+            help="Tunes how the refresh writer approaches tone and long-term memory. Off by default; existing timelines keep their current behavior until you turn this on."
+          >
+            <div className="space-y-3">
+              <ToggleSetting
+                label="Enhanced tone & continuity"
+                help="When on: each account's voice is grounded more strongly in its own personality instead of a default upbeat tone, accounts are encouraged to react to each other's posts in the same refresh, and older-post recall happens more often and favors posts relevant to currently active accounts. When off, refreshes use the original tone and recall behavior. The Noodle Timeline Voice & Tone prompt override (Settings -> Generations -> Image Generation Prompt Overrides) still lets you rewrite the tone text directly regardless of this toggle."
+                checked={settings.enableEnhancedTimelineWriting}
+                disabled={updateSettings.isPending}
+                onChange={(checked) => saveSettings({ enableEnhancedTimelineWriting: checked })}
+              />
+            </div>
+          </Section>
+
+          <Section
+            title="World / Lore"
+            help="Lets Noodle refreshes pull matching lorebook entries into the timeline prompt, the same lorebook system used by chat generation."
+          >
+            <div className="space-y-3">
+              <ToggleSetting
+                label="Lorebook context"
+                help="Scans recent Noodle activity and character profiles for lorebook keyword matches and includes them as world/lore context. Off by default; existing timelines are unaffected until you turn this on."
+                checked={settings.enableLorebookContext}
+                disabled={updateSettings.isPending}
+                onChange={(checked) => saveSettings({ enableLorebookContext: checked })}
+              />
+            </div>
+          </Section>
+
+          <Section
             title="Carryover"
             help="Controls whether recent Noodle activity is appended to chat, roleplay, or game context."
           >
