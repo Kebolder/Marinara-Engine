@@ -4,6 +4,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+## [2.2.1]
+
 ### Added
 
 - Added Tic-Tac-Toe and Rock-Paper-Scissors as one-on-one Conversation-mode table games. Tic-Tac-Toe seats you against a character on a 3×3 board with a choice of X, O, or a random mark, and detects wins and draws. Rock-Paper-Scissors plays a best-of-3/5/7 match where each round's throw stays hidden from your opponent until both of you have thrown, then reveals the result. Both join the `[tic_tac_toe]`/`[rock_paper_scissors]` Conversation command family alongside `[chess]` and `[eightball]`, with `/tictactoe` (alias `/ttt`) and `/rps` slash commands, natural-language launchers, per-chat command toggles, and setup modals for opponent and game length.
@@ -18,6 +20,9 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Changed Noodle participant selection so invited characters remain the primary cast while random-user accounts appear only occasionally as supporting activity.
 - Moved media-wide queueing and prompt-review controls into a new **Overall Generations** settings group, renamed the queue option to **Queue media generation requests**, extended it to video generation, and added a Conversation toolbar hint linking users to generation settings.
 - Moved weather particle rendering off the main UI thread where supported, capped canvas resolution and mobile particle density, and reduced background polling/animation work to improve foreground smoothness and mobile battery use (#3567).
+- Added consistent Marinara Engine app attribution to every OpenRouter request path, including text, embeddings, image generation, model discovery, and video generation.
+- Bumped release metadata to v2.2.1 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Android `versionName` is `2.2.1` with `versionCode 33`.
 
 ### Fixed
 
@@ -40,18 +45,6 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added profile editing for directly invited Noodle characters, including display name, handle, bio, location, avatar, and banner; manual profile identity changes are preserved when the underlying character card is refreshed (#3551).
 - Fixed add-character searches in Conversation and Roleplay setup and Chat Settings ignoring card tags, descriptions, creator metadata, and title aliases (#3555).
 - Fixed Noodle's default generated-image path sending the post text and prompt-building meta-instructions directly to image providers. It now sends only the model's visual idea, character appearance, Noodle image direction, and selected image-generation style settings, with recovery for legacy or JSON-wrapped image prompts (#3554).
-
-## [2.2.1]
-
-### Changed
-
-- Added consistent Marinara Engine app attribution to every OpenRouter request path, including text, embeddings, image generation, model discovery, and video generation.
-
-- Bumped release metadata to v2.2.1 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
-- Android `versionName` is `2.2.1` with `versionCode 33`.
-
-### Fixed
-
 - Fixed Noodle profile setup failing an entire refresh when one model-generated profile contains an overlong or malformed field. Generated profile text is safely bounded, invalid rows are skipped independently, and valid accounts from the same batch still apply (#3533).
 - Fixed Noodle forgetting the last selected persona after a browser refresh or app restart; the account choice now persists per browser and falls back safely when that persona no longer exists (#3535).
 - Fixed renamed character cards retaining their former Noodle display name. Bootstrap now refreshes entity-owned character names and avatars while preserving generated handles, bios, locations, and other Noodle profile data (#3537).
