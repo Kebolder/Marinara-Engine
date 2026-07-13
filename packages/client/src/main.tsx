@@ -58,9 +58,11 @@ function registerServiceWorker() {
               return;
             }
 
+            const isMobile = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+            const updateIntervalMs = isMobile ? 6 * 60 * 60_000 : 60 * 60_000;
             window.setInterval(() => {
-              void registration.update();
-            }, 60_000);
+              if (document.visibilityState === "visible") void registration.update();
+            }, updateIntervalMs);
           },
         });
       })

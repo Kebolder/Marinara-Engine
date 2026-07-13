@@ -40,6 +40,8 @@ export const CONVERSATION_COMMAND_KEYS = [
   "chess",
   "poker",
   "eightball",
+  "tic_tac_toe",
+  "rock_paper_scissors",
   "music",
   "haptic",
   "influence",
@@ -506,6 +508,10 @@ export interface ChatMetadata {
   gameStoryboardVideoPromptTemplateId?: string | null;
   /** Chat-local Game Mode scene/storyboard video prompt templates. */
   gameVideoPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
+  /** Selected provider-facing image prompt template for storyboard keyframes. */
+  gameStoryboardImagePromptTemplateId?: string | null;
+  /** Chat-local provider-facing storyboard image prompt templates. */
+  gameStoryboardImagePromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe illustrations. */
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe videos. */

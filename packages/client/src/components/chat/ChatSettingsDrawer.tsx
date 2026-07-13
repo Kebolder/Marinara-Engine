@@ -140,6 +140,7 @@ import { extractCreatorNotesCss } from "../../lib/creator-notes-css";
 import { isLorebookScopeActiveForChat } from "../../lib/lorebook-scope";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
 import { useUIStore } from "../../stores/ui.store";
+import { isDesktopShellNavigationTarget } from "../../lib/chat-floating-ui-events";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
 import {
   useChatPresets,
@@ -162,6 +163,7 @@ import type {
   ConversationCommandKey,
   ConversationNote,
   ExportEnvelope,
+  GameStoryboardPromptTemplateKind,
   GameStoryboardViewerDisplayMode,
   HapticFeedbackSensitivity,
   HudWidget,
@@ -185,22 +187,22 @@ import {
   DEFAULT_AGENT_PROMPTS,
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
-  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
-  GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
-  GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
-  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
-  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE_ID,
   getChatModeCapabilities,
+  getGameStoryboardPromptTemplateKind,
   LIMITS,
   MIN_AGENT_MAX_TOKENS,
   PROFESSOR_MARI_ID,
@@ -209,8 +211,6 @@ import {
   includesTextForMatch,
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
-  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
-  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
   isAgentAvailableInChatMode,
@@ -400,8 +400,19 @@ function normalizeGameStoryboardPromptTemplates(value: unknown): AgentPromptTemp
 
 function getGameStoryboardPromptTemplateOptions(
   customTemplates: AgentPromptTemplateOption[],
+  kind: GameStoryboardPromptTemplateKind,
+  selectedAnimationTemplateId?: string | null,
 ): AgentPromptTemplateOption[] {
-  return [...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES, ...customTemplates];
+  const builtInTemplates =
+    kind === "animation"
+      ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES
+      : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
+  return [
+    ...builtInTemplates,
+    ...customTemplates.filter(
+      (template) => getGameStoryboardPromptTemplateKind(template, selectedAnimationTemplateId) === kind,
+    ),
+  ];
 }
 
 function resolveSelectedGameStoryboardPromptTemplateId(
@@ -416,6 +427,7 @@ function resolveSelectedGameStoryboardPromptTemplateId(
 
 function createGameStoryboardCustomPromptTemplate(
   existingTemplates: AgentPromptTemplateOption[],
+  kind: GameStoryboardPromptTemplateKind,
   sourceTemplate?: AgentPromptTemplateOption,
 ): AgentPromptTemplateOption {
   const usedIds = new Set([
@@ -425,13 +437,17 @@ function createGameStoryboardCustomPromptTemplate(
   const sourceName = sourceTemplate?.name?.trim() || "Storyboard Prompt";
   return {
     id: getUniqueGameStoryboardPromptTemplateId(
-      `custom-${sourceName}-${Date.now().toString(36)}`,
+      `custom-${kind}-${sourceName}-${Date.now().toString(36)}`,
       usedIds,
-      "custom-storyboard-prompt",
+      `custom-${kind}-storyboard-prompt`,
     ),
     name: `Custom ${sourceName}`,
     description: sourceTemplate?.description ?? "",
-    promptTemplate: sourceTemplate?.promptTemplate ?? GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES[0]!.promptTemplate,
+    promptTemplate:
+      sourceTemplate?.promptTemplate ??
+      (kind === "animation"
+        ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES[0]!.promptTemplate
+        : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES[0]!.promptTemplate),
   };
 }
 
@@ -505,6 +521,42 @@ function createGameVideoCustomPromptTemplate(
     name: `Custom ${sourceName}`,
     description: sourceTemplate?.description ?? "",
     promptTemplate: sourceTemplate?.promptTemplate ?? GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0]!.promptTemplate,
+  };
+}
+
+const GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATE_IDS = new Set(
+  GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES.map((template) => template.id),
+);
+
+function normalizeGameStoryboardImagePromptTemplates(value: unknown): AgentPromptTemplateOption[] {
+  const usedIds = new Set(GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATE_IDS);
+  return normalizeAgentPromptTemplateOptions(value)
+    .map((template) => ({
+      ...template,
+      id: getUniqueGameVideoPromptTemplateId(template.id, usedIds, "custom-storyboard-image-prompt"),
+    }))
+    .slice(0, 20);
+}
+
+function createGameStoryboardImageCustomPromptTemplate(
+  existingTemplates: AgentPromptTemplateOption[],
+  sourceTemplate?: AgentPromptTemplateOption,
+): AgentPromptTemplateOption {
+  const usedIds = new Set([
+    ...GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATE_IDS,
+    ...existingTemplates.map((template) => template.id),
+  ]);
+  const sourceName = sourceTemplate?.name?.trim() || "Storyboard Illustration";
+  return {
+    id: getUniqueGameVideoPromptTemplateId(
+      `custom-${sourceName}-${Date.now().toString(36)}`,
+      usedIds,
+      "custom-storyboard-image-prompt",
+    ),
+    name: `Custom ${sourceName}`,
+    description: sourceTemplate?.description ?? "",
+    promptTemplate:
+      sourceTemplate?.promptTemplate ?? GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES[0]!.promptTemplate,
   };
 }
 
@@ -634,6 +686,16 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     id: "eightball",
     label: "8-Ball Pool",
     description: "Let characters rack up a game of 8-ball pool at the table.",
+  },
+  {
+    id: "tic_tac_toe",
+    label: "Tic-Tac-Toe",
+    description: "Let characters accept a one-on-one tic-tac-toe challenge at the table.",
+  },
+  {
+    id: "rock_paper_scissors",
+    label: "Rock-Paper-Scissors",
+    description: "Let characters accept a one-on-one rock-paper-scissors match at the table.",
   },
 ];
 
@@ -873,6 +935,8 @@ export function ChatSettingsDrawer({
   const imageSelfieWidth = useUIStore((s) => s.imageSelfieWidth);
   const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
   const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
+  const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
   const setMusicPlayerSource = useUIStore((s) => s.setMusicPlayerSource);
   const openToolDetail = useUIStore((s) => s.openToolDetail);
@@ -1141,6 +1205,10 @@ export function ChatSettingsDrawer({
       },
     });
   }, [chat.id, conversationCommandToggles, selfieFeatureEnabled, updateMeta]);
+  const openGenerationSettings = useCallback(() => {
+    setSettingsTab("generations");
+    openRightPanel("settings");
+  }, [openRightPanel, setSettingsTab]);
   const inactiveCharacterIds = useMemo<string[]>(
     () =>
       Array.isArray(metadata.inactiveCharacterIds)
@@ -1690,27 +1758,59 @@ export function ChatSettingsDrawer({
     () => normalizeGameStoryboardPromptTemplates(metadata.gameStoryboardPromptTemplates),
     [metadata.gameStoryboardPromptTemplates],
   );
-  const gameStoryboardPromptOptions = useMemo(
-    () => getGameStoryboardPromptTemplateOptions(gameStoryboardPromptTemplates),
-    [gameStoryboardPromptTemplates],
+  const configuredGameStoryboardAnimationPromptTemplateId =
+    typeof metadata.gameStoryboardAnimationPromptTemplateId === "string"
+      ? metadata.gameStoryboardAnimationPromptTemplateId.trim()
+      : null;
+  const gameStoryboardIllustrationPromptOptions = useMemo(
+    () =>
+      getGameStoryboardPromptTemplateOptions(
+        gameStoryboardPromptTemplates,
+        "illustration",
+        configuredGameStoryboardAnimationPromptTemplateId,
+      ),
+    [configuredGameStoryboardAnimationPromptTemplateId, gameStoryboardPromptTemplates],
+  );
+  const gameStoryboardAnimationPromptOptions = useMemo(
+    () =>
+      getGameStoryboardPromptTemplateOptions(
+        gameStoryboardPromptTemplates,
+        "animation",
+        configuredGameStoryboardAnimationPromptTemplateId,
+      ),
+    [configuredGameStoryboardAnimationPromptTemplateId, gameStoryboardPromptTemplates],
+  );
+  const customGameStoryboardIllustrationPromptTemplates = useMemo(
+    () =>
+      gameStoryboardIllustrationPromptOptions.filter(
+        (template) => !GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS.has(template.id),
+      ),
+    [gameStoryboardIllustrationPromptOptions],
+  );
+  const customGameStoryboardAnimationPromptTemplates = useMemo(
+    () =>
+      gameStoryboardAnimationPromptOptions.filter(
+        (template) => !GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS.has(template.id),
+      ),
+    [gameStoryboardAnimationPromptOptions],
   );
   const selectedGameStoryboardIllustrationPromptTemplateId = useMemo(
     () =>
       resolveSelectedGameStoryboardPromptTemplateId(
         metadata.gameStoryboardIllustrationPromptTemplateId,
         GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
-        gameStoryboardPromptOptions,
+        gameStoryboardIllustrationPromptOptions,
       ),
-    [gameStoryboardPromptOptions, metadata.gameStoryboardIllustrationPromptTemplateId],
+    [gameStoryboardIllustrationPromptOptions, metadata.gameStoryboardIllustrationPromptTemplateId],
   );
   const selectedGameStoryboardAnimationPromptTemplateId = useMemo(
     () =>
       resolveSelectedGameStoryboardPromptTemplateId(
         metadata.gameStoryboardAnimationPromptTemplateId,
         GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
-        gameStoryboardPromptOptions,
+        gameStoryboardAnimationPromptOptions,
       ),
-    [gameStoryboardPromptOptions, metadata.gameStoryboardAnimationPromptTemplateId],
+    [gameStoryboardAnimationPromptOptions, metadata.gameStoryboardAnimationPromptTemplateId],
   );
   const updateGameStoryboardPromptSelection = useCallback(
     (
@@ -1728,39 +1828,59 @@ export function ChatSettingsDrawer({
   const updateGameStoryboardPromptTemplates = useCallback(
     (templates: AgentPromptTemplateOption[]) => {
       const normalized = normalizeGameStoryboardPromptTemplates(templates);
-      const availableIds = new Set([
-        ...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATE_IDS,
-        ...normalized.map((template) => template.id),
-      ]);
+      const illustrationIds = new Set(
+        getGameStoryboardPromptTemplateOptions(
+          normalized,
+          "illustration",
+          configuredGameStoryboardAnimationPromptTemplateId,
+        ).map((template) => template.id),
+      );
+      const animationIds = new Set(
+        getGameStoryboardPromptTemplateOptions(
+          normalized,
+          "animation",
+          configuredGameStoryboardAnimationPromptTemplateId,
+        ).map((template) => template.id),
+      );
       updateMeta.mutate({
         id: chat.id,
         gameStoryboardPromptTemplates: normalized,
-        ...(availableIds.has(selectedGameStoryboardIllustrationPromptTemplateId)
+        ...(illustrationIds.has(selectedGameStoryboardIllustrationPromptTemplateId)
           ? {}
           : { gameStoryboardIllustrationPromptTemplateId: null }),
-        ...(availableIds.has(selectedGameStoryboardAnimationPromptTemplateId)
+        ...(animationIds.has(selectedGameStoryboardAnimationPromptTemplateId)
           ? {}
           : { gameStoryboardAnimationPromptTemplateId: null }),
       });
     },
     [
       chat.id,
+      configuredGameStoryboardAnimationPromptTemplateId,
       selectedGameStoryboardAnimationPromptTemplateId,
       selectedGameStoryboardIllustrationPromptTemplateId,
       updateMeta,
     ],
   );
   const addGameStoryboardPromptTemplate = useCallback(
-    (sourceTemplateId: string) => {
+    (kind: GameStoryboardPromptTemplateKind, sourceTemplateId: string) => {
+      const promptOptions =
+        kind === "animation" ? gameStoryboardAnimationPromptOptions : gameStoryboardIllustrationPromptOptions;
       const source =
-        gameStoryboardPromptOptions.find((option) => option.id === sourceTemplateId) ??
-        GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES[0];
+        promptOptions.find((option) => option.id === sourceTemplateId) ??
+        (kind === "animation"
+          ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES[0]
+          : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES[0]);
       updateGameStoryboardPromptTemplates([
         ...gameStoryboardPromptTemplates,
-        createGameStoryboardCustomPromptTemplate(gameStoryboardPromptTemplates, source),
+        createGameStoryboardCustomPromptTemplate(gameStoryboardPromptTemplates, kind, source),
       ]);
     },
-    [gameStoryboardPromptOptions, gameStoryboardPromptTemplates, updateGameStoryboardPromptTemplates],
+    [
+      gameStoryboardAnimationPromptOptions,
+      gameStoryboardIllustrationPromptOptions,
+      gameStoryboardPromptTemplates,
+      updateGameStoryboardPromptTemplates,
+    ],
   );
   const patchGameStoryboardPromptTemplate = useCallback(
     (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
@@ -1785,6 +1905,92 @@ export function ChatSettingsDrawer({
       updateGameStoryboardPromptTemplates(gameStoryboardPromptTemplates.filter((entry) => entry.id !== templateId));
     },
     [gameStoryboardPromptTemplates, updateGameStoryboardPromptTemplates],
+  );
+  const gameStoryboardImagePromptTemplates = useMemo(
+    () => normalizeGameStoryboardImagePromptTemplates(metadata.gameStoryboardImagePromptTemplates),
+    [metadata.gameStoryboardImagePromptTemplates],
+  );
+  const gameStoryboardImagePromptOptions = useMemo(
+    () => [...GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES, ...gameStoryboardImagePromptTemplates],
+    [gameStoryboardImagePromptTemplates],
+  );
+  const selectedGameStoryboardImagePromptTemplateId = useMemo(() => {
+    const selected =
+      typeof metadata.gameStoryboardImagePromptTemplateId === "string"
+        ? metadata.gameStoryboardImagePromptTemplateId.trim()
+        : "";
+    return selected && gameStoryboardImagePromptOptions.some((option) => option.id === selected)
+      ? selected
+      : GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID;
+  }, [gameStoryboardImagePromptOptions, metadata.gameStoryboardImagePromptTemplateId]);
+  const updateGameStoryboardImagePromptSelection = useCallback(
+    (promptTemplateId: string) => {
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardImagePromptTemplateId:
+          promptTemplateId === GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID ? null : promptTemplateId,
+      });
+    },
+    [chat.id, updateMeta],
+  );
+  const updateGameStoryboardImagePromptTemplates = useCallback(
+    (templates: AgentPromptTemplateOption[]) => {
+      const normalized = normalizeGameStoryboardImagePromptTemplates(templates);
+      const availableIds = new Set([
+        ...GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATE_IDS,
+        ...normalized.map((template) => template.id),
+      ]);
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardImagePromptTemplates: normalized,
+        ...(availableIds.has(selectedGameStoryboardImagePromptTemplateId)
+          ? {}
+          : { gameStoryboardImagePromptTemplateId: null }),
+      });
+    },
+    [chat.id, selectedGameStoryboardImagePromptTemplateId, updateMeta],
+  );
+  const addGameStoryboardImagePromptTemplate = useCallback(
+    (sourceTemplateId: string) => {
+      const source =
+        gameStoryboardImagePromptOptions.find((option) => option.id === sourceTemplateId) ??
+        GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES[0];
+      updateGameStoryboardImagePromptTemplates([
+        ...gameStoryboardImagePromptTemplates,
+        createGameStoryboardImageCustomPromptTemplate(gameStoryboardImagePromptTemplates, source),
+      ]);
+    },
+    [
+      gameStoryboardImagePromptOptions,
+      gameStoryboardImagePromptTemplates,
+      updateGameStoryboardImagePromptTemplates,
+    ],
+  );
+  const patchGameStoryboardImagePromptTemplate = useCallback(
+    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+      updateGameStoryboardImagePromptTemplates(
+        gameStoryboardImagePromptTemplates.map((template) =>
+          template.id === templateId ? { ...template, ...patch } : template,
+        ),
+      );
+    },
+    [gameStoryboardImagePromptTemplates, updateGameStoryboardImagePromptTemplates],
+  );
+  const removeGameStoryboardImagePromptTemplate = useCallback(
+    async (templateId: string) => {
+      const template = gameStoryboardImagePromptTemplates.find((entry) => entry.id === templateId);
+      const ok = await showConfirmDialog({
+        title: "Remove Storyboard Illustration Prompt",
+        message: `Remove "${template?.name ?? "this prompt"}" from this chat?`,
+        confirmLabel: "Remove",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      updateGameStoryboardImagePromptTemplates(
+        gameStoryboardImagePromptTemplates.filter((entry) => entry.id !== templateId),
+      );
+    },
+    [gameStoryboardImagePromptTemplates, updateGameStoryboardImagePromptTemplates],
   );
   const gameVideoPromptTemplates = useMemo(
     () => normalizeGameVideoPromptTemplates(metadata.gameVideoPromptTemplates),
@@ -3607,6 +3813,7 @@ export function ChatSettingsDrawer({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
+      if (isDesktopShellNavigationTarget(target)) return;
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest("[data-chat-floating-panel]")) return;
@@ -3629,7 +3836,10 @@ export function ChatSettingsDrawer({
           top: `${anchor.top}px`,
           width: `min(34rem, calc(100vw - ${anchor.right}px - 0.75rem))`,
         }
-      : { right: `${anchor.right}px`, top: `${anchor.top}px` }
+      : {
+          right: `max(${anchor.right}px, calc(var(--mari-chat-ui-inset-right, 0px) + 0.75rem))`,
+          top: `${anchor.top}px`,
+        }
     : undefined;
 
   return (
@@ -5639,6 +5849,24 @@ export function ChatSettingsDrawer({
                       </p>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={openGenerationSettings}
+                    className="mari-chat-option-field flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/60"
+                    title="Open Settings, Generations"
+                  >
+                    <Settings2 size="0.8125rem" className="shrink-0 text-[var(--primary)]" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                        Image generation settings
+                      </span>
+                      <span className="mt-0.5 block text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                        Adjust generation behavior, image sizes, and styles in Settings → Generations.
+                      </span>
+                    </span>
+                    <ChevronRight size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                  </button>
 
                   <button
                     type="button"
@@ -7831,8 +8059,14 @@ export function ChatSettingsDrawer({
                       fallbackId={GAME_VIDEO_PROMPT_TEMPLATE_ID}
                       onChange={updateGameVideoPromptSelection}
                     />
-                    <GameVideoPromptLibrary
+                    <GameProviderPromptLibrary
+                      title="Edit Video Prompt Presets"
+                      description="Built-in Game Video presets are read-only. Add a copy to edit the motion prompt for this chat's scene videos and storyboard clips."
+                      emptyDescription="Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above."
+                      builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
                       customTemplates={gameVideoPromptTemplates}
+                      customFallbackName="Custom Game Video Prompt"
+                      promptPlaceholder="Write the game video prompt template..."
                       onAddTemplate={addGameVideoPromptTemplate}
                       onPatchTemplate={patchGameVideoPromptTemplate}
                       onRemoveTemplate={removeGameVideoPromptTemplate}
@@ -7886,7 +8120,7 @@ export function ChatSettingsDrawer({
                     />
                     <AgentSettingsToggle
                       label="Use Storyboard Prompt Directly"
-                      description="Send each illustrator imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses the Game Scene Illustration prompt override and prevents tag distillation."
+                      description="Send each planner imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses Storyboard Illustration Prompt and prevents tag distillation."
                       enabled={gameStoryboardUseDirectScenePrompt}
                       onToggle={() =>
                         updateMeta.mutate({
@@ -8018,55 +8252,122 @@ export function ChatSettingsDrawer({
                         }
                       />
                     </div>
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <GamePromptTemplateSelect
-                        label="Illustration Prompt"
-                        description="Used when storyboards create still keyframes without videos."
-                        options={gameStoryboardPromptOptions}
-                        selectedId={selectedGameStoryboardIllustrationPromptTemplateId}
-                        fallbackId={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID}
-                        onChange={(promptTemplateId) =>
-                          updateGameStoryboardPromptSelection(
-                            "gameStoryboardIllustrationPromptTemplateId",
-                            promptTemplateId,
-                          )
-                        }
-                      />
-                      <GamePromptTemplateSelect
-                        label="Animation Prompt"
-                        description="Used when automatic storyboard animations are enabled."
-                        options={gameStoryboardPromptOptions}
-                        selectedId={selectedGameStoryboardAnimationPromptTemplateId}
-                        fallbackId={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID}
-                        onChange={(promptTemplateId) =>
-                          updateGameStoryboardPromptSelection(
-                            "gameStoryboardAnimationPromptTemplateId",
-                            promptTemplateId,
-                          )
-                        }
-                      />
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">Storyboard Planners</p>
+                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                          Planners split a completed GM turn into ordered keyframes and write the visual plan for each
+                          one.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                          <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">Still Storyboards</p>
+                          <GamePromptTemplateSelect
+                            label="Illustration Planner"
+                            description="Plans finished still keyframes and writes their image descriptions when videos are not being generated."
+                            options={gameStoryboardIllustrationPromptOptions}
+                            selectedId={selectedGameStoryboardIllustrationPromptTemplateId}
+                            fallbackId={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID}
+                            onChange={(promptTemplateId) =>
+                              updateGameStoryboardPromptSelection(
+                                "gameStoryboardIllustrationPromptTemplateId",
+                                promptTemplateId,
+                              )
+                            }
+                          />
+                          <GameStoryboardPromptLibrary
+                            kind="illustration"
+                            builtInTemplates={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES}
+                            customTemplates={customGameStoryboardIllustrationPromptTemplates}
+                            onAddTemplate={addGameStoryboardPromptTemplate}
+                            onPatchTemplate={patchGameStoryboardPromptTemplate}
+                            onRemoveTemplate={removeGameStoryboardPromptTemplate}
+                          />
+                        </div>
+                        <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                          <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">Animated Storyboards</p>
+                          <GamePromptTemplateSelect
+                            label="Animation Planner"
+                            description="Plans animation-ready source images and a motion direction for each generated clip."
+                            options={gameStoryboardAnimationPromptOptions}
+                            selectedId={selectedGameStoryboardAnimationPromptTemplateId}
+                            fallbackId={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID}
+                            onChange={(promptTemplateId) =>
+                              updateGameStoryboardPromptSelection(
+                                "gameStoryboardAnimationPromptTemplateId",
+                                promptTemplateId,
+                              )
+                            }
+                          />
+                          <GameStoryboardPromptLibrary
+                            kind="animation"
+                            builtInTemplates={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES}
+                            customTemplates={customGameStoryboardAnimationPromptTemplates}
+                            onAddTemplate={addGameStoryboardPromptTemplate}
+                            onPatchTemplate={patchGameStoryboardPromptTemplate}
+                            onRemoveTemplate={removeGameStoryboardPromptTemplate}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <GamePromptTemplateSelect
-                      label="Storyboard Video Prompt"
-                      description="Used only for storyboard keyframe clips. Manual scene videos keep the Game Video Prompt above."
-                      options={gameVideoPromptOptions}
-                      selectedId={selectedGameStoryboardVideoPromptTemplateId}
-                      fallbackId={selectedGameVideoPromptTemplateId}
-                      onChange={updateGameStoryboardVideoPromptSelection}
-                    />
-                    <GameStoryboardPromptLibrary
-                      customTemplates={gameStoryboardPromptTemplates}
-                      onAddTemplate={addGameStoryboardPromptTemplate}
-                      onPatchTemplate={patchGameStoryboardPromptTemplate}
-                      onRemoveTemplate={removeGameStoryboardPromptTemplate}
-                    />
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      These prompt presets are specific to Game Mode storyboards; the roleplay Illustrator presets stay
-                      separate.
-                    </p>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Still keyframes avoid comic text so normal storyboards do not reveal later panels. Comic page
-                      keyframes are meant for the animation path.
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                          Final Generation Prompts
+                        </p>
+                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                          These format each planner result into the final request sent to the image or video model.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <GamePromptTemplateSelect
+                          label="Storyboard Illustration Prompt"
+                          description="Formats each planned keyframe into the final prompt sent to the image model."
+                          options={gameStoryboardImagePromptOptions}
+                          selectedId={selectedGameStoryboardImagePromptTemplateId}
+                          fallbackId={GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID}
+                          onChange={updateGameStoryboardImagePromptSelection}
+                        />
+                        <GamePromptTemplateSelect
+                          label="Storyboard Video Prompt"
+                          description="Combines the generated keyframe and motion plan into the final prompt sent to the video model."
+                          options={gameVideoPromptOptions}
+                          selectedId={selectedGameStoryboardVideoPromptTemplateId}
+                          fallbackId={selectedGameVideoPromptTemplateId}
+                          onChange={updateGameStoryboardVideoPromptSelection}
+                        />
+                      </div>
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <GameProviderPromptLibrary
+                          title="Edit Illustration Prompt Presets"
+                          description="Built-in storyboard illustration prompts are read-only. Add a chat-local copy to change how planned keyframes are formatted for the image model."
+                          emptyDescription="Add a copy, edit it here, then choose it from Storyboard Illustration Prompt above."
+                          builtInTemplates={GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES}
+                          customTemplates={gameStoryboardImagePromptTemplates}
+                          customFallbackName="Custom Storyboard Illustration Prompt"
+                          promptPlaceholder="Write the storyboard illustration prompt template..."
+                          onAddTemplate={addGameStoryboardImagePromptTemplate}
+                          onPatchTemplate={patchGameStoryboardImagePromptTemplate}
+                          onRemoveTemplate={removeGameStoryboardImagePromptTemplate}
+                        />
+                        <GameProviderPromptLibrary
+                          title="Edit Storyboard Video Prompt Presets"
+                          description="Built-in video prompts are read-only. Add a chat-local copy to change how storyboard motion plans are formatted for the video model."
+                          emptyDescription="Add a copy, edit it here, then choose it from Storyboard Video Prompt above."
+                          builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
+                          customTemplates={gameVideoPromptTemplates}
+                          customFallbackName="Custom Game Video Prompt"
+                          promptPlaceholder="Write the storyboard video prompt template..."
+                          onAddTemplate={addGameVideoPromptTemplate}
+                          onPatchTemplate={patchGameVideoPromptTemplate}
+                          onRemoveTemplate={removeGameVideoPromptTemplate}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                      Flow: the selected planner creates each keyframe plan, Storyboard Illustration Prompt formats the
+                      image request, and Storyboard Video Prompt formats the animation request when videos are enabled.
                     </p>
                   </AgentSettingsCard>
                 )}
@@ -9653,20 +9954,25 @@ function GamePromptTemplateSelect({
         </select>
       </label>
       <p className="mt-1.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-        {activeOption?.description || description}
+        {description}
+        {activeOption?.description ? ` ${activeOption.description}` : ""}
       </p>
     </div>
   );
 }
 
 function GameStoryboardPromptLibrary({
+  kind,
+  builtInTemplates,
   customTemplates,
   onAddTemplate,
   onPatchTemplate,
   onRemoveTemplate,
 }: {
+  kind: GameStoryboardPromptTemplateKind;
+  builtInTemplates: AgentPromptTemplateOption[];
   customTemplates: AgentPromptTemplateOption[];
-  onAddTemplate: (sourceTemplateId: string) => void;
+  onAddTemplate: (kind: GameStoryboardPromptTemplateKind, sourceTemplateId: string) => void;
   onPatchTemplate: (
     templateId: string,
     patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
@@ -9674,6 +9980,7 @@ function GameStoryboardPromptLibrary({
   onRemoveTemplate: (templateId: string) => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const laneLabel = kind === "animation" ? "Animation" : "Illustration";
 
   return (
     <div className="rounded-lg bg-[var(--background)]/45 ring-1 ring-[var(--border)]">
@@ -9685,7 +9992,7 @@ function GameStoryboardPromptLibrary({
       >
         <FileText size="0.75rem" className="shrink-0 text-[var(--primary)]" />
         <span className="min-w-0 flex-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">
-          Edit Storyboard Presets
+          Edit {laneLabel} Planner Presets
         </span>
         <span className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
           {customTemplates.length} custom
@@ -9698,70 +10005,25 @@ function GameStoryboardPromptLibrary({
       {open && (
         <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
           <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-            Built-in Game Mode presets are read-only. Add a copy here to edit its name, description, and prompt body for
-            this chat.
+            Built-in {laneLabel.toLowerCase()} planner presets are read-only. Add a copy here to edit its name,
+            description, and prompt body for this chat.
           </p>
           <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <Plus size="0.6875rem" />
-              Add Still Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Comic Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Comic Animation Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Anime Episode Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add NovelAI Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Colored Manga Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add B&W Manga Copy
-            </button>
+            {builtInTemplates.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => onAddTemplate(kind, template.id)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+              >
+                <Plus size="0.6875rem" />
+                Copy {template.name}
+              </button>
+            ))}
           </div>
           {customTemplates.length === 0 ? (
             <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Add a copy, edit it here, then choose it from either storyboard prompt selector above.
+              Add a copy, edit it here, then choose it from the {laneLabel.toLowerCase()} planner above.
             </p>
           ) : (
             <div className="space-y-2">
@@ -9814,7 +10076,7 @@ function GameStoryboardPromptLibrary({
                     }}
                     rows={7}
                     className="min-h-[9rem] w-full resize-y rounded-md bg-[var(--background)] px-2.5 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    placeholder="Write the storyboard prompt template..."
+                    placeholder={`Write the storyboard ${laneLabel.toLowerCase()} prompt template...`}
                   />
                 </div>
               ))}
@@ -9826,13 +10088,25 @@ function GameStoryboardPromptLibrary({
   );
 }
 
-function GameVideoPromptLibrary({
+function GameProviderPromptLibrary({
+  title,
+  description,
+  emptyDescription,
+  builtInTemplates,
   customTemplates,
+  customFallbackName,
+  promptPlaceholder,
   onAddTemplate,
   onPatchTemplate,
   onRemoveTemplate,
 }: {
+  title: string;
+  description: string;
+  emptyDescription: string;
+  builtInTemplates: AgentPromptTemplateOption[];
   customTemplates: AgentPromptTemplateOption[];
+  customFallbackName: string;
+  promptPlaceholder: string;
   onAddTemplate: (sourceTemplateId: string) => void;
   onPatchTemplate: (
     templateId: string,
@@ -9851,9 +10125,7 @@ function GameVideoPromptLibrary({
         aria-expanded={open}
       >
         <FileText size="0.75rem" className="shrink-0 text-[var(--primary)]" />
-        <span className="min-w-0 flex-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">
-          Edit Video Presets
-        </span>
+        <span className="min-w-0 flex-1 text-[0.6875rem] font-semibold text-[var(--foreground)]">{title}</span>
         <span className="rounded-md bg-[var(--secondary)] px-1.5 py-0.5 text-[0.5625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
           {customTemplates.length} custom
         </span>
@@ -9865,38 +10137,24 @@ function GameVideoPromptLibrary({
       {open && (
         <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
           <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-            Built-in Game Video presets are read-only. Add a copy to edit the motion prompt for this chat's scene
-            videos and storyboard clips.
+            {description}
           </p>
           <div className="flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              onClick={() => onAddTemplate(GAME_VIDEO_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <Plus size="0.6875rem" />
-              Add Video Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Anime Video Copy
-            </button>
-            <button
-              type="button"
-              onClick={() => onAddTemplate(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
-            >
-              <FilePlus2 size="0.6875rem" />
-              Add Comic Video Copy
-            </button>
+            {builtInTemplates.map((template) => (
+              <button
+                key={template.id}
+                type="button"
+                onClick={() => onAddTemplate(template.id)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+              >
+                <Plus size="0.6875rem" />
+                Copy {template.name}
+              </button>
+            ))}
           </div>
           {customTemplates.length === 0 ? (
             <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above.
+              {emptyDescription}
             </p>
           ) : (
             <div className="space-y-2">
@@ -9912,7 +10170,7 @@ function GameVideoPromptLibrary({
                     <input
                       defaultValue={template.name}
                       onBlur={(event) => {
-                        const next = event.target.value.trim() || "Custom Game Video Prompt";
+                        const next = event.target.value.trim() || customFallbackName;
                         if (next !== template.name) onPatchTemplate(template.id, { name: next });
                       }}
                       className="min-w-0 flex-1 rounded-md bg-[var(--background)] px-2 py-1.5 text-xs text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
@@ -9949,7 +10207,7 @@ function GameVideoPromptLibrary({
                     }}
                     rows={7}
                     className="min-h-[9rem] w-full resize-y rounded-md bg-[var(--background)] px-2.5 py-2 font-mono text-[0.6875rem] leading-relaxed text-[var(--foreground)] ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    placeholder="Write the game video prompt template..."
+                    placeholder={promptPlaceholder}
                   />
                 </div>
               ))}

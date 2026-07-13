@@ -123,6 +123,16 @@ export function dailyCapForCharacter(schedule: WeekSchedule | undefined, chatMet
   return 2;
 }
 
+export function isAutonomousDailyBudgetExhausted(
+  characterId: string,
+  schedule: WeekSchedule | undefined,
+  chatMeta: Record<string, unknown>,
+  now: Date = new Date(),
+): boolean {
+  const budget = getAutonomousDailyBudget(chatMeta, now);
+  return (budget.counts[characterId] ?? 0) >= dailyCapForCharacter(schedule, chatMeta);
+}
+
 export function buildAutonomousDailyBudgetPatch(
   chatMeta: Record<string, unknown>,
   characterId: string,
@@ -404,9 +414,12 @@ export function checkAutonomousMessaging(
   const reason: AutonomousCheckResult["reason"] = top.reactionDriven ? "user_reaction" : "user_inactivity";
 
   if (isGroupChat) {
-    // In group chats, potentially multiple characters can exchange
-    // but start with just the top character
-    return { shouldTrigger: true, characterIds: [top.id], reason, inactivityMs };
+    return {
+      shouldTrigger: true,
+      characterIds: eligibleCharacters.map((candidate) => candidate.id),
+      reason,
+      inactivityMs,
+    };
   }
 
   // In DMs, only one character
@@ -462,13 +475,18 @@ export function checkCharacterExchange(
 
   // Probabilistic: roll dice weighted by talkativeness
   // A character with talkativeness 80 has an 80% chance of responding
-  const candidate = eligible[Math.floor(Math.random() * eligible.length)]!;
+  const shuffledEligible = [...eligible];
+  for (let index = shuffledEligible.length - 1; index > 0; index--) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffledEligible[index], shuffledEligible[swapIndex]] = [shuffledEligible[swapIndex]!, shuffledEligible[index]!];
+  }
+  const candidate = shuffledEligible[0]!;
   const roll = Math.random() * 100;
   if (roll > candidate.weight) return noTrigger;
 
   return {
     shouldTrigger: true,
-    characterIds: [candidate.id],
+    characterIds: shuffledEligible.map((entry) => entry.id),
     reason: "character_exchange",
     inactivityMs,
   };

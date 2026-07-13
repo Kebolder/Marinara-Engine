@@ -104,15 +104,18 @@ import {
   generationParametersSchema,
   VIDEO_GENERATION_SETTINGS_KEY,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   normalizeVideoGenerationUserSettings,
+  getGameStoryboardPromptTemplateKind,
   normalizeAgentPromptTemplateOptions,
   isClaudeAdaptiveOnlyNoSamplingModel,
   localAuthProviderBaseUrl,
@@ -1536,6 +1539,7 @@ const gameSetupConfigSchema = z.object({
     .optional(),
   gameGmPromptTemplateId: z.string().max(200).nullable().optional(),
   gameStoryboardAnimationPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardImagePromptTemplateId: z.string().max(200).nullable().optional(),
   gameStoryboardVideoPromptTemplateId: z.string().max(200).nullable().optional(),
   gameStoryboardUseDirectScenePrompt: z.boolean().optional(),
   artStylePrompt: z.string().max(500).optional(),
@@ -4055,35 +4059,38 @@ function normalizePortraitAppearancePart(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function addPortraitAppearancePart(parts: string[], value: unknown, label?: string): void {
+function addPortraitAppearancePart(parts: string[], seenValues: Set<string>, value: unknown, label?: string): void {
   const trimmed = optionalTrimmedString(value);
   if (!trimmed) return;
 
+  const normalizedValue = normalizePortraitAppearancePart(trimmed);
+  if (!normalizedValue || seenValues.has(normalizedValue)) return;
+  seenValues.add(normalizedValue);
+
   const part = label ? `${label}: ${trimmed}` : trimmed;
-  const normalized = normalizePortraitAppearancePart(part);
-  if (!normalized || parts.some((existing) => normalizePortraitAppearancePart(existing) === normalized)) return;
   parts.push(part);
 }
 
-function addPortraitAppearanceNotes(parts: string[], notes: unknown): void {
+function addPortraitAppearanceNotes(parts: string[], seenValues: Set<string>, notes: unknown): void {
   if (!Array.isArray(notes)) return;
 
   const noteText = notes
     .map((note) => optionalTrimmedString(note))
     .filter((note): note is string => Boolean(note))
     .join("; ");
-  addPortraitAppearancePart(parts, noteText, "Notable details");
+  addPortraitAppearancePart(parts, seenValues, noteText, "Notable details");
 }
 
 function addPresentCharacterPortraitAppearance(
   parts: string[],
+  seenValues: Set<string>,
   presentCharacter: Record<string, unknown> | null,
 ): void {
   if (!presentCharacter) return;
 
-  addPortraitAppearancePart(parts, presentCharacter.appearance);
-  addPortraitAppearancePart(parts, presentCharacter.outfit, "Current outfit");
-  addPortraitAppearancePart(parts, presentCharacter.mood, "Current expression or mood");
+  addPortraitAppearancePart(parts, seenValues, presentCharacter.appearance);
+  addPortraitAppearancePart(parts, seenValues, presentCharacter.outfit, "Current outfit");
+  addPortraitAppearancePart(parts, seenValues, presentCharacter.mood, "Current expression or mood");
 }
 
 function findNpcRecordByName(npcs: GameNpc[], name: string): GameNpc | null {
@@ -4102,29 +4109,30 @@ function findRecordByName(records: Array<Record<string, unknown>>, name: string)
   );
 }
 
-function resolveNpcPortraitAppearance(
+export function resolveNpcPortraitAppearance(
   npc: { description?: string | null },
   metadataNpc: GameNpc | null,
   presentCharacter: Record<string, unknown> | null,
 ): string {
   const parts: string[] = [];
+  const seenValues = new Set<string>();
   const metadataDescriptionIsCanonical =
     metadataNpc?.descriptionSource === "model" ||
     metadataNpc?.descriptionSource === "library" ||
     metadataNpc?.descriptionSource === "user";
 
   if (metadataDescriptionIsCanonical) {
-    addPortraitAppearancePart(parts, metadataNpc?.description, "Canonical NPC profile");
+    addPortraitAppearancePart(parts, seenValues, metadataNpc?.description, "Canonical NPC profile");
   }
 
-  addPortraitAppearancePart(parts, npc.description);
+  addPortraitAppearancePart(parts, seenValues, npc.description);
 
   if (!metadataDescriptionIsCanonical) {
-    addPortraitAppearancePart(parts, metadataNpc?.description);
+    addPortraitAppearancePart(parts, seenValues, metadataNpc?.description);
   }
 
-  addPresentCharacterPortraitAppearance(parts, presentCharacter);
-  addPortraitAppearanceNotes(parts, metadataNpc?.notes);
+  addPresentCharacterPortraitAppearance(parts, seenValues, presentCharacter);
+  addPortraitAppearanceNotes(parts, seenValues, metadataNpc?.notes);
 
   return parts.join(" ");
 }
@@ -5251,9 +5259,16 @@ async function loadStoryboardIllustratorSystemPrompt(args: {
   generateVideos: boolean;
   ctx: GameStoryboardIllustratorCtx;
 }): Promise<string> {
+  const kind = args.generateVideos ? "animation" : "illustration";
+  const selectedAnimationTemplateId = readTrimmedString(args.meta.gameStoryboardAnimationPromptTemplateId);
+  const builtInTemplates = args.generateVideos
+    ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES
+    : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
   const options = [
-    ...GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
-    ...normalizeGameStoryboardPromptTemplates(args.meta.gameStoryboardPromptTemplates),
+    ...builtInTemplates,
+    ...normalizeGameStoryboardPromptTemplates(args.meta.gameStoryboardPromptTemplates).filter(
+      (template) => getGameStoryboardPromptTemplateKind(template, selectedAnimationTemplateId) === kind,
+    ),
   ];
   const templateId = resolveGameStoryboardPromptTemplateId({
     meta: args.meta,
@@ -5265,7 +5280,7 @@ async function loadStoryboardIllustratorSystemPrompt(args: {
     : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID;
   const selectedTemplate =
     options.find((template) => template.id === templateId) ??
-    GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find((template) => template.id === fallbackTemplateId);
+    builtInTemplates.find((template) => template.id === fallbackTemplateId);
   if (!selectedTemplate?.promptTemplate.trim()) {
     return loadPrompt(args.promptOverridesStorage, GAME_STORYBOARD_ILLUSTRATION_DIRECTOR, args.ctx);
   }
@@ -6001,6 +6016,7 @@ export async function gameRoutes(app: FastifyInstance) {
       gameStoryboardKeyframeCount: storyboardKeyframeCount,
       gameGmPromptTemplateId: setupConfig.gameGmPromptTemplateId || null,
       gameStoryboardAnimationPromptTemplateId: setupConfig.gameStoryboardAnimationPromptTemplateId || null,
+      gameStoryboardImagePromptTemplateId: setupConfig.gameStoryboardImagePromptTemplateId || null,
       gameStoryboardVideoPromptTemplateId: setupConfig.gameStoryboardVideoPromptTemplateId || null,
       gameStoryboardUseDirectScenePrompt: setupConfig.gameStoryboardUseDirectScenePrompt === true,
       gameLastSceneVideoId: null,
@@ -9809,6 +9825,7 @@ export async function gameRoutes(app: FastifyInstance) {
     aspectRatio: z.enum(["16:9", "9:16"]).optional(),
     promptOverride: z.string().trim().min(1).max(20_000).optional(),
     previewOnly: z.boolean().optional().default(false),
+    queueMediaGenerationRequests: z.boolean().optional().default(true),
     debugMode: z.boolean().optional().default(false),
   });
 
@@ -10169,6 +10186,8 @@ export async function gameRoutes(app: FastifyInstance) {
               promptOverridesStorage,
               size: backgroundSize,
               useDirectScenePrompt: meta.gameStoryboardUseDirectScenePrompt === true,
+              storyboardImagePromptTemplateId: readTrimmedString(meta.gameStoryboardImagePromptTemplateId),
+              storyboardImagePromptTemplates: meta.gameStoryboardImagePromptTemplates,
               preserveFullScenePrompt: true,
             });
             if (debugLogsEnabled) {
@@ -10326,6 +10345,8 @@ export async function gameRoutes(app: FastifyInstance) {
             promptOverride: promptOverride?.prompt,
             negativePromptOverride: promptOverride?.negativePrompt,
             useDirectScenePrompt: meta.gameStoryboardUseDirectScenePrompt === true,
+            storyboardImagePromptTemplateId: readTrimmedString(meta.gameStoryboardImagePromptTemplateId),
+            storyboardImagePromptTemplates: meta.gameStoryboardImagePromptTemplates,
             preserveFullScenePrompt: true,
             onCompiledPrompt: (compiled) => {
               sentIllustrationPrompt = compiled.prompt;
@@ -10752,6 +10773,8 @@ export async function gameRoutes(app: FastifyInstance) {
         resolution,
         referenceImage,
         publicReferenceUpload,
+        queue: input.queueMediaGenerationRequests,
+        connectionKey: videoConnectionId,
         fallback: videoFallback,
         signal: sceneVideoAbortSignal,
       });

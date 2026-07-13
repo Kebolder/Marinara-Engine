@@ -63,11 +63,84 @@ import {
 } from "../../packages/server/src/services/image/illustrator-prompt-review.js";
 import { resolveReviewedImagePromptSubmission } from "../../packages/server/src/services/image/image-prompt-review.js";
 import { resolveSceneVideoPrompt } from "../../packages/server/src/services/video/scene-video-prompt-review.js";
+import { buildPersonaCreateRow } from "../../packages/server/src/services/mari-db/mari-db.service.js";
+import {
+  checkAutonomousMessaging,
+  clearChatActivity,
+  initializeActivityFromMessages,
+  isAutonomousDailyBudgetExhausted,
+} from "../../packages/server/src/services/conversation/autonomous.service.js";
+import type { WeekSchedule } from "../../packages/server/src/services/conversation/schedule.service.js";
+
+const minimalProfessorMariPersona = buildPersonaCreateRow(
+  { name: "Minimal helper persona" },
+  "persona-minimal",
+  "2026-07-13T00:00:00.000Z",
+);
+assert.equal(minimalProfessorMariPersona.phoneticName, "");
+assert.equal(minimalProfessorMariPersona.convoDisplayName, "");
+assert.equal(minimalProfessorMariPersona.aboutMe, "");
+assert.equal(minimalProfessorMariPersona.convoBehavior, "");
+
+const completeProfessorMariPersona = buildPersonaCreateRow(
+  {
+    name: "Complete helper persona",
+    phoneticName: "Professor Mah-ree",
+    convoDisplayName: "Prof. Mari",
+    aboutMe: "I help people build worlds.",
+    convoBehavior: "Speak warmly and precisely.",
+  },
+  "persona-complete",
+  "2026-07-13T00:00:00.000Z",
+);
+assert.equal(completeProfessorMariPersona.phoneticName, "Professor Mah-ree");
+assert.equal(completeProfessorMariPersona.convoDisplayName, "Prof. Mari");
+assert.equal(completeProfessorMariPersona.aboutMe, "I help people build worlds.");
+assert.deepEqual(completeProfessorMariPersona.convoBehavior, {
+  instruction: "Speak warmly and precisely.",
+  insertionStrategy: "constant_after",
+});
 
 assert.equal(resolveInitialGameGmConnectionId(undefined, "chat-connection"), "chat-connection");
 assert.equal(resolveInitialGameGmConnectionId("explicit-connection", "chat-connection"), "explicit-connection");
 assert.equal(resolveInitialGameGmConnectionId(undefined, null), null);
 assert.equal(DEFAULT_GENERATION_PARAMS.reasoningEffort, "maximum");
+
+const autonomousSchedule = (talkativeness: number, cap: number): WeekSchedule => ({
+  weekStart: "2026-07-13",
+  days: {},
+  inactivityThresholdMinutes: 1,
+  autonomousDailyCapOverride: cap,
+  talkativeness,
+});
+const autonomousChatId = "regression-autonomous-candidates";
+initializeActivityFromMessages(autonomousChatId, [
+  { role: "user", createdAt: new Date(Date.now() - 5 * 60_000).toISOString() },
+]);
+const autonomousCandidates = checkAutonomousMessaging(
+  autonomousChatId,
+  {
+    capped: autonomousSchedule(90, 1),
+    fallback: autonomousSchedule(70, 3),
+  },
+  true,
+);
+assert.deepEqual(autonomousCandidates.characterIds, ["capped", "fallback"]);
+const today = new Date();
+const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+assert.equal(
+  isAutonomousDailyBudgetExhausted("capped", autonomousSchedule(90, 1), {
+    autonomousDailyBudget: { date: dateKey, counts: { capped: 1 } },
+  }),
+  true,
+);
+assert.equal(
+  isAutonomousDailyBudgetExhausted("fallback", autonomousSchedule(70, 3), {
+    autonomousDailyBudget: { date: dateKey, counts: { fallback: 1 } },
+  }),
+  false,
+);
+clearChatActivity(autonomousChatId);
 assert.equal(
   getApiErrorMessage(
     { formErrors: [], fieldErrors: { handle: ["Handle must contain at most 40 characters."] } },
@@ -429,7 +502,7 @@ const sharedGameSetup = formatGameSetupShareText({
     personaName: "Player Persona",
   },
 });
-assert.match(sharedGameSetup, /Presentation: Anime Episode/u);
+assert.match(sharedGameSetup, /Presentation: Storyboard Optimized/u);
 assert.match(sharedGameSetup, /Temperature: 1\.1/u);
 assert.match(sharedGameSetup, /Max Tokens: 16384/u);
 assert.match(sharedGameSetup, /gpt-5\.6-sol/iu);

@@ -82,8 +82,9 @@ All of these live in the **Storyboards** card. Open **Chat Settings**, go to **A
 | **Keyframes per Turn** | 3 (range 1 to 6) | How many keyframes each turn plans |
 | **Animation Clip Duration** | 6 seconds (range 1 to 15) | Length of each clip |
 | **Viewer Display** | Floating | Floating panel or full background |
-| **Illustration Prompt** | Still Keyframes | Style preset for still-only storyboards |
-| **Animation Prompt** | Comic Page | Style preset when animations are on |
+| **Illustration Planner** | Still Keyframes | Plans finished still keyframes and their image descriptions |
+| **Animation Planner** | Comic Page Animation | Plans animation-ready source images and motion directions |
+| **Storyboard Illustration Prompt** | Game Scene Illustration | Formats each planned keyframe for the image model |
 | **Storyboard Video Prompt** | Same as Game Video Prompt | Motion prompt used only for storyboard keyframe clips |
 
 **Keyframes per Turn** is a slider. The engine tries to plan this many keyframes. A short turn may get fewer. It never plans more than 6.
@@ -92,32 +93,40 @@ All of these live in the **Storyboards** card. Open **Chat Settings**, go to **A
 
 In **Background** viewer mode, each animation starts once with sound when its story beat becomes active. Narration can display while it plays, but narration auto-play waits for the clip to finish. The animation then stays paused on its final frame. The game toolbar provides replay, play/pause, and mute controls on desktop and mobile. Floating storyboard videos also play once and can be replayed instead of looping indefinitely.
 
-**Storyboard Video Prompt** is separate from the general **Game Video Prompt** in the **Scene Videos** card. Leave it on the inherited choice to reuse the general prompt, or select **Anime Game Video** for keyframe clips without changing manual Gallery or Game Assets videos.
+The two planners create the visual plan. **Illustration Planner** is used for still storyboards. **Animation Planner** is used when videos are generated and produces both an animation-ready image description and a compact motion direction.
+
+**Storyboard Illustration Prompt** then formats the planner's image description into the final request sent to the image model. Existing chats default to **Game Scene Illustration**. **Storyboard Illustration** keeps the planner result primary while adding character references, appearance notes, campaign art direction, and image instructions.
+
+**Storyboard Video Prompt** is separate from the general **Game Video Prompt** in the **Scene Videos** card. It combines the generated keyframe, the Animation Planner's motion direction, and the current scene context into the final request sent to the video model. Leave it on the inherited choice to reuse the general prompt, or select **Anime Game Video** for keyframe clips without changing manual Gallery or Game Assets videos.
 
 Select **Comic Page Animation** for the duration-aware comic source pages, then choose **Comic Page Video** to interpret those panels as ordered visual reference beats for one clip. The original **Comic Page** remains available for ordinary illustrations. The separate video choice leaves the inherited **Game Video Prompt** plus manual Gallery and Game Assets videos unchanged.
 
-New games created with the **Anime Episode** presentation select **Comic Page Animation** and **Comic Page Video** by default. You can switch that chat to the still-shot combination at any time by selecting **Anime Episode Director** and **Anime Game Video**.
+New games created with the **Storyboard Optimized** presentation select the **Storyboard Game Prompt**, **Comic Page Animation** planner, **Storyboard Illustration**, and **Comic Page Video**. You can switch that chat to the single-shot combination at any time by selecting **Still Keyframe Animation** and **Anime Game Video**.
 
 ## Style presets
 
-The style presets shape how each keyframe looks. Two selectors pick them:
+The planner presets shape how each keyframe is selected and described. Two selectors pick them:
 
-- **Illustration Prompt** is used when storyboards make still keyframes without videos. Default: **Still Keyframes**.
-- **Animation Prompt** is used when **Automatic Storyboard Animations** is on. Default: **Comic Page**.
+- **Illustration Planner** is used when storyboards make still keyframes without videos. Default: **Still Keyframes**.
+- **Animation Planner** is used when **Automatic Storyboard Animations** is on. Default: **Comic Page Animation**.
 
-There are seven built-in presets. They are for Game Mode storyboards only. They are separate from Roleplay illustrator presets.
+The two selectors have separate preset lists. Illustration presets describe finished stills and can include reader-facing comic or manga lettering. Animation presets describe a stable first frame plus duration-aware motion direction. An illustration preset never appears in the Animation Planner menu, and an animation preset never appears in the Illustration Planner menu.
 
-| Preset | Best for |
-| --- | --- |
-| **Still Keyframes** | Normal reading. Single-scene keyframes. Avoids comic panels, speech bubbles, captions, and SFX text, so the viewer does not spoil later beats. |
-| **NovelAI Keyframes** | Compact tag prompts tuned for NovelAI V4 and V4.5. Best paired with **Use Storyboard Prompt Directly**. |
-| **Anime Episode Director** | Ordered, animation-ready single shots. It plans the exact first frame, one main movement, simple camera behavior, environmental motion, and an ending hold. |
-| **Comic Page** | Original comic-page illustration prompt with 2-6 panels, dialogue bubbles, captions, and lettering. |
-| **Comic Page Animation** | Duration-aware comic source pages for animation. Each page uses a small number of chronological panels as ordered visual references for one clip. |
-| **Colored Manga** | Colored manga staging, cell shading, screentones, speech bubbles, and SFX. |
-| **B&W Manga** | Black-and-white manga inks, screentones, heavy blacks, speech bubbles, and SFX. |
+| Lane | Preset | Best for |
+| --- | --- | --- |
+| Illustration | **Still Keyframes** | Normal reading. Single-scene keyframes without comic panels, speech bubbles, captions, or SFX text. |
+| Illustration | **NovelAI Keyframes** | Compact still-image tag prompts tuned for NovelAI V4 and V4.5. Best paired with **Use Storyboard Prompt Directly**. |
+| Illustration | **Comic Page** | Finished comic-page illustrations with 2-6 panels, dialogue bubbles, captions, and lettering. |
+| Illustration | **Colored Manga** | Finished colored manga staging with cell shading, screentones, speech bubbles, and SFX. |
+| Illustration | **B&W Manga** | Finished black-and-white manga inks, screentones, heavy blacks, speech bubbles, and SFX. |
+| Animation | **Still Keyframe Animation** | Ordered single shots with an exact first frame, one main movement, simple camera behavior, environmental motion, and an ending hold. |
+| Animation | **Anime Episode Director** | Broadcast-anime single shots with first-frame continuity, compact motion direction, and provider-safe staging. |
+| Animation | **NovelAI Keyframe Animation** | NovelAI tag-based first frames with timing and motion kept in a separate animation direction. |
+| Animation | **Comic Page Animation** | Duration-aware comic source pages whose chronological panels act as ordered visual references for one clip. |
+| Animation | **Colored Manga Animation** | Text-free colored manga first frames with motion that preserves linework and cel shading. |
+| Animation | **B&W Manga Animation** | Text-free monochrome first frames with motion that preserves inks and screentones. |
 
-The **Anime Episode Director** pairs with **Anime Game Video** and **Use Storyboard Prompt Directly** when you want the generated still to be the exact first frame of a continuous clip. The director keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
+The **Still Keyframe Animation** preset is the style-neutral motion counterpart to **Still Keyframes**. The **Anime Episode Director** is a separate specialized option that pairs with **Anime Game Video** and **Use Storyboard Prompt Directly** when you want broadcast-anime shot planning. It keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
 
 The **Comic Page Animation** preset uses the animation clip duration to control page density. It defaults to 2 panels for a 6-7 second clip, allowing a third only for three simple beats with about 2 seconds each; it uses 2-3 panels for 8-10 seconds and no more than 4 for longer clips. Animation pages prioritize visual timing over comic lettering, keep each panel focused, and reserve a short ending hold. Panels follow cause and effect in reading order. **Comic Page Video** normally enters panel 1 immediately; it permits only a very brief full-page establish when doing so cannot reveal a later consequence early.
 
@@ -133,9 +142,9 @@ With **Expose image prompts before sending** enabled in **Settings > Generation*
 
 ## Editing storyboard presets
 
-The built-in presets are read-only. To make your own, open the **Edit Storyboard Presets** section inside the **Storyboards** card. It shows a count of your custom copies.
+The built-in presets are read-only. To make your own, open **Edit Illustration Planner Presets**, **Edit Animation Planner Presets**, **Edit Illustration Prompt Presets**, or **Edit Video Prompt Presets** inside the **Storyboards** card. Each section shows only the built-ins and custom copies for that stage.
 
-You copy a built-in into a chat-only editable template, then pick that copy in either selector. The copy controls include the built-in still, anime episode, comic illustration, comic animation, NovelAI, colored manga, and black-and-white manga templates. **Edit Video Presets** likewise offers copies of Cinematic Scene Video, Anime Game Video, and Comic Page Video for either video selector.
+Copy a built-in into a chat-only editable template, then pick that copy in the matching selector. Illustration Planner copies cannot be selected as Animation Planners, and Animation Planner copies cannot be selected as Illustration Planners. Storyboard Illustration Prompt copies affect only storyboard images. Video prompt copies remain shared with the general Game Video Prompt so either video selector can use them.
 
 Each custom copy has a name, a short description, and the prompt body you edit. A trash button removes a copy after a confirm dialog. These copies are stored on that one chat, not across your whole app.
 

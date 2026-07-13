@@ -93,6 +93,7 @@ const generateSceneVideoSchema = z.object({
   durationSeconds: z.number().int().min(1).max(60).optional(),
   aspectRatio: z.enum(["16:9", "9:16"]).optional(),
   promptOverride: z.string().trim().min(1).max(20_000).optional(),
+  queueMediaGenerationRequests: z.boolean().optional().default(true),
   debugMode: z.boolean().optional().default(false),
 });
 
@@ -833,6 +834,8 @@ export async function galleryRoutes(app: FastifyInstance) {
         resolution,
         referenceImage,
         publicReferenceUpload,
+        queue: input.queueMediaGenerationRequests,
+        connectionKey: videoConnectionId,
         signal: sceneVideoAbortSignal,
         fallback: videoFallback,
       });

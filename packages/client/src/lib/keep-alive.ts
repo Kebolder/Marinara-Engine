@@ -16,6 +16,9 @@ let started = false;
 
 export function startKeepAlive() {
   if (started) return;
+  // Mobile browsers need to suspend idle pages to protect battery and thermal
+  // headroom. This exists only to defeat desktop sleeping-tab heuristics.
+  if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) return;
   started = true;
 
   // ── Web Lock (primary defense) ──

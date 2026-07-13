@@ -14,7 +14,7 @@ import { api } from "../lib/api-client";
 import { toAutonomousPresenceStatus } from "../lib/user-status";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
-import { showConversationLocalNotification } from "../lib/local-notifications";
+import { showConversationLocalNotification, showConversationNativeNotification } from "../lib/local-notifications";
 import { playConfiguredNotificationPing } from "../lib/notification-sound";
 import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
@@ -242,6 +242,11 @@ export function useBackgroundAutonomousPolling() {
 
                 void showConversationLocalNotification({
                   enabled: useUIStore.getState().conversationBrowserNotifications,
+                  characterName: charName,
+                  tag: `marinara-conversation-${chat.id}`,
+                });
+                showConversationNativeNotification({
+                  enabled: useUIStore.getState().conversationMobileNotifications,
                   characterName: charName,
                   tag: `marinara-conversation-${chat.id}`,
                 });

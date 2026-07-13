@@ -701,6 +701,39 @@ test("home shell and primary topbar panels open without client errors", async ({
   expect(errors).toEqual([]);
 });
 
+test("Professor Mari chat fills the mobile home viewport and keeps its composer visible", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("mobile"), "Professor Mari mobile viewport regression.");
+  await page.goto("/");
+
+  await page
+    .locator('[data-component="HomeProfessorMariChat.MariPanel"]')
+    .getByRole("button", { name: "Ask Professor Mari" })
+    .click();
+
+  const topBar = page.locator('[data-component="TopBar"]');
+  const window = page.locator('[data-component="HomeProfessorMariChat.Window"]');
+  const composer = window.getByPlaceholder("Ask Professor Mari...");
+  await expect(window).toBeVisible();
+  await expect(composer).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [topBarBox, windowBox, composerBox] = await Promise.all([
+        topBar.boundingBox(),
+        window.boundingBox(),
+        composer.boundingBox(),
+      ]);
+      const viewport = page.viewportSize();
+      if (!topBarBox || !windowBox || !composerBox || !viewport) return false;
+      const contentTop = topBarBox.y + topBarBox.height;
+      return (
+        Math.abs(windowBox.y - contentTop) <= 1 &&
+        Math.abs(windowBox.y + windowBox.height - viewport.height) <= 1 &&
+        composerBox.y + composerBox.height <= viewport.height + 1
+      );
+    })
+    .toBe(true);
+});
+
 test("Lorebook Save keeps Overview stable while the updated detail cache settles", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.includes("mobile"), "Desktop editor regression");
 

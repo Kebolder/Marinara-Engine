@@ -31,6 +31,7 @@ import {
   ANIME_GAME_SYSTEM_PROMPT,
   COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   DEFAULT_GAME_SYSTEM_PROMPT,
+  STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
@@ -830,9 +831,10 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         gameGmPromptTemplateId: gamePresentation === "anime" ? ANIME_GAME_PROMPT_TEMPLATE_ID : null,
         gameStoryboardAnimationPromptTemplateId:
           gamePresentation === "anime" ? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID : null,
+        gameStoryboardImagePromptTemplateId:
+          gamePresentation === "anime" ? STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID : null,
         gameStoryboardVideoPromptTemplateId:
           gamePresentation === "anime" ? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID : null,
-        gameStoryboardUseDirectScenePrompt: gamePresentation === "anime" || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,
         customHudWidgets:
@@ -2241,7 +2243,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
             <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                 <Sparkles size={12} />
-                Presentation
+                Game Presentation
               </label>
               <select
                 value={gamePresentation}
@@ -2249,18 +2251,35 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 className={GAME_SETUP_INPUT_CLASS}
               >
                 <option value="standard">Standard</option>
-                <option value="anime">Anime Episode</option>
+                <option value="anime">Storyboard Optimized</option>
               </select>
               <p className="mt-1 text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
                 {gamePresentation === "anime"
-                  ? "Shapes narration like an anime episode and pairs Comic Page Animation with Comic Page Video for storyboard animations. It does not enable image or video generation or change your connections."
+                  ? "Coordinates the game narration, storyboard planning, image formatting, and video formatting without enabling media generation or changing your connections."
                   : "Uses the standard flexible Game Mode narration and media prompts."}
               </p>
+              {gamePresentation === "anime" && (
+                <dl className="mt-2 grid gap-1.5 rounded-lg bg-[var(--secondary)]/55 p-2 ring-1 ring-[var(--border)] sm:grid-cols-2">
+                  {[
+                    ["Game Prompt", "Storyboard Game Prompt"],
+                    ["Animation Planner", "Comic Page Animation"],
+                    ["Storyboard Illustration Prompt", "Storyboard Illustration"],
+                    ["Storyboard Video Prompt", "Comic Page Video"],
+                  ].map(([label, value]) => (
+                    <div key={label} className="min-w-0 rounded-md bg-[var(--background)]/65 px-2 py-1.5">
+                      <dt className="text-[0.525rem] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
+                        {label}
+                      </dt>
+                      <dd className="truncate text-[0.625rem] font-semibold text-[var(--foreground)]">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
             </div>
             <div>
               <label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-[var(--foreground)]">
                 <Feather size={12} />
-                Game Prompt Preset
+                Base Prompt Preset
               </label>
               <select
                 value={promptPresetId ?? ""}
@@ -2276,7 +2295,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
               </select>
               <p className="mt-1 text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
                 {gamePresentation === "anime"
-                  ? "The Anime Game Prompt replaces the selected preset's Game prompt. Other preset settings remain available."
+                  ? "The Storyboard Game Prompt replaces the selected preset's Game prompt. Other preset settings remain available."
                   : "Uses the Game mode prompt from the selected preset unless the custom GM prompt below is enabled."}
               </p>
             </div>
@@ -2318,7 +2337,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                           ? "Custom prompt will override the selected prompt"
                           : "Previewing the selected prompt; edit it to override"
                         : gamePresentation === "anime"
-                          ? "Using Anime Game Prompt"
+                          ? "Using Storyboard Game Prompt"
                           : selectedPromptPresetName
                           ? `Using ${selectedPromptPresetName}`
                           : "Using default game prompt"}
@@ -2332,7 +2351,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                         ? "Custom"
                         : "Preview"
                       : gamePresentation === "anime"
-                        ? "Anime"
+                        ? "Storyboard"
                         : selectedPromptPresetName
                           ? "Preset"
                           : "Default"}

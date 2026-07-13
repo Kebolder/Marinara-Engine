@@ -24,6 +24,7 @@ import {
 } from "@marinara-engine/shared";
 import type { ImageGenerationSize } from "../image/image-generation-settings.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
+import { loadGameStoryboardImagePrompt } from "../image/game-storyboard-image-prompt.js";
 
 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
 const CHAT_BACKGROUND_DIR = join(DATA_DIR, "backgrounds");
@@ -583,12 +584,19 @@ function compileGameImagePrompt(
   negativePrompt?: string | null,
 ) {
   const canonicalAppearance = kind === "portrait" && typeof req.appearance === "string" ? req.appearance.trim() : "";
-  const canonicalPrefix = canonicalAppearance
-    ? `Required canonical NPC visual profile: ${canonicalAppearance.slice(0, 700)}`
+  const protectedCanonicalAppearance = canonicalAppearance.slice(0, 700);
+  const canonicalPrefix = protectedCanonicalAppearance
+    ? `Required canonical NPC visual profile: ${protectedCanonicalAppearance}`
     : "";
   if (!req.styleProfiles) {
     return {
-      prompt: [canonicalPrefix, prompt].filter(Boolean).join(". ").slice(0, maxLength),
+      prompt: prependCanonicalAppearanceIfMissing(
+        prompt,
+        protectedCanonicalAppearance,
+        canonicalPrefix,
+        maxLength,
+        ". ",
+      ),
       negativePrompt: [negativePrompt, hardNegative].filter(Boolean).join(", "),
     };
   }
@@ -621,11 +629,44 @@ function compileGameImagePrompt(
     generatedStyle: req.artStyle,
     applyPromptModeToSourcePrompt: kind === "background" || (kind === "illustration" && !req.preserveFullScenePrompt),
   });
-  const protectedPrompt = [canonicalPrefix, compiled.prompt].filter(Boolean).join(", ");
   return {
-    prompt: protectedPrompt.slice(0, maxLength),
+    prompt: prependCanonicalAppearanceIfMissing(
+      compiled.prompt,
+      protectedCanonicalAppearance,
+      canonicalPrefix,
+      maxLength,
+      ", ",
+    ),
     negativePrompt: compiled.negativePrompt,
   };
+}
+
+function prependCanonicalAppearanceIfMissing(
+  prompt: string,
+  canonicalAppearance: string,
+  canonicalPrefix: string,
+  maxLength: number,
+  separator: string,
+): string {
+  // Inspect the provider-visible slice. If identity is missing, rebuild from the original
+  // prompt so prefixing still happens before the single final maxLength truncation.
+  const truncatedPrompt = prompt.slice(0, maxLength);
+  if (!canonicalPrefix || promptContainsCanonicalAppearance(truncatedPrompt, canonicalAppearance)) {
+    return truncatedPrompt;
+  }
+  return [canonicalPrefix, prompt].filter(Boolean).join(separator).slice(0, maxLength);
+}
+
+function promptContainsCanonicalAppearance(prompt: string, canonicalAppearance: string): boolean {
+  // Whole-word matching can still treat short or generic appearances as incidental matches;
+  // changing this behavior trades duplicate suppression against identity preservation.
+  const normalizedAppearance = normalizedPromptText(canonicalAppearance);
+  if (!normalizedAppearance) return false;
+  return ` ${normalizedPromptText(prompt)} `.includes(` ${normalizedAppearance} `);
+}
+
+function normalizedPromptText(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 async function maybeGenerateDynamicGameImagePrompt(
@@ -822,6 +863,10 @@ export interface SceneIllustrationGenRequest {
   onCompiledPrompt?: (compiled: CompiledGameImagePrompt) => void;
   /** Use the storyboard illustrator's imagePrompt as the complete scene source, bypassing the scene-illustration prompt template. */
   useDirectScenePrompt?: boolean;
+  /** Selected provider-facing storyboard image prompt template. */
+  storyboardImagePromptTemplateId?: string | null;
+  /** Chat-local provider-facing storyboard image prompt templates. */
+  storyboardImagePromptTemplates?: unknown;
   /** Preserve the full generated scene prompt instead of distilling it into the selected tagged prompt grammar. */
   preserveFullScenePrompt?: boolean;
   /** Optional request-scoped abort signal. */
@@ -934,11 +979,20 @@ async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest)
     artDirectionLine: styleHint ? `Art direction: ${styleHint}.` : "",
     imagePromptInstructionsLine,
   };
+  const hasStoryboardImagePromptSelection =
+    req.storyboardImagePromptTemplateId != null || req.storyboardImagePromptTemplates != null;
   const rawIllustrationPrompt = req.useDirectScenePrompt
     ? req.prompt.trim()
-    : req.promptOverridesStorage
-      ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
-      : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
+    : hasStoryboardImagePromptSelection
+      ? await loadGameStoryboardImagePrompt({
+          promptOverridesStorage: req.promptOverridesStorage,
+          templateId: req.storyboardImagePromptTemplateId,
+          customTemplates: req.storyboardImagePromptTemplates,
+          ctx: sceneIllustrationVars,
+        })
+      : req.promptOverridesStorage
+        ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
+        : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
   const finalPrompt =
     imagePromptInstructionsLine && !rawIllustrationPrompt.includes(imagePromptInstructionsLine)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`

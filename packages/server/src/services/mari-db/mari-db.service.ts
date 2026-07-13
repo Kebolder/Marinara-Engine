@@ -783,6 +783,51 @@ function normalizeCharacterActionData(input: Row): Row {
   return out;
 }
 
+function normalizePersonaConvoBehavior(value: unknown): unknown {
+  if (isRecord(value)) return clone(value);
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (isRecord(parsed)) return parsed;
+  } catch {
+    // A plain directive is still useful input from Professor Mari or the CLI.
+  }
+  return { instruction: trimmed, insertionStrategy: "constant_after" };
+}
+
+export function buildPersonaCreateRow(data: Row, id: string, timestamp: string): Row {
+  return {
+    id,
+    name: requiredString(data, ["name"], "persona name"),
+    comment: firstString(data, ["comment"]) ?? "",
+    creator: firstString(data, ["creator"]) ?? "",
+    personaVersion: firstString(data, ["personaVersion", "persona_version"]) ?? "1.0",
+    creatorNotes: firstString(data, ["creatorNotes", "creator_notes", "creator-notes"]) ?? "",
+    phoneticName: firstString(data, ["phoneticName", "phonetic_name", "phonetic-name"]) ?? "",
+    description: firstString(data, ["description"]) ?? "",
+    personality: firstString(data, ["personality"]) ?? "",
+    scenario: firstString(data, ["scenario"]) ?? "",
+    backstory: firstString(data, ["backstory"]) ?? "",
+    appearance: firstString(data, ["appearance"]) ?? "",
+    isActive: "false",
+    nameColor: "",
+    dialogueColor: "",
+    boxColor: "",
+    trackerCardColors: { mode: "chat" },
+    personaStats: "",
+    tags: firstStringList(data, ["tags"]) ?? [],
+    savedStatusOptions: [],
+    avatarCrop: "",
+    convoDisplayName: firstString(data, ["convoDisplayName", "convo_display_name", "convo-display-name"]) ?? "",
+    aboutMe: firstString(data, ["aboutMe", "about_me", "about-me"]) ?? "",
+    convoBehavior: normalizePersonaConvoBehavior(data.convoBehavior ?? data.convo_behavior ?? data["convo-behavior"]),
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function jsonString(value: unknown, fallback: unknown): string {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -1765,34 +1810,18 @@ export class MariDbService {
           "creatorNotes",
           "creator_notes",
           "tags",
+          "phoneticName",
+          "phonetic_name",
+          "convoDisplayName",
+          "convo_display_name",
+          "aboutMe",
+          "about_me",
+          "convoBehavior",
+          "convo_behavior",
         ]);
-        const name = requiredString(data, ["name"], "persona name");
         const timestamp = now();
         const id = firstString(args, ["id", "personaId"]) ?? newId();
-        const row: Row = {
-          id,
-          name,
-          comment: firstString(data, ["comment"]) ?? "",
-          creator: firstString(data, ["creator"]) ?? "",
-          personaVersion: firstString(data, ["personaVersion", "persona_version"]) ?? "1.0",
-          creatorNotes: firstString(data, ["creatorNotes", "creator_notes", "creator-notes"]) ?? "",
-          description: firstString(data, ["description"]) ?? "",
-          personality: firstString(data, ["personality"]) ?? "",
-          scenario: firstString(data, ["scenario"]) ?? "",
-          backstory: firstString(data, ["backstory"]) ?? "",
-          appearance: firstString(data, ["appearance"]) ?? "",
-          isActive: "false",
-          nameColor: "",
-          dialogueColor: "",
-          boxColor: "",
-          trackerCardColors: { mode: "chat" },
-          personaStats: "",
-          tags: firstStringList(data, ["tags"]) ?? [],
-          savedStatusOptions: [],
-          avatarCrop: "",
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        };
+        const row = buildPersonaCreateRow(data, id, timestamp);
         return this.executeMutation(
           {
             kind: "insert",
@@ -1823,6 +1852,14 @@ export class MariDbService {
           "creatorNotes",
           "creator_notes",
           "tags",
+          "phoneticName",
+          "phonetic_name",
+          "convoDisplayName",
+          "convo_display_name",
+          "aboutMe",
+          "about_me",
+          "convoBehavior",
+          "convo_behavior",
         ]);
         const patch: Row = { updatedAt: now() };
         assignStringField(patch, data, ["name"], "name");
@@ -1834,6 +1871,19 @@ export class MariDbService {
         assignStringField(patch, data, ["comment"], "comment");
         assignStringField(patch, data, ["creator"], "creator");
         assignStringField(patch, data, ["creatorNotes", "creator_notes", "creator-notes"], "creatorNotes");
+        assignStringField(patch, data, ["phoneticName", "phonetic_name", "phonetic-name"], "phoneticName");
+        assignStringField(
+          patch,
+          data,
+          ["convoDisplayName", "convo_display_name", "convo-display-name"],
+          "convoDisplayName",
+        );
+        assignStringField(patch, data, ["aboutMe", "about_me", "about-me"], "aboutMe");
+        if (data.convoBehavior !== undefined || data.convo_behavior !== undefined || data["convo-behavior"] !== undefined) {
+          patch.convoBehavior = normalizePersonaConvoBehavior(
+            data.convoBehavior ?? data.convo_behavior ?? data["convo-behavior"],
+          );
+        }
         assignListField(patch, data, ["tags"], "tags");
         if (Object.keys(patch).length <= 1) {
           throw new Error("persona.update needs a patch field such as name, description, personality, scenario, backstory, appearance, tags, comment, creator, or creatorNotes");
@@ -3174,38 +3224,34 @@ export class MariDbService {
         const name = flagString(flags, "name")?.trim();
         if (!name) {
           throw new Error(
-            "Usage: mari personas create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
+            "Usage: mari personas create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--phonetic-name <text>] [--convo-display-name <text>] [--about-me <text>] [--convo-behavior <text-or-json>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
           );
         }
         const timestamp = now();
-        const row: Row = {
-          id: flagString(flags, "id") ?? newId(),
-          name,
-          comment: flagString(flags, "comment") ?? "",
-          creator: flagString(flags, "creator") ?? "",
-          personaVersion: "1.0",
-          creatorNotes: flagString(flags, "creator-notes") ?? "",
-          description: flagString(flags, "description") ?? "",
-          personality: flagString(flags, "personality") ?? "",
-          scenario: flagString(flags, "scenario") ?? "",
-          backstory: flagString(flags, "backstory") ?? "",
-          appearance: flagString(flags, "appearance") ?? "",
-          isActive: "false",
-          nameColor: "",
-          dialogueColor: "",
-          boxColor: "",
-          trackerCardColors: { mode: "chat" },
-          personaStats: "",
-          tags: [],
-          savedStatusOptions: [],
-          avatarCrop: "",
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        };
+        const id = flagString(flags, "id") ?? newId();
+        const row = buildPersonaCreateRow(
+          {
+            name,
+            comment: flagString(flags, "comment"),
+            creator: flagString(flags, "creator"),
+            creatorNotes: flagString(flags, "creator-notes"),
+            phoneticName: flagString(flags, "phonetic-name"),
+            description: flagString(flags, "description"),
+            personality: flagString(flags, "personality"),
+            scenario: flagString(flags, "scenario"),
+            backstory: flagString(flags, "backstory"),
+            appearance: flagString(flags, "appearance"),
+            convoDisplayName: flagString(flags, "convo-display-name"),
+            aboutMe: flagString(flags, "about-me"),
+            convoBehavior: flagString(flags, "convo-behavior"),
+          },
+          id,
+          timestamp,
+        );
         const request: ParsedMutationRequest = {
           kind: "insert",
           table: "personas",
-          id: String(row.id),
+          id,
           row,
           apply: hasFlag(flags, "apply"),
           cascade: false,
@@ -3218,7 +3264,7 @@ export class MariDbService {
         const id = parsed.positionals[0];
         if (!id)
           throw new Error(
-            "Usage: mari personas update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
+            "Usage: mari personas update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--phonetic-name <text>] [--convo-display-name <text>] [--about-me <text>] [--convo-behavior <text-or-json>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
           );
         const patch: Row = { updatedAt: now() };
         const fieldMap: Array<[string, string]> = [
@@ -3231,6 +3277,9 @@ export class MariDbService {
           ["comment", "comment"],
           ["creator", "creator"],
           ["creator-notes", "creatorNotes"],
+          ["phonetic-name", "phoneticName"],
+          ["convo-display-name", "convoDisplayName"],
+          ["about-me", "aboutMe"],
         ];
         for (const [flagName, fieldName] of fieldMap) {
           const val = flagString(flags, flagName);
@@ -3242,9 +3291,11 @@ export class MariDbService {
             ? personaTagsRaw.split(/[,|]/).map((t) => t.trim()).filter(Boolean)
             : [];
         }
+        const convoBehaviorRaw = flagString(flags, "convo-behavior");
+        if (convoBehaviorRaw !== undefined) patch.convoBehavior = normalizePersonaConvoBehavior(convoBehaviorRaw);
         if (Object.keys(patch).length <= 1) {
           throw new Error(
-            "Provide at least one field to update (--name, --description, --personality, --scenario, --backstory, --appearance, --tags, --comment, --creator, --creator-notes)",
+            "Provide at least one field to update (--name, --description, --personality, --scenario, --backstory, --appearance, --phonetic-name, --convo-display-name, --about-me, --convo-behavior, --tags, --comment, --creator, --creator-notes)",
           );
         }
         const request: ParsedMutationRequest = {
@@ -4679,8 +4730,8 @@ export class MariDbService {
       "Read:  active",
       "Read:  get <id>",
       "Read:  search <query> [--limit <n>]",
-      "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
-      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
+      "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--phonetic-name <text>] [--convo-display-name <text>] [--about-me <text>] [--convo-behavior <text-or-json>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--phonetic-name <text>] [--convo-display-name <text>] [--about-me <text>] [--convo-behavior <text-or-json>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
       "Write: delete <id> [--apply] [--reason <text>]",
       "Writes dry-run by default; --apply saves reversible changes and shows a Keep/Restore review card.",
     ].join("\n");

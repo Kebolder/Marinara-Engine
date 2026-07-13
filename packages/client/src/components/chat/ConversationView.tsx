@@ -34,6 +34,11 @@ import { PokerBoard } from "./PokerBoard";
 import { PokerSetup } from "./PokerSetup";
 import { EightBallBoard } from "./EightBallBoard";
 import { EightBallSetup } from "./EightBallSetup";
+import { ConversationGamesPicker } from "./ConversationGamesPicker";
+import { TicTacToeBoard } from "./TicTacToeBoard";
+import { TicTacToeSetup } from "./TicTacToeSetup";
+import { RockPaperScissorsBoard } from "./RockPaperScissorsBoard";
+import { RockPaperScissorsSetup } from "./RockPaperScissorsSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
@@ -48,6 +53,9 @@ import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
 import { usePokerGameStore } from "../../stores/poker-game.store";
 import { useEightBallGameStore } from "../../stores/eightball-game.store";
+import { useConversationGamesStore } from "../../stores/conversation-games.store";
+import { useTicTacToeGameStore } from "../../stores/tic-tac-toe-game.store";
+import { useRockPaperScissorsGameStore } from "../../stores/rock-paper-scissors-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
 import { playConversationCallRingingSoundOnce } from "../../lib/conversation-call-sounds";
@@ -338,6 +346,18 @@ export function ConversationView({
   );
   const eightBallSetupOpen = useEightBallGameStore((s) => s.setupChatId === chatId);
   const closeEightBallSetup = useEightBallGameStore((s) => s.closeSetup);
+  const gamesPickerOpen = useConversationGamesStore((s) => s.pickerChatId === chatId);
+  const closeGamesPicker = useConversationGamesStore((s) => s.closePicker);
+  const ticTacToeGameActive = useTicTacToeGameStore(
+    (s) => s.current?.chatId === chatId && s.current?.status !== "finished",
+  );
+  const ticTacToeSetupOpen = useTicTacToeGameStore((s) => s.setupChatId === chatId);
+  const closeTicTacToeSetup = useTicTacToeGameStore((s) => s.closeSetup);
+  const rpsGameActive = useRockPaperScissorsGameStore(
+    (s) => s.current?.chatId === chatId && s.current?.status !== "finished",
+  );
+  const rpsSetupOpen = useRockPaperScissorsGameStore((s) => s.setupChatId === chatId);
+  const closeRpsSetup = useRockPaperScissorsGameStore((s) => s.closeSetup);
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useThrottledStreamBuffer();
@@ -426,8 +446,7 @@ export function ConversationView({
   const theme = useUIStore((s) => s.theme);
   const gradientStyle = useMemo(() => {
     const g = convoGradient[theme];
-    const defaults =
-      theme === "dark" ? { from: "#0a0a0e", to: "#1c2133" } : { from: "#f2eff7", to: "#eae6f0" };
+    const defaults = theme === "dark" ? { from: "#0a0a0e", to: "#1c2133" } : { from: "#f2eff7", to: "#eae6f0" };
     if (g.from === defaults.from && g.to === defaults.to) {
       return {
         background: `linear-gradient(135deg, var(--marinara-conversation-gradient-from, ${g.from}), var(--marinara-conversation-gradient-to, ${g.to}))`,
@@ -497,16 +516,7 @@ export function ConversationView({
     if (callStatus && useChatStore.getState().activeConversationCall?.session.chatId === chatId) {
       setActiveConversationCall(null);
     }
-  }, [
-    activeCall,
-    callStatus,
-    characterMap,
-    chatCharIds,
-    chatId,
-    chatName,
-    personaInfo,
-    setActiveConversationCall,
-  ]);
+  }, [activeCall, callStatus, characterMap, chatCharIds, chatId, chatName, personaInfo, setActiveConversationCall]);
   const renderToolbarActions = (compact = false) => (
     <>
       <ChatBranchSelector
@@ -1500,9 +1510,15 @@ export function ConversationView({
         )}
 
         {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
-        {sceneInfo?.variant === "origin" && !unoGameActive && !chessGameActive && !pokerGameActive && !eightBallGameActive && (
-          <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
-        )}
+        {sceneInfo?.variant === "origin" &&
+          !unoGameActive &&
+          !chessGameActive &&
+          !pokerGameActive &&
+          !eightBallGameActive &&
+          !ticTacToeGameActive &&
+          !rpsGameActive && (
+            <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
+          )}
 
         <div ref={messagesEndRef} className="h-1" />
       </div>
@@ -1531,11 +1547,13 @@ export function ConversationView({
         />
       )}
 
-      {/* ── Turn-game boards (UNO, chess, poker, 8-ball) — each self-hides when no game is active ── */}
+      {/* ── Turn-game boards (UNO, chess, poker, 8-ball, tic-tac-toe, rock-paper-scissors) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
       <ChessBoard chatId={chatId} />
       <PokerBoard chatId={chatId} />
       <EightBallBoard chatId={chatId} />
+      <TicTacToeBoard chatId={chatId} />
+      <RockPaperScissorsBoard chatId={chatId} />
       {renderIncomingCallBanner()}
       {/* Setup modals mounted once here (stable position) so they never double-render.
           Keyed by chatId so their internal selection state resets on a chat switch
@@ -1547,7 +1565,25 @@ export function ConversationView({
       <UnoSetup key={`uno-${chatId}`} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
       <ChessSetup key={`chess-${chatId}`} chatId={chatId} open={chessSetupOpen} onClose={closeChessSetup} />
       <PokerSetup key={`poker-${chatId}`} chatId={chatId} open={pokerSetupOpen} onClose={closePokerSetup} />
-      <EightBallSetup key={`eightball-${chatId}`} chatId={chatId} open={eightBallSetupOpen} onClose={closeEightBallSetup} />
+      <EightBallSetup
+        key={`eightball-${chatId}`}
+        chatId={chatId}
+        open={eightBallSetupOpen}
+        onClose={closeEightBallSetup}
+      />
+      <ConversationGamesPicker
+        key={`games-${chatId}`}
+        chatId={chatId}
+        open={gamesPickerOpen}
+        onClose={closeGamesPicker}
+      />
+      <TicTacToeSetup
+        key={`tic-tac-toe-${chatId}`}
+        chatId={chatId}
+        open={ticTacToeSetupOpen}
+        onClose={closeTicTacToeSetup}
+      />
+      <RockPaperScissorsSetup key={`rps-${chatId}`} chatId={chatId} open={rpsSetupOpen} onClose={closeRpsSetup} />
 
       {/* ── Input area ── */}
       <ConversationInput

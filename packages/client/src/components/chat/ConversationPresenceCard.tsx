@@ -12,6 +12,7 @@ import { api } from "../../lib/api-client";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
+import { isDesktopShellNavigationTarget } from "../../lib/chat-floating-ui-events";
 import type { CharacterMap } from "./chat-area.types";
 import {
   CHAT_TOOLBAR_IDENTITY_PILL_SIZE_CLASS,
@@ -269,6 +270,7 @@ export function ConversationPresenceCard({
   useEffect(() => {
     if (!open) return;
     const handleMouseDown = (event: MouseEvent) => {
+      if (isDesktopShellNavigationTarget(event.target)) return;
       const target = event.target as Node;
       if (
         buttonRef.current?.contains(target) ||
@@ -603,7 +605,11 @@ export function ConversationPresenceCard({
           <div
             ref={popoverRef}
             className={cn(ROLEPLAY_POPOVER_SHELL, "fixed z-[9999] overflow-hidden")}
-            style={{ top: position.top, left: position.left, width: position.width }}
+            style={{
+              top: position.top,
+              left: `max(calc(var(--mari-chat-ui-inset-left, 0px) + 0.75rem), min(${position.left}px, calc(100vw - var(--mari-chat-ui-inset-right, 0px) - ${position.width}px - 0.75rem)))`,
+              width: position.width,
+            }}
           >
             <div className={ROLEPLAY_POPOVER_HEADER}>
               <div className="flex items-start justify-between gap-3">

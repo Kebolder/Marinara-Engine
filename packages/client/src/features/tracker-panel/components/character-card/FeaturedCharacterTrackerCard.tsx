@@ -18,6 +18,7 @@ import type {
   TrackerThoughtBubbleDisplay,
 } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
+import { trackerEditableText } from "../../lib/tracker-display";
 import {
   makeUniqueCharacterCustomFieldName,
   normalizeCharacterCustomFieldName,
@@ -126,7 +127,9 @@ export function FeaturedCharacterTrackerCard({
   const thoughtBubbleRef = useRef<HTMLDivElement | null>(null);
   const thoughtControlRef = useRef<HTMLButtonElement | null>(null);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
-  const customFields = Object.entries(character.customFields ?? {});
+  const customFields = Object.entries((character.customFields ?? {}) as Record<string, unknown>).map(
+    ([name, value]) => [name, value, trackerEditableText(value)] as const,
+  );
   const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasEditableStatAdd = !!onUpdate && addMode;
   const hasEditableCustomFieldAdd = !!onUpdate && addMode;
@@ -232,7 +235,7 @@ export function FeaturedCharacterTrackerCard({
   };
   const removeCustomField = (name: string) => {
     if (!onUpdate) return;
-    const nextFields = { ...(character.customFields ?? {}) };
+    const nextFields: Record<string, unknown> = { ...(character.customFields ?? {}) };
     delete nextFields[name];
     onUpdateFieldLocks?.((locks) =>
       removeTrackerFieldLockPrefix(
@@ -240,11 +243,11 @@ export function FeaturedCharacterTrackerCard({
         characterCustomFieldTrackerLockKey(character, characterIndex, name, "name").replace(/\.name$/, ""),
       ),
     );
-    onUpdate({ ...character, customFields: nextFields });
+    onUpdate({ ...character, customFields: nextFields as Record<string, string> });
   };
-  const updateCustomField = (oldName: string, nextName: string, nextValue: string) => {
+  const updateCustomField = (oldName: string, nextName: string, nextValue: unknown) => {
     if (!onUpdate) return;
-    const nextFields = { ...(character.customFields ?? {}) };
+    const nextFields: Record<string, unknown> = { ...(character.customFields ?? {}) };
     const trimmedName = resolveCharacterCustomFieldName(nextName, oldName);
     if (
       trimmedName !== oldName &&
@@ -267,7 +270,7 @@ export function FeaturedCharacterTrackerCard({
     }
     delete nextFields[oldName];
     nextFields[trimmedName] = nextValue;
-    onUpdate({ ...character, customFields: nextFields });
+    onUpdate({ ...character, customFields: nextFields as Record<string, string> });
   };
 
   return (
@@ -410,7 +413,7 @@ export function FeaturedCharacterTrackerCard({
 
       {(customFields.length > 0 || hasEditableCustomFieldAdd) && (
         <div className={FEATURED_CUSTOM_FIELD_LIST_CLASS}>
-          {customFields.map(([name, value]) => (
+          {customFields.map(([name, rawValue, displayValue]) => (
             <div
               key={name}
               className={cn(
@@ -421,7 +424,7 @@ export function FeaturedCharacterTrackerCard({
               {onUpdate ? (
                 <InlineEdit
                   value={name}
-                  onSave={(nextName) => updateCustomField(name, nextName, value)}
+                  onSave={(nextName) => updateCustomField(name, nextName, rawValue)}
                   placeholder="Field"
                   ariaLabel={`${name} field name`}
                   className="min-w-0 px-0.5 py-0 font-medium"
@@ -443,7 +446,7 @@ export function FeaturedCharacterTrackerCard({
               )}
               {onUpdate ? (
                 <InlineEdit
-                  value={value}
+                  value={displayValue}
                   onSave={(nextValue) => updateCustomField(name, name, nextValue)}
                   placeholder="Value"
                   ariaLabel={`${name} value`}
@@ -464,7 +467,7 @@ export function FeaturedCharacterTrackerCard({
                   }
                 />
               ) : (
-                <span className="min-w-0 truncate text-[color:var(--tracker-profile-text)]">{value}</span>
+                <span className="min-w-0 truncate text-[color:var(--tracker-profile-text)]">{displayValue}</span>
               )}
               {deleteMode && onUpdate && (
                 <button

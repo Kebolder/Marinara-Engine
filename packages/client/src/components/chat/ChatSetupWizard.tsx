@@ -178,6 +178,16 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
   { id: "poker", label: "Poker", description: "Let characters sit down for a game of Texas Hold'em poker at the table." },
   { id: "eightball", label: "8-Ball Pool", description: "Let characters rack up a game of 8-ball pool at the table." },
+  {
+    id: "tic_tac_toe",
+    label: "Tic-Tac-Toe",
+    description: "Let characters accept a one-on-one tic-tac-toe challenge at the table.",
+  },
+  {
+    id: "rock_paper_scissors",
+    label: "Rock-Paper-Scissors",
+    description: "Let characters accept a one-on-one rock-paper-scissors match at the table.",
+  },
 ];
 
 // ─── Main component ───────────────────────────

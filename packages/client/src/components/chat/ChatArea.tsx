@@ -176,6 +176,7 @@ type GenerateSceneBackgroundPayload = {
 type GenerateRoleplaySceneVideoPayload = {
   chatId: string;
   galleryImageId?: string;
+  queueMediaGenerationRequests: boolean;
   debugMode: boolean;
   promptOverride?: string;
 };
@@ -1393,6 +1394,7 @@ export function ChatArea() {
       const payload: GenerateRoleplaySceneVideoPayload = {
         chatId: activeChatId,
         ...(galleryImageId ? { galleryImageId } : {}),
+        queueMediaGenerationRequests: useUIStore.getState().queueImageGenerationRequests,
         debugMode: useUIStore.getState().debugMode,
       };
       roleplaySceneVideoGeneratingRef.current = true;
@@ -2522,10 +2524,21 @@ export function ChatArea() {
     if (openedAtBottomChatIdRef.current === activeChatId) return;
     if (isLoading && loadedMessageCount === 0) return;
 
-    openedAtBottomChatIdRef.current = activeChatId;
-    userScrolledAwayRef.current = false;
-    isNearBottomRef.current = true;
-    scheduleScrollToMessagesBottom("auto");
+    let frame = 0;
+    const scrollWhenSurfaceIsReady = () => {
+      if (!scrollRef.current && !messagesEndRef.current) {
+        frame = requestAnimationFrame(scrollWhenSurfaceIsReady);
+        return;
+      }
+
+      openedAtBottomChatIdRef.current = activeChatId;
+      userScrolledAwayRef.current = false;
+      isNearBottomRef.current = true;
+      scheduleScrollToMessagesBottom("auto");
+    };
+
+    scrollWhenSurfaceIsReady();
+    return () => cancelAnimationFrame(frame);
   }, [activeChatId, isFetchingNextPage, isLoading, loadedMessageCount, scheduleScrollToMessagesBottom]);
 
   useEffect(() => {

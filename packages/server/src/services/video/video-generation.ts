@@ -5,6 +5,7 @@ import { newId } from "../../utils/id-generator.js";
 import { logger } from "../../lib/logger.js";
 import { assertInsideDir, safeFetch } from "../../utils/security.js";
 import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
+import { runMediaGenerationRequest } from "../image/image-generation-queue.js";
 
 export interface VideoReferenceImage {
   base64: string;
@@ -30,6 +31,10 @@ export interface VideoGenerationRequest {
   lastFrameImage?: VideoReferenceImage | null;
   publicReferenceUpload?: VideoReferencePublicUploadOptions | null;
   signal?: AbortSignal;
+  /** Serialize this request with other media jobs using the same configured connection. */
+  queue?: boolean;
+  /** Stable configured connection ID used to scope queued media jobs. */
+  connectionKey?: string;
   /** Called immediately before a configured fallback connection is attempted. */
   onFallback?: GenerationFallbackNotifier;
   /** Optional one-shot backup connection used only when the primary video request fails. */
@@ -94,6 +99,23 @@ export async function generateVideo(
   serviceHint: string,
   request: VideoGenerationRequest,
 ): Promise<VideoGenerationResult> {
+  // The request deadline begins when the queued task starts; queue wait time is
+  // governed separately by the shared media-generation queue.
+  return runMediaGenerationRequest({
+    connectionKey: request.connectionKey ?? `${serviceHint || source}:${baseUrl}`,
+    queue: request.queue === true,
+    signal: request.signal,
+    task: () => generateVideoUnqueued(source, baseUrl, apiKey, serviceHint, request),
+  });
+}
+
+async function generateVideoUnqueued(
+  source: string,
+  baseUrl: string,
+  apiKey: string,
+  serviceHint: string,
+  request: VideoGenerationRequest,
+): Promise<VideoGenerationResult> {
   const resolvedService = normalizeVideoService(serviceHint || source);
   const primaryRequest = { ...request, fallback: undefined };
   try {
@@ -146,6 +168,7 @@ export async function generateVideo(
       ...request,
       fallback: undefined,
       model: fallback.model,
+      connectionKey: fallback.connectionId,
     });
   }
 }

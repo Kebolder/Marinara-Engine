@@ -33,15 +33,29 @@ import {
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_BW_MANGA_ANIMATION_PROMPT_TEMPLATE,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE,
   GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_COLORED_MANGA_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID,
+  STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE,
+  STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
   DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE,
   hasDeferredRelocationConditionals,
+  getGameStoryboardPromptTemplateKind,
   normalizeGameStoryboardKeyframeCount,
   parseDeferredConditionalPayload,
   selectConditionalPayloadBranch,
@@ -54,6 +68,7 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import { loadGameStoryboardImagePrompt } from "../../packages/server/src/services/image/game-storyboard-image-prompt.js";
 import { formatAgentFailuresToast, toAgentFailure } from "../../packages/client/src/lib/agent-failures.js";
 import { formatGenerationParameterError } from "../../packages/client/src/lib/generation-parameter-errors.js";
 import {
@@ -62,6 +77,8 @@ import {
 } from "../../packages/server/src/services/video/prompt-context.js";
 import { resolveGameGmPromptTemplate } from "../../packages/server/src/services/generation/game-gm-prompt-runtime.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
+import { buildNpcPortraitProviderPrompt } from "../../packages/server/src/services/game/game-asset-generation.js";
+import { resolveNpcPortraitAppearance } from "../../packages/server/src/routes/game.routes.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
@@ -945,7 +962,7 @@ const cases: RegressionCase[] = [
     },
   },
   {
-    name: "Anime Game presets stay keyframe-aware and causally animation-ready",
+    name: "Storyboard Game presets stay keyframe-aware and causally animation-ready",
     run() {
       const gameSetupWizardSource = readFileSync(
         new URL("../../packages/client/src/components/game/GameSetupWizard.tsx", import.meta.url),
@@ -972,6 +989,7 @@ const cases: RegressionCase[] = [
       assert.equal(normalizeGameStoryboardKeyframeCount(0), 1);
       assert.equal(normalizeGameStoryboardKeyframeCount(12), 6);
       assert.equal(gmPreset?.promptTemplate, ANIME_GAME_SYSTEM_PROMPT);
+      assert.equal(gmPreset?.name, "Storyboard Game Prompt");
       assert.match(resolvedGmPrompt, /Aim to include 5 strong visual anchor moments/);
       assert.doesNotMatch(resolvedGmPrompt, /\{\{gameStoryboardKeyframeCount\}\}/);
       assert.match(directorPreset?.promptTemplate ?? "", /time T=0: the exact first frame/);
@@ -982,13 +1000,18 @@ const cases: RegressionCase[] = [
         gameSetupWizardSource,
         /gamePresentation === "anime"\s*\? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID/,
       );
+      assert.match(
+        gameSetupWizardSource,
+        /gamePresentation === "anime"\s*\? STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID/,
+      );
       assert.match(gameSetupWizardSource, /gamePresentation === "anime"\s*\? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID/);
+      assert.doesNotMatch(gameSetupWizardSource, /gameStoryboardUseDirectScenePrompt:\s*gamePresentation === "anime"/);
       assert.match(gameSetupWizardSource, /trimmedGameSystemPrompt !== effectiveGameSystemPrompt\.trim\(\)/);
       assert.match(gameSetupWizardSource, /Reset to selected/);
     },
   },
   {
-    name: "custom Game GM text wins over a selected Anime Game preset",
+    name: "custom Game GM text wins over a selected Storyboard Game preset",
     run() {
       assert.equal(
         resolveGameGmPromptTemplate({
@@ -1088,10 +1111,86 @@ const cases: RegressionCase[] = [
     },
   },
   {
-    name: "Comic Page illustration and animation presets remain separate prompt contracts",
+    name: "Storyboard Illustration Prompt preserves legacy fallback and supports selected chat templates",
+    async run() {
+      const promptOverridesStorage = {
+        async get(key: string) {
+          if (key !== "game.sceneIllustration") return null;
+          return {
+            key,
+            template: "GLOBAL SCENE ${scenePrompt}",
+            enabled: true,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+        },
+        async list() {
+          return [];
+        },
+        async upsert(input) {
+          return {
+            key: input.key,
+            template: input.template,
+            enabled: input.enabled,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+        },
+        async remove() {},
+      } satisfies PromptOverridesStorage;
+      const ctx = {
+        sceneTitleLine: "Mira at the gate.",
+        scenePrompt: "Mira braces beneath a storm-lit archway.",
+        narrativePurposeLine: "Narrative purpose: arrival.",
+        charactersLine: "Characters: Mira.",
+        referenceHandlingLine: "Reference handling: match the attached portrait.",
+        appearanceNotesBlock: "",
+        artDirectionLine: "Art direction: painterly fantasy.",
+        imagePromptInstructionsLine: "User image instructions: keep the silver cloak.",
+      };
+
+      const legacyPrompt = await loadGameStoryboardImagePrompt({ promptOverridesStorage, ctx });
+      const optimizedPrompt = await loadGameStoryboardImagePrompt({
+        promptOverridesStorage,
+        templateId: STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+        ctx,
+      });
+      const customPrompt = await loadGameStoryboardImagePrompt({
+        promptOverridesStorage,
+        templateId: "custom-storyboard-image",
+        customTemplates: [
+          {
+            id: "custom-storyboard-image",
+            name: "Custom Storyboard Image",
+            promptTemplate: "CUSTOM ${scenePrompt} ${artDirectionLine}",
+          },
+        ],
+        ctx,
+      });
+
+      assert.equal(legacyPrompt, "GLOBAL SCENE Mira braces beneath a storm-lit archway.");
+      assert.match(optimizedPrompt, /Storyboard keyframe: Mira braces beneath a storm-lit archway/);
+      assert.match(optimizedPrompt, /Reference handling: match the attached portrait/);
+      assert.match(optimizedPrompt, /Art direction: painterly fantasy/);
+      assert.doesNotMatch(optimizedPrompt, /GLOBAL SCENE/);
+      assert.equal(customPrompt, "CUSTOM Mira braces beneath a storm-lit archway. Art direction: painterly fantasy.");
+      assert.equal(GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES.length, 2);
+      assert.equal(
+        GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES.find(
+          (template) => template.id === STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+        )?.promptTemplate,
+        STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE,
+      );
+      assert.equal(GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID, "game-scene-illustration");
+    },
+  },
+  {
+    name: "Storyboard illustration and animation lanes remain separate prompt contracts",
     run() {
       const drawerSource = readFileSync(
         new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/game.routes.ts", import.meta.url),
         "utf8",
       );
       const gameSurfaceSource = readFileSync(
@@ -1102,14 +1201,39 @@ const cases: RegressionCase[] = [
         new URL("../../packages/client/src/components/game/StoryboardBackgroundControls.tsx", import.meta.url),
         "utf8",
       );
-      const illustrationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
-        (template) => template.id === "comic-page-keyframes",
+      const illustrationPreset = GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE_ID,
       );
-      const animationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+      const animationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
         (template) => template.id === GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
       );
+      const stillAnimationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
+      );
+      const illustrationIds = new Set(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.map((template) => template.id));
+      const animationIds = new Set(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.map((template) => template.id));
 
+      assert.equal(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.length, 5);
+      assert.equal(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.length, 6);
+      assert.equal(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID);
+      assert.notEqual(
+        GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
+        GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+      );
+      assert.deepEqual([...illustrationIds].filter((id) => animationIds.has(id)), []);
+      assert.ok(
+        GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.every(
+          (template) => !template.promptTemplate.includes("${durationSeconds}"),
+        ),
+      );
+      assert.ok(
+        GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.every((template) =>
+          template.promptTemplate.includes("${durationSeconds}"),
+        ),
+      );
       assert.equal(illustrationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE);
+      assert.equal(stillAnimationPreset?.promptTemplate, GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE);
+      assert.match(stillAnimationPreset?.promptTemplate ?? "", /style-neutral/);
       assert.match(illustrationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
       assert.doesNotMatch(illustrationPreset?.promptTemplate ?? "", /\$\{durationSeconds\}-second/);
       assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE);
@@ -1125,12 +1249,42 @@ const cases: RegressionCase[] = [
       assert.match(animationPreset?.promptTemplate ?? "", /Reserve the final 0.4-0.7 seconds/);
       assert.match(animationPreset?.promptTemplate ?? "", /Do not ask the video model to animate every panel at once/);
       assert.doesNotMatch(animationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
+      assert.match(GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE, /timing in narrationBeat only/);
+      assert.match(GAME_STORYBOARD_COLORED_MANGA_ANIMATION_PROMPT_TEMPLATE, /one stable frame to animate/);
+      assert.match(GAME_STORYBOARD_BW_MANGA_ANIMATION_PROMPT_TEMPLATE, /Do not introduce color during the clip/);
+      assert.equal(
+        getGameStoryboardPromptTemplateKind({
+          id: "custom-animation-example",
+          name: "Example",
+          promptTemplate: "Custom prompt",
+        }),
+        "animation",
+      );
+      assert.equal(
+        getGameStoryboardPromptTemplateKind({
+          id: "legacy-custom",
+          name: "Legacy",
+          promptTemplate: "Plan a ${durationSeconds}-second clip",
+        }),
+        "animation",
+      );
       assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /no more than 0.35 seconds/);
       assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /reveal a later consequence before its cause/);
-      assert.match(drawerSource, /onAddTemplate\(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add Comic Animation Copy/);
-      assert.match(drawerSource, /onAddTemplate\(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add Comic Video Copy/);
+      assert.match(drawerSource, /options=\{gameStoryboardIllustrationPromptOptions\}/);
+      assert.match(drawerSource, /options=\{gameStoryboardAnimationPromptOptions\}/);
+      assert.match(drawerSource, /label="Illustration Planner"/);
+      assert.match(drawerSource, /label="Animation Planner"/);
+      assert.match(drawerSource, /label="Storyboard Illustration Prompt"/);
+      assert.match(drawerSource, /options=\{gameStoryboardImagePromptOptions\}/);
+      assert.match(drawerSource, /label="Storyboard Video Prompt"/);
+      assert.match(drawerSource, /kind="illustration"/);
+      assert.match(drawerSource, /kind="animation"/);
+      assert.match(drawerSource, /builtInTemplates\.map\(\(template\) =>/);
+      assert.match(gameRouteSource, /getGameStoryboardPromptTemplateKind\(template, selectedAnimationTemplateId\)/);
+      assert.match(gameRouteSource, /const builtInTemplates = args\.generateVideos/);
+      assert.match(gameRouteSource, /storyboardImagePromptTemplateId: readTrimmedString\(meta\.gameStoryboardImagePromptTemplateId\)/);
+      assert.match(drawerSource, /title="Edit Illustration Prompt Presets"/);
+      assert.match(drawerSource, /title="Edit Video Prompt Presets"/);
       const backgroundViewerStart = gameSurfaceSource.indexOf("const renderStoryboardBackgroundVisual");
       const backgroundViewerEnd = gameSurfaceSource.indexOf("const renderGameAssetsPanel", backgroundViewerStart);
       const backgroundViewerSource = gameSurfaceSource.slice(backgroundViewerStart, backgroundViewerEnd);
@@ -1252,6 +1406,9 @@ const cases: RegressionCase[] = [
       const preset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
         (template) => template.id === GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
       );
+      const animationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE_ID,
+      );
 
       assert.equal(preset?.promptTemplate, GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE);
       assert.match(preset?.promptTemplate ?? "", /ASCII-only comma-separated NovelAI\/Danbooru tag list/);
@@ -1259,9 +1416,11 @@ const cases: RegressionCase[] = [
       assert.match(preset?.promptTemplate ?? "", /Do not put the keyframe title/);
       assert.match(preset?.promptTemplate ?? "", /\$\{keyframeCount\}/);
       assert.match(preset?.promptTemplate ?? "", /\$\{aspectRatio\}/);
+      assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE);
+      assert.match(animationPreset?.promptTemplate ?? "", /\$\{durationSeconds\}-second/);
       assert.match(drawerSource, /label="Use NovelAI Character Prompts"/);
-      assert.match(drawerSource, /onAddTemplate\(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add NovelAI Copy/);
+      assert.match(drawerSource, /builtInTemplates=\{GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES\}/);
+      assert.match(drawerSource, /builtInTemplates=\{GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES\}/);
       assert.match(gameRouteSource, /meta\.gameStoryboardUseNovelAiCharacterPrompts !== false/);
       assert.match(gameRouteSource, /useNovelAiCharacterPrompts\s*&&\s*providerSupportsStructuredCharacterPrompts/);
     },
@@ -1748,6 +1907,104 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.match(last.content, /"character-tracker": null/);
       assert.doesNotMatch(last.content, /"quest": null/);
       assert.equal(last.content.trim().endsWith("</output_format>"), true);
+    },
+  },
+  {
+    name: "game portrait appearance aggregation deduplicates raw values before labels",
+    run() {
+      const description = "A silver-furred fox-woman in a persimmon kimono.";
+      const appearance = resolveNpcPortraitAppearance(
+        { description: `  ${description.toUpperCase()}  ` },
+        {
+          description,
+          descriptionSource: "model",
+          notes: ["Carries a debt-scroll."],
+        } as any,
+        {
+          appearance: description,
+          outfit: "Persimmon kimono",
+          mood: "Warm smile",
+        },
+      );
+
+      assert.equal(appearance.toLowerCase().split(description.toLowerCase()).length - 1, 1);
+      assert.match(appearance, /^Canonical NPC profile:/);
+      assert.match(appearance, /Current outfit: Persimmon kimono/);
+      assert.match(appearance, /Current expression or mood: Warm smile/);
+      assert.match(appearance, /Notable details: Carries a debt-scroll/);
+    },
+  },
+  {
+    name: "game portrait prompts preserve one canonical description across compilation paths",
+    async run() {
+      const appearance = "silver-furred fox-woman, persimmon kimono, debt-scroll tucked in her sleeve";
+      const request = {
+        chatId: "prompt-regression",
+        npcName: "Lyra",
+        appearance,
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      };
+      const countAppearance = (prompt: string) => prompt.toLowerCase().split(appearance.toLowerCase()).length - 1;
+
+      const unstyled = await buildNpcPortraitProviderPrompt(request);
+      assert.equal(countAppearance(unstyled.prompt), 1);
+
+      const zImage = await buildNpcPortraitProviderPrompt({
+        ...request,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+      });
+      assert.equal(countAppearance(zImage.prompt), 1);
+
+      const tagged = await buildNpcPortraitProviderPrompt({
+        ...request,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "danbooru",
+      });
+      assert.equal(countAppearance(tagged.prompt), 1);
+      assert.match(tagged.prompt, /silver-furred fox-woman/);
+
+      const dynamicPreserved = await buildNpcPortraitProviderPrompt({
+        ...request,
+        dynamicPromptGenerator: async () =>
+          `Centered portrait of Lyra, ${appearance}, readable expression, single subject.`,
+      });
+      assert.equal(countAppearance(dynamicPreserved.prompt), 1);
+
+      const dynamicOmitted = await buildNpcPortraitProviderPrompt({
+        ...request,
+        dynamicPromptGenerator: async () => "Centered portrait of Lyra with a readable expression and clean lighting.",
+      });
+      assert.equal(countAppearance(dynamicOmitted.prompt), 1);
+
+      const shortDescription = await buildNpcPortraitProviderPrompt({
+        ...request,
+        appearance: "man",
+        dynamicPromptGenerator: async () => "Centered portrait of a woman with clean lighting and a readable expression.",
+      });
+      assert.match(shortDescription.prompt, /^Required canonical NPC visual profile: man\./);
+
+      const narrationDescription = "A rain-soaked courier in a patched green cloak.";
+      const narrationAppearance = resolveNpcPortraitAppearance(
+        { description: null },
+        {
+          description: narrationDescription,
+          descriptionSource: "narration",
+          notes: [],
+        } as any,
+        null,
+      );
+      const narrationPrompt = await buildNpcPortraitProviderPrompt({
+        ...request,
+        appearance: narrationAppearance,
+      });
+      assert.equal(
+        narrationPrompt.prompt.toLowerCase().split(narrationDescription.toLowerCase()).length - 1,
+        1,
+      );
+      assert.doesNotMatch(narrationPrompt.prompt, /Canonical NPC profile:/);
     },
   },
   {

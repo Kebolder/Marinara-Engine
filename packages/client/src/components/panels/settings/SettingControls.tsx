@@ -4,8 +4,12 @@ import { toast } from "sonner";
 import { useUIStore } from "../../../stores/ui.store";
 import {
   getLocalNotificationPermission,
+  getNativeNotificationPermission,
+  hasNativeNotificationBridge,
   requestLocalNotificationPermission,
+  requestNativeNotificationPermission,
   type LocalNotificationPermission,
+  type NativeNotificationPermission,
 } from "../../../lib/local-notifications";
 import { playNotificationPing } from "../../../lib/notification-sound";
 import { cn } from "../../../lib/utils";
@@ -94,7 +98,13 @@ export function ConversationSoundSetting() {
   const setNotificationSoundsOnlyWhenUnfocused = useUIStore((s) => s.setNotificationSoundsOnlyWhenUnfocused);
   const conversationBrowserNotifications = useUIStore((s) => s.conversationBrowserNotifications);
   const setConversationBrowserNotifications = useUIStore((s) => s.setConversationBrowserNotifications);
+  const conversationMobileNotifications = useUIStore((s) => s.conversationMobileNotifications);
+  const setConversationMobileNotifications = useUIStore((s) => s.setConversationMobileNotifications);
   const [browserPermission, setBrowserPermission] = useState<LocalNotificationPermission>("default");
+  const nativeNotificationsAvailable = hasNativeNotificationBridge();
+  const [nativePermission, setNativePermission] = useState<NativeNotificationPermission>(() =>
+    getNativeNotificationPermission(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +115,17 @@ export function ConversationSoundSetting() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!nativeNotificationsAvailable) return;
+    const refreshPermission = () => setNativePermission(getNativeNotificationPermission());
+    window.addEventListener("focus", refreshPermission);
+    document.addEventListener("visibilitychange", refreshPermission);
+    return () => {
+      window.removeEventListener("focus", refreshPermission);
+      document.removeEventListener("visibilitychange", refreshPermission);
+    };
+  }, [nativeNotificationsAvailable]);
 
   const handleBrowserNotificationToggle = (enabled: boolean) => {
     if (!enabled) {
@@ -126,6 +147,32 @@ export function ConversationSoundSetting() {
           : "Browser notification permission was not granted.",
       );
     });
+  };
+
+  const handleMobileNotificationToggle = (enabled: boolean) => {
+    if (!enabled) {
+      setConversationMobileNotifications(false);
+      return;
+    }
+    void requestNativeNotificationPermission()
+      .then((permission) => {
+        setNativePermission(permission);
+        if (permission === "granted") {
+          setConversationMobileNotifications(true);
+          toast.success("Mobile notifications enabled for background replies.");
+          return;
+        }
+        setConversationMobileNotifications(false);
+        toast.error(
+          permission === "unsupported"
+            ? "Mobile notifications require the Marinara Android app."
+            : "Android notification permission was not granted.",
+        );
+      })
+      .catch(() => {
+        setConversationMobileNotifications(false);
+        toast.error("Android notification permission could not be requested.");
+      });
   };
 
   return (
@@ -170,14 +217,27 @@ export function ConversationSoundSetting() {
       />
       <div className="mt-1 flex items-center gap-1.5">
         <Bell size="0.75rem" className="text-[var(--muted-foreground)]" />
-        <span className="text-xs font-medium">Browser Notifications</span>
-        <HelpTooltip text="Show an operating-system browser notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
+        <span className="text-xs font-medium">Background Notifications</span>
+        <HelpTooltip text="Show a private operating-system notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
       </div>
       <ToggleSetting
         anchorId="settings-control-browser-background-notifications"
-        label="Background replies"
+        label="Browser"
         checked={conversationBrowserNotifications && browserPermission === "granted"}
         onChange={handleBrowserNotificationToggle}
+        help="Uses your browser's notification permission."
+      />
+      <ToggleSetting
+        anchorId="settings-control-mobile-background-notifications"
+        label="Mobile app"
+        checked={conversationMobileNotifications && nativePermission === "granted"}
+        onChange={handleMobileNotificationToggle}
+        disabled={!nativeNotificationsAvailable}
+        help={
+          nativeNotificationsAvailable
+            ? "Uses native Android notifications from the installed Marinara app."
+            : "Available in the updated Marinara Android APK. Browser and PWA installations use the Browser toggle above."
+        }
       />
     </div>
   );

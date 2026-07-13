@@ -29,6 +29,7 @@ import { getActiveTurnGame, loadTurnGameForDrain } from "./turn-game-runner.serv
 
 const MAX_BOT_TURNS = 100;
 const HUMAN_FALLBACK_SEAT = "human";
+const SILENT_BOT_MOVE_GAME_TYPES = new Set(["tic-tac-toe", "rock-paper-scissors"]);
 
 /** The non-null shape `getActiveTurnGame` / `loadTurnGameForDrain` resolve to. */
 type ActiveTurnGame = NonNullable<Awaited<ReturnType<typeof getActiveTurnGame>>>;
@@ -404,34 +405,38 @@ export async function runTurnGameBotTurns(args: RunBotTurnsArgs): Promise<void> 
       .filter(Boolean)
       .join(" ");
 
-    // ── Narration: a natural in-character turn — may banter with the table AND flavor the move ──
-    let narration = await narrateOutcome(provider, model, persona, seatName, engine.label, eventSummary, recent, signal);
-    if (!narration) narration = eventSummary || `${seatName} makes a move.`;
-
-    // ── Persist narration message + per-message engine snapshot ──
-    const saved = await chats.createMessage({ chatId, role: "assistant", characterId: seatId, content: narration });
-    if (saved) {
-      await engineStorage.create({
-        chatId,
-        messageId: saved.id,
-        swipeIndex: saved.activeSwipeIndex ?? 0,
-        gameType: engine.gameType,
-        schemaVersion: engine.schemaVersion,
-        state: JSON.stringify(nextState),
-        committed: true,
-      });
-      trySendSseEvent(reply, { type: "message_saved", data: saved });
+    if (SILENT_BOT_MOVE_GAME_TYPES.has(engine.gameType)) {
+      await engineStorage.updateStateById(active.row.id, JSON.stringify(nextState), true);
     } else {
-      // Persistence of the message failed — still advance engine state so the game continues.
-      await engineStorage.create({
-        chatId,
-        messageId: "",
-        swipeIndex: 0,
-        gameType: engine.gameType,
-        schemaVersion: engine.schemaVersion,
-        state: JSON.stringify(nextState),
-        committed: true,
-      });
+      // ── Narration: a natural in-character turn — may banter with the table AND flavor the move ──
+      let narration = await narrateOutcome(provider, model, persona, seatName, engine.label, eventSummary, recent, signal);
+      if (!narration) narration = eventSummary || `${seatName} makes a move.`;
+
+      // ── Persist narration message + per-message engine snapshot ──
+      const saved = await chats.createMessage({ chatId, role: "assistant", characterId: seatId, content: narration });
+      if (saved) {
+        await engineStorage.create({
+          chatId,
+          messageId: saved.id,
+          swipeIndex: saved.activeSwipeIndex ?? 0,
+          gameType: engine.gameType,
+          schemaVersion: engine.schemaVersion,
+          state: JSON.stringify(nextState),
+          committed: true,
+        });
+        trySendSseEvent(reply, { type: "message_saved", data: saved });
+      } else {
+        // Persistence of the message failed — still advance engine state so the game continues.
+        await engineStorage.create({
+          chatId,
+          messageId: "",
+          swipeIndex: 0,
+          gameType: engine.gameType,
+          schemaVersion: engine.schemaVersion,
+          state: JSON.stringify(nextState),
+          committed: true,
+        });
+      }
     }
 
     // Push the redacted human-perspective board so the client updates live.

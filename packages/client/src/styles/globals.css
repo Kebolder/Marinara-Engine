@@ -3773,6 +3773,24 @@ strong {
   animation: pulse-ring 2s ease-out infinite;
 }
 
+/* Phones reserve continuous compositing for meaningful live content.
+   Loading and progress animations remain active. */
+@media (hover: none) and (pointer: coarse) {
+  .animate-ping,
+  .animate-pulse,
+  .animate-float,
+  .animate-pulse-ring,
+  .pulse-glow,
+  .bunny-glow,
+  .retro-card,
+  .y2k-star,
+  .y2k-star-md,
+  .y2k-star-lg,
+  .gradient-border::before {
+    animation-play-state: paused !important;
+  }
+}
+
 @keyframes fadeSlideIn {
   from {
     opacity: 0;
@@ -4916,6 +4934,46 @@ strong {
     linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
   animation: combat-impact-flash 360ms ease-out forwards;
   mix-blend-mode: screen;
+}
+
+@keyframes rps-clank-left {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  45% {
+    transform: translateX(18px) scale(1.04) rotate(2deg);
+  }
+  58% {
+    transform: translateX(24px) scale(1.08) rotate(-1deg);
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes rps-clank-right {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  45% {
+    transform: translateX(-18px) scale(1.04) rotate(-2deg);
+  }
+  58% {
+    transform: translateX(-24px) scale(1.08) rotate(1deg);
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes rps-vs-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  52% {
+    transform: scale(1.18);
+  }
 }
 
 .game-combat-impact-flash--critical {

@@ -165,6 +165,7 @@ interface AgentState {
   setEchoMessages: (messages: Array<{ characterName: string; reaction: string; timestamp: number }>) => void;
   clearEchoMessages: () => void;
   setEchoVisibleCount: (count: number) => void;
+  revealNextEchoMessage: () => void;
   setEchoBaseline: (count: number) => void;
   setEchoLoadedChatId: (chatId: string | null) => void;
   setCyoaChoices: (choices: Array<{ label: string; text: string }>, chatId?: string | null) => void;
@@ -382,6 +383,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   clearEchoMessages: () => set({ echoMessages: [], echoVisibleCount: 0, echoBaseline: 0, echoLoadedChatId: null }),
 
   setEchoVisibleCount: (count) => set({ echoVisibleCount: count }),
+  revealNextEchoMessage: () =>
+    set((state) => ({
+      echoVisibleCount: Math.min(state.echoVisibleCount + 1, state.echoMessages.length),
+    })),
   setEchoBaseline: (count) => set({ echoBaseline: count }),
   setEchoLoadedChatId: (chatId) => set({ echoLoadedChatId: chatId }),
 

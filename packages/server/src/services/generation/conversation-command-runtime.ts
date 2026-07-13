@@ -70,6 +70,10 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "poker";
     case "eightball":
       return "eightball";
+    case "tic_tac_toe":
+      return "tic_tac_toe";
+    case "rock_paper_scissors":
+      return "rock_paper_scissors";
     case "spotify":
     case "youtube":
       return "music";
@@ -255,7 +259,7 @@ export async function buildConversationCommandsReminder(args: {
       `   - You invite {{user}} somewhere and they accept → trigger a scene for that activity.`,
       `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives → trigger a scene.`,
       `   Do NOT wait for {{user}} to explicitly ask for a scene. If the conversation implies you and {{user}} are about to DO something together, initiate the scene yourself.`,
-      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, poker, 8-ball pool, cards, or other board/table games — those have their own commands. Use [uno] for UNO, [chess] for chess, [poker] for poker, and [eightball] for 8-ball pool, not [scene].`,
+      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, poker, 8-ball pool, tic-tac-toe, rock-paper-scissors, cards, or other board/table games — those have their own commands. Use [uno] for UNO, [chess] for chess, [poker] for poker, [eightball] for 8-ball pool, [tic_tac_toe] for tic-tac-toe, and [rock_paper_scissors] for rock-paper-scissors, not [scene].`,
     );
   }
 
@@ -274,8 +278,14 @@ export async function buildConversationCommandsReminder(args: {
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "poker") && characterIds.length >= 1;
   const eightballAdvertisable =
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "eightball") && characterIds.length >= 1;
+  const ticTacToeAdvertisable =
+    chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "tic_tac_toe") && characterIds.length >= 1;
+  const rpsAdvertisable =
+    chatMode === "conversation" &&
+    isConversationCommandEnabled(chatMeta, "rock_paper_scissors") &&
+    characterIds.length >= 1;
   const noActiveTurnGame =
-    (unoAdvertisable || chessAdvertisable || pokerAdvertisable || eightballAdvertisable) &&
+    (unoAdvertisable || chessAdvertisable || pokerAdvertisable || eightballAdvertisable || ticTacToeAdvertisable || rpsAdvertisable) &&
     !(await getActiveTurnGame(args.db, args.chatId));
   if (unoAdvertisable && noActiveTurnGame) {
     addCommandLines(
@@ -303,6 +313,20 @@ export async function buildConversationCommandsReminder(args: {
       `- [eightball] - start a one-on-one game of 8-ball pool against ${personaName}. Include this ONLY when ${personaName} proposes playing pool/8-ball and YOU are willing to play right now. 8-ball seats exactly two players: ${personaName} and you — whichever character includes [eightball] takes the opponent's seat. The system racks the table and runs the game — you do NOT describe the table or narrate shots.`,
       `   If you'd rather not play, say so in character and do NOT include [eightball]. Agreeing to play IS including [eightball].`,
       `   Example: ${personaName} says "rack 'em up?" and you're in → "You're breaking. [eightball]"`,
+    );
+  }
+  if (ticTacToeAdvertisable && noActiveTurnGame) {
+    addCommandLines(
+      `- [tic_tac_toe] - start a one-on-one tic-tac-toe game against ${personaName}. Include this ONLY when ${personaName} proposes playing tic-tac-toe (or noughts and crosses) and YOU are willing to play right now. Tic-tac-toe seats exactly two players: ${personaName} and you — whichever character includes [tic_tac_toe] takes the opponent's seat. The system sets up the board and runs the game — you do NOT describe the board or narrate moves.`,
+      `   If you'd rather not play, say so in character and do NOT include [tic_tac_toe]. Agreeing to play IS including [tic_tac_toe].`,
+      `   Example: ${personaName} says "tic-tac-toe?" and you're in → "You're on. [tic_tac_toe]"`,
+    );
+  }
+  if (rpsAdvertisable && noActiveTurnGame) {
+    addCommandLines(
+      `- [rock_paper_scissors] - start a one-on-one rock-paper-scissors match against ${personaName}. Include this ONLY when ${personaName} proposes playing rock-paper-scissors (or "rps") and YOU are willing to play right now. Rock-paper-scissors seats exactly two players: ${personaName} and you — whichever character includes [rock_paper_scissors] takes the opponent's seat. The system runs the match — you do NOT narrate throws or reveal your choice in advance.`,
+      `   If you'd rather not play, say so in character and do NOT include [rock_paper_scissors]. Agreeing to play IS including [rock_paper_scissors].`,
+      `   Example: ${personaName} says "rock paper scissors, best of three?" and you're in → "Bring it on. [rock_paper_scissors]"`,
     );
   }
 

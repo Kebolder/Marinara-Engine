@@ -4,7 +4,7 @@ import { BookOpen, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useActiveLorebookEntries } from "../../hooks/use-lorebooks";
 import { useUIStore } from "../../stores/ui.store";
-import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
+import { CHAT_FLOATING_UI_DISMISS_EVENT, isDesktopShellNavigationTarget } from "../../lib/chat-floating-ui-events";
 import { ROLEPLAY_POPOVER_SCROLL_AREA, ROLEPLAY_POPOVER_SHELL } from "./roleplay-popover-styles";
 import {
   CHAT_FLOATING_PANEL_SELECTOR,
@@ -126,6 +126,7 @@ export function ActiveLorebookEntriesButton({
   useEffect(() => {
     if (!open) return;
     const handle = (e: MouseEvent) => {
+      if (isDesktopShellNavigationTarget(e.target)) return;
       const target = e.target as Node;
       const targetElement = target instanceof Element ? target : target.parentElement;
       if (targetElement?.closest(CHAT_FLOATING_PANEL_SELECTOR)) return;

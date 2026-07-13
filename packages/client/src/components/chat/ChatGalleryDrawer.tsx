@@ -15,6 +15,7 @@ import {
 } from "./roleplay-popover-styles";
 import type { Chat } from "@marinara-engine/shared";
 import type { ChatImage } from "../../hooks/use-gallery";
+import { isDesktopShellNavigationTarget } from "../../lib/chat-floating-ui-events";
 
 interface ChatGalleryDrawerProps {
   chat: Chat;
@@ -59,6 +60,7 @@ export function ChatGalleryDrawer({
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
+      if (isDesktopShellNavigationTarget(target)) return;
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest("[data-chat-floating-panel]")) return;
@@ -71,7 +73,10 @@ export function ChatGalleryDrawer({
 
   if (!open) return null;
   const panelStyle: CSSProperties | undefined = anchor
-    ? { right: `${anchor.right}px`, top: `${anchor.top}px` }
+    ? {
+        right: `max(${anchor.right}px, calc(var(--mari-chat-ui-inset-right, 0px) + 0.75rem))`,
+        top: `${anchor.top}px`,
+      }
     : undefined;
 
   return (

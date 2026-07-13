@@ -8,6 +8,7 @@ type TranscriptWindowControlsProps = {
   onShowNewer?: () => void;
   onJumpToLatest?: () => void;
   className?: string;
+  buttonClassName?: string;
 };
 
 export function TranscriptWindowControls({
@@ -17,6 +18,7 @@ export function TranscriptWindowControls({
   onShowNewer,
   onJumpToLatest,
   className,
+  buttonClassName,
 }: TranscriptWindowControlsProps) {
   if (!onShowOlder && !onShowNewer && !onJumpToLatest) return null;
 
@@ -26,7 +28,10 @@ export function TranscriptWindowControls({
         <button
           type="button"
           onClick={onShowOlder}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]",
+            buttonClassName,
+          )}
         >
           <ChevronUp size="0.75rem" />
           Show older ({hiddenBeforeCount})
@@ -36,7 +41,10 @@ export function TranscriptWindowControls({
         <button
           type="button"
           onClick={onShowNewer}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]",
+            buttonClassName,
+          )}
         >
           <ChevronDown size="0.75rem" />
           Show newer ({hiddenAfterCount})
@@ -46,7 +54,10 @@ export function TranscriptWindowControls({
         <button
           type="button"
           onClick={onJumpToLatest}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]"
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--muted-foreground)] transition-all hover:bg-[var(--accent)]",
+            buttonClassName,
+          )}
         >
           Latest
         </button>

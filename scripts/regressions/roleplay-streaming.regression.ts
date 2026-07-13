@@ -15,10 +15,22 @@ import { mergePairedBuiltInRewriteAgents } from "../../packages/server/src/servi
 import { aboutMeKeeperAgentManifest } from "../../packages/shared/src/features/agents/about-me-keeper/manifest.js";
 import { estimateAgentLoadCost } from "../../packages/shared/src/utils/agent-cost.js";
 import {
-  ECHO_CHAMBER_MESSAGE_INTERVAL_MS,
+  ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS,
+  ECHO_CHAMBER_MESSAGE_INTERVAL_MIN_MS,
   enqueueEchoChamberMessages,
+  getEchoChamberMessageInterval,
   resolveEchoChamberPersistedBaseline,
 } from "../../packages/client/src/lib/echo-chamber-queue.js";
+import { useAgentStore } from "../../packages/client/src/stores/agent.store.js";
+import { advanceWeatherFrameClock } from "../../packages/client/src/lib/weather-frame-clock.js";
+import { trackerEditableText } from "../../packages/client/src/features/tracker-panel/lib/tracker-display.js";
+
+assert.equal(
+  trackerEditableText({ name: "HP", value: 75, max: 100, color: "#ef4444" }),
+  "HP: 75/100",
+  "object-shaped tracker values must become editable text instead of invalid React children",
+);
+assert.equal(trackerEditableText({ nested: true }), '{"nested":true}');
 
 assert.equal(
   shouldKeepStreamLiveThroughPostProcessing({
@@ -171,7 +183,10 @@ const queuedEchoBatch = enqueueEchoChamberMessages(
 assert.equal(queuedEchoBatch.messages.length, 4);
 assert.equal(queuedEchoBatch.visibleCount, 1, "a fresh Echo result must remain behind the reveal cursor");
 assert.equal(queuedEchoBatch.baseline, 1);
-assert.ok(ECHO_CHAMBER_MESSAGE_INTERVAL_MS >= 1_000 && ECHO_CHAMBER_MESSAGE_INTERVAL_MS <= 3_000);
+assert.equal(getEchoChamberMessageInterval(0), ECHO_CHAMBER_MESSAGE_INTERVAL_MIN_MS);
+assert.equal(getEchoChamberMessageInterval(0.5), 20_000);
+assert.ok(getEchoChamberMessageInterval(0.999999) < ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS);
+assert.equal(getEchoChamberMessageInterval(1), ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS);
 
 const staleEchoCursor = enqueueEchoChamberMessages(
   { messages: [], visibleCount: 99, baseline: 99 },
@@ -191,6 +206,25 @@ assert.equal(
   1,
   "an Echo result persisted during the initial load must stay queued instead of appearing all at once",
 );
+
+useAgentStore.setState({
+  echoMessages: queuedEchoBatch.messages,
+  echoVisibleCount: queuedEchoBatch.visibleCount,
+  echoBaseline: queuedEchoBatch.baseline,
+});
+useAgentStore.getState().revealNextEchoMessage();
+assert.equal(useAgentStore.getState().echoVisibleCount, 2, "one Echo timer tick must reveal exactly one reaction");
+useAgentStore.getState().revealNextEchoMessage();
+assert.equal(useAgentStore.getState().echoVisibleCount, 3, "a second Echo timer tick must reveal only the next reaction");
+
+let weatherAccumulator = 0;
+let weatherDraws = 0;
+for (let frame = 0; frame < 6; frame++) {
+  const step = advanceWeatherFrameClock(weatherAccumulator, 1000 / 60);
+  weatherAccumulator = step.accumulatedMs;
+  if (step.shouldDraw) weatherDraws++;
+}
+assert.equal(weatherDraws, 3, "60 Hz foreground callbacks should produce an even 30 FPS weather cadence");
 
 const legacyRewrite = resolveMessageRewriteVersions(
   "The polished rewritten reply.",

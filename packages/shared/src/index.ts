@@ -68,6 +68,7 @@ export * from "./constants/image-style-profiles.js";
 export * from "./constants/security.js";
 export * from "./constants/game-assets.js";
 export * from "./constants/game-storyboard-prompts.js";
+export * from "./constants/game-storyboard-image-prompts.js";
 export * from "./constants/game-video-prompts.js";
 export * from "./constants/conversation-prompt.js";
 export * from "./constants/game-prompt.js";
@@ -95,6 +96,12 @@ export { pokerEngine, buildPots } from "./features/turn-games/poker/engine.js";
 export * from "./features/turn-games/eightball/types.js";
 export * from "./features/turn-games/eightball/tools.js";
 export { eightBallEngine } from "./features/turn-games/eightball/engine.js";
+export * from "./features/turn-games/tic-tac-toe/types.js";
+export * from "./features/turn-games/tic-tac-toe/tools.js";
+export { ticTacToeEngine } from "./features/turn-games/tic-tac-toe/engine.js";
+export * from "./features/turn-games/rock-paper-scissors/types.js";
+export * from "./features/turn-games/rock-paper-scissors/tools.js";
+export { rockPaperScissorsEngine } from "./features/turn-games/rock-paper-scissors/engine.js";
 
 // Utils
 export * from "./utils/macro-engine.js";

@@ -226,6 +226,7 @@ type GameSceneVideoPayload = {
   galleryImageId?: string;
   promptOverride?: string;
   previewOnly?: boolean;
+  queueMediaGenerationRequests: boolean;
   debugMode: boolean;
 };
 
@@ -5668,6 +5669,7 @@ function GameSurfaceComponent({
         const payload: GameSceneVideoPayload = {
           chatId: activeChatId,
           ...(galleryImageId ? { galleryImageId } : { illustrationTag }),
+          queueMediaGenerationRequests: useUIStore.getState().queueImageGenerationRequests,
           debugMode: useUIStore.getState().debugMode,
         };
         if (useUIStore.getState().reviewImagePromptsBeforeSend) {

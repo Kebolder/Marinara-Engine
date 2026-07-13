@@ -1,7 +1,11 @@
 package com.marinara.engine;
 
 import android.annotation.SuppressLint;
+import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
@@ -51,6 +55,10 @@ public class MainActivity extends Activity {
     private static final int TERMUX_PERMISSION_REQUEST = 1002;
     private static final int UNKNOWN_APP_SOURCES_REQUEST = 1003;
     private static final int TERMUX_INSTALL_STATUS_REQUEST = 1004;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 1005;
+    private static final String NOTIFICATION_PERMISSION_PREFS = "marinara_notification_permission";
+    private static final String NOTIFICATION_PERMISSION_REQUESTED = "requested";
+    private static final String MESSAGE_NOTIFICATION_CHANNEL_ID = "marinara_messages";
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String TERMUX_RUN_COMMAND_PERMISSION = "com.termux.permission.RUN_COMMAND";
     private static final String TERMUX_DOWNLOAD_PAGE = "https://f-droid.org/en/packages/com.termux/";
@@ -110,6 +118,7 @@ public class MainActivity extends Activity {
 
         setContentView(root);
 
+        createMessageNotificationChannel();
         configureWebView();
         tryConnect();
         handleTermuxInstallStatus(getIntent());
@@ -663,6 +672,36 @@ public class MainActivity extends Activity {
 
     private class MarinaraAndroidBridge {
         @JavascriptInterface
+        public String getNotificationPermission() {
+            return getNotificationPermissionStatus();
+        }
+
+        @JavascriptInterface
+        public void requestNotificationPermission() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                        || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    dispatchNotificationPermissionStatus("granted");
+                    return;
+                }
+                getSharedPreferences(NOTIFICATION_PERMISSION_PREFS, MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(NOTIFICATION_PERMISSION_REQUESTED, true)
+                        .apply();
+                requestPermissions(
+                        new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                        NOTIFICATION_PERMISSION_REQUEST
+                );
+            });
+        }
+
+        @JavascriptInterface
+        public void showNotification(String title, String body, String tag) {
+            runOnUiThread(() -> showNativeMessageNotification(title, body, tag));
+        }
+
+        @JavascriptInterface
         public void openConsole() {
             runOnUiThread(() -> {
                 if (!isTermuxInstalled()) {
@@ -683,6 +722,76 @@ public class MainActivity extends Activity {
                 }
             });
         }
+    }
+
+    private void createMessageNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        NotificationChannel channel = new NotificationChannel(
+                MESSAGE_NOTIFICATION_CHANNEL_ID,
+                "Background messages",
+                NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Notifications for new Marinara character messages");
+        manager.createNotificationChannel(channel);
+    }
+
+    private String getNotificationPermissionStatus() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "granted";
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return "granted";
+        }
+        boolean requested = getSharedPreferences(NOTIFICATION_PERMISSION_PREFS, MODE_PRIVATE)
+                .getBoolean(NOTIFICATION_PERMISSION_REQUESTED, false);
+        return requested ? "denied" : "default";
+    }
+
+    private void dispatchNotificationPermissionStatus(String status) {
+        if (webView == null) return;
+        webView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('marinara:native-notification-permission',{detail:'"
+                        + status
+                        + "'}));",
+                null
+        );
+    }
+
+    private void showNativeMessageNotification(String rawTitle, String rawBody, String rawTag) {
+        if (!"granted".equals(getNotificationPermissionStatus())) return;
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+
+        String title = truncateNotificationText(rawTitle, "New Marinara message", 100);
+        String body = truncateNotificationText(rawBody, "Open Marinara to read it.", 180);
+        String tag = truncateNotificationText(rawTag, "marinara-message", 120);
+        Intent openIntent = new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent contentIntent = PendingIntent.getActivity(
+                this,
+                tag.hashCode(),
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, MESSAGE_NOTIFICATION_CHANNEL_ID)
+                : new Notification.Builder(this);
+        Notification notification = builder
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setContentIntent(contentIntent)
+                .setAutoCancel(true)
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .build();
+        manager.notify(tag, 1, notification);
+    }
+
+    private String truncateNotificationText(String value, String fallback, int maxLength) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isEmpty()) normalized = fallback;
+        return normalized.length() <= maxLength ? normalized : normalized.substring(0, maxLength);
     }
 
     private void openUri(String url) {
@@ -742,6 +851,11 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            dispatchNotificationPermissionStatus(granted ? "granted" : "denied");
+            return;
+        }
         if (requestCode != TERMUX_PERMISSION_REQUEST) return;
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             sendTermuxSetupCommand();

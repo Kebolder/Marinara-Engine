@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useRenderTimer } from "../../lib/perf-diagnostics";
-import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
+import { CHAT_FLOATING_UI_DISMISS_EVENT, isDesktopShellNavigationTarget } from "../../lib/chat-floating-ui-events";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
@@ -470,6 +470,7 @@ function ActiveContextLinksButton({
   useEffect(() => {
     if (!open) return;
     const handle = (event: MouseEvent) => {
+      if (isDesktopShellNavigationTarget(event.target)) return;
       const target = event.target as Node;
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
       setOpen(false);
@@ -1942,6 +1943,7 @@ export function ChatRoleplaySurface({
                   hiddenAfterCount={transcriptWindow.hiddenAfterCount}
                   onShowNewer={transcriptWindow.hiddenAfterCount > 0 ? showNewerTranscriptMessages : undefined}
                   onJumpToLatest={transcriptWindow.hiddenAfterCount > 0 ? jumpToLatestTranscriptMessages : undefined}
+                  buttonClassName="border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] text-[var(--marinara-chat-chrome-button-text-active)] hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)]"
                 />
 
                 {!isStreaming && <CyoaChoices messages={visibleMessages} />}
