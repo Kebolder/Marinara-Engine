@@ -2958,6 +2958,15 @@ export function ChatSettingsDrawer({
   const [gameImagePromptInstructionsDraft, setGameImagePromptInstructionsDraft] = useState(
     (metadata.gameImagePromptInstructions as string) ?? "",
   );
+  const gameSetupConfig =
+    metadata.gameSetupConfig && typeof metadata.gameSetupConfig === "object"
+      ? (metadata.gameSetupConfig as Record<string, unknown>)
+      : {};
+  const campaignArtStyle = typeof gameSetupConfig.artStylePrompt === "string" ? gameSetupConfig.artStylePrompt : "";
+  const generatedCampaignArtStyle =
+    typeof gameSetupConfig.generatedArtStylePrompt === "string" ? gameSetupConfig.generatedArtStylePrompt : "";
+  const useCampaignArtStyle = gameSetupConfig.useCampaignArtStyle !== false;
+  const [campaignArtStyleDraft, setCampaignArtStyleDraft] = useState(campaignArtStyle);
   const [spotifyArtistDraft, setSpotifyArtistDraft] = useState(spotifyArtist);
   const [gameSpotifyArtistDraft, setGameSpotifyArtistDraft] = useState(gameSpotifyArtist);
 
@@ -2997,6 +3006,10 @@ export function ChatSettingsDrawer({
   useEffect(() => {
     setGameImagePromptInstructionsDraft((metadata.gameImagePromptInstructions as string) ?? "");
   }, [chat.id, metadata.gameImagePromptInstructions]);
+
+  useEffect(() => {
+    setCampaignArtStyleDraft(campaignArtStyle);
+  }, [campaignArtStyle, chat.id]);
 
   useEffect(() => {
     setGamePromptDraft((metadata.gameSystemPrompt as string) ?? "");
@@ -7672,6 +7685,67 @@ export function ChatSettingsDrawer({
                           </select>
                         </label>
                         <AgentSettingsToggle
+                          label="Use Campaign Art Style"
+                          description="Add this game's setup-generated art direction as a separate layer alongside the selected Image Style profile."
+                          enabled={useCampaignArtStyle}
+                          onToggle={() =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameSetupConfig: {
+                                ...gameSetupConfig,
+                                useCampaignArtStyle: !useCampaignArtStyle,
+                              },
+                            })
+                          }
+                        />
+                        <label className="flex flex-col gap-1">
+                          <span className="flex items-center justify-between gap-2 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                            <span>Campaign art style</span>
+                            {generatedCampaignArtStyle && generatedCampaignArtStyle !== campaignArtStyleDraft.trim() && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCampaignArtStyleDraft(generatedCampaignArtStyle);
+                                  updateMeta.mutate({
+                                    id: chat.id,
+                                    gameSetupConfig: {
+                                      ...gameSetupConfig,
+                                      artStylePrompt: generatedCampaignArtStyle,
+                                    },
+                                  });
+                                }}
+                                className="rounded px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+                              >
+                                Restore setup style
+                              </button>
+                            )}
+                          </span>
+                          <textarea
+                            value={campaignArtStyleDraft}
+                            onChange={(event) => setCampaignArtStyleDraft(event.target.value)}
+                            onBlur={() => {
+                              const nextArtStyle = campaignArtStyleDraft.trim();
+                              if (nextArtStyle === campaignArtStyle) return;
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameSetupConfig: {
+                                  ...gameSetupConfig,
+                                  artStylePrompt: nextArtStyle,
+                                  generatedArtStylePrompt: generatedCampaignArtStyle || campaignArtStyle,
+                                },
+                              });
+                            }}
+                            placeholder="Leave blank to use only the selected Image Style profile."
+                            rows={3}
+                            maxLength={500}
+                            disabled={!useCampaignArtStyle}
+                            className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-50"
+                          />
+                          <span className="text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                            Generated during game setup. Edit or clear it here; the Image Style profile remains independent.
+                          </span>
+                        </label>
+                        <AgentSettingsToggle
                           label="Attach Card Appearance"
                           description="Append matched character appearance details to generated scene image prompts."
                           enabled={gameImageIncludeCharacterAppearance}
@@ -7786,7 +7860,7 @@ export function ChatSettingsDrawer({
                     </div>
                     <AgentSettingsToggle
                       label="Automatic Storyboard Illustrations"
-                      description="Automatically create still keyframe illustrations after completed GM turns. Requires an Illustrator image connection."
+                      description="Automatically create still keyframe illustrations after completed GM turns. Automatic runs cannot pause for prompt review; use Storyboard turn to review prompts first."
                       enabled={gameStoryboardAutoIllustrationsEnabled}
                       onToggle={() => {
                         const nextEnabled = !gameStoryboardAutoIllustrationsEnabled;

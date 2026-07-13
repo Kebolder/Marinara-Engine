@@ -68,7 +68,7 @@ Move your pointer over any image in the **Images** tab, or tap it on mobile, to 
 You can check and edit the prompt before Marinara sends a background request to your image provider.
 
 1. Open **Settings**, then **Generations**, then **Image Generation**.
-2. Turn on **Expose image prompts before sending**.
+2. Turn on **Expose media prompts before sending**.
 
 With this setting on, a **Review Image Prompt** window opens before each request is sent. Its help text reads: "Edit the prompt below before Marinara sends the image request to your provider."
 

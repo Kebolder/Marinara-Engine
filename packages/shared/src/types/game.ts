@@ -195,8 +195,12 @@ export interface GameSetupConfig {
   gameStoryboardVideoPromptTemplateId?: string | null;
   /** Send storyboard imagePrompt directly to the image compiler/provider. */
   gameStoryboardUseDirectScenePrompt?: boolean;
-  /** Unified art style prompt applied to all generated images (auto-generated at setup) */
+  /** Unified art style prompt applied to all generated images (auto-generated at setup, user-editable). */
   artStylePrompt?: string;
+  /** Original setup-generated art style, retained so user edits can be restored. */
+  generatedArtStylePrompt?: string;
+  /** Whether the campaign art style is included in generated image prompts. Defaults to true. */
+  useCampaignArtStyle?: boolean;
   /** Optional image style profile applied to generated images in this game. */
   imageStyleProfileId?: string | null;
   /** Lorebook IDs to activate for this game */

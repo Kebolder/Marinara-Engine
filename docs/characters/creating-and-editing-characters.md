@@ -107,7 +107,7 @@ The AI avatar option appears only when you have at least one image-generation co
 6. Click **Generate**. To try again, click **Regenerate**.
 7. When you like the result, click **Use Avatar**.
 
-The picture size comes from the **Portraits** image-size setting in the image-generation settings, which defaults to 1024 by 1024. If you have turned on **Expose image prompts before sending**, a prompt-review step appears before each request.
+The picture size comes from the **Portraits** image-size setting in the image-generation settings, which defaults to 1024 by 1024. If you have turned on **Expose media prompts before sending**, a prompt-review step appears before each request.
 
 ## Advanced tab
 

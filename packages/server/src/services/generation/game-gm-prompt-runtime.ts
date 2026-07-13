@@ -2,6 +2,7 @@ import {
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   normalizeAgentPromptTemplateOptions,
   normalizeTextForMatch,
+  resolveGameSetupArtStylePrompt,
   type GameActiveState,
   type GameCampaignPlan,
   type GameMap,
@@ -327,7 +328,7 @@ export async function injectGameGmPromptRuntime(args: {
       args.chatMetadata.gameImageAutoGenerationEnabled !== false &&
       args.chatMetadata.gameStoryboardViewerDisplayMode !== "background" &&
       !!args.chatMetadata.gameImageConnectionId,
-    artStylePrompt: (setupConfig?.artStylePrompt as string) || undefined,
+    artStylePrompt: resolveGameSetupArtStylePrompt(setupConfig) || undefined,
     gameTime,
     weatherContext,
     playerNotes,

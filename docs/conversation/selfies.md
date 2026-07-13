@@ -59,14 +59,14 @@ To learn more about styles, see [Image Style Profiles](../media/style-profiles.m
 
 The size options are:
 
-| Resolution | Shape |
-| --- | --- |
-| 512x512 | Square |
-| 512x768 | Portrait |
-| 768x768 | Square |
-| 768x1024 | Portrait |
-| 896x1152 | Portrait (default) |
-| 1024x1024 | Square |
+| Resolution | Shape              |
+| ---------- | ------------------ |
+| 512x512    | Square             |
+| 512x768    | Portrait           |
+| 768x768    | Square             |
+| 768x1024   | Portrait           |
+| 896x1152   | Portrait (default) |
+| 1024x1024  | Square             |
 
 ## How a character sends a selfie
 
@@ -79,7 +79,8 @@ You can also request a selfie yourself instead of waiting for the character.
 1. Open the chat **Gallery** panel.
 2. Click the **Selfie** button (the camera icon).
 3. If the chat has more than one character, pick who should take the selfie from the character list next to the button.
-4. Wait while the button shows **Generating...**.
+4. If **Expose media prompts before sending** is enabled under **Settings**, **Generations**, **Image Generation**, review or edit the final compiled selfie prompt and click **Generate**. Canceling the review does not send an image request.
+5. Wait while the button shows **Generating...**.
 
 When the selfie is ready, you should see a "Selfie generated." message, and the picture appears in the chat. This manual request also uses your chosen **Selfie Connection**, so it uses one image generation request too.
 

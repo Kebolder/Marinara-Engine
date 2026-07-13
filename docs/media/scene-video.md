@@ -24,12 +24,12 @@ To make scene videos, you first add a connection that can generate video. This u
 
 The **Video Service** picker offers four choices. Each one fills in a default web address and a default model:
 
-| Video Service | Default model | Notes |
-| --- | --- | --- |
-| **Google AI Studio** | `gemini-omni-flash-preview` | Runs Gemini Omni and Veo video models through the Gemini API. |
-| **xAI Imagine** | `grok-imagine-video-1.5` | Grok Imagine video through the xAI Videos API. |
-| **OpenRouter Video** | `google/veo-3.1` | Video models through OpenRouter. You can type any OpenRouter video model ID. |
-| **Seedance 2.0** | `seedance-2-0` | Text, first-frame, and first and last frame video modes. |
+| Video Service        | Default model               | Notes                                                                        |
+| -------------------- | --------------------------- | ---------------------------------------------------------------------------- |
+| **Google AI Studio** | `gemini-omni-flash-preview` | Runs Gemini Omni and Veo video models through the Gemini API.                |
+| **xAI Imagine**      | `grok-imagine-video-1.5`    | Grok Imagine video through the xAI Videos API.                               |
+| **OpenRouter Video** | `google/veo-3.1`            | Video models through OpenRouter. You can type any OpenRouter video model ID. |
+| **Seedance 2.0**     | `seedance-2-0`              | Text, first-frame, and first and last frame video modes.                     |
 
 **Google AI Studio** covers two model families. **Gemini Omni** uses `gemini-omni-flash-preview`. **Google Veo** uses `veo-3.1-generate-preview`. Which one runs depends on the model you pick in the connection.
 
@@ -43,13 +43,13 @@ The connection editor for a Video Generation connection shows a **Default for Vi
 
 A Video Generation connection has its own **Video Generation Defaults** panel in the connection editor. Here you set the default clip length, aspect ratio, and resolution for that connection. These per-connection defaults take priority over the app-wide fallback length.
 
-| Service | Default length | Length range | Aspect ratio | Resolution |
-| --- | --- | --- | --- | --- |
-| Gemini Omni | 10s | 1 to 60s | 16:9 | Provider default |
-| Google Veo | 8s | 4, 6, or 8s | 16:9 | 720p |
-| xAI Imagine | 10s | 1 to 15s | 16:9 | 720p |
-| OpenRouter Video | 10s | 1 to 60s | 16:9 | 720p |
-| Seedance 2.0 | 5s | 4 to 15s | 16:9 | 720p |
+| Service          | Default length | Length range | Aspect ratio | Resolution       |
+| ---------------- | -------------- | ------------ | ------------ | ---------------- |
+| Gemini Omni      | 10s            | 1 to 60s     | 16:9         | Provider default |
+| Google Veo       | 8s             | 4, 6, or 8s  | 16:9         | 720p             |
+| xAI Imagine      | 10s            | 1 to 15s     | 16:9         | 720p             |
+| OpenRouter Video | 10s            | 1 to 60s     | 16:9         | 720p             |
+| Seedance 2.0     | 5s             | 4 to 15s     | 16:9         | 720p             |
 
 Gemini Omni has no resolution field, and its length is written into the prompt text instead of a separate setting. Google Veo forces 8 seconds whenever it animates a reference image, because it needs 8 seconds to blend the first and last frames.
 
@@ -83,14 +83,17 @@ To animate the newest picture:
 
 1. Make sure at least one picture exists under the **Images** tab. Use **Illustrate** or upload a picture first.
 2. Click **Video** in the action row at the top of the Gallery.
-3. The button changes to **Generating...**, and a banner tells you video generation is running.
-4. When it finishes, the clip appears under the **Videos** tab.
+3. If **Expose media prompts before sending** is enabled under **Settings**, **Generations**, **Image Generation**, review or edit the compiled animation prompt and click **Generate**. Canceling this window does not start a provider request.
+4. The button changes to **Generating...**, and a banner tells you video generation is running.
+5. When it finishes, the clip appears under the **Videos** tab.
 
 To animate one specific picture instead of the newest one:
 
 1. Open the **Images** tab.
 2. Hover over the picture you want.
 3. Click the **Animate illustration** button (the film icon) in the hover controls.
+
+The same **Review Video Prompt** window appears for **Animate illustration** when prompt review is enabled. It shows the exact server-compiled prompt, duration, aspect ratio, and resolution that will be used for that selected image. Your edit applies only to that generation and does not replace the reusable Game Video Prompt template.
 
 Under the **Videos** tab, each clip plays inline and shows its length and model name. You can pin a clip with **Pin video to chat**, or save it with **Download scene video**. If there are no clips yet, the tab reads **No videos yet**.
 

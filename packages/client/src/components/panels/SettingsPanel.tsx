@@ -684,9 +684,21 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
   {
     id: "image-prompt-review",
     sectionId: "image-generation",
-    label: "Expose image prompts before sending",
-    description: "Review generated image prompts before sending.",
-    aliases: ["image", "prompt", "review"],
+    label: "Expose media prompts before sending",
+    description: "Review generated image and Gallery video prompts before sending.",
+    aliases: [
+      "image",
+      "video",
+      "media",
+      "prompt",
+      "review",
+      "selfie",
+      "noodle",
+      "avatar",
+      "portrait",
+      "sprite",
+      "animated expression",
+    ],
     kind: "Toggle",
   },
   {
@@ -2988,14 +3000,14 @@ function ImageGenerationSettings() {
           label="Queue image generation requests"
           checked={queueImageGenerationRequests}
           onChange={setQueueImageGenerationRequests}
-          help="Sends image generation jobs one at a time. Keep this on for providers that reject simultaneous background, illustration, or portrait requests."
+          help="Sends supported image generation jobs one at a time, including Game assets and Roleplay Gallery illustrations. Keep this on for providers that reject simultaneous requests."
         />
         <ToggleSetting
           anchorId={getSettingsControlAnchorId("image-prompt-review")}
-          label="Expose image prompts before sending"
+          label="Expose media prompts before sending"
           checked={reviewImagePromptsBeforeSend}
           onChange={setReviewImagePromptsBeforeSend}
-          help="Pauses supported user-started image generation so you can review and edit the final positive and negative prompts before provider submission. This applies across Game and Roleplay scenes, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
+          help="Pauses supported user-started media generation so you can review and edit the final prompt before provider submission. This applies across Game and Roleplay images, Conversation Gallery selfies, Gallery Video and Animate actions, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
         />
 
         <ImageDimensionRow

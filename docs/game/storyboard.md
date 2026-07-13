@@ -37,6 +37,7 @@ For steady character looks across keyframes, use character cards with avatars, a
 3. Play until the GM finishes a narration turn.
 4. Open the **Gallery** panel.
 5. Click **Create storyboard**. The button shows **Creating...** with a spinner while it runs.
+   - If **Expose image prompts before sending** is enabled in **Settings > Generation**, review and edit the compiled prompt for every keyframe, then confirm generation.
 6. Keep reading the turn. The floating viewer appears and switches keyframes as you read.
 
 If you close the viewer, reopen it. In the **Gallery** panel, click **View storyboard**.
@@ -55,6 +56,8 @@ Automatic storyboards are set per chat. Find the controls in either place:
 - Existing game: **Chat Settings**, **Agents**, then the **Storyboards** card.
 
 **Automatic Storyboard Illustrations** makes still keyframe images after each finished GM turn, with no clicks from you. This is the lower-cost path. For a new game created through the wizard, this is on by default once **Visual Generation** is enabled. It has no effect until **Game Illustrator** is set up.
+
+Automatic storyboards do not pause the completed-turn pipeline for prompt review. When **Expose image prompts before sending** is enabled, use the manual **Create storyboard** action to see and edit every final compiled keyframe prompt. Automatic runs continue without a modal so gameplay does not stall while the chat is unattended.
 
 **Automatic Storyboard Animations** also makes an MP4 clip for each keyframe. This is off by default. It needs still illustrations plus a video connection. Turning animations on also turns illustrations on. Turning illustrations off turns animations off.
 
@@ -120,6 +123,14 @@ The **Comic Page Animation** preset uses the animation clip duration to control 
 
 The **NovelAI Keyframes** preset writes compact Danbooru tags. Danbooru tags are short comma-separated keyword tags that some anime image models expect. Choosing an animation, comic, or manga preset does not turn animations on by itself. You still need **Automatic Storyboard Animations** and a video connection for clips.
 
+## Campaign art style and image style profiles
+
+Game setup generates a campaign-level art style for visual consistency. For an existing game, open **Chat Settings > Agents > Illustrator** to see it under **Campaign art style**. You can edit it, clear it, restore the original setup-generated wording, or turn off **Use Campaign Art Style**.
+
+The campaign art style and **Image Style** profile are separate prompt layers. When both are enabled, Marinara includes both. Turning off or clearing the campaign style leaves the selected Image Style profile in place. This setting applies to storyboard keyframes and the game's other generated visual assets.
+
+With **Expose image prompts before sending** enabled in **Settings > Generation**, manual **Create storyboard** requests first show the exact compiled positive and negative prompts for all planned keyframes. Changes in that review are one-off overrides for that storyboard only; they do not replace the campaign style or Image Style profile settings.
+
 ## Editing storyboard presets
 
 The built-in presets are read-only. To make your own, open the **Edit Storyboard Presets** section inside the **Storyboards** card. It shows a count of your custom copies.
@@ -181,7 +192,7 @@ Two toggles help official NovelAI storyboards. Both are in the **Storyboards** c
 
 **The storyboard is partial or stuck.** This usually means one or more image or video jobs failed, timed out, or hit a provider rate limit. Prohibited content can also block a job. If a provider is slow, raise the image and video generation timeouts in your `.env` file, then restart Marinara. See the [configuration guide](../CONFIGURATION.md) for the exact variable names.
 
-For deeper diagnosis, set your log level to debug and watch the server log. The storyboard log lines are tagged `[debug/game/storyboard-illustrator]`, `[debug/game/storyboard-image-assets]`, and `[debug/game/storyboard-video]`.
+For deeper diagnosis, set your log level to debug and watch the server log. The storyboard log lines are tagged `[debug/game/storyboard-illustrator]`, `[debug/game/storyboard-image-preview]`, `[debug/game/storyboard-image-assets]`, and `[debug/game/storyboard-video]`.
 
 ## Related guides
 

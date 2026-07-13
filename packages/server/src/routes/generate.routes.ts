@@ -39,6 +39,7 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   normalizeTextForMatch,
   normalizeGameStoryboardKeyframeCount,
+  resolveGameSetupArtStylePrompt,
   type APIProvider,
   type MacroContext,
 } from "@marinara-engine/shared";
@@ -6600,7 +6601,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         currentWeather: gameState?.weather ?? null,
                         currentTimeOfDay: gameState?.time ?? null,
                         worldOverview: (chatMeta.gameWorldOverview as string | undefined) ?? null,
-                        artStyle: (setupConfigForImage?.artStylePrompt as string | undefined) ?? undefined,
+                        artStyle: resolveGameSetupArtStylePrompt(setupConfigForImage) || undefined,
                         reason:
                           typeof generationRequest.reason === "string"
                             ? generationRequest.reason.trim().slice(0, 300)

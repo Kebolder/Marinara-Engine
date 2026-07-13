@@ -40,6 +40,11 @@ type RetryAgentsOptions = {
   lorebookKeeperBackfill?: boolean;
   forMessageId?: string;
   secretPlotRerollMode?: "full" | "turn_only";
+  illustratorPromptReviewOverride?: {
+    resultData: Record<string, unknown>;
+    prompt: string;
+    negativePrompt?: string;
+  };
 };
 
 type RetryAgentsFn = (chatId: string, agentTypes: string[], options?: RetryAgentsOptions) => Promise<boolean>;
@@ -1196,12 +1201,7 @@ export function useGenerate() {
           typeof message.activeSwipeIndex === "number" && Number.isInteger(message.activeSwipeIndex)
             ? message.activeSwipeIndex
             : null;
-        rememberRecentMessageContentEdit(
-          params.chatId,
-          message.id,
-          message.content,
-          swipeIndex,
-        );
+        rememberRecentMessageContentEdit(params.chatId, message.id, message.content, swipeIndex);
       };
       const appendVisibleGeneratedChunk = (chunk: string) => {
         const normalizedChunk = normalizeLineBreakSpacing(chunk);
@@ -1379,9 +1379,7 @@ export function useGenerate() {
       const canRefreshCurrentMessagesNow = () => {
         if (!streamingEnabled || !shouldDisplayRawStream) return true;
         const streamState = useChatStore.getState();
-        return (
-          streamState.streamingChatId !== params.chatId || streamState.committedStreamChatIds.has(params.chatId)
-        );
+        return streamState.streamingChatId !== params.chatId || streamState.committedStreamChatIds.has(params.chatId);
       };
       const invalidateCurrentMessagesIfSafe = () => {
         if (!canRefreshCurrentMessagesNow()) return false;
@@ -2353,7 +2351,8 @@ export function useGenerate() {
                 if (useUIStore.getState().professorMariSuggestionsEnabled) setMariChips(params.chatId, suggestions);
               } else if (actionData.action === "plan") {
                 const plan = Array.isArray(actionData.plan) ? (actionData.plan as MariGuidedPlanStep[]) : [];
-                if (useUIStore.getState().professorMariSuggestionsEnabled && plan.length > 0) setMariPlan(params.chatId, plan);
+                if (useUIStore.getState().professorMariSuggestionsEnabled && plan.length > 0)
+                  setMariPlan(params.chatId, plan);
               } else if (actionData.action === "navigate") {
                 const panel = actionData.panel as string;
                 const tab = actionData.tab as string | null;
@@ -2609,7 +2608,10 @@ export function useGenerate() {
             unpersistedPartialMessage = created;
             persistedMessages.set(created.id, created);
           } catch (error) {
-            console.warn("[use-generate] Failed to persist stopped partial message; keeping cache-only fallback", error);
+            console.warn(
+              "[use-generate] Failed to persist stopped partial message; keeping cache-only fallback",
+              error,
+            );
             unpersistedPartialMessage = {
               id: `__partial_${params.chatId}_${Date.now()}`,
               chatId: params.chatId,
@@ -2810,6 +2812,7 @@ export function useGenerate() {
       clearFailedAgentTypes(chatId);
       if (isActiveChat()) clearThoughtBubbles();
       let hasError = false;
+      let imagePromptReviewRequested = false;
 
       try {
         const flushPatch = useGameStateStore.getState().flushPatch;
@@ -2834,6 +2837,11 @@ export function useGenerate() {
             agentTypes,
             streaming: useUIStore.getState().enableStreaming,
             debugMode: retryDebugMode,
+            queueImageGenerationRequests: useUIStore.getState().queueImageGenerationRequests,
+            reviewImagePromptsBeforeSend: useUIStore.getState().reviewImagePromptsBeforeSend,
+            ...(options?.illustratorPromptReviewOverride
+              ? { illustratorPromptReviewOverride: options.illustratorPromptReviewOverride }
+              : {}),
             musicPlayerEnabled: useUIStore.getState().musicPlayerEnabled,
             musicPlayerSource: useUIStore.getState().musicPlayerSource,
             lorebookKeeperBackfill: options?.lorebookKeeperBackfill === true,
@@ -3094,6 +3102,15 @@ export function useGenerate() {
               }
               break;
             }
+            case "image_prompt_review": {
+              imagePromptReviewRequested = true;
+              window.dispatchEvent(
+                new CustomEvent("marinara:image-prompt-review", {
+                  detail: event.data,
+                }),
+              );
+              break;
+            }
             case "agent_error": {
               const errData = event.data as { agentType: string; agentName?: string | null; error: string };
               hasError = true;
@@ -3117,7 +3134,7 @@ export function useGenerate() {
             }
           }
         }
-        if (!hasError) {
+        if (!hasError && !imagePromptReviewRequested) {
           if (options?.lorebookKeeperBackfill) {
             toast.success("Lorebook Keeper backfill completed");
           } else if (agentResultCount === 0) {
