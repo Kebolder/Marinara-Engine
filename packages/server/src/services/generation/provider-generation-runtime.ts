@@ -19,6 +19,8 @@ import {
 import { mergeModelContextLimit, resolveStoredModelContextLimit } from "./model-access-policy.js";
 import { normalizeChatTopP } from "./generation-parameters.js";
 import { clampGenerationMaxOutputTokens } from "./output-token-limits.js";
+import { withConnectionFallbackProvider, type FallbackConnection } from "../llm/connection-fallback-provider.js";
+import type { GenerationFallbackNotifier } from "./fallback-notification.js";
 
 type GenerationConnection = {
   provider: string;
@@ -36,6 +38,9 @@ type GenerationProviderRuntimeArgs = {
   connectionId: string;
   connection: GenerationConnection;
   baseUrl: string;
+  fallbackConnection?: FallbackConnection | null;
+  fallbackBaseUrl?: string;
+  onFallback?: GenerationFallbackNotifier;
   chatMode: string;
   isSceneChat: boolean;
   chatParameters: unknown;
@@ -68,6 +73,7 @@ export type GenerationProviderRuntime = GenerationProviderRuntimeArgs["initial"]
   enableThinking: boolean;
   isClaudeNoSampling: boolean;
   providerTopK: number | undefined;
+  primaryProvider: BaseLLMProvider;
   provider: BaseLLMProvider;
 };
 
@@ -174,7 +180,7 @@ export function resolveGenerationProviderRuntime(args: GenerationProviderRuntime
   }
 
   const providerTopK = resolveProviderTopK(runtime.topK);
-  const provider =
+  const primaryProvider =
     args.connectionId === LOCAL_SIDECAR_CONNECTION_ID
       ? getLocalSidecarProvider()
       : createLLMProvider(
@@ -187,6 +193,14 @@ export function resolveGenerationProviderRuntime(args: GenerationProviderRuntime
           args.connection.claudeFastMode === "true",
           args.connection.treatAsLocalEndpoint === "true",
         );
+  const provider = withConnectionFallbackProvider({
+    primary: primaryProvider,
+    primaryConnectionId: args.connectionId,
+    fallbackConnection: args.fallbackConnection,
+    fallbackBaseUrl: args.fallbackBaseUrl ?? "",
+    category: "main",
+    onFallback: args.onFallback,
+  });
 
   return {
     ...runtime,
@@ -196,6 +210,7 @@ export function resolveGenerationProviderRuntime(args: GenerationProviderRuntime
     enableThinking,
     isClaudeNoSampling,
     providerTopK,
+    primaryProvider,
     provider,
   };
 }

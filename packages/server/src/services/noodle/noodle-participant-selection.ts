@@ -39,26 +39,46 @@ export function chooseNoodleParticipantAccounts(input: {
   const count =
     input.settings.participantSelectionMode === "exact" ? max : min + Math.floor(random() * Math.max(1, max - min + 1));
 
-  const priority = candidates.filter((account) => priorityAccountIds.has(account.id));
-  const ordinary = candidates.filter((account) => !priorityAccountIds.has(account.id));
-  const inactiveFollowed = ordinary.filter(
-    (account) => followedAccountIds.has(account.id) && !recentlyActiveAccountIds.has(account.id),
-  );
-  const inactiveOthers = ordinary.filter(
-    (account) => !followedAccountIds.has(account.id) && !recentlyActiveAccountIds.has(account.id),
-  );
-  const recentFollowed = ordinary.filter(
-    (account) => followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
-  );
-  const recentOthers = ordinary.filter(
-    (account) => !followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
-  );
+  const ordered = (pool: NoodleAccount[]) => {
+    const priority = pool.filter((account) => priorityAccountIds.has(account.id));
+    const ordinary = pool.filter((account) => !priorityAccountIds.has(account.id));
+    const inactiveFollowed = ordinary.filter(
+      (account) => followedAccountIds.has(account.id) && !recentlyActiveAccountIds.has(account.id),
+    );
+    const inactiveOthers = ordinary.filter(
+      (account) => !followedAccountIds.has(account.id) && !recentlyActiveAccountIds.has(account.id),
+    );
+    const recentFollowed = ordinary.filter(
+      (account) => followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
+    );
+    const recentOthers = ordinary.filter(
+      (account) => !followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
+    );
+    return [
+      ...shuffleWith(priority, random),
+      ...shuffleWith(inactiveFollowed, random),
+      ...shuffleWith(inactiveOthers, random),
+      ...shuffleWith(recentFollowed, random),
+      ...shuffleWith(recentOthers, random),
+    ];
+  };
 
-  return [
-    ...shuffleWith(priority, random),
-    ...shuffleWith(inactiveFollowed, random),
-    ...shuffleWith(inactiveOthers, random),
-    ...shuffleWith(recentFollowed, random),
-    ...shuffleWith(recentOthers, random),
-  ].slice(0, count);
+  const characters = ordered(candidates.filter((account) => account.kind === "character"));
+  const randomUsers = ordered(candidates.filter((account) => account.kind === "random_user"));
+  if (characters.length === 0) return randomUsers.slice(0, count);
+
+  // Random users are supporting cast: include at most one in a minority of
+  // refreshes, while leaving the remaining participant slots to characters.
+  const includeRandomUser = randomUsers.length > 0 && count > 1 && random() < 0.25;
+  const characterCount = Math.max(1, count - (includeRandomUser ? 1 : 0));
+  const selected = characters.slice(0, characterCount);
+  if (includeRandomUser) selected.push(randomUsers[0]!);
+  if (selected.length < count) {
+    selected.push(...characters.slice(characterCount, characterCount + (count - selected.length)));
+  }
+  if (selected.length < count) {
+    const randomStart = includeRandomUser ? 1 : 0;
+    selected.push(...randomUsers.slice(randomStart, randomStart + (count - selected.length)));
+  }
+  return selected.slice(0, count);
 }

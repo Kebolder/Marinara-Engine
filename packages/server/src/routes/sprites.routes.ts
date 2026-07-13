@@ -72,6 +72,10 @@ import { resolveConnectionImageDefaults } from "../services/image/image-generati
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import {
+  resolveImageConnectionFallback,
+  resolveVideoConnectionFallback,
+} from "../services/generation/media-connection-fallback.js";
+import {
   generateVideo,
   resolveVideoReferencePublicUploadOptions,
   type VideoReferenceImage,
@@ -165,7 +169,10 @@ type SpriteGenerateSheetBody = {
   promptOverrides?: SpritePromptOverride[];
 };
 
-type SpriteGenerateAnimatedBody = Omit<SpriteGenerateSheetBody, "cols" | "rows" | "spriteType" | "fullBodyExpressionMode"> & {
+type SpriteGenerateAnimatedBody = Omit<
+  SpriteGenerateSheetBody,
+  "cols" | "rows" | "spriteType" | "fullBodyExpressionMode"
+> & {
   durationSeconds?: number;
 };
 
@@ -400,11 +407,11 @@ function resolveVideoConnection(connection: VideoGenerationConnection) {
         ? "https://api.x.ai/v1"
         : isGoogleVeoVideo
           ? "https://generativelanguage.googleapis.com/v1beta"
-        : isOpenRouterVideo
-          ? "https://openrouter.ai/api/v1"
-        : isSeedanceVideo
-          ? "https://api.seedance2.ai"
-          : "https://generativelanguage.googleapis.com/v1beta"),
+          : isOpenRouterVideo
+            ? "https://openrouter.ai/api/v1"
+            : isSeedanceVideo
+              ? "https://api.seedance2.ai"
+              : "https://generativelanguage.googleapis.com/v1beta"),
     model:
       connection.model ||
       (isXaiVideo
@@ -413,18 +420,18 @@ function resolveVideoConnection(connection: VideoGenerationConnection) {
           ? "veo-3.1-generate-preview"
           : isOpenRouterVideo
             ? "google/veo-3.1"
-          : isSeedanceVideo
-            ? "seedance-2-0"
-            : "gemini-omni-flash-preview"),
+            : isSeedanceVideo
+              ? "seedance-2-0"
+              : "gemini-omni-flash-preview"),
     resolution: isXaiVideo
       ? videoDefaults.xai.resolution
       : isGoogleVeoVideo
         ? videoDefaults.googleVeo.resolution
-      : isOpenRouterVideo
-        ? videoDefaults.openrouter.resolution
-      : isSeedanceVideo
-        ? videoDefaults.seedance.resolution
-        : undefined,
+        : isOpenRouterVideo
+          ? videoDefaults.openrouter.resolution
+          : isSeedanceVideo
+            ? videoDefaults.seedance.resolution
+            : undefined,
     publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
   };
 }
@@ -1305,11 +1312,10 @@ async function resolveVideoReferenceImage(input?: string): Promise<VideoReferenc
   if (!base64) return null;
   const trimmedInput = input?.trim() ?? "";
   const normalizedInputPath = normalizeLocalImagePath(trimmedInput);
-  const referenceUrl =
-    /^https?:\/\//i.test(trimmedInput)
-      ? trimmedInput
-      : normalizedInputPath.startsWith("/api/") || normalizedInputPath.startsWith("/sprites/")
-        ? normalizedInputPath
+  const referenceUrl = /^https?:\/\//i.test(trimmedInput)
+    ? trimmedInput
+    : normalizedInputPath.startsWith("/api/") || normalizedInputPath.startsWith("/sprites/")
+      ? normalizedInputPath
       : null;
   const buffer = Buffer.from(extractBase64ImageData(base64), "base64");
   const info = isAllowedImageBuffer(buffer);
@@ -1377,14 +1383,11 @@ async function buildAnimatedExpressionPrompt(input: {
       : "Use a simple clean portrait background that does not distract from the character.",
   });
   const override = input.promptOverrides.get(animatedSpritePromptReviewId(input.expression));
-  return resolveSpritePromptOverride(
-    override,
-    {
-      prompt,
-      negativePrompt:
-        "text, captions, subtitles, speech bubbles, UI, watermark, logo, extra people, multiple faces, split panel, collage, scene cut, camera shake, identity drift, changed outfit",
-    },
-  ).value;
+  return resolveSpritePromptOverride(override, {
+    prompt,
+    negativePrompt:
+      "text, captions, subtitles, speech bubbles, UI, watermark, logo, extra people, multiple faces, split panel, collage, scene cut, camera shake, identity drift, changed outfit",
+  }).value;
 }
 
 async function buildSpritePromptPlan(
@@ -2091,6 +2094,7 @@ export async function spritesRoutes(app: FastifyInstance) {
       if (referenceImage) break;
     }
     const resolved = resolveVideoConnection(conn as unknown as VideoGenerationConnection);
+    const videoFallback = await resolveVideoConnectionFallback(connections, conn.id);
 
     try {
       return await withSpriteGenerationDeadline(
@@ -2121,6 +2125,7 @@ export async function spritesRoutes(app: FastifyInstance) {
                   resolution: resolved.resolution,
                   referenceImage,
                   publicReferenceUpload: resolved.publicReferenceUpload,
+                  fallback: videoFallback,
                 },
               );
               const gif = await convertMp4ToGif(Buffer.from(video.base64, "base64"));
@@ -2234,6 +2239,7 @@ export async function spritesRoutes(app: FastifyInstance) {
         ? [body.referenceImage]
         : [];
     const resolvedRefs = rawRefs.map(resolveReferenceImageBase64).filter((r): r is string => !!r);
+    const imageFallback = await resolveImageConnectionFallback(connections, conn.id);
 
     try {
       return await withSpriteGenerationDeadline(
@@ -2277,6 +2283,7 @@ export async function spritesRoutes(app: FastifyInstance) {
                   imageEndpointId: conn.imageEndpointId || undefined,
                   comfyWorkflow: conn.comfyuiWorkflow || undefined,
                   imageDefaults,
+                  fallback: imageFallback,
                 });
 
                 let spriteBuffer: Buffer = Buffer.from(imageResult.base64, "base64");
@@ -2339,6 +2346,7 @@ export async function spritesRoutes(app: FastifyInstance) {
             imageEndpointId: conn.imageEndpointId || undefined,
             comfyWorkflow: conn.comfyuiWorkflow || undefined,
             imageDefaults,
+            fallback: imageFallback,
           });
 
           // Decode the generated image

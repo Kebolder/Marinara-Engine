@@ -15,12 +15,13 @@ export interface NoodleImagePostCtx extends Record<string, string | number | und
 export const NOODLE_IMAGE_POST: PromptOverrideKeyDef<NoodleImagePostCtx> = {
   key: "noodle.imagePost",
   label: "Noodle Post Image",
-  description: "Template that turns a generated Noodle post image idea into the final image-generation prompt.",
+  description:
+    "Template that assembles the final image-generation prompt. The default sends the visual idea, appearance notes, and Noodle image directions without the post text or meta-instructions.",
   variables: [
     { name: "authorName", description: "Display name of the Noodle account posting.", example: "Dottore" },
     {
       name: "postContent",
-      description: "The text of the Noodle post that the image will be attached to.",
+      description: "The Noodle post text, available for custom templates but omitted by the default image prompt.",
       example: "I left one meeting unattended for six minutes and returned to theatrical accusations.",
     },
     {
@@ -41,22 +42,10 @@ export const NOODLE_IMAGE_POST: PromptOverrideKeyDef<NoodleImagePostCtx> = {
     },
   ],
   defaultBuilder: (ctx) =>
-    [
-      `Create one concise image-generation prompt for a fake social media post by ${ctx.authorName}.`,
-      ``,
-      `Post text: ${ctx.postContent}`,
-      `Draft image idea: ${ctx.draftPrompt}`,
-      ctx.userInstructions ? `User instructions: ${ctx.userInstructions}` : "",
-      ctx.characterDescription || "",
-      ``,
-      `The image may be either a character-focused image (selfie, portrait, scene, candid, or illustration) or an in-character meme.`,
-      `For character-focused images, describe the visible subject, build/body type when relevant, clothing, appearance, expression, pose, setting, lighting, mood, framing, and composition.`,
-      `For memes, describe the meme format, visual gag, composition, character appearance if a character is visible, and exact short readable caption/text only when the meme needs it.`,
-      `Do not include UI chrome, social-media interface elements, watermarks, or unrelated text.`,
-      `Output only the final positive image prompt.`,
-    ]
+    [ctx.draftPrompt.trim() || `A social-media-ready image posted by ${ctx.authorName}.`, ctx.characterDescription, ctx.userInstructions]
+      .map((part) => part.trim())
       .filter(Boolean)
-      .join("\n"),
+      .join("\n\n"),
   exampleContext: {
     authorName: "Dottore",
     postContent: "I left one meeting unattended for six minutes and returned to theatrical accusations.",

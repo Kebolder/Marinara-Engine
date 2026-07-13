@@ -4,6 +4,7 @@ import { DATA_DIR } from "../../utils/data-dir.js";
 import { newId } from "../../utils/id-generator.js";
 import { logger } from "../../lib/logger.js";
 import { assertInsideDir, safeFetch } from "../../utils/security.js";
+import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
 
 export interface VideoReferenceImage {
   base64: string;
@@ -29,6 +30,18 @@ export interface VideoGenerationRequest {
   lastFrameImage?: VideoReferenceImage | null;
   publicReferenceUpload?: VideoReferencePublicUploadOptions | null;
   signal?: AbortSignal;
+  /** Called immediately before a configured fallback connection is attempted. */
+  onFallback?: GenerationFallbackNotifier;
+  /** Optional one-shot backup connection used only when the primary video request fails. */
+  fallback?: {
+    connectionId: string;
+    connectionName: string;
+    source: string;
+    baseUrl: string;
+    apiKey: string;
+    serviceHint: string;
+    model: string;
+  };
 }
 
 export interface VideoGenerationResult {
@@ -82,32 +95,59 @@ export async function generateVideo(
   request: VideoGenerationRequest,
 ): Promise<VideoGenerationResult> {
   const resolvedService = normalizeVideoService(serviceHint || source);
-  if (resolvedService === "gemini_omni") {
-    return withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
-      generateGeminiOmniVideo(baseUrl, apiKey, { ...request, signal }),
+  const primaryRequest = { ...request, fallback: undefined };
+  try {
+    if (resolvedService === "gemini_omni") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateGeminiOmniVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
+    if (resolvedService === "google_veo") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateGoogleVeoVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
+    if (resolvedService === "xai") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateXaiVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
+    if (resolvedService === "openrouter") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateOpenRouterVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
+    if (resolvedService === "seedance") {
+      return await withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
+        generateSeedanceVideo(baseUrl, apiKey, { ...primaryRequest, signal }),
+      );
+    }
+    throw new Error(`Unsupported video generation service: ${resolvedService || serviceHint || source}`);
+  } catch (error) {
+    const fallback = request.fallback;
+    if (!fallback || request.signal?.aborted) throw error;
+    logger.warn(
+      error,
+      "[video-fallback] Primary video generation failed; retrying with connection %s (%s)",
+      fallback.connectionId,
+      fallback.model,
     );
+    try {
+      await (request.onFallback ?? notifyGenerationFallback)({
+        category: "video",
+        connectionId: fallback.connectionId,
+        connectionName: fallback.connectionName,
+        model: fallback.model,
+      });
+    } catch (noticeError) {
+      logger.warn(noticeError, "[video-fallback] Failed to report fallback activation");
+    }
+    return generateVideo(fallback.source, fallback.baseUrl, fallback.apiKey, fallback.serviceHint, {
+      ...request,
+      fallback: undefined,
+      model: fallback.model,
+    });
   }
-  if (resolvedService === "google_veo") {
-    return withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
-      generateGoogleVeoVideo(baseUrl, apiKey, { ...request, signal }),
-    );
-  }
-  if (resolvedService === "xai") {
-    return withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
-      generateXaiVideo(baseUrl, apiKey, { ...request, signal }),
-    );
-  }
-  if (resolvedService === "openrouter") {
-    return withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
-      generateOpenRouterVideo(baseUrl, apiKey, { ...request, signal }),
-    );
-  }
-  if (resolvedService === "seedance") {
-    return withVideoGenerationDeadline(request.signal, VIDEO_GEN_TIMEOUT, (signal) =>
-      generateSeedanceVideo(baseUrl, apiKey, { ...request, signal }),
-    );
-  }
-  throw new Error(`Unsupported video generation service: ${resolvedService || serviceHint || source}`);
 }
 
 export function resolveVideoReferencePublicUploadOptions(

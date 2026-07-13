@@ -35,10 +35,14 @@ export interface APIConnection {
   maxContext: number;
   /** Whether this connection is the default */
   isDefault: boolean;
+  /** Whether this language connection is the fallback for main generations */
+  fallbackForMain: boolean;
   /** Whether this connection is in the random-selection pool */
   useForRandom: boolean;
   /** Whether this connection is the default for all agents */
   defaultForAgents: boolean;
+  /** Whether this connection is the category fallback for agents, images, or videos */
+  fallbackForAgents: boolean;
   /** Whether provider-native prompt caching is enabled */
   enableCaching: boolean;
   /** Anthropic only: use the 1-hour prompt-cache TTL instead of the default 5-minute TTL */

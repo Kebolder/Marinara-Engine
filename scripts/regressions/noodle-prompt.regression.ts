@@ -28,6 +28,12 @@ import {
 import { chooseNoodleParticipantAccounts } from "../../packages/server/src/services/noodle/noodle-participant-selection.js";
 import { canCreateGeneratedNoodleInteraction } from "../../packages/server/src/services/noodle/noodle-interaction-policy.js";
 import { parseNoodleGeneratedProfiles } from "../../packages/server/src/services/noodle/noodle-generated-profiles.js";
+import {
+  parseNoodleGeneratedRefresh,
+  validateNoodleGeneratedRefresh,
+} from "../../packages/server/src/services/noodle/noodle-generated-refresh.js";
+import { normalizeNoodleImagePrompt } from "../../packages/server/src/services/noodle/noodle-image-prompt.js";
+import { NOODLE_IMAGE_POST } from "../../packages/server/src/services/prompt-overrides/registry/noodle.js";
 import { collectNoodlePriorityAccountIds } from "../../packages/server/src/routes/noodle.routes.js";
 import { NOODLE_TIMELINE_VOICE } from "../../packages/server/src/services/prompt-overrides/registry/noodle.js";
 
@@ -132,6 +138,31 @@ assert.deepEqual(
   }).map((account) => account.id),
   ["alpha", "gamma"],
 );
+
+const randomParticipant = { ...makeAccount("ambient"), kind: "random_user" as const };
+const characterFirstSelection = chooseNoodleParticipantAccounts({
+  accounts: [...participantAccounts, randomParticipant],
+  settings: { ...participantSettings, allowRandomUsers: true },
+  selectedGroupCharacterIds: new Set(),
+  random: () => 0,
+});
+assert.equal(characterFirstSelection.filter((account) => account.kind === "character").length, 1);
+assert.equal(characterFirstSelection.filter((account) => account.kind === "random_user").length, 1);
+const charactersOnlySelection = chooseNoodleParticipantAccounts({
+  accounts: [...participantAccounts, randomParticipant],
+  settings: { ...participantSettings, allowRandomUsers: true },
+  selectedGroupCharacterIds: new Set(),
+  random: () => 0.9,
+});
+assert.equal(charactersOnlySelection.every((account) => account.kind === "character"), true);
+const sparseCharacterSelection = chooseNoodleParticipantAccounts({
+  accounts: [participantAccounts[0]!, randomParticipant, { ...randomParticipant, id: "ambient-two", entityId: "ambient-two" }],
+  settings: { ...participantSettings, allowRandomUsers: true, participantMin: 3, participantMax: 3 },
+  selectedGroupCharacterIds: new Set(),
+  random: () => 0.9,
+});
+assert.equal(sparseCharacterSelection.length, 3);
+assert.equal(sparseCharacterSelection[0]?.kind, "character");
 
 const repeatActor = makeAccount("repeat_actor");
 const repeatPost: NoodlePost = {
@@ -321,10 +352,12 @@ assert.deepEqual(
 );
 
 const activeAccountsInstruction = "- Use only the active accounts listed by entityId. Do not invent accounts.";
+const randomUserSupportingInstruction =
+  "- Character accounts are the primary cast. Random-user activity should be occasional supporting texture and must never dominate the generated posts or interactions.";
 const randomUserParodyInstruction =
   "- A small minority of posts from random_user accounts may be obvious parody advertisements or absurd fake crypto scams. Usually generate none and never more than one per refresh. Keep every company, product, coin, ticker, price, and financial claim invented, visibly ridiculous, and non-actionable. Never imitate a real company or include real or usable links, wallet addresses, financial advice, or scam instructions.";
 const imageGenerationInstruction =
-  "- When image generation is enabled, imagePrompt should be a concrete visual idea for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post.";
+  "- When image generation is enabled, imagePrompt must contain only the final concrete visual description for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post. Do not put the post JSON, field names, meta-commentary, instructions to another model, or the full post text inside imagePrompt.";
 const galleryAttachmentInstruction =
   "- When gallery attachments are enabled, set attachGalleryImage to true only when the post naturally fits an existing gallery or chat image.";
 
@@ -340,13 +373,97 @@ const instructions = (input: {
   });
 
 assert.deepEqual(instructions({}), []);
-assert.deepEqual(instructions({ allowRandomUsers: true }), [activeAccountsInstruction, randomUserParodyInstruction]);
+assert.deepEqual(instructions({ allowRandomUsers: true }), [
+  activeAccountsInstruction,
+  randomUserSupportingInstruction,
+  randomUserParodyInstruction,
+]);
 assert.deepEqual(instructions({ enableImagePrompts: true }), [imageGenerationInstruction]);
 assert.deepEqual(instructions({ allowGalleryImageAttachments: true }), [galleryAttachmentInstruction]);
 assert.deepEqual(
   instructions({ allowRandomUsers: true, enableImagePrompts: true, allowGalleryImageAttachments: true }),
-  [activeAccountsInstruction, randomUserParodyInstruction, imageGenerationInstruction, galleryAttachmentInstruction],
+  [
+    activeAccountsInstruction,
+    randomUserSupportingInstruction,
+    randomUserParodyInstruction,
+    imageGenerationInstruction,
+    galleryAttachmentInstruction,
+  ],
 );
+
+const resilientRefresh = parseNoodleGeneratedRefresh({
+  posts: [{ authorEntityId: "entity-alpha", content: "A valid post." }],
+  interactions: [
+    {
+      actorEntityId: "entity-beta",
+      targetPostId: "post-1",
+      type: "like",
+      parentInteractionId: "comment-that-must-not-be-here",
+    },
+  ],
+  follows: [],
+  digests: [],
+});
+assert.equal(resilientRefresh.refresh.posts.length, 1);
+assert.equal(resilientRefresh.refresh.interactions.length, 0);
+assert.deepEqual(resilientRefresh.rejected, [{ collection: "interactions", index: 0, issueCount: 1 }]);
+assert.equal(
+  validateNoodleGeneratedRefresh(
+    { posts: [], interactions: [], follows: [], digests: [] },
+    new Set(["entity-alpha"]),
+    new Set(["entity-alpha", "persona"]),
+  ),
+  "the response contained no timeline activity",
+);
+assert.equal(
+  validateNoodleGeneratedRefresh(
+    {
+      posts: [{ authorEntityId: "persona", content: "The model must not post as the user.", attachGalleryImage: false }],
+      interactions: [],
+      follows: [],
+      digests: [],
+    },
+    new Set(["entity-alpha"]),
+    new Set(["entity-alpha", "persona"]),
+  ),
+  "the response used no selected participant entityId",
+);
+assert.equal(
+  validateNoodleGeneratedRefresh(
+    {
+      posts: [{ authorEntityId: "entity-alpha", content: "A valid cast post.", attachGalleryImage: false }],
+      interactions: [],
+      follows: [],
+      digests: [],
+    },
+    new Set(["entity-alpha"]),
+    new Set(["entity-alpha", "persona"]),
+  ),
+  null,
+);
+
+assert.equal(
+  normalizeNoodleImagePrompt(
+    'Post text: a long social post\nDraft image idea: cel-shaded scientist holding a test tube\nUser instructions: vivid color',
+  ),
+  "cel-shaded scientist holding a test tube",
+);
+assert.equal(
+  normalizeNoodleImagePrompt('{"imagePrompt":"moonlit laboratory portrait","content":"do not send me"}'),
+  "moonlit laboratory portrait",
+);
+assert.equal(normalizeNoodleImagePrompt('{"content":"do not send this JSON to an image model"}'), null);
+const defaultNoodleImagePrompt = NOODLE_IMAGE_POST.defaultBuilder({
+  authorName: "Dottore",
+  postContent: "This entire post must not be sent to ComfyUI.",
+  draftPrompt: "cel-shaded laboratory selfie",
+  userInstructions: "dramatic blue lighting",
+  characterDescription: "Dottore has blue hair and a white mask.",
+});
+assert.match(defaultNoodleImagePrompt, /^cel-shaded laboratory selfie/u);
+assert.match(defaultNoodleImagePrompt, /Dottore has blue hair/u);
+assert.doesNotMatch(defaultNoodleImagePrompt, /This entire post/u);
+assert.doesNotMatch(defaultNoodleImagePrompt, /Output only|Draft image idea|Post text/u);
 
 const cutoffAnchor = new Date("2026-07-10T12:00:00.000Z");
 assert.equal(noodlePastMemoryCutoff(cutoffAnchor), "2026-07-08T12:00:00.000Z");

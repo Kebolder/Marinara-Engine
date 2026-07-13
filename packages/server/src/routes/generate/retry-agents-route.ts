@@ -40,9 +40,10 @@ import {
   type ResolvedAgent,
 } from "../../services/agents/agent-pipeline.js";
 import { executeAgent, executeAgentBatch, normalizeAgentContextSize } from "../../services/agents/agent-executor.js";
-import type { LLMToolDefinition } from "../../services/llm/base-provider.js";
+import type { BaseLLMProvider, LLMToolDefinition } from "../../services/llm/base-provider.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
 import { createLLMProvider } from "../../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../../services/llm/connection-fallback-provider.js";
 import { sidecarModelService } from "../../services/sidecar/sidecar-model.service.js";
 import { buildSpotifyDjConstraints } from "../../services/spotify/spotify-dj-constraints.js";
 import { resolveSpotifyCredentials } from "../../services/spotify/spotify.service.js";
@@ -67,6 +68,9 @@ import { resolveConnectionImageDefaults } from "../../services/image/image-gener
 import { loadImageGenerationUserSettings } from "../../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../../services/image/image-prompt-compiler.js";
 import { persistGeneratedImageToEntityGalleries } from "../../services/image/generated-image-entity-gallery.js";
+import { resolveImageConnectionFallback } from "../../services/generation/media-connection-fallback.js";
+import type { GenerationFallbackNotifier } from "../../services/generation/fallback-notification.js";
+import { createReplyFallbackNotifier } from "./fallback-notification.js";
 import { runImageGenerationRequest } from "../../services/image/image-generation-queue.js";
 import {
   parseIllustratorPromptReviewOverride,
@@ -1007,8 +1011,9 @@ async function resolveRetryAgents(args: {
   conns: ReturnType<typeof createConnectionsStorage>;
   agentsStore: ReturnType<typeof createAgentsStorage>;
   activeMusicPlayerSource?: "spotify" | "youtube" | "custom" | null;
+  onFallback?: GenerationFallbackNotifier;
 }): Promise<ResolvedRetryAgents> {
-  const { agentTypes, chat, conns, agentsStore, activeMusicPlayerSource } = args;
+  const { agentTypes, chat, conns, agentsStore, activeMusicPlayerSource, onFallback } = args;
   const chatMode = ((chat as { mode?: ChatMode }).mode ?? "conversation") as ChatMode;
   const chatMeta = parseExtra((chat as { metadata?: unknown }).metadata);
   const agentPromptTemplateSelections = normalizeAgentPromptTemplateSelectionMap(chatMeta.agentPromptTemplateIds);
@@ -1051,6 +1056,16 @@ async function resolveRetryAgents(args: {
   const setupSceneConnectionId =
     typeof setupConfig.sceneConnectionId === "string" ? setupConfig.sceneConnectionId.trim() : "";
   const defaultAgentConn = await conns.getDefaultForAgents();
+  const fallbackAgentConn = await conns.getFallbackForAgents();
+  const wrapRetryAgentProvider = (primary: BaseLLMProvider, primaryConnectionId: string) =>
+    withConnectionFallbackProvider({
+      primary,
+      primaryConnectionId,
+      fallbackConnection: fallbackAgentConn,
+      fallbackBaseUrl: fallbackAgentConn ? resolveBaseUrl(fallbackAgentConn) : "",
+      category: "agents",
+      onFallback,
+    });
   type RetryAgentConnectionResolution = {
     entry: {
       connectionId: string | null;
@@ -1087,17 +1102,18 @@ async function resolveRetryAgents(args: {
 
     const knownModel = findKnownModel(storedConn.provider as APIProvider, model);
     connForPromptDefaults ??= storedConn;
+    const primaryProvider = createLLMProvider(
+      storedConn.provider,
+      baseUrl,
+      storedConn.apiKey,
+      storedConn.maxContext,
+      storedConn.openrouterProvider,
+      storedConn.maxTokensOverride,
+    );
     return {
       entry: {
         connectionId,
-        provider: createLLMProvider(
-          storedConn.provider,
-          baseUrl,
-          storedConn.apiKey,
-          storedConn.maxContext,
-          storedConn.openrouterProvider,
-          storedConn.maxTokensOverride,
-        ),
+        provider: wrapRetryAgentProvider(primaryProvider, connectionId ?? storedConn.id),
         model,
         customParameters: parseStoredGenerationParameters(storedConn.defaultParameters)?.customParameters ?? {},
         maxOutputTokens: knownModel?.maxOutput && knownModel.maxOutput > 0 ? Math.floor(knownModel.maxOutput) : null,
@@ -1173,10 +1189,11 @@ async function resolveRetryAgents(args: {
     }
 
     if (isLocalSidecarConnectionId(connectionId) && localSidecarAvailableForTrackers) {
+      const primaryProvider = getLocalSidecarProvider();
       return {
         entry: {
           connectionId,
-          provider: getLocalSidecarProvider(),
+          provider: wrapRetryAgentProvider(primaryProvider, connectionId),
           model: LOCAL_SIDECAR_MODEL,
           customParameters: {},
           maxOutputTokens: null,
@@ -2942,6 +2959,7 @@ async function applyRetryResultEffects(args: {
               imageGenerationSource: imgSource,
             });
             const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
+            const imageFallback = await resolveImageConnectionFallback(conns, imgConnFull.id);
             const imageSettings = await loadImageGenerationUserSettings(app.db);
 
             const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
@@ -3097,6 +3115,8 @@ async function applyRetryResultEffects(args: {
                   imageDefaults,
                   referenceImages,
                   signal: agentContext.signal,
+                  fallback: imageFallback,
+                  onFallback: createReplyFallbackNotifier(reply),
                 }),
             });
 
@@ -3289,6 +3309,7 @@ export async function registerRetryAgentsRoute(app: FastifyInstance) {
     }
 
     startSseReply(reply, { "X-Accel-Buffering": "no" });
+    const onFallback = createReplyFallbackNotifier(reply);
 
     // Abort in-flight agent LLM calls when the client disconnects, and stop
     // writing to a closed socket. Mirrors the main /generate handler so a dropped
@@ -3388,6 +3409,7 @@ export async function registerRetryAgentsRoute(app: FastifyInstance) {
             : musicPlayerSource === "youtube" || musicPlayerSource === "custom"
               ? musicPlayerSource
               : "spotify",
+        onFallback,
       });
       const chatMode = ((chat as { mode?: ChatMode }).mode ?? "conversation") as ChatMode;
       const retryWrapFormat = await resolveRetryAgentWrapFormat({

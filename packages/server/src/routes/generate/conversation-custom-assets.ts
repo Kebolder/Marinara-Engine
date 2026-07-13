@@ -11,6 +11,7 @@ import { logger } from "../../lib/logger.js";
 import { cosineSimilarity } from "../../services/lorebook/embeddings.js";
 import { isLocalEmbedderAvailable, localEmbed } from "../../services/local-embedder.js";
 import { createLLMProvider } from "../../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../../services/llm/connection-fallback-provider.js";
 import type { GenerationPromptMessage } from "../../services/generation/prompt-message-scope.js";
 import type { createConnectionsStorage } from "../../services/storage/connections.storage.js";
 import { appendToFirstSystemMessage, latestHistoryUserContent } from "./conversation-prompt-formatting.js";
@@ -105,14 +106,21 @@ export async function selectCustomAssetNamesByToolCall(
   try {
     const conn = await connections.getWithKey(connectionId);
     if (!conn?.model) return null;
-    const provider = createLLMProvider(
-      conn.provider,
-      resolveBaseUrl(conn),
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const fallbackConnection = await connections.getFallbackForAgents();
+    const provider = withConnectionFallbackProvider({
+      primary: createLLMProvider(
+        conn.provider,
+        resolveBaseUrl(conn),
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+      ),
+      primaryConnectionId: conn.id,
+      fallbackConnection,
+      fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+      category: "agents",
+    });
     const result = await provider.chatComplete(
       [
         {

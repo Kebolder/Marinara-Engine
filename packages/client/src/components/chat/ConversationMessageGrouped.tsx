@@ -164,7 +164,7 @@ export function ConversationMessageGrouped({
           const segChar = grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
           const segAvatar = segChar?.avatarUrl ?? null;
           const segAvatarCropStyle = getAvatarCropStyle(segChar?.avatarCrop);
-          const segName = segChar?.name ?? grp.speaker ?? "";
+          const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
           const segColor = segChar?.nameColor;
           const isFirst = i === 0;
           const combinedText = grp.lines.join("\n");

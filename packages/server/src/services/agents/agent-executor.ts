@@ -395,7 +395,9 @@ function getAgentOutputTemplate(
 ): string {
   return (
     renderedTemplates?.get(config.type) ??
-    renderAgentPromptTemplate(config.promptTemplate || getDefaultPromptForAgent(config), config.settings, context)
+    renderAgentPromptTemplate(config.promptTemplate || getDefaultPromptForAgent(config), config.settings, context, {
+      escapeValues: normalizeAgentContextWrapFormat(context.wrapFormat) === "xml",
+    })
   );
 }
 
@@ -442,14 +444,18 @@ function buildAgentOutputFormatBody(
   return parts.join("\n");
 }
 
-function buildAgentOutputFormatBlock(
+export function buildAgentOutputFormatBlock(
   configs: AgentExecConfig[],
   context: AgentContext,
   renderedTemplates?: RenderedAgentTemplateMap,
 ): string {
   const wrapFormat = normalizeAgentContextWrapFormat(context.wrapFormat);
   const body = buildAgentOutputFormatBody(configs, context, renderedTemplates);
-  return wrapContent(sanitizePromptLeaf(body, wrapFormat), "Output Format", wrapFormat);
+  // The contract contains trusted, user-authored prompt-template markup. Escape
+  // interpolated macro values when rendering the template, but preserve literal
+  // tags such as <chat_summary> and <existing_entries> in the contract itself.
+  const formattedBody = wrapFormat === "xml" ? body : sanitizePromptLeaf(body, wrapFormat);
+  return wrapContent(formattedBody, "Output Format", wrapFormat);
 }
 
 export function formatToolPayloadForLog(payload: string, maxLength = 400): string {
@@ -605,6 +611,7 @@ export async function executeAgent(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
       context,
+      { escapeValues: normalizeAgentContextWrapFormat(context.wrapFormat) === "xml" },
     );
     if (!template) {
       return makeError(config, "No prompt template configured", startTime);

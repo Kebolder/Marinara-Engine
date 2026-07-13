@@ -15,6 +15,11 @@ import {
 } from "../../services/conversation/timezone.js";
 import { formatConversationPromptTurn } from "../../services/generation/generation-text-utils.js";
 import type { GenerationPromptMessage } from "../../services/generation/prompt-message-scope.js";
+import {
+  withConnectionFallbackProvider,
+  type FallbackConnection,
+} from "../../services/llm/connection-fallback-provider.js";
+import type { BaseLLMProvider } from "../../services/llm/base-provider.js";
 import { createLLMProvider } from "../../services/llm/provider-registry.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 import { annotateContentWithReactions, REACTION_ANNOTATION_CONTENT_CAP } from "./conversation-custom-assets.js";
@@ -74,7 +79,10 @@ export async function prepareConversationPromptHistory(args: {
   promptTimeZone?: string;
   wrapFormat: WrapFormat;
   connection: ConversationSummaryConnection;
+  connectionId: string;
   baseUrl: string;
+  fallbackConnection?: FallbackConnection | null;
+  fallbackBaseUrl?: string;
 }): Promise<{ finalMessages: GenerationPromptMessage[]; importantMemoryBlock: string | null }> {
   const rolloverHour = Math.max(
     0,
@@ -116,14 +124,20 @@ export async function prepareConversationPromptHistory(args: {
   const summarySourceMessages = args.regenerateMessageId
     ? args.scopedMessages.filter((message) => message.id !== args.regenerateMessageId)
     : args.scopedMessages;
-  const summaryProvider = createLLMProvider(
-    args.connection.provider,
-    args.baseUrl,
-    args.connection.apiKey,
-    args.connection.maxContext,
-    args.connection.openrouterProvider,
-    args.connection.maxTokensOverride,
-  );
+  const summaryProvider: BaseLLMProvider = withConnectionFallbackProvider({
+    primary: createLLMProvider(
+      args.connection.provider,
+      args.baseUrl,
+      args.connection.apiKey,
+      args.connection.maxContext,
+      args.connection.openrouterProvider,
+      args.connection.maxTokensOverride,
+    ),
+    primaryConnectionId: args.connectionId,
+    fallbackConnection: args.fallbackConnection,
+    fallbackBaseUrl: args.fallbackBaseUrl ?? "",
+    category: "agents",
+  });
   const summaryRun = await generateMissingConversationSummaries({
     messages: summarySourceMessages.map((message) => ({
       id: typeof message.id === "string" ? message.id : undefined,

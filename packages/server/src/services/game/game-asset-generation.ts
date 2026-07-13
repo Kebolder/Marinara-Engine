@@ -12,7 +12,7 @@ import { createHash } from "crypto";
 import { logger } from "../../lib/logger.js";
 import { basename, join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
-import { generateImage, type ImageGenResult } from "../image/image-generation.js";
+import { generateImage, type ImageGenRequest, type ImageGenResult } from "../image/image-generation.js";
 import { buildAssetManifest, GAME_ASSETS_DIR } from "./asset-manifest.service.js";
 import type { PromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
 import { loadPrompt, GAME_NPC_PORTRAIT, GAME_BACKGROUND, GAME_SCENE_ILLUSTRATION } from "../prompt-overrides/index.js";
@@ -115,10 +115,9 @@ function normalizeSceneIllustrationImageSource(value: string | null | undefined)
   return SCENE_ILLUSTRATION_IMAGE_BACKENDS.has(normalized) ? normalized : "";
 }
 
-function resolveSceneIllustrationImageBackend(req: Pick<
-  SceneIllustrationGenRequest,
-  "imgSource" | "imgModel" | "imgBaseUrl" | "imgService"
->): string {
+function resolveSceneIllustrationImageBackend(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+): string {
   const inferred = inferImageSource(req.imgModel || req.imgSource || "", req.imgBaseUrl || "");
   const explicit = normalizeSceneIllustrationImageSource(req.imgService || req.imgSource);
   if (!explicit) return inferred;
@@ -142,10 +141,9 @@ export function supportsSceneIllustrationStructuredCharacterPrompts(
   return /^nai-diffusion-(?:4(?:-(?:curated-preview|full))?|4-5(?:-(?:curated|full))?)$/i.test(req.imgModel.trim());
 }
 
-export function resolveSceneIllustrationReferenceImageLimit(req: Pick<
-  SceneIllustrationGenRequest,
-  "imgSource" | "imgModel" | "imgBaseUrl" | "imgService"
->): number {
+export function resolveSceneIllustrationReferenceImageLimit(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+): number {
   const backend = resolveSceneIllustrationImageBackend(req);
   const model = [req.imgModel, req.imgSource, req.imgService].filter(Boolean).join(" ").toLowerCase();
   const isGeminiImageModel = model.includes("gemini") && model.includes("image");
@@ -502,6 +500,7 @@ export interface NpcPortraitRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -698,6 +697,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -759,6 +759,7 @@ export interface BackgroundGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -806,6 +807,7 @@ export interface SceneIllustrationGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -1062,6 +1064,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -1131,6 +1134,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -1199,6 +1203,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
         referenceImages: referenceImages.length ? referenceImages : undefined,
         characterPrompts: req.characterPrompts,

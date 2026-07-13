@@ -39,7 +39,11 @@ import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
 import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
-import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
+import {
+  characterMatchesSearch,
+  getCharacterTitle,
+  parseCharacterDisplayData,
+} from "../../lib/character-display";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import {
@@ -908,13 +912,9 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const addRandomCharacter = useCallback(() => {
     const selected = new Set(chatCharIds);
-    const query = search.trim().toLowerCase();
     const pool = characters.filter((character) => {
       if (selected.has(character.id)) return false;
-      if (!query) return true;
-      const info = getCharacterInfo(character);
-      const title = getCharacterTitle(info)?.toLowerCase() ?? "";
-      return info.name.toLowerCase().includes(query) || title.includes(query);
+      return characterMatchesSearch(getCharacterInfo(character), search);
     });
     const character = pool[Math.floor(Math.random() * pool.length)];
     if (character) toggleCharacter(character.id);
@@ -982,10 +982,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     () =>
       characters.filter((c) => {
         if (chatCharIds.includes(c.id)) return false;
-        const info = getCharacterInfo(c);
-        const query = search.toLowerCase();
-        const title = getCharacterTitle(info)?.toLowerCase() ?? "";
-        return info.name.toLowerCase().includes(query) || title.includes(query);
+        return characterMatchesSearch(getCharacterInfo(c), search);
       }),
     [characters, chatCharIds, getCharacterInfo, search],
   );
@@ -1821,20 +1818,22 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     return map;
   }, [characters]);
 
-  const charName = useCallback(
+  const getCharacterInfo = useCallback(
     (c: { id?: string; data: string; comment?: string | null }) => {
-      if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!.name;
-      return parseCharacterDisplayData(c).name;
+      if (c.id && charInfoMap.has(c.id)) return charInfoMap.get(c.id)!;
+      return parseCharacterDisplayData(c);
     },
     [charInfoMap],
   );
 
+  const charName = useCallback(
+    (c: { id?: string; data: string; comment?: string | null }) => getCharacterInfo(c).name,
+    [getCharacterInfo],
+  );
+
   const charTitle = useCallback(
-    (c: { id?: string; data: string; comment?: string | null }) => {
-      if (c.id && charInfoMap.has(c.id)) return getCharacterTitle(charInfoMap.get(c.id)!);
-      return getCharacterTitle(parseCharacterDisplayData(c));
-    },
-    [charInfoMap],
+    (c: { id?: string; data: string; comment?: string | null }) => getCharacterTitle(getCharacterInfo(c)),
+    [getCharacterInfo],
   );
 
   const agentAddSpriteSubjects = useMemo<AgentAddSpriteSubject[]>(() => {
@@ -2280,20 +2279,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   function renderCharacters() {
     const available = characters.filter((c) => {
       if (chatCharIds.includes(c.id)) return false;
-      const query = charSearch.toLowerCase();
-      const title = charTitle(c)?.toLowerCase() ?? "";
-      return charName(c).toLowerCase().includes(query) || title.includes(query);
+      return characterMatchesSearch(getCharacterInfo(c), charSearch);
     });
     const visibleAvailable = available.slice(0, characterPickerLimit);
     const hasMoreAvailable = available.length > visibleAvailable.length;
     const addRandomCharacter = () => {
       const selected = new Set(chatCharIds);
-      const query = charSearch.trim().toLowerCase();
       const pool = characters.filter((character) => {
         if (selected.has(character.id)) return false;
-        if (!query) return true;
-        const title = charTitle(character)?.toLowerCase() ?? "";
-        return charName(character).toLowerCase().includes(query) || title.includes(query);
+        return characterMatchesSearch(getCharacterInfo(character), charSearch);
       });
       const character = pool[Math.floor(Math.random() * pool.length)];
       if (character) toggleCharacter(character.id);

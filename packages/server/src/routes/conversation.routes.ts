@@ -10,6 +10,7 @@ import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { CONVERSATION_SCHEDULE_DAYS, PROVIDERS, localAuthProviderBaseUrl } from "@marinara-engine/shared";
 import type { CharacterData, ConversationStatusOverride } from "@marinara-engine/shared";
 import {
@@ -365,12 +366,36 @@ export async function conversationRoutes(app: FastifyInstance) {
   const chars = createCharactersStorage(app.db);
   const connections = createConnectionsStorage(app.db);
 
+  async function createConversationAgentProvider(
+    conn: NonNullable<Awaited<ReturnType<typeof connections.getWithKey>>>,
+    baseUrl: string,
+  ) {
+    const fallbackConnection = await connections.getFallbackForAgents();
+    return withConnectionFallbackProvider({
+      primary: createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+      ),
+      primaryConnectionId: conn.id,
+      fallbackConnection,
+      fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+      category: "agents",
+    });
+  }
+
   async function resolveScheduleGenerationContext(chatId: string, characterId: string) {
     const chat = await chats.getById(chatId);
     if (!chat) return { errorStatus: 404 as const, error: "Chat not found" };
     if (chat.mode !== "conversation") return { errorStatus: 400 as const, error: "Not a conversation chat" };
 
-    const { conn, error: connectionError } = await resolveConversationScheduleConnection(connections, chat.connectionId);
+    const { conn, error: connectionError } = await resolveConversationScheduleConnection(
+      connections,
+      chat.connectionId,
+    );
     if (!conn) return { errorStatus: 400 as const, error: connectionError ?? "No connection configured" };
     const baseUrl = resolveBaseUrl(conn);
     if (!baseUrl) return { errorStatus: 400 as const, error: "No base URL" };
@@ -378,14 +403,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     const charRow = await chars.getById(characterId);
     if (!charRow) return { errorStatus: 404 as const, error: "Character not found" };
     const charData = JSON.parse(charRow.data as string) as CharacterData;
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const provider = await createConversationAgentProvider(conn, baseUrl);
     return { chat, charData, provider, model: conn.model ?? "" };
   }
 
@@ -398,8 +416,10 @@ export async function conversationRoutes(app: FastifyInstance) {
       routineSummary: null,
       routineSummaryGeneratedAt: null,
     };
-    if (typeof existing.idleResponseDelayMinutes === "number") merged.idleResponseDelayMinutes = existing.idleResponseDelayMinutes;
-    if (typeof existing.dndResponseDelayMinutes === "number") merged.dndResponseDelayMinutes = existing.dndResponseDelayMinutes;
+    if (typeof existing.idleResponseDelayMinutes === "number")
+      merged.idleResponseDelayMinutes = existing.idleResponseDelayMinutes;
+    if (typeof existing.dndResponseDelayMinutes === "number")
+      merged.dndResponseDelayMinutes = existing.dndResponseDelayMinutes;
     return preserveAutonomousScheduleControls(merged, existing);
   }
 
@@ -461,12 +481,17 @@ export async function conversationRoutes(app: FastifyInstance) {
         charData.description ?? "",
         charData.personality ?? "",
         guidance,
-        req.body.schedule ? `Current draft schedule:\n${summarizePreviousSchedule(req.body.schedule).join("\n")}` : undefined,
+        req.body.schedule
+          ? `Current draft schedule:\n${summarizePreviousSchedule(req.body.schedule).join("\n")}`
+          : undefined,
         {
           draftMode: parseWeekScheduleDraftMode(req.body.draftMode),
         },
       );
-      const fullSchedule = preserveDraftScheduleFields({ ...schedule, weekStart: getMonday().toISOString() }, req.body.schedule);
+      const fullSchedule = preserveDraftScheduleFields(
+        { ...schedule, weekStart: getMonday().toISOString() },
+        req.body.schedule,
+      );
       return reply.send({ schedule: fullSchedule });
     } catch (error) {
       logger.error(error instanceof Error ? error : undefined, "[schedule] Draft generation failed");
@@ -540,14 +565,7 @@ export async function conversationRoutes(app: FastifyInstance) {
           ? JSON.parse(chat.characterIds)
           : chat.characterIds;
 
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const provider = await createConversationAgentProvider(conn, baseUrl);
     const model = conn.model ?? "";
     const mondayStr = getMonday().toISOString();
 

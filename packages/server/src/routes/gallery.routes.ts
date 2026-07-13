@@ -37,7 +37,12 @@ import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { resolveReviewedImagePromptSubmission } from "../services/image/image-prompt-review.js";
 import { runImageGenerationRequest } from "../services/image/image-generation-queue.js";
 import { persistGeneratedImageToEntityGalleries } from "../services/image/generated-image-entity-gallery.js";
+import {
+  resolveImageConnectionFallback,
+  resolveVideoConnectionFallback,
+} from "../services/generation/media-connection-fallback.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../services/llm/local-sidecar.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
 import { isNovelAiImageConnection, resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
@@ -555,6 +560,7 @@ export async function galleryRoutes(app: FastifyInstance) {
       promptOverride: input.promptOverride,
       maxPromptLength: videoRuntime.promptLimits.finalPrompt,
     });
+    const videoFallback = await resolveVideoConnectionFallback(connections, videoConnectionId);
 
     return {
       videoConnectionId,
@@ -563,6 +569,7 @@ export async function galleryRoutes(app: FastifyInstance) {
       durationSeconds,
       aspectRatio,
       prompt,
+      videoFallback,
     };
   }
 
@@ -784,7 +791,8 @@ export async function galleryRoutes(app: FastifyInstance) {
       logDebugOverride(debugOverrideEnabled, message, ...args);
     };
     const sceneVideos = createGameSceneVideosStorage(app.db);
-    const { videoConnectionId, galleryImage, videoRuntime, durationSeconds, aspectRatio, prompt } = prepared;
+    const { videoConnectionId, galleryImage, videoRuntime, durationSeconds, aspectRatio, prompt, videoFallback } =
+      prepared;
     const { source, serviceHint, baseUrl, apiKey, model, resolution, publicReferenceUpload } = videoRuntime;
 
     const galleryImagePath = resolveGalleryImagePath(galleryImage);
@@ -826,6 +834,7 @@ export async function galleryRoutes(app: FastifyInstance) {
         referenceImage,
         publicReferenceUpload,
         signal: sceneVideoAbortSignal,
+        fallback: videoFallback,
       });
       const filePath = await saveVideoToDisk(input.chatId, generated.base64);
       savedFilePath = filePath;
@@ -928,7 +937,8 @@ export async function galleryRoutes(app: FastifyInstance) {
     });
 
     const selfieAbortSignal = createResponseAbortSignal(reply, SCENE_VIDEO_GENERATION_TIMEOUT_MS, "Selfie generation");
-    const promptBuilder = useLocalSidecar
+    const promptFallbackConnection = await connections.getFallbackForAgents();
+    const primaryPromptBuilder = useLocalSidecar
       ? getLocalSidecarProvider()
       : createLLMProvider(
           chatConn!.provider,
@@ -940,6 +950,13 @@ export async function galleryRoutes(app: FastifyInstance) {
           chatConn!.claudeFastMode === "true",
           chatConn!.treatAsLocalEndpoint === "true",
         );
+    const promptBuilder = withConnectionFallbackProvider({
+      primary: primaryPromptBuilder,
+      primaryConnectionId: useLocalSidecar ? LOCAL_SIDECAR_CONNECTION_ID : chatConn!.id,
+      fallbackConnection: promptFallbackConnection,
+      fallbackBaseUrl: promptFallbackConnection ? resolveBaseUrl(promptFallbackConnection) : "",
+      category: "agents",
+    });
     const promptContext = input.context?.trim()
       ? `Context for the selfie: ${input.context.trim()}`
       : `Generate a casual selfie of ${characterName} based on the current conversation context.`;
@@ -1083,6 +1100,7 @@ export async function galleryRoutes(app: FastifyInstance) {
     }
 
     try {
+      const imageFallback = await resolveImageConnectionFallback(connections, imageConn.id);
       const imageConnectionQueueKey = imageConn.id?.trim() || `${imageServiceHint}:${imageBaseUrl}:${imageModel}`;
       const imageResult = await runImageGenerationRequest({
         connectionKey: imageConnectionQueueKey,
@@ -1100,6 +1118,7 @@ export async function galleryRoutes(app: FastifyInstance) {
             imageDefaults,
             referenceImages,
             signal: selfieAbortSignal,
+            fallback: imageFallback,
           }),
       });
       const filePath = saveImageToDisk(chatId, imageResult.base64, imageResult.ext);

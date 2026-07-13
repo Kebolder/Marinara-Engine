@@ -141,11 +141,14 @@ function getDayKey(dateStr: string): string {
 
 /** Check if a message's content uses "Name: text" format with known chat-member character names */
 function getKnownChatMemberNames(characterMap: CharacterMap, chatCharacterIds: string[]): Set<string> {
-  return new Set(
-    chatCharacterIds
-      .map((id) => normalizeTextForMatch(characterMap.get(id)?.name))
-      .filter((name): name is string => typeof name === "string" && name.length > 0),
-  );
+  const names = new Set<string>();
+  for (const id of chatCharacterIds) {
+    const character = characterMap.get(id);
+    for (const candidate of [character?.name, character?.convoDisplayName]) {
+      if (candidate?.trim()) names.add(normalizeTextForMatch(candidate));
+    }
+  }
+  return names;
 }
 
 function hasNamePrefixFormat(content: string, knownNames: Set<string>): boolean {

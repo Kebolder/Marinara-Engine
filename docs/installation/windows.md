@@ -12,7 +12,7 @@ Marinara Engine runs on your own Windows PC. You need the following:
 
 Both install methods need two tools. The installer can fetch them for you. For the source method you install them yourself:
 
-- **Node.js** version 24 or 25. Node.js runs the app. Version 24 is the LTS release. LTS means Long Term Support, a stable version.
+- **Node.js** version 24, 25, or 26. Node.js runs the app. Version 24 is the recommended LTS release. LTS means Long Term Support, a stable version.
 - **Git**. Git downloads the code and lets the app update itself later.
 
 pnpm is the package manager that installs the app's parts. If you use the installer or the **start.bat** launcher, you do not need to install pnpm yourself. Both fetch the correct pnpm version through Corepack, a pnpm helper included with Node.js, or through a temporary download. Only the manual setup without the launcher needs the `pnpm` command on your system. That section includes the install step.
@@ -63,7 +63,7 @@ https://nodejs.org/en/download
 https://git-scm.com/download/win
 ```
 
-3. Open a new Command Prompt window. Check that Node.js is version 24 or 25:
+3. Open a new Command Prompt window. Check that Node.js is version 24, 25, or 26:
 
 ```bat
 node -v
@@ -262,7 +262,7 @@ git checkout -B staging origin/staging
 
 ## If something goes wrong
 
-If the install or launch fails, first make sure Node.js is version 24 or 25 and that Git is installed. If your antivirus blocks the installer or the download, that is a known false alarm as noted above.
+If the install or launch fails, first make sure Node.js is version 24, 25, or 26 and that Git is installed. If your antivirus blocks the installer or the download, that is a known false alarm as noted above.
 
 For more fixes, see the [Troubleshooting Marinara Engine](../TROUBLESHOOTING.md) guide.
 

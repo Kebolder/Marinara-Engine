@@ -1379,7 +1379,7 @@ export function PersonaEditor() {
               value={formData.comment}
               onChange={(e) => updateField("comment", e.target.value)}
               className="mari-editor-subtitle-input"
-              placeholder="Comment (e.g. 'Modern AU version')"
+              placeholder="Title / comment (e.g. 'Modern AU version')"
             />
             <p className="mari-editor-meta text-[0.625rem]">
               {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.personaVersion || "1.0"}
@@ -2734,7 +2734,7 @@ function PersonaMetadataTab({
     <div className="space-y-5">
       <SectionHeader
         title="Metadata"
-        subtitle="Basic persona info — name, creator, version, avatar, tags."
+        subtitle="Basic persona info: name, title, creator, version, avatar, tags."
         helpText={PERSONA_METADATA_HELP}
       />
 
@@ -2771,7 +2771,7 @@ function PersonaMetadataTab({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
             Name{" "}
             <HelpTooltip text="Your persona's display name. This is injected into prompts as the user's persona identity." />
@@ -2783,16 +2783,16 @@ function PersonaMetadataTab({
             placeholder="Persona name"
           />
         </label>
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Creator{" "}
-            <HelpTooltip text="The person who made this persona. Useful for credit when sharing persona cards." />
+            Title / comment{" "}
+            <HelpTooltip text="A short note shown under the persona name in the library, useful for variants or alternate versions." />
           </span>
           <input
-            value={formData.creator}
-            onChange={(e) => updateField("creator", e.target.value)}
+            value={formData.comment}
+            onChange={(e) => updateField("comment", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Your name"
+            placeholder="Modern AU version"
           />
         </label>
         <label className="space-y-1.5">
@@ -2809,14 +2809,14 @@ function PersonaMetadataTab({
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Title / Comment{" "}
-            <HelpTooltip text="A short private note shown under the persona name in the library, useful for variants or alternate versions." />
+            Creator{" "}
+            <HelpTooltip text="The person who made this persona. Useful for credit when sharing persona cards." />
           </span>
           <input
-            value={formData.comment}
-            onChange={(e) => updateField("comment", e.target.value)}
+            value={formData.creator}
+            onChange={(e) => updateField("creator", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Modern AU version"
+            placeholder="Your name"
           />
         </label>
         <label className="space-y-1.5">

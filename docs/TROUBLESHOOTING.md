@@ -236,6 +236,21 @@ Exit status 134 usually means Android ran out of memory during a build step. Upd
 
 If it still stops, close other Android apps, reopen Termux, and run the command again.
 
+### Android update runs out of storage while installing dependencies
+
+The built Marinara app is not several gigabytes, and Noodle does not download its own AI models. A large temporary footprint during an update usually comes from pnpm's dependency store and virtual store, especially after several releases or an interrupted forced reinstall.
+
+The current launcher prunes packages left over from older releases and avoids rebuilding the dependency store more than once for the same update. If an older launcher already filled the device, update the launcher and reclaim its unreferenced cache before trying again:
+
+```bash
+cd Marinara-Engine
+git pull --ff-only
+pnpm store prune
+./start-termux.sh
+```
+
+Do not delete `data`, `storage`, or `marinara-engine.db`; those locations may contain your chats and settings. If the command still stops, capture the lines beginning at `Installing dependencies` and include the phone's free-space and memory figures in the report.
+
 ### Container permission denied on a volume mount
 
 If a Docker or Podman container fails with permission errors on the data volume:

@@ -36,7 +36,7 @@ pkg update -y && pkg install -y git nodejs-lts && ([ -d "$HOME/Marinara-Engine/.
 This one command does five things:
 
 1. Updates the Termux packages.
-2. Installs Git and Node.js. Marinara needs Node.js version 24 or 25.
+2. Installs Git and Node.js. Marinara supports Node.js versions 24, 25, and 26.
 3. Downloads Marinara Engine, unless it is already installed.
 4. Makes the launcher (the `start-termux.sh` script) runnable.
 5. Runs the launcher for the first time.
@@ -68,6 +68,8 @@ The launcher checks for updates, then starts Marinara. To start your current cop
 cd Marinara-Engine
 ./start-termux.sh --skip-update
 ```
+
+The launcher also removes unreferenced packages from its local pnpm cache during dependency updates. This keeps old releases from accumulating several gigabytes on the phone; it does not touch Marinara chats, settings, or other user data.
 
 ## Access from another device
 

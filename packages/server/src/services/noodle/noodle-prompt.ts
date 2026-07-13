@@ -323,12 +323,13 @@ export function noodleTimelineFeatureInstructions(settings: NoodleTimelineFeatur
     ...(settings.allowRandomUsers
       ? [
           "- Use only the active accounts listed by entityId. Do not invent accounts.",
+          "- Character accounts are the primary cast. Random-user activity should be occasional supporting texture and must never dominate the generated posts or interactions.",
           "- A small minority of posts from random_user accounts may be obvious parody advertisements or absurd fake crypto scams. Usually generate none and never more than one per refresh. Keep every company, product, coin, ticker, price, and financial claim invented, visibly ridiculous, and non-actionable. Never imitate a real company or include real or usable links, wallet addresses, financial advice, or scam instructions.",
         ]
       : []),
     ...(settings.enableImagePrompts
       ? [
-          "- When image generation is enabled, imagePrompt should be a concrete visual idea for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post.",
+          "- When image generation is enabled, imagePrompt must contain only the final concrete visual description for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post. Do not put the post JSON, field names, meta-commentary, instructions to another model, or the full post text inside imagePrompt.",
         ]
       : []),
     ...(settings.allowGalleryImageAttachments

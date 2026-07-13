@@ -27,6 +27,7 @@ import { isImageLocalUrlsEnabled } from "../../config/runtime-config.js";
 import { generateRunPodComfyUI } from "./runpod-comfyui.service.js";
 import { logger } from "../../lib/logger.js";
 import { assertInsideDir, normalizeLoopbackUrl, safeFetch, validateOutboundUrl } from "../../utils/security.js";
+import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
 
 // sharp is an optional native module (no prebuilds on some platforms like Termux).
 // Lazy-load so the server boots even when sharp is missing. The Draw Things img2img
@@ -100,6 +101,22 @@ export interface ImageGenRequest {
   transparentBackground?: boolean;
   /** Optional caller-owned abort signal for cancelling long image requests. */
   signal?: AbortSignal;
+  /** Called immediately before a configured fallback connection is attempted. */
+  onFallback?: GenerationFallbackNotifier;
+  /** Optional one-shot backup connection used only when the primary image request fails. */
+  fallback?: {
+    connectionId: string;
+    connectionName: string;
+    provider: string;
+    source: string;
+    baseUrl: string;
+    apiKey: string;
+    serviceHint: string;
+    model: string;
+    imageEndpointId?: string;
+    comfyWorkflow?: string;
+    imageDefaults?: ImageGenerationDefaultsProfile | null;
+  };
 }
 
 export interface ImageGenResult {
@@ -109,6 +126,13 @@ export interface ImageGenResult {
   mimeType: string;
   /** File extension without dot */
   ext: string;
+  /** Present when a configured fallback connection produced the image. */
+  effectiveConnection?: {
+    connectionId: string;
+    connectionName: string;
+    provider: string;
+    model: string;
+  };
 }
 
 const EXPLICIT_IMAGE_SOURCES = new Set([
@@ -171,54 +195,93 @@ export async function generateImage(
       ? Math.max(IMAGE_GEN_TIMEOUT, COMFYUI_GEN_TIMEOUT_SECONDS * 1000)
       : IMAGE_GEN_TIMEOUT;
 
-  return withImageGenerationDeadline(request, generationTimeoutMs, async (signal) => {
-    const scopedRequest = {
-      ...request,
-      signal,
-      allowLocalUrls:
-        request.allowLocalUrls ?? (await shouldAllowLocalUrlsForImageConnection(normalizedBaseUrl, resolvedSource)),
-    };
+  try {
+    return await withImageGenerationDeadline(request, generationTimeoutMs, async (signal) => {
+      const scopedRequest = {
+        ...request,
+        fallback: undefined,
+        signal,
+        allowLocalUrls:
+          request.allowLocalUrls ?? (await shouldAllowLocalUrlsForImageConnection(normalizedBaseUrl, resolvedSource)),
+      };
 
-    switch (resolvedSource) {
-      case "openai":
-        return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "nanogpt":
-        return generateNanoGPT(normalizedBaseUrl, apiKey, scopedRequest);
-      case "openrouter":
-        return generateOpenRouter(normalizedBaseUrl, apiKey, scopedRequest);
-      case "pollinations":
-        return generatePollinations(scopedRequest);
-      case "stability":
-        return generateStability(normalizedBaseUrl, apiKey, scopedRequest);
-      case "togetherai":
-        return generateTogetherAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "novelai":
-        return generateNovelAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "horde":
-        return generateHorde(normalizedBaseUrl, apiKey, scopedRequest);
-      case "xai":
-        return generateXAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "comfyui":
-        return generateComfyUI(normalizedBaseUrl, scopedRequest);
-      case "runpod_comfyui": {
-        const endpointId = scopedRequest.imageEndpointId || "";
-        if (!endpointId) {
-          throw new Error(
-            "RunPod ComfyUI requires an endpoint ID. " +
-              "Enter your RunPod endpoint ID in the Endpoint ID field (e.g. 'abc123def456').",
-          );
+      switch (resolvedSource) {
+        case "openai":
+          return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "nanogpt":
+          return generateNanoGPT(normalizedBaseUrl, apiKey, scopedRequest);
+        case "openrouter":
+          return generateOpenRouter(normalizedBaseUrl, apiKey, scopedRequest);
+        case "pollinations":
+          return generatePollinations(scopedRequest);
+        case "stability":
+          return generateStability(normalizedBaseUrl, apiKey, scopedRequest);
+        case "togetherai":
+          return generateTogetherAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "novelai":
+          return generateNovelAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "horde":
+          return generateHorde(normalizedBaseUrl, apiKey, scopedRequest);
+        case "xai":
+          return generateXAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "comfyui":
+          return generateComfyUI(normalizedBaseUrl, scopedRequest);
+        case "runpod_comfyui": {
+          const endpointId = scopedRequest.imageEndpointId || "";
+          if (!endpointId) {
+            throw new Error(
+              "RunPod ComfyUI requires an endpoint ID. " +
+                "Enter your RunPod endpoint ID in the Endpoint ID field (e.g. 'abc123def456').",
+            );
+          }
+          return generateRunPodComfyUI(normalizedBaseUrl, endpointId, apiKey, scopedRequest);
         }
-        return generateRunPodComfyUI(normalizedBaseUrl, endpointId, apiKey, scopedRequest);
+        case "automatic1111":
+          return generateAutomatic1111(normalizedBaseUrl, scopedRequest, serviceHint);
+        case "gemini_image":
+          return generateViaChatCompletions(normalizedBaseUrl, apiKey, scopedRequest);
+        default:
+          return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
       }
-      case "automatic1111":
-        return generateAutomatic1111(normalizedBaseUrl, scopedRequest, serviceHint);
-      case "gemini_image":
-        return generateViaChatCompletions(normalizedBaseUrl, apiKey, scopedRequest);
-      default:
-        // Fallback: try OpenAI-compatible endpoint
-        return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
+    });
+  } catch (error) {
+    const fallback = request.fallback;
+    if (!fallback || request.signal?.aborted) throw error;
+    logger.warn(
+      error,
+      "[illustrator-fallback] Primary image generation failed; retrying with connection %s (%s)",
+      fallback.connectionId,
+      fallback.model,
+    );
+    try {
+      await (request.onFallback ?? notifyGenerationFallback)({
+        category: "illustrator",
+        connectionId: fallback.connectionId,
+        connectionName: fallback.connectionName,
+        model: fallback.model,
+      });
+    } catch (noticeError) {
+      logger.warn(noticeError, "[illustrator-fallback] Failed to report fallback activation");
     }
-  });
+    const result = await generateImage(fallback.source, fallback.baseUrl, fallback.apiKey, fallback.serviceHint, {
+      ...request,
+      fallback: undefined,
+      model: fallback.model,
+      imageEndpointId: fallback.imageEndpointId,
+      comfyWorkflow: fallback.comfyWorkflow,
+      imageDefaults: fallback.imageDefaults,
+      allowLocalUrls: undefined,
+    });
+    return {
+      ...result,
+      effectiveConnection: {
+        connectionId: fallback.connectionId,
+        connectionName: fallback.connectionName,
+        provider: fallback.provider,
+        model: fallback.model,
+      },
+    };
+  }
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
 } from "@marinara-engine/shared";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import type { ConversationCallCharacterVideoClipKind, ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
@@ -29,6 +30,7 @@ import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
+import { resolveImageConnectionFallback } from "../services/generation/media-connection-fallback.js";
 import {
   ConversationCallVideoClipAvatarMismatchError,
   ConversationCallVideoClipNotFoundError,
@@ -61,6 +63,8 @@ import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
 import { newId } from "../utils/id-generator.js";
+import { resolveBaseUrl } from "./generate/generate-route-utils.js";
+import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
 
 const CHARACTER_GALLERY_ROOT = join(DATA_DIR, "gallery", "characters");
 const PERSONA_GALLERY_ROOT = join(DATA_DIR, "gallery", "personas");
@@ -572,7 +576,7 @@ export async function charactersRoutes(app: FastifyInstance) {
    * non-streaming. The prompt deliberately produces an IN-CHARACTER bio, which
    * for many characters means something short, empty, joking, or barely there.
    */
-  app.post("/generate-about-me", async (req) => {
+  app.post("/generate-about-me", async (req, reply) => {
     const input = generateAboutMeSchema.parse(req.body);
     const conn = await connections.getWithKey(input.connectionId);
     if (!conn) throw Object.assign(new Error("API connection not found"), { statusCode: 400 });
@@ -583,14 +587,22 @@ export async function charactersRoutes(app: FastifyInstance) {
     if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
     if (!baseUrl) throw Object.assign(new Error("No base URL configured for this connection"), { statusCode: 400 });
 
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const fallbackConnection = await connections.getFallbackForAgents();
+    const provider = withConnectionFallbackProvider({
+      primary: createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+      ),
+      primaryConnectionId: conn.id,
+      fallbackConnection,
+      fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+      category: "agents",
+      onFallback: createReplyFallbackNotifier(reply),
+    });
 
     const who = input.kind === "persona" ? "this user persona" : "this character";
     const systemPrompt = [
@@ -800,6 +812,7 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imgSource = conn.imageGenerationSource || imgModel;
     const imgServiceHint = conn.imageService || imgSource;
     const imageDefaults = resolveConnectionImageDefaults(conn);
+    const imageFallback = await resolveImageConnectionFallback(connections, conn.id);
     const compiled = promptOverride
       ? {
           prompt: promptOverride.prompt,
@@ -825,6 +838,8 @@ export async function charactersRoutes(app: FastifyInstance) {
         imageEndpointId: conn.imageEndpointId || undefined,
         comfyWorkflow: conn.comfyuiWorkflow || undefined,
         imageDefaults,
+        fallback: imageFallback,
+        onFallback: createReplyFallbackNotifier(reply),
       });
       return {
         image: `data:${result.mimeType};base64,${result.base64}`,

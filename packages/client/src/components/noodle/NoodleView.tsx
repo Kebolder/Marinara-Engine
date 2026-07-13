@@ -1046,6 +1046,9 @@ export function NoodleView() {
   );
   const noodleCustomEmojiMap = useNoodleCustomEmojiMap(viewedProfileAccount);
   const viewingOwnProfile = Boolean(personaAccount && viewedProfileAccount?.id === personaAccount.id);
+  const canEditViewedProfile = Boolean(
+    viewingOwnProfile || (viewedProfileAccount?.kind === "character" && viewedProfileAccount.invited),
+  );
 
   useEffect(() => {
     // Do not erase the persisted choice while the account/persona queries are
@@ -1079,15 +1082,15 @@ export function NoodleView() {
   }, [settings?.imageGenerationPrompt]);
 
   useEffect(() => {
-    if (!personaAccount) return;
-    setProfileHandle(personaAccount.handle);
-    setProfileName(personaAccount.displayName);
-    setProfileBio(personaAccount.bio);
-    setProfileAvatarUrl(personaAccount.avatarUrl ?? "");
-    setProfileBannerUrl(readAccountSetting(personaAccount, "bannerUrl"));
-    setProfileLocation(readAccountSetting(personaAccount, "location"));
+    if (!viewedProfileAccount) return;
+    setProfileHandle(viewedProfileAccount.handle);
+    setProfileName(viewedProfileAccount.displayName);
+    setProfileBio(viewedProfileAccount.bio);
+    setProfileAvatarUrl(viewedProfileAccount.avatarUrl ?? "");
+    setProfileBannerUrl(readAccountSetting(viewedProfileAccount, "bannerUrl"));
+    setProfileLocation(readAccountSetting(viewedProfileAccount, "location"));
     setProfileEditing(false);
-  }, [personaAccount]);
+  }, [viewedProfileAccount]);
 
   useEffect(() => {
     setInviteCharacterLimit(NOODLE_INVITE_PAGE_SIZE);
@@ -1130,16 +1133,16 @@ export function NoodleView() {
   };
 
   const saveProfile = () => {
-    if (!personaAccount) return;
+    if (!viewedProfileAccount || !canEditViewedProfile) return;
     const normalizedHandle = profileHandle.trim().replace(/^@+/, "");
     const nextSettings = {
-      ...personaAccount.settings,
+      ...viewedProfileAccount.settings,
       bannerUrl: profileBannerUrl.trim(),
       location: profileLocation.trim(),
     };
     updateAccount.mutate(
       {
-        id: personaAccount.id,
+        id: viewedProfileAccount.id,
         handle: normalizedHandle,
         displayName: profileName.trim(),
         bio: profileBio,
@@ -1173,14 +1176,14 @@ export function NoodleView() {
           if (target === "avatar") setProfileAvatarUrl(image.url);
           else setProfileBannerUrl(image.url);
 
-          if (!personaAccount) return;
+          if (!viewedProfileAccount || !canEditViewedProfile) return;
           updateAccount.mutate(
             target === "avatar"
-              ? { id: personaAccount.id, avatarUrl: image.url }
+              ? { id: viewedProfileAccount.id, avatarUrl: image.url }
               : {
-                  id: personaAccount.id,
+                  id: viewedProfileAccount.id,
                   settings: {
-                    ...personaAccount.settings,
+                    ...viewedProfileAccount.settings,
                     bannerUrl: image.url,
                   },
                 },
@@ -1420,13 +1423,15 @@ export function NoodleView() {
           ? resetNoodleTimeline.isPending
           : false;
   const normalizedProfileHandle = profileHandle.trim().replace(/^@+/, "");
-  const isEditingOwnProfile = viewingOwnProfile && profileEditing;
-  const profileDisplayName = viewingOwnProfile
+  const isEditingProfile = canEditViewedProfile && profileEditing;
+  const profileDisplayName = canEditViewedProfile
     ? profileName.trim() || viewedProfileAccount?.displayName || "Noodle Account"
     : viewedProfileAccount?.displayName || "Noodle Account";
-  const profileDisplayHandle = viewingOwnProfile ? normalizedProfileHandle : (viewedProfileAccount?.handle ?? "noodle");
-  const profileBioPreview = viewingOwnProfile ? profileBio.trim() : (viewedProfileAccount?.bio.trim() ?? "");
-  const profileAvatarPreview = viewingOwnProfile
+  const profileDisplayHandle = canEditViewedProfile
+    ? normalizedProfileHandle
+    : (viewedProfileAccount?.handle ?? "noodle");
+  const profileBioPreview = canEditViewedProfile ? profileBio.trim() : (viewedProfileAccount?.bio.trim() ?? "");
+  const profileAvatarPreview = canEditViewedProfile
     ? profileAvatarUrl.trim() || null
     : (viewedProfileAccount?.avatarUrl ?? null);
   const profileAvatarCropPreview =
@@ -1438,13 +1443,13 @@ export function NoodleView() {
     avatarUrl: profileAvatarPreview,
     avatarCrop: profileAvatarCropPreview,
   };
-  const profileBannerPreview = viewingOwnProfile
+  const profileBannerPreview = canEditViewedProfile
     ? profileBannerUrl.trim()
     : readAccountSetting(viewedProfileAccount, "bannerUrl");
-  const profileLocationPreview = viewingOwnProfile
+  const profileLocationPreview = canEditViewedProfile
     ? profileLocation.trim()
     : readAccountSetting(viewedProfileAccount, "location");
-  const canSaveProfile = Boolean(viewingOwnProfile && profileName.trim() && normalizedProfileHandle);
+  const canSaveProfile = Boolean(canEditViewedProfile && profileName.trim() && normalizedProfileHandle);
   const rawPostSearch = postSearch.trim();
   const normalizedPostSearch = rawPostSearch.toLowerCase();
   const isAccountSearch = rawPostSearch.includes("@");
@@ -4818,14 +4823,14 @@ export function NoodleView() {
                   <button
                     type="button"
                     onClick={() => {
-                      if (viewingOwnProfile) bannerFileRef.current?.click();
+                      if (canEditViewedProfile) bannerFileRef.current?.click();
                     }}
-                    disabled={!viewingOwnProfile || profileUploadTarget === "banner"}
+                    disabled={!canEditViewedProfile || profileUploadTarget === "banner"}
                     className={cn(
                       "relative block h-40 w-full overflow-hidden bg-[var(--noodle-blue)]/15 text-left disabled:cursor-default",
                       profileUploadTarget === "banner" && "cursor-wait opacity-80",
                     )}
-                    title={viewingOwnProfile ? "Upload banner" : undefined}
+                    title={canEditViewedProfile ? "Upload banner" : undefined}
                   >
                     {profileBannerPreview ? (
                       <img src={profileBannerPreview} alt="" className="h-full w-full object-cover" />
@@ -4853,14 +4858,14 @@ export function NoodleView() {
                       <button
                         type="button"
                         onClick={() => {
-                          if (viewingOwnProfile) avatarFileRef.current?.click();
+                          if (canEditViewedProfile) avatarFileRef.current?.click();
                         }}
-                        disabled={!viewingOwnProfile || profileUploadTarget === "avatar"}
+                        disabled={!canEditViewedProfile || profileUploadTarget === "avatar"}
                         className={cn(
                           "relative rounded-full bg-[var(--background)] p-1 text-left disabled:cursor-default",
                           profileUploadTarget === "avatar" && "cursor-wait opacity-80",
                         )}
-                        title={viewingOwnProfile ? "Upload avatar" : undefined}
+                        title={canEditViewedProfile ? "Upload avatar" : undefined}
                       >
                         <Avatar account={profilePreviewAccount} size="lg" />
                         {profileUploadTarget === "avatar" && (
@@ -4876,17 +4881,17 @@ export function NoodleView() {
                         className="hidden"
                         onChange={(event) => handleProfileImageFile("avatar", event)}
                       />
-                      {viewingOwnProfile ? (
+                      {canEditViewedProfile ? (
                         <button
                           type="button"
                           onClick={() => {
-                            if (isEditingOwnProfile) saveProfile();
+                            if (isEditingProfile) saveProfile();
                             else setProfileEditing(true);
                           }}
-                          disabled={isEditingOwnProfile ? !canSaveProfile || updateAccount.isPending : !personaAccount}
+                          disabled={isEditingProfile ? !canSaveProfile || updateAccount.isPending : !viewedProfileAccount}
                           className="mb-1 h-9 rounded-full bg-[var(--noodle-blue)] px-5 text-xs font-bold text-zinc-950 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          {isEditingOwnProfile ? (updateAccount.isPending ? "Saving" : "Save") : "Edit Profile"}
+                          {isEditingProfile ? (updateAccount.isPending ? "Saving" : "Save") : "Edit Profile"}
                         </button>
                       ) : canFollowViewedProfile && viewedProfileAccount ? (
                         <button
@@ -4905,7 +4910,7 @@ export function NoodleView() {
                       ) : null}
                     </div>
 
-                    {isEditingOwnProfile ? (
+                    {isEditingProfile ? (
                       <div className="mt-3 space-y-3">
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                           <label className="block space-y-1.5">

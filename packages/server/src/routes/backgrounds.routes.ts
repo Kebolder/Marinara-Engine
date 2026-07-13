@@ -19,6 +19,7 @@ import { createPromptOverridesStorage } from "../services/storage/prompt-overrid
 import { buildBackgroundProviderPrompt, generateChatBackground } from "../services/game/game-asset-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
+import { resolveImageConnectionFallback } from "../services/generation/media-connection-fallback.js";
 import { resolveGameSetupArtStylePrompt } from "@marinara-engine/shared";
 
 const BG_DIR = join(DATA_DIR, "backgrounds");
@@ -292,6 +293,7 @@ export async function backgroundsRoutes(app: FastifyInstance) {
             .catch(() => null)
         : null;
     const imageSettings = await loadImageGenerationUserSettings(app.db);
+    const imageFallback = await resolveImageConnectionFallback(connections, imgConn.id);
     const styleProfileId =
       readTrimmedString(setupConfig.imageStyleProfileId) ?? readTrimmedString(metadata.imageStyleProfileId);
     const locationSlug = input.locationSlug?.trim() || input.reason?.trim() || chat.name || "current-scene";
@@ -303,6 +305,7 @@ export async function backgroundsRoutes(app: FastifyInstance) {
         metadata,
         mode,
         imageSettings,
+        imageFallback,
         imgConn,
         gameState,
         setupConfig,
@@ -339,6 +342,7 @@ export async function backgroundsRoutes(app: FastifyInstance) {
       imgEndpointId: context.imgConn.imageEndpointId || undefined,
       imgComfyWorkflow: context.imgConn.comfyuiWorkflow || undefined,
       imgDefaults: resolveConnectionImageDefaults(context.imgConn),
+      imgFallback: context.imageFallback,
       styleProfiles: context.imageSettings.styleProfiles,
       styleProfileId: context.styleProfileId,
       promptOverridesStorage: createPromptOverridesStorage(app.db),
@@ -389,6 +393,7 @@ export async function backgroundsRoutes(app: FastifyInstance) {
       imgEndpointId: context.imgConn.imageEndpointId || undefined,
       imgComfyWorkflow: context.imgConn.comfyuiWorkflow || undefined,
       imgDefaults: resolveConnectionImageDefaults(context.imgConn),
+      imgFallback: context.imageFallback,
       styleProfiles: context.imageSettings.styleProfiles,
       styleProfileId: context.styleProfileId,
       debugLog: context.debugLog,

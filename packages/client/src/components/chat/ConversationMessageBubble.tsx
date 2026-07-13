@@ -229,7 +229,7 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                   {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
                     const segChar =
                       grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
-                    const segName = segChar?.name ?? grp.speaker ?? "";
+                    const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
                     const segColor = segChar?.nameColor;
                     const combinedText = grp.lines.join("\n");
                     if (!grp.speaker) {

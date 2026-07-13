@@ -1991,7 +1991,7 @@ export function ConnectionEditor() {
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 {isGrokSubscriptionProvider
-                  ? "Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. A value you set here is used as-is — raise it gradually, and lower it if requests start failing with \"max turns reached\"."
+                  ? 'Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. A value you set here is used as-is — raise it gradually, and lower it if requests start failing with "max turns reached".'
                   : "This is auto-set when selecting a model from the list. Override manually if needed."}
               </p>
             </FieldGroup>
@@ -2207,50 +2207,12 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Default for Agents ── */}
-          <FieldGroup
-            label={
-              isImageGenerationProvider
-                ? "Default for Illustrator"
-                : isVideoGenerationProvider
-                  ? "Default for Videos"
-                  : "Default for Agents"
-            }
-            icon={<Sparkles size="0.875rem" className="text-sky-400" />}
-            help={
-              isImageGenerationProvider
-                ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
-                : isVideoGenerationProvider
-                  ? "When enabled, Marinara uses this video generation connection by default when a chat has no specific Video Generation Connection assigned."
-                  : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
-            }
-          >
-            <SettingsSwitch
-              label={
-                isImageGenerationProvider
-                  ? "Use as default Illustrator agent connection"
-                  : isVideoGenerationProvider
-                    ? "Use as default video connection"
-                    : "Use as default agent connection"
-              }
-              checked={localDefaultForAgents}
-              onChange={(checked) => {
-                setLocalDefaultForAgents(checked);
-                markDirty();
-              }}
-              className="px-2 py-1"
-            />
-            {isImageGenerationProvider && (
-              <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Only one image generation connection should be marked as the default for the Illustrator agent.
-              </p>
-            )}
-            {isVideoGenerationProvider && (
-              <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Only one video generation connection should be marked as the default video connection.
-              </p>
-            )}
-            {isVideoGenerationProvider && selectedVideoDefaultsService === "seedance" && localVideoDefaults && (
+          {isVideoGenerationProvider && selectedVideoDefaultsService === "seedance" && localVideoDefaults && (
+            <FieldGroup
+              label="Seedance References"
+              icon={<Sparkles size="0.875rem" className="text-sky-400" />}
+              help="Controls temporary reference-frame uploads for Seedance video generations using this connection."
+            >
               <div className="mx-2 mt-2 space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
                 <SettingsSwitch
                   label="Upload Seedance reference frames temporarily"
@@ -2307,8 +2269,8 @@ export function ConnectionEditor() {
                   Marinara install.
                 </p>
               </div>
-            )}
-          </FieldGroup>
+            </FieldGroup>
+          )}
 
           {/* ── Claude (Subscription) — Fast Mode toggle ── */}
           {isClaudeSubscriptionProvider && (

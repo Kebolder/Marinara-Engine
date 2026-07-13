@@ -14,7 +14,6 @@ import {
   noodleBulkInviteSchema,
   noodleCreateInteractionSchema,
   noodleCreatePostSchema,
-  noodleGeneratedRefreshSchema,
   noodleInviteSchema,
   noodleInteractionOwnerSchema,
   noodleInteractionUpdateSchema,
@@ -42,6 +41,7 @@ import { createCharacterGalleryStorage } from "../services/storage/character-gal
 import { createNoodleStorage, parseNoodleAvatarCrop } from "../services/storage/noodle.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { generateImage, saveImageToDisk } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
@@ -52,6 +52,7 @@ import { resolveIllustratorCharacterReferences } from "./generate/illustrator-re
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import { clampGenerationMaxOutputTokens } from "../services/generation/output-token-limits.js";
+import { resolveImageConnectionFallback } from "../services/generation/media-connection-fallback.js";
 import {
   noodleRefreshSchedulerStatus,
   rescheduleNoodleRefreshTime,
@@ -91,6 +92,11 @@ import {
 import { chooseNoodleParticipantAccounts } from "../services/noodle/noodle-participant-selection.js";
 import { canCreateGeneratedNoodleInteraction } from "../services/noodle/noodle-interaction-policy.js";
 import { parseNoodleGeneratedProfiles } from "../services/noodle/noodle-generated-profiles.js";
+import {
+  parseNoodleGeneratedRefresh,
+  validateNoodleGeneratedRefresh,
+} from "../services/noodle/noodle-generated-refresh.js";
+import { normalizeNoodleImagePrompt } from "../services/noodle/noodle-image-prompt.js";
 
 const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
@@ -441,7 +447,10 @@ async function ensureProfessorMariAccount(
     invited: true,
     syncIdentity: true,
   });
-  if (account.bio !== PROFESSOR_MARI_NOODLE_BIO || !isProfileGenerated(account) || !account.settings.location) {
+  if (
+    account.settings.profileManuallyEdited !== true &&
+    (account.bio !== PROFESSOR_MARI_NOODLE_BIO || !isProfileGenerated(account) || !account.settings.location)
+  ) {
     await noodle.updateAccount(account.id, {
       handle: account.handle || "professor_mari",
       displayName: account.displayName || "Professor Mari",
@@ -1115,6 +1124,10 @@ async function generateNoodlePostImage(input: {
   const imageBaseUrl = input.imageConnection.baseUrl || "https://image.pollinations.ai";
   const imageSource = input.imageConnection.imageGenerationSource || imageModel;
   const imageServiceHint = input.imageConnection.imageService || imageSource;
+  const imageFallback = await resolveImageConnectionFallback(
+    createConnectionsStorage(input.app.db),
+    input.imageConnection.id,
+  );
   let characterDescription = "";
   let referenceImages: string[] | undefined;
 
@@ -1219,6 +1232,7 @@ async function generateNoodlePostImage(input: {
         comfyWorkflow: input.imageConnection.comfyuiWorkflow || undefined,
         imageDefaults,
         referenceImages,
+        fallback: imageFallback,
       }),
     (error, attempt, maxAttempts) => {
       logger.warn(
@@ -1320,7 +1334,30 @@ export async function noodleRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const parsed = noodleAccountUpdateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const updated = await noodle.updateAccount(id, parsed.data);
+    const existing = await noodle.getAccountById(id);
+    if (!existing) return reply.code(404).send({ error: "Noodle account not found" });
+    const profileFieldsChanged =
+      existing.kind === "character" &&
+      (parsed.data.handle !== undefined ||
+        parsed.data.displayName !== undefined ||
+        parsed.data.bio !== undefined ||
+        parsed.data.avatarUrl !== undefined ||
+        parsed.data.settings?.avatarCrop !== undefined ||
+        parsed.data.settings?.bannerUrl !== undefined ||
+        parsed.data.settings?.location !== undefined);
+    const updated = await noodle.updateAccount(id, {
+      ...parsed.data,
+      ...(profileFieldsChanged
+        ? {
+            settings: {
+              ...existing.settings,
+              ...parsed.data.settings,
+              ...(parsed.data.avatarUrl !== undefined ? { avatarCrop: null } : {}),
+              profileManuallyEdited: true,
+            },
+          }
+        : {}),
+    });
     if (!updated) return reply.code(404).send({ error: "Noodle account not found" });
     return updated;
   });
@@ -1520,7 +1557,7 @@ export async function noodleRoutes(app: FastifyInstance) {
     const [post, accounts] = await Promise.all([noodle.getPostById(postId), noodle.listAccounts()]);
     if (post && interactionActor) {
       const directReplyTarget = updated.parentInteractionId
-        ? (await noodle.getInteractionById(updated.parentInteractionId))
+        ? await noodle.getInteractionById(updated.parentInteractionId)
         : null;
       const mentionedAccounts = mentionedCharacterAccounts(accounts, updated.content ?? "");
       await noodle.createDigest({
@@ -1673,7 +1710,7 @@ export async function noodleRoutes(app: FastifyInstance) {
 
     try {
       const baseUrl = resolveBaseUrl(conn);
-      const provider = createLLMProvider(
+      const primaryProvider = createLLMProvider(
         conn.provider,
         baseUrl,
         conn.apiKey,
@@ -1683,6 +1720,14 @@ export async function noodleRoutes(app: FastifyInstance) {
         conn.claudeFastMode === "true",
         conn.treatAsLocalEndpoint === "true",
       );
+      const fallbackConnection = await connections.getFallbackForMain();
+      const provider = withConnectionFallbackProvider({
+        primary: primaryProvider,
+        primaryConnectionId: conn.id,
+        fallbackConnection,
+        fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+        category: "main",
+      });
       await ensurePersonaAccounts(noodle, characters);
       await ensureProfessorMariAccount(noodle, characters);
       const personaAccount = await resolvePersonaAccount(noodle, characters, parsed.data.personaId);
@@ -1811,6 +1856,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         debugMode,
         responseFormat: noodleResponseFormat(conn.model, "timeline"),
       } as const;
+      let requestMessages: ChatMessage[] = messages;
       let result: Awaited<ReturnType<typeof provider.chatComplete>>;
       try {
         result = await provider.chatComplete(messages, completionOptions);
@@ -1825,10 +1871,56 @@ export async function noodleRoutes(app: FastifyInstance) {
           "[debug/noodle] Text-only fallback prompt sent to model:\n%s",
           textOnlyPromptForLog,
         );
+        requestMessages = textOnlyMessages;
         result = await provider.chatComplete(textOnlyMessages, completionOptions);
       }
-      const content = result.content ?? "";
-      const generated = noodleGeneratedRefreshSchema.parse(parseGameJsonish(content));
+      let content = result.content ?? "";
+      let parsedGenerated: ReturnType<typeof parseNoodleGeneratedRefresh> | null = null;
+      let retryReason: string | null = null;
+      const allowedActorEntityIds = new Set(selectedParticipants.map((account) => account.entityId));
+      const knownEntityIds = new Set(activeAccounts.map((account) => account.entityId));
+      try {
+        parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
+        retryReason = validateNoodleGeneratedRefresh(parsedGenerated.refresh, allowedActorEntityIds, knownEntityIds);
+      } catch (error) {
+        retryReason = `the response was not valid timeline JSON (${getErrorMessage(error).slice(0, 180)})`;
+      }
+
+      if (retryReason) {
+        const allowedActorIds = selectedParticipants.map((account) => account.entityId);
+        const knownTargetIds = activeAccounts.map((account) => account.entityId);
+        logger.warn("[noodle] Retrying timeline generation because %s", retryReason);
+        const correction = [
+          "Your previous timeline response could not be used.",
+          `Reason: ${retryReason}.`,
+          `Regenerate the complete JSON object now. Authors and actors must use only these selected participant entityId values: ${allowedActorIds.join(", ")}.`,
+          `Follow targets may additionally use these known entityId values: ${knownTargetIds.join(", ")}.`,
+          "Do not invent, rename, or omit an authorEntityId, actorEntityId, or targetEntityId. Return JSON only.",
+        ].join("\n");
+        result = await provider.chatComplete([...requestMessages, { role: "user", content: correction }], completionOptions);
+        content = result.content ?? "";
+        parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
+        const correctedRetryReason = validateNoodleGeneratedRefresh(
+          parsedGenerated.refresh,
+          allowedActorEntityIds,
+          knownEntityIds,
+        );
+        if (correctedRetryReason) {
+          throw new Error(`Noodle timeline correction could not be used because ${correctedRetryReason}.`);
+        }
+      }
+
+      if (!parsedGenerated) throw new Error("Noodle timeline generation returned no usable response.");
+      const generated = parsedGenerated.refresh;
+      for (const rejected of parsedGenerated.rejected) {
+        logger.warn(
+          "[noodle] Ignoring malformed generated %s item at index %d (%d validation issue%s)",
+          rejected.collection,
+          rejected.index,
+          rejected.issueCount,
+          rejected.issueCount === 1 ? "" : "s",
+        );
+      }
       const entityToAccount = new Map(activeAccounts.map((account) => [account.entityId, account]));
       const mutableAccountSettings = new Map(
         activeAccounts.map((account) => [account.id, { ...account.settings }] as const),
@@ -1864,7 +1956,7 @@ export async function noodleRoutes(app: FastifyInstance) {
           continue;
         }
         const imagePrompt =
-          remainingImagePrompts > 0 && generatedPost.imagePrompt?.trim() ? generatedPost.imagePrompt.trim() : null;
+          remainingImagePrompts > 0 ? normalizeNoodleImagePrompt(generatedPost.imagePrompt) : null;
         if (imagePrompt) remainingImagePrompts -= 1;
         let persistedImagePrompt = imagePrompt;
         let imageUrl: string | null = null;

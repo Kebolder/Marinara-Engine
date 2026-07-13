@@ -5,9 +5,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { DEFAULT_TRANSLATION_SYSTEM_PROMPT, PROVIDERS, localAuthProviderBaseUrl } from "@marinara-engine/shared";
 import { isDeeplxLocalUrlsEnabled } from "../config/runtime-config.js";
 import { safeFetch, validateOutboundUrl } from "../utils/security.js";
+import { resolveBaseUrl } from "./generate/generate-route-utils.js";
+import type { GenerationFallbackNotifier } from "../services/generation/fallback-notification.js";
+import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
 
 const GOOGLE_MAX_LENGTH = 5000;
 
@@ -39,7 +43,7 @@ export async function translateRoutes(app: FastifyInstance) {
 
     switch (input.provider) {
       case "ai":
-        return await translateWithAI(input, connections);
+        return await translateWithAI(input, connections, createReplyFallbackNotifier(reply));
       case "deeplx":
         return await translateWithDeepLX(input);
       case "deepl":
@@ -56,6 +60,7 @@ export async function translateRoutes(app: FastifyInstance) {
 async function translateWithAI(
   input: z.infer<typeof translateSchema>,
   connections: ReturnType<typeof createConnectionsStorage>,
+  onFallback?: GenerationFallbackNotifier,
 ) {
   if (!input.connectionId) {
     throw Object.assign(new Error("Connection ID is required for AI translation"), { statusCode: 400 });
@@ -77,14 +82,22 @@ async function translateWithAI(
     throw Object.assign(new Error("No base URL configured for this connection"), { statusCode: 400 });
   }
 
-  const provider = createLLMProvider(
-    conn.provider,
-    baseUrl,
-    conn.apiKey,
-    conn.maxContext,
-    conn.openrouterProvider,
-    conn.maxTokensOverride,
-  );
+  const fallbackConnection = await connections.getFallbackForMain();
+  const provider = withConnectionFallbackProvider({
+    primary: createLLMProvider(
+      conn.provider,
+      baseUrl,
+      conn.apiKey,
+      conn.maxContext,
+      conn.openrouterProvider,
+      conn.maxTokensOverride,
+    ),
+    primaryConnectionId: conn.id,
+    fallbackConnection,
+    fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+    category: "main",
+    onFallback,
+  });
   const systemPrompt = input.systemPrompt?.trim() || DEFAULT_TRANSLATION_SYSTEM_PROMPT;
   const result = await provider.chatComplete(
     [

@@ -136,6 +136,56 @@ test("provider concurrency errors appear in generation toasts", async ({ page },
   }
 });
 
+test("generation fallbacks identify the replacement connection in a toast", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Fallback toast regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "Fallback Toast Smoke",
+      mode: "roleplay",
+      characterIds: [],
+      connectionId: "fallback-toast-test-connection",
+    },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    await page.route("**/api/generate", async (route) => {
+      const events = [
+        {
+          type: "fallback_used",
+          data: {
+            category: "main",
+            connectionId: "backup-api",
+            connectionName: "Backup API",
+            model: "fallback-model",
+          },
+        },
+        { type: "token", data: "Fallback response." },
+        { type: "done", data: {} },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+    await page.locator("textarea.mari-chat-input-textarea").fill("Use the fallback if necessary");
+    await page.locator("button.mari-chat-send-btn").click();
+    await expect(page.getByText("Main switched to Backup API (fallback-model).")).toBeVisible();
+    await expect(
+      page.getByText("The primary generation failed, so Marinara retried with your configured fallback."),
+    ).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
 test("Roleplay rewrite streaming follows the rendered message height", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Roleplay rewrite scrolling is covered on desktop.");
 

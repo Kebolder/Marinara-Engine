@@ -6,7 +6,7 @@ This guide shows you how to install and run Marinara Engine on macOS or Linux. Y
 
 You need two free tools installed before you start:
 
-- **Node.js**: the program that runs Marinara. Install version 24 or 25 (version 24 is the recommended LTS release).
+- **Node.js**: the program that runs Marinara. Install version 24, 25, or 26 (version 24 is the recommended LTS release).
 - **Git**: the tool that downloads Marinara and fetches updates.
 
 You do not need to install pnpm yourself. pnpm is the package manager Marinara uses to fetch its parts. The shell launcher installs the correct pnpm version for you.
@@ -137,7 +137,7 @@ Most users should use the launcher above. If you prefer to run each step yoursel
 corepack enable pnpm
 ```
 
-On Node.js 25, install the user-provided Corepack package first, then turn on pnpm:
+On Node.js 25 or 26, install the user-provided Corepack package first, then turn on pnpm:
 
 ```bash
 npm install --global corepack

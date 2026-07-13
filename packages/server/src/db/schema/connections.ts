@@ -32,6 +32,8 @@ export const apiConnections = sqliteTable("api_connections", {
   imagePath: text("image_path"),
   maxContext: integer("max_context").notNull().default(128000),
   isDefault: text("is_default").notNull().default("false"),
+  /** Whether this language connection is the fallback for main generations (only one allowed). */
+  fallbackForMain: text("fallback_for_main").notNull().default("false"),
   /** Whether this connection is part of the random-selection pool */
   useForRandom: text("use_for_random").notNull().default("false"),
   /** Whether to enable Anthropic prompt caching */
@@ -42,6 +44,8 @@ export const apiConnections = sqliteTable("api_connections", {
   cachingAtDepth: integer("caching_at_depth").notNull().default(5),
   /** Whether this connection is the default for all agents (only one allowed) */
   defaultForAgents: text("default_for_agents").notNull().default("false"),
+  /** Category-aware fallback for language agents, image generation, or video generation. */
+  fallbackForAgents: text("fallback_for_agents").notNull().default("false"),
   /** Model to use for embedding generation (e.g. text-embedding-3-small) */
   embeddingModel: text("embedding_model"),
   /** Optional: separate base URL for the embedding backend (e.g. a second llama.cpp instance) */

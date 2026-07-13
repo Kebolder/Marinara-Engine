@@ -41,6 +41,8 @@ import { sidecarProcessService } from "./services/sidecar/sidecar-process.servic
 import { startServerAutonomousScheduler } from "./services/conversation/server-autonomous-scheduler.service.js";
 import { startNoodleRefreshScheduler } from "./services/noodle/noodle-refresh-scheduler.service.js";
 import { serverExtensionRuntime } from "./services/extensions/server-extension-runtime.js";
+import { runWithGenerationFallbackNotifier } from "./services/generation/fallback-notification.js";
+import { createReplyFallbackNotifier } from "./routes/generate/fallback-notification.js";
 
 const isLite = process.env.MARINARA_LITE === "true" || process.env.MARINARA_LITE === "1";
 const REVALIDATE_FILES = new Set(["index.html"]);
@@ -114,6 +116,13 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
 
   // ── Recover orphaned gallery images (files on disk without DB records) ──
   await recoverGalleryImages(db);
+
+  // Keep fallback reporting attached to the originating request even when
+  // generation passes through nested services. Streamed routes emit an SSE
+  // event; ordinary requests expose a response header consumed by the client.
+  app.addHook("preHandler", (_request, reply, done) => {
+    runWithGenerationFallbackNotifier(createReplyFallbackNotifier(reply), done);
+  });
 
   // ── Security headers ──
   app.addHook("onRequest", securityHeadersHook);

@@ -381,10 +381,13 @@ const CREATE_TABLES: string[] = [
     max_parallel_jobs INTEGER NOT NULL DEFAULT 1,
     treat_as_local_endpoint TEXT NOT NULL DEFAULT 'false',
     is_default TEXT NOT NULL DEFAULT 'false',
+    fallback_for_main TEXT NOT NULL DEFAULT 'false',
     use_for_random TEXT NOT NULL DEFAULT 'false',
     enable_caching TEXT NOT NULL DEFAULT 'false',
     anthropic_extended_cache_ttl TEXT NOT NULL DEFAULT 'false',
     caching_at_depth INTEGER NOT NULL DEFAULT 5,
+    default_for_agents TEXT NOT NULL DEFAULT 'false',
+    fallback_for_agents TEXT NOT NULL DEFAULT 'false',
     prompt_preset_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -907,6 +910,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
   {
     table: "api_connections",
     column: "default_for_agents",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "api_connections",
+    column: "fallback_for_main",
+    definition: "TEXT NOT NULL DEFAULT 'false'",
+  },
+  {
+    table: "api_connections",
+    column: "fallback_for_agents",
     definition: "TEXT NOT NULL DEFAULT 'false'",
   },
   {

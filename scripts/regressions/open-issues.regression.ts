@@ -20,6 +20,10 @@ import { arePresetChoiceSelectionsComplete } from "../../packages/client/src/lib
 import { shouldExecuteQuickPostAsCommand } from "../../packages/client/src/lib/slash-commands.js";
 import { getAvatarCropStyle } from "../../packages/client/src/lib/utils.js";
 import { getApiErrorMessage } from "../../packages/client/src/lib/api-client.js";
+import {
+  characterMatchesSearch,
+  parseCharacterDisplayData,
+} from "../../packages/client/src/lib/character-display.js";
 import { DEFAULT_GENERATION_PARAMS } from "../../packages/shared/src/constants/defaults.js";
 import { mergeNoodleCustomEmojiMap } from "../../packages/client/src/hooks/use-noodle-custom-emojis.js";
 import {
@@ -72,6 +76,25 @@ assert.equal(
   "Handle must contain at most 40 characters.",
 );
 assert.equal(getApiErrorMessage({ code: "USER_NOT_FOUND", requestId: "abc-123" }, "Request failed"), "Request failed");
+
+const searchableCharacter = parseCharacterDisplayData({
+  data: JSON.stringify({
+    name: "Il Dottore",
+    description: "A Fatui researcher from Snezhnaya.",
+    creator: "Pasta Devs",
+    tags: ["scientist", "villain"],
+  }),
+  comment: "Modern AU version",
+});
+assert.equal(characterMatchesSearch(searchableCharacter, "scientist"), true);
+assert.equal(characterMatchesSearch(searchableCharacter, "modern au"), true);
+assert.equal(characterMatchesSearch(searchableCharacter, "snezhnaya"), true);
+assert.equal(characterMatchesSearch(searchableCharacter, "friendly bard"), false);
+
+const termuxLauncher = readFileSync(new URL("../../start-termux.sh", import.meta.url), "utf8");
+assert.doesNotMatch(termuxLauncher, /run_pnpm install --force/u);
+assert.match(termuxLauncher, /run_pnpm store prune/u);
+assert.match(termuxLauncher, /TERMUX_REBUILD_REQUIRED/u);
 
 assert.equal(stripLeadingMessageTimestamps("[11.07 15:53] Character: Hello!"), "Character: Hello!");
 assert.equal(stripLeadingMessageTimestamps("[11.07.2026 15:53] Character: Hello!"), "Character: Hello!");

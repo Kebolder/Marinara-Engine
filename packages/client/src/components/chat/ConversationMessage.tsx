@@ -433,9 +433,14 @@ export const ConversationMessage = memo(function ConversationMessage({
     const map = new Map<string, NonNullable<ReturnType<CharacterMap["get"]>>>();
     for (const [id, v] of scopedCharacterMap) {
       if (v) {
-        const key = normalizeTextForMatch(v.name);
-        if (id === message.characterId) map.set(key, v);
-        else if (!map.has(key)) map.set(key, v);
+        const aliases = [v.name, v.convoDisplayName].filter(
+          (name): name is string => typeof name === "string" && name.trim().length > 0,
+        );
+        for (const alias of aliases) {
+          const key = normalizeTextForMatch(alias);
+          if (id === message.characterId) map.set(key, v);
+          else if (!map.has(key)) map.set(key, v);
+        }
       }
     }
     return map;
@@ -446,6 +451,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     const names: string[] = [];
     for (const [, v] of scopedCharacterMap) {
       if (v?.name) names.push(v.name);
+      if (v?.convoDisplayName?.trim()) names.push(v.convoDisplayName);
     }
     return names;
   }, [scopedCharacterMap]);
@@ -453,7 +459,8 @@ export const ConversationMessage = memo(function ConversationMessage({
   const groupedSegments = useMemo(() => {
     if (isUser || !renderedContent) return null;
     const knownNames = charByName ? new Set(charByName.keys()) : new Set<string>();
-    const leadingSpeaker = message.characterId ? scopedCharacterMap?.get(message.characterId)?.name : null;
+    const leadingCharacter = message.characterId ? scopedCharacterMap?.get(message.characterId) : null;
+    const leadingSpeaker = leadingCharacter?.convoDisplayName?.trim() || leadingCharacter?.name || null;
     return parseGroupedSpeakerSegments(renderedContent, knownNames, leadingSpeaker);
   }, [isUser, renderedContent, charByName, message.characterId, scopedCharacterMap]);
 

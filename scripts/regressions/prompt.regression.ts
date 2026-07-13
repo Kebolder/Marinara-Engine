@@ -1680,6 +1680,35 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "XML agent output contracts preserve template tags while escaping macro values",
+    async run() {
+      const { calls, provider } = makeCapturingProvider(`{"entries":[]}`);
+      const config = makeRegressionAgentConfig({
+        type: "lorebook-keeper",
+        name: "Lorebook Keeper",
+        promptTemplate:
+          "Skip facts already captured by <chat_summary>. Review <existing_entries> first. Active user: {{user}}.",
+        settings: { resultType: "json" },
+      });
+      const context = makeRegressionAgentContext({
+        wrapFormat: "xml",
+        persona: { name: "Mari <override>", description: "The active user persona." },
+      });
+
+      const result = await executeAgent(config as any, context, provider as any, "regression-model");
+      assert.equal(result.success, true);
+      const messages = calls[0]!;
+      const system = messages[0]!.content;
+      const terminal = messages[messages.length - 1]!.content;
+      assert.match(system, /<chat_summary>/u);
+      assert.match(system, /<existing_entries>/u);
+      assert.match(terminal, /<chat_summary>/u);
+      assert.match(terminal, /<existing_entries>/u);
+      assert.doesNotMatch(terminal, /&lt;chat_summary>/u);
+      assert.match(terminal, /Mari &lt;override&gt;/u);
+    },
+  },
+  {
     name: "batched agent output format lists only active requested agents in terminal user message",
     async run() {
       const { calls, provider } = makeCapturingProvider(

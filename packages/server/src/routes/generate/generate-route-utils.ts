@@ -70,11 +70,13 @@ export type LocalSidecarGenerationConnection = {
   imagePath: null;
   maxContext: number;
   isDefault: "false";
+  fallbackForMain: "false";
   useForRandom: "false";
   enableCaching: "false";
   anthropicExtendedCacheTtl: "false";
   cachingAtDepth: number;
   defaultForAgents: "false";
+  fallbackForAgents: "false";
   embeddingModel: string;
   embeddingBaseUrl: string;
   embeddingConnectionId: null;
@@ -157,11 +159,13 @@ export function createLocalSidecarGenerationConnection(): LocalSidecarGeneration
     imagePath: null,
     maxContext: config.contextSize,
     isDefault: "false",
+    fallbackForMain: "false",
     useForRandom: "false",
     enableCaching: "false",
     anthropicExtendedCacheTtl: "false",
     cachingAtDepth: 5,
     defaultForAgents: "false",
+    fallbackForAgents: "false",
     embeddingModel: "",
     embeddingBaseUrl: "",
     embeddingConnectionId: null,

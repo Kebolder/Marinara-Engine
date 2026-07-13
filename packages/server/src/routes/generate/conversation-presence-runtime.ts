@@ -22,7 +22,10 @@ import { isMessageHiddenFromAI, parseExtra } from "./generate-route-utils.js";
 
 export type ConversationPromptCharacterInfo = {
   charId: string;
+  /** Base character-card name, retained for matching historical mentions. */
   name: string;
+  /** Conversation-only name used in generated group speaker prefixes and UI events. */
+  displayName: string;
   status: string;
   activity: string;
   todaySchedule: string;
@@ -86,7 +89,7 @@ export async function resolveConversationPresenceRuntime(args: {
 
   persistConversationPresenceState(args.chats, args.chatId, convoCharInfo);
 
-  const convoCharNames = convoCharInfo.map((character) => character.name);
+  const convoCharNames = convoCharInfo.map((character) => character.displayName);
   const charNameList = convoCharNames.length ? convoCharNames.join(", ") : "the character";
   const manualTargetCharId =
     typeof args.forCharacterId === "string" && args.characterIds.includes(args.forCharacterId)
@@ -98,7 +101,11 @@ export async function resolveConversationPresenceRuntime(args: {
   const scopedConvoCharInfo = manualTargetCharId
     ? convoCharInfo.filter((character) => character.charId === manualTargetCharId)
     : requestedMentionNames.size > 0
-      ? convoCharInfo.filter((character) => requestedMentionNames.has(normalizeTextForMatch(character.name)))
+      ? convoCharInfo.filter(
+          (character) =>
+            requestedMentionNames.has(normalizeTextForMatch(character.name)) ||
+            requestedMentionNames.has(normalizeTextForMatch(character.displayName)),
+        )
       : convoCharInfo;
   let respondingConvoCharInfo = scopedConvoCharInfo.length > 0 ? scopedConvoCharInfo : convoCharInfo;
 
@@ -117,7 +124,7 @@ export async function resolveConversationPresenceRuntime(args: {
     }
   }
 
-  const respondingConvoCharNames = respondingConvoCharInfo.map((character) => character.name);
+  const respondingConvoCharNames = respondingConvoCharInfo.map((character) => character.displayName);
   const seatedGameCharIds = await resolveSeatedTurnGameCharacterIds(args.db, args.chatId);
   const effectiveStatus = (character: { charId: string; status: string }): string =>
     seatedGameCharIds.has(character.charId) ? "online" : character.status;
@@ -231,9 +238,16 @@ async function resolveConversationPromptCharacters(args: {
       activity = derived.activity;
       todaySchedule = getTodaySchedule(schedule, args.promptNow);
     }
+    const characterData = data as { name?: string; extensions?: Record<string, unknown> } | null;
+    const name = characterData?.name?.trim() || "Unknown";
+    const convoDisplayName =
+      typeof characterData?.extensions?.convoDisplayName === "string"
+        ? characterData.extensions.convoDisplayName.trim()
+        : "";
     convoCharInfo.push({
       charId: cid,
-      name: (data as { name?: string } | null)?.name ?? "Unknown",
+      name,
+      displayName: convoDisplayName || name,
       status,
       activity,
       todaySchedule,

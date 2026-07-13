@@ -344,6 +344,14 @@ export function CharacterEditor() {
     [formatQuotes, markDirty],
   );
 
+  const updateCharacterComment = useCallback(
+    (value: string) => {
+      setCharacterComment(value);
+      markDirty();
+    },
+    [markDirty],
+  );
+
   const setExtensionValue = useCallback((key: string, value: unknown) => {
     setFormData((prev) => {
       if (!prev) return prev;
@@ -962,10 +970,7 @@ export function CharacterEditor() {
             />
             <input
               value={characterComment}
-              onChange={(e) => {
-                setCharacterComment(e.target.value);
-                markDirty();
-              }}
+              onChange={(e) => updateCharacterComment(e.target.value)}
               className="mari-editor-subtitle-input"
               placeholder="Title / comment (e.g. 'Modern AU version')"
             />
@@ -1031,6 +1036,7 @@ export function CharacterEditor() {
                 characterId={characterId}
                 formData={formData}
                 characterComment={characterComment}
+                updateCharacterComment={updateCharacterComment}
                 updateField={updateField}
                 updateExtension={updateExtension}
                 newTag={newTag}
@@ -1303,6 +1309,7 @@ function MetadataTab({
   characterId,
   formData,
   characterComment,
+  updateCharacterComment,
   updateField,
   updateExtension,
   newTag,
@@ -1317,6 +1324,7 @@ function MetadataTab({
   characterId: string | null;
   formData: CharacterData;
   characterComment: string;
+  updateCharacterComment: (value: string) => void;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
   updateExtension: (key: string, value: unknown) => void;
   newTag: string;
@@ -1336,7 +1344,7 @@ function MetadataTab({
     <div className="space-y-5">
       <SectionHeader
         title="Metadata"
-        subtitle="Basic character info — name, creator, version, tags."
+        subtitle="Basic character info: name, title, creator, version, tags."
         helpText={CHARACTER_METADATA_HELP}
       />
 
@@ -1376,7 +1384,7 @@ function MetadataTab({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
             Name{" "}
             <HelpTooltip text="The character's display name. This is what appears in chat and is used as {{char}} in prompts." />
@@ -1385,6 +1393,18 @@ function MetadataTab({
             value={formData.name}
             onChange={(e) => updateField("name", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+          />
+        </label>
+        <label className="space-y-1.5 sm:col-span-2">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+            Title / comment{" "}
+            <HelpTooltip text="A short note shown under the character name in the library, useful for variants or alternate versions." />
+          </span>
+          <input
+            value={characterComment}
+            onChange={(e) => updateCharacterComment(e.target.value)}
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            placeholder="Modern AU version"
           />
         </label>
         <label className="space-y-1.5">

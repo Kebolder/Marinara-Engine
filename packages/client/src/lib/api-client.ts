@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 
 import { CSRF_HEADER, CSRF_HEADER_VALUE } from "@marinara-engine/shared";
+import { showGenerationFallbackHeader, showGenerationFallbackToast } from "./generation-fallback-notice";
 
 const BASE = "/api";
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -170,6 +171,7 @@ export function isJsonRepairApiError(error: unknown): boolean {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(path, init);
+  showGenerationFallbackHeader(res);
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -323,6 +325,7 @@ export const api = {
       body: JSON.stringify(body),
       cache: "no-store",
     });
+    showGenerationFallbackHeader(res);
     if (!res.ok) {
       const payload = await res.json().catch(() => ({ error: res.statusText }));
       throw new ApiError(res.status, payload.error ?? "Download failed", payload);
@@ -343,6 +346,7 @@ export const api = {
       cache: "no-store",
       signal,
     });
+    showGenerationFallbackHeader(res);
 
     if (!res.ok || !res.body) {
       let detail = `HTTP ${res.status}`;
@@ -378,7 +382,8 @@ export const api = {
           if (data === "[DONE]") return;
           const parsed = parseSseJsonPayload(data);
           if (!parsed) continue;
-          if (parsed.type === "token" && typeof parsed.data === "string") yield parsed.data;
+          if (parsed.type === "fallback_used") showGenerationFallbackToast(parsed.data);
+          else if (parsed.type === "token" && typeof parsed.data === "string") yield parsed.data;
           else if (parsed.type === "error") throw new ApiError(500, getSseErrorMessage(parsed), parsed);
           else if (parsed.type === "done") return;
         }
@@ -388,7 +393,8 @@ export const api = {
         if (data === "[DONE]") return;
         const parsed = parseSseJsonPayload(data);
         if (!parsed) continue;
-        if (parsed.type === "token" && typeof parsed.data === "string") yield parsed.data;
+        if (parsed.type === "fallback_used") showGenerationFallbackToast(parsed.data);
+        else if (parsed.type === "token" && typeof parsed.data === "string") yield parsed.data;
         else if (parsed.type === "error") throw new ApiError(500, getSseErrorMessage(parsed), parsed);
         else if (parsed.type === "done") return;
       }
@@ -413,6 +419,7 @@ export const api = {
       cache: "no-store",
       signal,
     });
+    showGenerationFallbackHeader(res);
 
     if (!res.ok || !res.body) {
       let detail = `HTTP ${res.status}`;
@@ -448,6 +455,7 @@ export const api = {
           if (data === "[DONE]") return;
           const parsed = parseSseJsonPayload(data);
           if (!parsed || typeof parsed.type !== "string") continue;
+          if (parsed.type === "fallback_used") showGenerationFallbackToast(parsed.data);
           yield parsed as { type: string; data: unknown } & Record<string, unknown>;
           if (parsed.type === "error") return;
         }
@@ -457,6 +465,7 @@ export const api = {
         if (data === "[DONE]") return;
         const parsed = parseSseJsonPayload(data);
         if (!parsed || typeof parsed.type !== "string") continue;
+        if (parsed.type === "fallback_used") showGenerationFallbackToast(parsed.data);
         yield parsed as { type: string; data: unknown } & Record<string, unknown>;
         if (parsed.type === "error") return;
       }
@@ -472,6 +481,7 @@ export const api = {
       headers: { ...getAdminSecretHeader(), [CSRF_HEADER]: CSRF_HEADER_VALUE },
       body: formData,
     });
+    showGenerationFallbackHeader(res);
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));

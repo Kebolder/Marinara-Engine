@@ -3,6 +3,7 @@ import type { createConnectionsStorage } from "../storage/connections.storage.js
 import type { BaseLLMProvider } from "../llm/base-provider.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createLLMProvider } from "../llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../llm/connection-fallback-provider.js";
 
 type ConnectionsStorage = ReturnType<typeof createConnectionsStorage>;
 type ConnectionWithKey = NonNullable<Awaited<ReturnType<ConnectionsStorage["getWithKey"]>>>;
@@ -71,19 +72,22 @@ export async function resolveChatSummaryConnection(args: {
   const candidates: SummaryConnectionCandidate[] = [];
   const summaryConnectionId = normalizeId(args.chatMetadata.summaryConnectionId);
   const defaultAgentConnection = await args.connections.getDefaultForAgents();
+  const fallbackAgentConnection = await args.connections.getFallbackForAgents();
+  const wrapWithFallback = (provider: BaseLLMProvider, primaryConnectionId: string) =>
+    withConnectionFallbackProvider({
+      primary: provider,
+      primaryConnectionId,
+      fallbackConnection: fallbackAgentConnection,
+      fallbackBaseUrl: fallbackAgentConnection ? args.resolveBaseUrl(fallbackAgentConnection) : "",
+      category: "agents",
+    });
 
-  pushUniqueCandidate(
-    candidates,
-    summaryConnectionId ? { id: summaryConnectionId, source: "summary" } : null,
-  );
+  pushUniqueCandidate(candidates, summaryConnectionId ? { id: summaryConnectionId, source: "summary" } : null);
   pushUniqueCandidate(
     candidates,
     defaultAgentConnection?.id ? { id: defaultAgentConnection.id, source: "agent-default" } : null,
   );
-  pushUniqueCandidate(
-    candidates,
-    args.chatConnectionId ? { id: args.chatConnectionId, source: "chat" } : null,
-  );
+  pushUniqueCandidate(candidates, args.chatConnectionId ? { id: args.chatConnectionId, source: "chat" } : null);
 
   if (candidates.length === 0) {
     return { ok: false, error: "No API connection configured for chat summary", warnings };
@@ -93,7 +97,7 @@ export async function resolveChatSummaryConnection(args: {
     if (candidate.id === LOCAL_SIDECAR_CONNECTION_ID) {
       return {
         ok: true,
-        provider: getLocalSidecarProvider(),
+        provider: wrapWithFallback(getLocalSidecarProvider(), LOCAL_SIDECAR_CONNECTION_ID),
         model: LOCAL_SIDECAR_MODEL,
         connectionId: LOCAL_SIDECAR_CONNECTION_ID,
         source: candidate.source,
@@ -120,13 +124,16 @@ export async function resolveChatSummaryConnection(args: {
 
     return {
       ok: true,
-      provider: createLLMProvider(
-        conn.provider,
-        baseUrl,
-        conn.apiKey,
-        conn.maxContext,
-        conn.openrouterProvider,
-        conn.maxTokensOverride,
+      provider: wrapWithFallback(
+        createLLMProvider(
+          conn.provider,
+          baseUrl,
+          conn.apiKey,
+          conn.maxContext,
+          conn.openrouterProvider,
+          conn.maxTokensOverride,
+        ),
+        conn.id,
       ),
       model: conn.model,
       connectionId: conn.id,

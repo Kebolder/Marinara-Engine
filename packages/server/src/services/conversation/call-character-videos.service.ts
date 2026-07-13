@@ -32,6 +32,7 @@ import {
   generateVideo,
   resolveVideoReferencePublicUploadOptions,
   resolveVideoRequestDuration,
+  type VideoGenerationRequest,
   type VideoReferenceImage,
 } from "../video/video-generation.js";
 
@@ -730,6 +731,7 @@ async function runGenerationJob(input: {
   videoSettings: VideoGenerationUserSettings;
   debugMode?: boolean;
   includeAvatarReference?: boolean;
+  fallback?: NonNullable<VideoGenerationRequest["fallback"]>;
 }) {
   const startedAt = nowIso();
   const avatar = await readAvatarIdentity(input.avatarPath);
@@ -814,6 +816,7 @@ async function runGenerationJob(input: {
           resolution: resolved.resolution,
           ...(reference ? { referenceImage: reference.image, lastFrameImage: reference.image } : {}),
           publicReferenceUpload: resolved.publicReferenceUpload,
+          fallback: input.fallback,
         },
       );
       const file = clipPath(input.characterId, kind);
@@ -898,6 +901,7 @@ async function runCustomClipGenerationJob(input: {
   prompt: string;
   debugMode?: boolean;
   includeAvatarReference?: boolean;
+  fallback?: NonNullable<VideoGenerationRequest["fallback"]>;
 }) {
   const startedAt = nowIso();
   try {
@@ -941,6 +945,7 @@ async function runCustomClipGenerationJob(input: {
         resolution: resolved.resolution,
         ...(reference ? { referenceImage: reference.image, lastFrameImage: reference.image } : {}),
         publicReferenceUpload: resolved.publicReferenceUpload,
+        fallback: input.fallback,
       },
     );
     const file = customClipPath(input.characterId, input.clipId);
@@ -1044,6 +1049,7 @@ export async function startConversationCallCharacterVideoGeneration(input: {
   videoSettings?: VideoGenerationUserSettings | null;
   debugMode?: boolean;
   includeAvatarReference?: boolean;
+  fallback?: NonNullable<VideoGenerationRequest["fallback"]>;
 }): Promise<ConversationCallCharacterVideoManifest> {
   assertSafeCharacterId(input.characterId);
   const videoSettings = normalizeVideoGenerationUserSettings(input.videoSettings);
@@ -1101,6 +1107,7 @@ export async function startConversationCallCustomVideoClipGeneration(input: {
   prompt: string;
   debugMode?: boolean;
   includeAvatarReference?: boolean;
+  fallback?: NonNullable<VideoGenerationRequest["fallback"]>;
 }): Promise<ConversationCallCharacterVideoManifest> {
   assertSafeCharacterId(input.characterId);
   const videoSettings = normalizeVideoGenerationUserSettings(input.videoSettings);

@@ -15,6 +15,59 @@ import {
   OPENROUTER_APP_TITLE,
   requestHeadersWithOpenRouterAttribution,
 } from "../../packages/server/src/utils/openrouter-attribution.js";
+import {
+  ConnectionFallbackProvider,
+  type FallbackConnection,
+} from "../../packages/server/src/services/llm/connection-fallback-provider.js";
+import {
+  BaseLLMProvider,
+  type ChatMessage,
+  type ChatOptions,
+  type LLMUsage,
+} from "../../packages/server/src/services/llm/base-provider.js";
+import {
+  runWithGenerationFallbackNotifier,
+  type GenerationFallbackNotice,
+} from "../../packages/server/src/services/generation/fallback-notification.js";
+
+class RegressionProvider extends BaseLLMProvider {
+  calls = 0;
+  lastOptions: ChatOptions | null = null;
+
+  constructor(
+    private readonly chunks: string[],
+    private readonly failure?: Error,
+  ) {
+    super("", "");
+  }
+
+  async *chat(_messages: ChatMessage[], options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
+    this.calls += 1;
+    this.lastOptions = options;
+    for (const chunk of this.chunks) yield chunk;
+    if (this.failure) throw this.failure;
+  }
+}
+
+class TokenCallbackFailureProvider extends BaseLLMProvider {
+  calls = 0;
+
+  constructor() {
+    super("", "");
+  }
+
+  async *chat(_messages: ChatMessage[], options: ChatOptions): AsyncGenerator<string, LLMUsage | void, unknown> {
+    this.calls += 1;
+    await options.onToken?.("visible callback output");
+    throw new Error("stream interrupted after callback output");
+  }
+}
+
+async function collectProviderOutput(provider: BaseLLMProvider, options: ChatOptions): Promise<string> {
+  let output = "";
+  for await (const chunk of provider.chat([{ role: "user", content: "test" }], options)) output += chunk;
+  return output;
+}
 
 function assertStrictObjects(value: unknown): void {
   if (!value || typeof value !== "object") return;
@@ -124,5 +177,109 @@ assert.equal(isOpenRouterApiUrl("https://openrouter.ai/api/v1"), true);
 assert.equal(isOpenRouterApiUrl("https://api.openrouter.ai/v1"), true);
 assert.equal(isOpenRouterApiUrl("https://openrouter.ai.example.com/v1"), false);
 assert.equal(isOpenRouterApiUrl("not a URL"), false);
+
+const fallbackConnection: FallbackConnection = {
+  id: "fallback-connection",
+  name: "Fallback",
+  provider: "custom",
+  baseUrl: "https://fallback.example/v1",
+  apiKey: "test",
+  model: "fallback-model",
+  defaultParameters: JSON.stringify({ temperature: 0.35, maxTokens: 512 }),
+};
+const primaryFailure = new RegressionProvider([], new Error("primary unavailable"));
+const successfulFallback = new RegressionProvider(["fallback response"]);
+const fallbackProvider = new ConnectionFallbackProvider(primaryFailure, successfulFallback, fallbackConnection, "main");
+assert.equal(
+  await collectProviderOutput(fallbackProvider, { model: "primary-model", temperature: 0.9, maxTokens: 1024 }),
+  "fallback response",
+);
+assert.equal(primaryFailure.calls, 1);
+assert.equal(successfulFallback.calls, 1);
+assert.equal(successfulFallback.lastOptions?.model, "fallback-model");
+assert.equal(successfulFallback.lastOptions?.temperature, 0.35);
+assert.equal(successfulFallback.lastOptions?.maxTokens, 512);
+
+let fallbackNotice: GenerationFallbackNotice | null = null;
+await runWithGenerationFallbackNotifier(
+  (notice) => {
+    fallbackNotice = notice;
+  },
+  () =>
+    collectProviderOutput(
+      new ConnectionFallbackProvider(
+        new RegressionProvider([], new Error("primary unavailable")),
+        new RegressionProvider(["notified fallback"]),
+        fallbackConnection,
+        "main",
+      ),
+      { model: "primary-model" },
+    ),
+);
+assert.deepEqual(fallbackNotice, {
+  category: "main",
+  connectionId: "fallback-connection",
+  connectionName: "Fallback",
+  model: "fallback-model",
+});
+
+const partialPrimary = new RegressionProvider(["partial"], new Error("stream interrupted"));
+const unusedFallback = new RegressionProvider(["must not be appended"]);
+await assert.rejects(
+  collectProviderOutput(new ConnectionFallbackProvider(partialPrimary, unusedFallback, fallbackConnection, "main"), {
+    model: "primary-model",
+  }),
+  /stream interrupted/,
+);
+assert.equal(unusedFallback.calls, 0, "a fallback must not be appended after visible primary output");
+
+const callbackPrimary = new TokenCallbackFailureProvider();
+const callbackFallback = new RegressionProvider(["must not replace visible callback output"]);
+let callbackOutput = "";
+await assert.rejects(
+  collectProviderOutput(
+    new ConnectionFallbackProvider(callbackPrimary, callbackFallback, fallbackConnection, "main"),
+    {
+      model: "primary-model",
+      onToken: (chunk) => {
+        callbackOutput += chunk;
+      },
+    },
+  ),
+  /stream interrupted after callback output/,
+);
+assert.equal(callbackOutput, "visible callback output");
+assert.equal(callbackFallback.calls, 0, "a fallback must not replace output already emitted through onToken");
+
+const rejectedNoticeFallback = new RegressionProvider(["fallback survives notification failure"]);
+assert.equal(
+  await collectProviderOutput(
+    new ConnectionFallbackProvider(
+      new RegressionProvider([], new Error("primary unavailable")),
+      rejectedNoticeFallback,
+      fallbackConnection,
+      "main",
+      async () => {
+        throw new Error("toast transport unavailable");
+      },
+    ),
+    { model: "primary-model" },
+  ),
+  "fallback survives notification failure",
+);
+assert.equal(rejectedNoticeFallback.calls, 1, "notification failures must not cancel fallback generation");
+
+const abortController = new AbortController();
+abortController.abort();
+const abortedPrimary = new RegressionProvider([], new Error("cancelled"));
+const abortedFallback = new RegressionProvider(["must not run"]);
+await assert.rejects(
+  collectProviderOutput(new ConnectionFallbackProvider(abortedPrimary, abortedFallback, fallbackConnection, "agents"), {
+    model: "primary-model",
+    signal: abortController.signal,
+  }),
+  /cancelled/,
+);
+assert.equal(abortedFallback.calls, 0, "user cancellation must not trigger a fallback request");
 
 process.stdout.write("Provider compatibility regression passed.\n");

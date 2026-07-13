@@ -37,6 +37,7 @@ import { createCharacterGalleryStorage } from "../services/storage/character-gal
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { sidecarSpeechService } from "../services/sidecar/sidecar-speech.service.js";
 import {
   getActiveStatusOverride,
@@ -69,6 +70,10 @@ import { loadImageGenerationUserSettings } from "../services/image/image-generat
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
 import { generateImage, saveImageToDisk } from "../services/image/image-generation.js";
 import { persistGeneratedImageToEntityGalleries } from "../services/image/generated-image-entity-gallery.js";
+import {
+  resolveImageConnectionFallback,
+  resolveVideoConnectionFallback,
+} from "../services/generation/media-connection-fallback.js";
 import { isNovelAiImageConnection, resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
 import { getChatHapticIntifaceUrl } from "../services/generation/haptic-runtime.js";
 import { resolveSpotifyCredentials, spotifyHasScope } from "../services/spotify/spotify.service.js";
@@ -77,7 +82,11 @@ import {
   isSilentConversationSpotifyCommandError,
   playConversationSpotifyCommand,
 } from "../services/spotify/conversation-spotify-command.service.js";
-import { buildPromptMacroContext, resolveCharacterMacroData, resolvePromptMessageMacros } from "../services/prompt/index.js";
+import {
+  buildPromptMacroContext,
+  resolveCharacterMacroData,
+  resolvePromptMessageMacros,
+} from "../services/prompt/index.js";
 import { cardPromptText } from "../services/generation/generation-text-utils.js";
 import {
   getConversationCallCharacterVideoFile,
@@ -118,6 +127,32 @@ type ChatRow = Awaited<ReturnType<ReturnType<typeof createChatsStorage>["getById
 type CharacterRow = Awaited<ReturnType<ReturnType<typeof createCharactersStorage>["getById"]>>;
 type CallsStorage = ReturnType<typeof createConversationCallsStorage>;
 type ConnectionsStorage = ReturnType<typeof createConnectionsStorage>;
+type ConnectionWithKey = NonNullable<Awaited<ReturnType<ConnectionsStorage["getWithKey"]>>>;
+
+async function createConversationCallProvider(
+  connections: ConnectionsStorage,
+  connection: ConnectionWithKey,
+  category: "main" | "agents",
+) {
+  const fallbackConnection =
+    category === "main" ? await connections.getFallbackForMain() : await connections.getFallbackForAgents();
+  return withConnectionFallbackProvider({
+    primary: createLLMProvider(
+      connection.provider,
+      resolveBaseUrl(connection),
+      connection.apiKey,
+      connection.maxContext,
+      connection.openrouterProvider,
+      connection.maxTokensOverride,
+      connection.claudeFastMode === "true",
+      connection.treatAsLocalEndpoint === "true",
+    ),
+    primaryConnectionId: connection.id,
+    fallbackConnection,
+    fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+    category,
+  });
+}
 type CallPresenceStatus = "online" | "idle" | "dnd" | "offline";
 type CallCharacter = {
   id: string;
@@ -970,8 +1005,8 @@ async function buildCallPrompt(input: {
   });
   const callMacroProfilesById = (await resolveCharacterMacroData(input.app.db, characterIds)).profilesById;
   const resolveCallMacros = (value: string, characterId?: string | null) =>
-    resolvePromptMessageMacros([{ content: value, characterId }], promptMacroContext, callMacroProfilesById)[0]?.content ??
-    value;
+    resolvePromptMessageMacros([{ content: value, characterId }], promptMacroContext, callMacroProfilesById)[0]
+      ?.content ?? value;
   const personaParts = persona
     ? [
         `Name: ${persona.name}`,
@@ -1132,7 +1167,9 @@ async function buildCallPrompt(input: {
     .slice(0, 30)
     .map((entry: any) => `- ${entry.name ?? "Entry"}: ${resolveCallMacros(String(entry.content ?? ""))}`)
     .join("\n");
-  const characterText = promptCharacters.map((character) => `<character>\n${character.context}\n</character>`).join("\n\n");
+  const characterText = promptCharacters
+    .map((character) => `<character>\n${character.context}\n</character>`)
+    .join("\n\n");
   const mainHistoryText = todaysMessages
     .map((message) => {
       const label =
@@ -1310,16 +1347,7 @@ async function createCallTurns(input: {
   if (!connId) return { turns: [], fallbackSpeaker };
   const conn = await input.connections.getWithKey(connId);
   if (!conn) return { turns: [], fallbackSpeaker };
-  const provider = createLLMProvider(
-    conn.provider,
-    resolveBaseUrl(conn),
-    conn.apiKey,
-    conn.maxContext,
-    conn.openrouterProvider,
-    conn.maxTokensOverride,
-    conn.claudeFastMode === "true",
-    conn.treatAsLocalEndpoint === "true",
-  );
+  const provider = await createConversationCallProvider(input.connections, conn, "main");
   try {
     if (shouldLogDebug) {
       debugLog(
@@ -1632,16 +1660,7 @@ async function buildCallSelfiePrompt(input: {
   const promptConn = await connections.getWithKey(promptConnectionId);
   if (!promptConn) return fallback;
   try {
-    const provider = createLLMProvider(
-      promptConn.provider,
-      resolveBaseUrl(promptConn),
-      promptConn.apiKey,
-      promptConn.maxContext,
-      promptConn.openrouterProvider,
-      promptConn.maxTokensOverride,
-      promptConn.claudeFastMode === "true",
-      promptConn.treatAsLocalEndpoint === "true",
-    );
+    const provider = await createConversationCallProvider(connections, promptConn, "agents");
     const selfieSystemPrompt = await resolveConversationSelfieSystemPrompt({
       promptOverridesStorage: createPromptOverridesStorage(input.app.db),
       chatPromptTemplate: typeof input.metadata.selfiePrompt === "string" ? input.metadata.selfiePrompt.trim() : "",
@@ -1681,8 +1700,9 @@ async function applyCallSelfieCommand(input: {
     typeof input.metadata.imageGenConnectionId === "string" ? input.metadata.imageGenConnectionId.trim() : "";
   if (!imageConnectionId || !input.characterId) return [];
 
+  const connections = createConnectionsStorage(input.app.db);
   const [imageConn, charRow] = await Promise.all([
-    createConnectionsStorage(input.app.db).getWithKey(imageConnectionId),
+    connections.getWithKey(imageConnectionId),
     input.chars.getById(input.characterId),
   ]);
   if (!imageConn || !charRow) return [];
@@ -1774,6 +1794,7 @@ async function applyCallSelfieCommand(input: {
     styleProfileId,
     imageDefaults,
   });
+  const imageFallback = await resolveImageConnectionFallback(connections, imageConn.id);
   const imageResult = await generateImage(
     imageConn.model || "",
     imageConn.baseUrl || "https://image.pollinations.ai",
@@ -1789,16 +1810,19 @@ async function applyCallSelfieCommand(input: {
       comfyWorkflow: imageConn.comfyuiWorkflow || undefined,
       imageDefaults,
       referenceImages,
+      fallback: imageFallback,
     },
   );
 
   const filePath = saveImageToDisk(input.chat.id, imageResult.base64, imageResult.ext);
+  const effectiveImageProvider = imageResult.effectiveConnection?.provider ?? imageConn.provider ?? "image_generation";
+  const effectiveImageModel = imageResult.effectiveConnection?.model ?? imageConn.model ?? "unknown";
   const galleryEntry = await createGalleryStorage(input.app.db).create({
     chatId: input.chat.id,
     filePath,
     prompt: compiledPrompt.prompt,
-    provider: imageConn.provider ?? "image_generation",
-    model: imageConn.model || "unknown",
+    provider: effectiveImageProvider,
+    model: effectiveImageModel,
     width: selfieW || imageSettings.selfie.width,
     height: selfieH || imageSettings.selfie.height,
   });
@@ -1808,8 +1832,8 @@ async function applyCallSelfieCommand(input: {
     characterGallery: createCharacterGalleryStorage(input.app.db),
     personaGallery: createPersonaGalleryStorage(input.app.db),
     prompt: compiledPrompt.prompt,
-    provider: imageConn.provider ?? "image_generation",
-    model: imageConn.model || "unknown",
+    provider: effectiveImageProvider,
+    model: effectiveImageModel,
     width: selfieW || imageSettings.selfie.width,
     height: selfieH || imageSettings.selfie.height,
   });
@@ -1871,15 +1895,17 @@ async function applyCallCustomClipCommand(input: {
   const prompt = readCustomClipPrompt(input.commandText);
   if (prompt.length < 8) return [];
   const label = readCustomClipLabel(input.commandText, prompt);
+  const connections = createConnectionsStorage(input.app.db);
   const [character, connection] = await Promise.all([
     input.chars.getById(input.characterId),
-    createConnectionsStorage(input.app.db).getDefaultForVideoGeneration(),
+    connections.getDefaultForVideoGeneration(),
   ]);
   if (!character || !connection) return [];
   const characterData = parseCharacterData(character);
   const videoSettings = normalizeVideoGenerationUserSettings(
     await createAppSettingsStorage(input.app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
   );
+  const fallback = await resolveVideoConnectionFallback(connections, connection.id);
   const manifest = await startConversationCallCustomVideoClipGeneration({
     characterId: character.id,
     characterName: readName(characterData, "Character"),
@@ -1889,6 +1915,7 @@ async function applyCallCustomClipCommand(input: {
     videoSettings,
     label,
     prompt,
+    fallback,
   });
   const customClip = manifest.customClips.find((clip) => clip.label === label && clip.prompt === prompt) ?? null;
   const message = await input.calls.createMessage({
@@ -2135,16 +2162,7 @@ async function summarizeCall(input: {
   }
   const conn = await connections.getWithKey(connectionId);
   if (!conn) return "Call ended. Summary unavailable because the chat connection could not be resolved.";
-  const provider = createLLMProvider(
-    conn.provider,
-    resolveBaseUrl(conn),
-    conn.apiKey,
-    conn.maxContext,
-    conn.openrouterProvider,
-    conn.maxTokensOverride,
-    conn.claudeFastMode === "true",
-    conn.treatAsLocalEndpoint === "true",
-  );
+  const provider = await createConversationCallProvider(connections, conn, "agents");
   const transcript = messages.map((message) => `${message.participantKind}:${message.content}`).join("\n");
   try {
     const result = await provider.chatComplete(
@@ -2344,6 +2362,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
+    const fallback = await resolveVideoConnectionFallback(connections, videoConnection.id);
     return startConversationCallCharacterVideoGeneration({
       characterId: character.id,
       characterName: readName(data, "Character"),
@@ -2354,6 +2373,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       videoSettings,
       debugMode: body.debugMode === true,
       includeAvatarReference: body.includeAvatarReference !== false,
+      fallback,
     });
   });
 
@@ -2382,6 +2402,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       const videoSettings = normalizeVideoGenerationUserSettings(
         await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
       );
+      const fallback = await resolveVideoConnectionFallback(connections, videoConnection.id);
       return startConversationCallCustomVideoClipGeneration({
         characterId: character.id,
         characterName: readName(data, "Character"),
@@ -2393,6 +2414,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
         prompt,
         debugMode: body.debugMode === true,
         includeAvatarReference: body.includeAvatarReference !== false,
+        fallback,
       });
     },
   );
@@ -2427,6 +2449,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
+    const fallback = await resolveVideoConnectionFallback(connections, videoConnection.id);
     const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
     return startConversationCallCharacterVideoGeneration({
       characterId: req.params.personaId,
@@ -2438,6 +2461,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       videoSettings,
       debugMode: body.debugMode === true,
       includeAvatarReference: body.includeAvatarReference !== false,
+      fallback,
     });
   });
 
@@ -2464,6 +2488,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
     const personaName = typeof persona.name === "string" && persona.name.trim() ? persona.name.trim() : "Persona";
+    const fallback = await resolveVideoConnectionFallback(connections, videoConnection.id);
     return startConversationCallCustomVideoClipGeneration({
       characterId: req.params.personaId,
       characterName: personaName,
@@ -2475,6 +2500,7 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
       prompt,
       debugMode: body.debugMode === true,
       includeAvatarReference: body.includeAvatarReference !== false,
+      fallback,
     });
   });
 

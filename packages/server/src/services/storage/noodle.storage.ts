@@ -379,15 +379,16 @@ export function createNoodleStorage(db: DB) {
       const existing = await this.getAccountByEntity(input.kind, input.entityId);
       if (existing) {
         const updates: Record<string, unknown> = { updatedAt: now() };
-        if (input.syncIdentity) {
+        const profileManuallyEdited = existing.settings.profileManuallyEdited === true;
+        if (input.syncIdentity && !profileManuallyEdited) {
           updates.displayName = input.displayName.trim().slice(0, 120) || existing.handle;
           if (input.avatarUrl !== undefined) updates.avatarUrl = input.avatarUrl;
         } else if (!existing.displayName.trim()) {
           updates.displayName = input.displayName || existing.handle;
         }
-        if (!existing.bio.trim() && input.bio) updates.bio = input.bio;
+        if (!profileManuallyEdited && !existing.bio.trim() && input.bio) updates.bio = input.bio;
         if (!input.syncIdentity && !existing.avatarUrl && input.avatarUrl) updates.avatarUrl = input.avatarUrl;
-        if (input.avatarCrop !== undefined) {
+        if (input.avatarCrop !== undefined && !profileManuallyEdited) {
           updates.settings = JSON.stringify({ ...existing.settings, avatarCrop: input.avatarCrop });
         }
         if (input.invited !== undefined) updates.invited = String(input.invited);

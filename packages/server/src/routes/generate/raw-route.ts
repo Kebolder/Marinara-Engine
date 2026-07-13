@@ -10,6 +10,7 @@ import {
 } from "@marinara-engine/shared";
 import { createConnectionsStorage } from "../../services/storage/connections.storage.js";
 import { createLLMProvider } from "../../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../../services/llm/connection-fallback-provider.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
 import { yieldToEventLoop, type BaseLLMProvider, type ChatMessage } from "../../services/llm/base-provider.js";
 import { mergeAdjacentMessages } from "../../services/prompt/merger.js";
@@ -22,6 +23,7 @@ import {
 import { resolveMemoryRecallEmbeddingSource } from "../../services/memory-recall-embedding.js";
 import { logger } from "../../lib/logger.js";
 import { sendSseEvent, startSseKeepalive, startSseReply } from "./sse.js";
+import { createReplyFallbackNotifier } from "./fallback-notification.js";
 import {
   createLocalSidecarGenerationConnection,
   mergeCustomParameters,
@@ -214,7 +216,7 @@ export async function registerRawRoute(app: FastifyInstance) {
       presencePenalty = 0;
     }
 
-    const provider: BaseLLMProvider =
+    const primaryProvider: BaseLLMProvider =
       body.connectionId === LOCAL_SIDECAR_CONNECTION_ID
         ? (getLocalSidecarProvider() as BaseLLMProvider)
         : createLLMProvider(
@@ -227,6 +229,15 @@ export async function registerRawRoute(app: FastifyInstance) {
             conn.claudeFastMode === "true",
             conn.treatAsLocalEndpoint === "true",
           );
+    const fallbackConnection = await connections.getFallbackForMain();
+    const provider = withConnectionFallbackProvider({
+      primary: primaryProvider,
+      primaryConnectionId: body.connectionId,
+      fallbackConnection,
+      fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+      category: "main",
+      onFallback: createReplyFallbackNotifier(reply),
+    });
 
     const normalizedMessages: ChatMLMessage[] = body.messages.map((message) => ({
       role: message.role,
