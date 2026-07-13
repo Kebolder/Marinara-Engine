@@ -93,6 +93,12 @@ export { pokerEngine, buildPots } from "./features/turn-games/poker/engine.js";
 export * from "./features/turn-games/eightball/types.js";
 export * from "./features/turn-games/eightball/tools.js";
 export { eightBallEngine } from "./features/turn-games/eightball/engine.js";
+export * from "./features/turn-games/tic-tac-toe/types.js";
+export * from "./features/turn-games/tic-tac-toe/tools.js";
+export { ticTacToeEngine } from "./features/turn-games/tic-tac-toe/engine.js";
+export * from "./features/turn-games/rock-paper-scissors/types.js";
+export * from "./features/turn-games/rock-paper-scissors/tools.js";
+export { rockPaperScissorsEngine } from "./features/turn-games/rock-paper-scissors/engine.js";
 
 // Utils
 export * from "./utils/macro-engine.js";

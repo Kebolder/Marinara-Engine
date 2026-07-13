@@ -4918,6 +4918,46 @@ strong {
   mix-blend-mode: screen;
 }
 
+@keyframes rps-clank-left {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  45% {
+    transform: translateX(18px) scale(1.04) rotate(2deg);
+  }
+  58% {
+    transform: translateX(24px) scale(1.08) rotate(-1deg);
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes rps-clank-right {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  45% {
+    transform: translateX(-18px) scale(1.04) rotate(-2deg);
+  }
+  58% {
+    transform: translateX(-24px) scale(1.08) rotate(1deg);
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes rps-vs-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  52% {
+    transform: scale(1.18);
+  }
+}
+
 .game-combat-impact-flash--critical {
   background:
     radial-gradient(circle at 50% 45%, rgba(248, 113, 113, 0.42), transparent 36%),

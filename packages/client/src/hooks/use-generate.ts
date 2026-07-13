@@ -423,6 +423,8 @@ import { useUnoGameStore } from "../stores/uno-game.store";
 import { useChessGameStore } from "../stores/chess-game.store";
 import { usePokerGameStore } from "../stores/poker-game.store";
 import { useEightBallGameStore } from "../stores/eightball-game.store";
+import { useTicTacToeGameStore } from "../stores/tic-tac-toe-game.store";
+import { useRockPaperScissorsGameStore } from "../stores/rock-paper-scissors-game.store";
 import { useTranslationStore } from "../stores/translation.store";
 import { useUIStore } from "../stores/ui.store";
 import {
@@ -1850,6 +1852,9 @@ export function useGenerate() {
                 else if (turnGameType === "uno") useUnoGameStore.getState().clearUno(params.chatId);
                 else if (turnGameType === "poker") usePokerGameStore.getState().clearPoker(params.chatId);
                 else if (turnGameType === "eightball") useEightBallGameStore.getState().clearEightBall(params.chatId);
+                else if (turnGameType === "tic-tac-toe") useTicTacToeGameStore.getState().clearTicTacToe(params.chatId);
+                else if (turnGameType === "rock-paper-scissors")
+                  useRockPaperScissorsGameStore.getState().clearRockPaperScissors(params.chatId);
                 void qc.invalidateQueries({ queryKey: turnGameKeys.state(params.chatId) });
                 break;
               }
@@ -1861,6 +1866,10 @@ export function useGenerate() {
                 usePokerGameStore.getState().setPoker(event.data as never, params.chatId);
               } else if (turnGameType === "eightball") {
                 useEightBallGameStore.getState().setEightBall(event.data as never, params.chatId);
+              } else if (turnGameType === "tic-tac-toe") {
+                useTicTacToeGameStore.getState().setTicTacToe(event.data as never, params.chatId);
+              } else if (turnGameType === "rock-paper-scissors") {
+                useRockPaperScissorsGameStore.getState().setRockPaperScissors(event.data as never, params.chatId);
               }
               break;
             }
@@ -3065,6 +3074,9 @@ export function useGenerate() {
                 else if (turnGameType === "uno") useUnoGameStore.getState().clearUno(chatId);
                 else if (turnGameType === "poker") usePokerGameStore.getState().clearPoker(chatId);
                 else if (turnGameType === "eightball") useEightBallGameStore.getState().clearEightBall(chatId);
+                else if (turnGameType === "tic-tac-toe") useTicTacToeGameStore.getState().clearTicTacToe(chatId);
+                else if (turnGameType === "rock-paper-scissors")
+                  useRockPaperScissorsGameStore.getState().clearRockPaperScissors(chatId);
                 void qc.invalidateQueries({ queryKey: turnGameKeys.state(chatId) });
                 break;
               }
@@ -3076,6 +3088,10 @@ export function useGenerate() {
                 usePokerGameStore.getState().setPoker(event.data as never, chatId);
               } else if (turnGameType === "eightball") {
                 useEightBallGameStore.getState().setEightBall(event.data as never, chatId);
+              } else if (turnGameType === "tic-tac-toe") {
+                useTicTacToeGameStore.getState().setTicTacToe(event.data as never, chatId);
+              } else if (turnGameType === "rock-paper-scissors") {
+                useRockPaperScissorsGameStore.getState().setRockPaperScissors(event.data as never, chatId);
               }
               break;
             }

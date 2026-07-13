@@ -8,6 +8,8 @@ import { useUnoGameStore } from "../stores/uno-game.store";
 import { useChessGameStore } from "../stores/chess-game.store";
 import { usePokerGameStore } from "../stores/poker-game.store";
 import { useEightBallGameStore } from "../stores/eightball-game.store";
+import { useTicTacToeGameStore } from "../stores/tic-tac-toe-game.store";
+import { useRockPaperScissorsGameStore } from "../stores/rock-paper-scissors-game.store";
 import { useGalleryStore } from "../stores/gallery.store";
 import { toast } from "sonner";
 import { startSceneWithPromptPreferences } from "./scene-generation";
@@ -603,6 +605,34 @@ const COMMANDS: SlashCommand[] = [
         return { handled: true, feedback: "8-ball pool can only be played in conversation chats." };
       }
       useEightBallGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
+    name: "tictactoe",
+    aliases: ["ttt"],
+    description: "Start a game of tic-tac-toe with a character in this chat",
+    usage: "/tictactoe",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "Tic-tac-toe can only be played in conversation chats." };
+      }
+      useTicTacToeGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
+    name: "rps",
+    aliases: ["rockpaperscissors"],
+    description: "Start a game of rock-paper-scissors with a character in this chat",
+    usage: "/rps",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "Rock-paper-scissors can only be played in conversation chats." };
+      }
+      useRockPaperScissorsGameStore.getState().openSetup(ctx.chatId);
       return { handled: true };
     },
   },

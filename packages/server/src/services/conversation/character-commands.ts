@@ -16,6 +16,8 @@
 // - [chess] (start a one-on-one chess game against the user; Conversation mode)
 // - [poker] (start a game of Texas Hold'em poker at the table; Conversation mode)
 // - [eightball] (start a one-on-one 8-ball pool game against the user; Conversation mode)
+// - [tic_tac_toe] (start a one-on-one tic-tac-toe game against the user; Conversation mode)
+// - [rock_paper_scissors] (start a one-on-one rock-paper-scissors match against the user; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
@@ -105,6 +107,16 @@ export interface PokerCommand {
 export interface EightballCommand {
   /** Start a one-on-one 8-ball pool game against the user. Param-less; the system racks + runs the table. */
   type: "eightball";
+}
+
+export interface TicTacToeCommand {
+  /** Start a one-on-one tic-tac-toe game against the user. Param-less; the system sets up + runs the board. */
+  type: "tic_tac_toe";
+}
+
+export interface RockPaperScissorsCommand {
+  /** Start a one-on-one rock-paper-scissors match against the user. Param-less; the system sets up + runs the match. */
+  type: "rock_paper_scissors";
 }
 
 export interface InfluenceCommand {
@@ -379,6 +391,8 @@ export type CharacterCommand =
   | ChessCommand
   | PokerCommand
   | EightballCommand
+  | TicTacToeCommand
+  | RockPaperScissorsCommand
   | InfluenceCommand
   | NoteCommand
   | DirectMessageCommand
@@ -411,6 +425,10 @@ const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
 const POKER_RE = /\[poker(?::[^\]\r\n]*)?\]/gi;
 // Param-less 8-ball trigger. Same tolerant shape as UNO_RE.
 const EIGHTBALL_RE = /\[eightball(?::[^\]\r\n]*)?\]/gi;
+// Param-less tic-tac-toe trigger. Same tolerant shape as UNO_RE.
+const TIC_TAC_TOE_RE = /\[tic_tac_toe(?::[^\]\r\n]*)?\]/gi;
+// Param-less rock-paper-scissors trigger. Same tolerant shape as UNO_RE.
+const ROCK_PAPER_SCISSORS_RE = /\[rock_paper_scissors(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -1178,6 +1196,18 @@ export function parseCharacterCommands(content: string): {
     break;
   }
 
+  // Parse tic-tac-toe command — start a one-on-one tic-tac-toe game. Param-less; only one per message.
+  for (const _ticTacToeMatch of content.matchAll(TIC_TAC_TOE_RE)) {
+    commands.push({ type: "tic_tac_toe" });
+    break;
+  }
+
+  // Parse rock-paper-scissors command — start a one-on-one match. Param-less; only one per message.
+  for (const _rpsMatch of content.matchAll(ROCK_PAPER_SCISSORS_RE)) {
+    commands.push({ type: "rock_paper_scissors" });
+    break;
+  }
+
   // Parse influence commands (<influence>text</influence>)
   for (const match of content.matchAll(INFLUENCE_RE)) {
     const text = stripConversationPromptTimestamps(match[1]!.trim());
@@ -1404,6 +1434,8 @@ export function parseCharacterCommands(content: string): {
     .replace(CHESS_RE, "")
     .replace(POKER_RE, "")
     .replace(EIGHTBALL_RE, "")
+    .replace(TIC_TAC_TOE_RE, "")
+    .replace(ROCK_PAPER_SCISSORS_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")

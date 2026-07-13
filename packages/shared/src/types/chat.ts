@@ -40,6 +40,8 @@ export const CONVERSATION_COMMAND_KEYS = [
   "chess",
   "poker",
   "eightball",
+  "tic_tac_toe",
+  "rock_paper_scissors",
   "music",
   "haptic",
   "influence",

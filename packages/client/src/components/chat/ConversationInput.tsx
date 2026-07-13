@@ -28,6 +28,8 @@ import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
 import { usePokerGameStore } from "../../stores/poker-game.store";
 import { useEightBallGameStore } from "../../stores/eightball-game.store";
+import { useTicTacToeGameStore } from "../../stores/tic-tac-toe-game.store";
+import { useRockPaperScissorsGameStore } from "../../stores/rock-paper-scissors-game.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../hooks/use-chats";
@@ -1037,6 +1039,23 @@ export function ConversationInput({
         /\b(?:play|start|rack)\b[^.!?\n]{0,24}\b(?:8-ball|8 ball|eightball|pool|billiards)\b/i.test(raw)
       ) {
         useEightBallGameStore.getState().openSetup(activeChatId);
+      }
+      const activeTicTacToe = useTicTacToeGameStore.getState().current;
+      const ticTacToeActive =
+        !!activeTicTacToe && activeTicTacToe.chatId === activeChatId && activeTicTacToe.status !== "finished";
+      if (
+        !ticTacToeActive &&
+        /\b(?:play|start)\b[^.!?\n]{0,24}\b(?:tic-tac-toe|tic tac toe|noughts and crosses)\b/i.test(raw)
+      ) {
+        useTicTacToeGameStore.getState().openSetup(activeChatId);
+      }
+      const activeRps = useRockPaperScissorsGameStore.getState().current;
+      const rpsActive = !!activeRps && activeRps.chatId === activeChatId && activeRps.status !== "finished";
+      if (
+        !rpsActive &&
+        /\b(?:play|start)\b[^.!?\n]{0,24}\b(?:rock[\s-]?paper[\s-]?scissors|rps)\b/i.test(raw)
+      ) {
+        useRockPaperScissorsGameStore.getState().openSetup(activeChatId);
       }
     }
 

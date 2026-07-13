@@ -37,6 +37,14 @@ export async function handleTurnGameCommand(args: {
     await startEightballFromCommand(args);
     return true;
   }
+  if (args.commandType === "tic_tac_toe") {
+    await startTicTacToeFromCommand(args);
+    return true;
+  }
+  if (args.commandType === "rock_paper_scissors") {
+    await startRockPaperScissorsFromCommand(args);
+    return true;
+  }
   return false;
 }
 
@@ -227,5 +235,77 @@ async function startEightballFromCommand(args: Parameters<typeof handleTurnGameC
     }
   } catch (err) {
     logger.error(err, "[commands] eightball start failed");
+  }
+}
+
+async function startTicTacToeFromCommand(args: Parameters<typeof handleTurnGameCommand>[0]): Promise<void> {
+  try {
+    const existingGame = await getActiveTurnGame(args.db, args.chatId);
+    if (existingGame) {
+      logger.info("[commands] tic-tac-toe requested but a game is already active in chat %s", args.chatId);
+      return;
+    }
+    if (!args.characterId) {
+      logger.warn("[commands] tic-tac-toe requested without an agreeing character in chat %s", args.chatId);
+      return;
+    }
+
+    const outcome = await startTurnGame(args.db, args.chatId, {
+      gameType: "tic-tac-toe",
+      botCharacterIds: [args.characterId],
+      humanFirst: true,
+    });
+    if (outcome.ok) {
+      args.reply.raw.write(`data: ${JSON.stringify({ type: "turn_game_state_patch", data: outcome.view })}\n\n`);
+      logger.info("[commands] tic-tac-toe started in chat %s against %s", args.chatId, args.characterId);
+      await runTurnGameBotTurns({
+        db: args.db,
+        chatId: args.chatId,
+        conn: args.conn,
+        baseUrl: args.baseUrl,
+        reply: args.reply,
+        signal: args.signal,
+      });
+    } else {
+      logger.warn("[commands] tic-tac-toe start failed in chat %s: %s", args.chatId, outcome.error ?? "");
+    }
+  } catch (err) {
+    logger.error(err, "[commands] tic-tac-toe start failed");
+  }
+}
+
+async function startRockPaperScissorsFromCommand(args: Parameters<typeof handleTurnGameCommand>[0]): Promise<void> {
+  try {
+    const existingGame = await getActiveTurnGame(args.db, args.chatId);
+    if (existingGame) {
+      logger.info("[commands] rock-paper-scissors requested but a game is already active in chat %s", args.chatId);
+      return;
+    }
+    if (!args.characterId) {
+      logger.warn("[commands] rock-paper-scissors requested without an agreeing character in chat %s", args.chatId);
+      return;
+    }
+
+    const outcome = await startTurnGame(args.db, args.chatId, {
+      gameType: "rock-paper-scissors",
+      botCharacterIds: [args.characterId],
+      humanFirst: true,
+    });
+    if (outcome.ok) {
+      args.reply.raw.write(`data: ${JSON.stringify({ type: "turn_game_state_patch", data: outcome.view })}\n\n`);
+      logger.info("[commands] rock-paper-scissors started in chat %s against %s", args.chatId, args.characterId);
+      await runTurnGameBotTurns({
+        db: args.db,
+        chatId: args.chatId,
+        conn: args.conn,
+        baseUrl: args.baseUrl,
+        reply: args.reply,
+        signal: args.signal,
+      });
+    } else {
+      logger.warn("[commands] rock-paper-scissors start failed in chat %s: %s", args.chatId, outcome.error ?? "");
+    }
+  } catch (err) {
+    logger.error(err, "[commands] rock-paper-scissors start failed");
   }
 }
