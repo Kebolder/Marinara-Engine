@@ -38,6 +38,7 @@ import {
   EyeOff,
   Heart,
   Droplets,
+  Crosshair,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "../../lib/utils";
@@ -47,6 +48,7 @@ import { useTacticalCombatStart, useTacticalCombatAction } from "../../hooks/use
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import {
   TERRAIN_DATA,
+  CLASS_PROFILES,
   getMovementRange,
   getTargetsInRange,
   forecastAttack,
@@ -60,6 +62,7 @@ import {
   type TacticalEvent,
   type TacticalCoord,
   type TacticalTerrain,
+  type TacticalClass,
 } from "@marinara-engine/shared";
 
 // ── Props ──
@@ -354,6 +357,31 @@ function ringColorFor(id: string, side: "party" | "enemy"): string {
 // type having the field yet (the engine agent adds `environment?: TacticalEnvironment`).
 function environmentOf(state: TacticalCombatState | null): string | undefined {
   return (state as { environment?: string } | null)?.environment ?? undefined;
+}
+
+// ── Class helpers ──
+//
+// R3-A adds `TacticalClass`, `CLASS_PROFILES`, and `TacticalUnit.unitClass?`. Old
+// snapshots predate `unitClass`, so every read goes through `unitClassOf`, which
+// falls back to "fighter" for absent/invalid values.
+
+const CLASS_ICONS: Record<TacticalClass, typeof Sword> = {
+  fighter: Sword,
+  knight: Shield,
+  rogue: Wind,
+  archer: Crosshair,
+  mage: Sparkles,
+  healer: Heart,
+};
+
+function unitClassOf(unit: TacticalUnit): TacticalClass {
+  const uc = (unit as { unitClass?: string }).unitClass;
+  return uc && Object.prototype.hasOwnProperty.call(CLASS_PROFILES, uc) ? (uc as TacticalClass) : "fighter";
+}
+
+// "Rng 1" for melee, "Rng 2-3" for spread ranges (min===max collapses to one number).
+function rangeText(range: { min: number; max: number }): string {
+  return range.min === range.max ? `Rng ${range.min}` : `Rng ${range.min}-${range.max}`;
 }
 
 // ── Transient render state (positions + hp during animation) ──
@@ -741,12 +769,16 @@ export function TacticalCombatUI({
     ) => {
       clearTimers();
       if (events.length === 0) {
+        // No events to animate — release the lock sendAction set before flight.
+        animatingRef.current = false;
+        setAnimating(false);
         setState(finalState);
         persistSnapshot(finalState);
         maybeEnd(finalState);
         onSettled?.(finalState);
         return;
       }
+      // Already locked by sendAction; keep it set through the animation + finalize.
       animatingRef.current = true;
       setAnimating(true);
       const working = renderMapFromState(preState);
@@ -791,6 +823,14 @@ export function TacticalCombatUI({
     (action: TacticalAction, onSettled?: (final: TacticalCombatState) => void) => {
       if (!liveState || animatingRef.current) return;
       const preState = liveState;
+      // Lock SYNCHRONOUSLY — before the request leaves — so the network-flight
+      // window is guarded too. Without this, a second click during flight posts
+      // the STALE pre-action state, whose response cancels this animation and
+      // commits a pre-kill state (enemy revived, unit teleported back). The lock
+      // now covers request flight + animation + commit; playEvents / the catch
+      // below own its release.
+      animatingRef.current = true;
+      setAnimating(true);
       resetSelection();
       actionMut
         .mutateAsync({ chatId, state: preState, action })
@@ -798,6 +838,9 @@ export function TacticalCombatUI({
           playEvents(res.events, res.state, preState, onSettled);
         })
         .catch((err: unknown) => {
+          // Release the lock so a rejected action doesn't wedge the grid.
+          animatingRef.current = false;
+          setAnimating(false);
           const msg = err instanceof Error ? err.message : "That action was rejected.";
           toast.error(msg);
         });
@@ -1007,6 +1050,10 @@ export function TacticalCombatUI({
 
   const outcome = liveState.outcome;
   const isPlayerPhase = isPlayerPhaseNow;
+  // Raw player-phase flag (ignores `animating`) so the End Turn / Flee controls
+  // stay visible-but-disabled during resolution instead of vanishing — dropped
+  // clicks then read as "greyed out", not "the button disappeared".
+  const playerPhase = liveState.phase === "player";
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-slate-950/60 text-white select-none">
@@ -1044,6 +1091,12 @@ export function TacticalCombatUI({
           <span className="hidden text-[0.65rem] font-medium uppercase tracking-wider text-white/40 sm:inline">
             {liveState.difficulty}
           </span>
+          {animating && (
+            <span className="flex items-center gap-1.5 rounded-md bg-white/10 px-2 py-1 text-[0.65rem] font-semibold text-white/70">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300 shadow-[0_0_6px_1px_rgba(252,211,77,0.7)]" />
+              Resolving…
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -1069,19 +1122,27 @@ export function TacticalCombatUI({
             <ScrollText size={13} />
             <span className="hidden sm:inline">Log</span>
           </button>
-          {isPlayerPhase && (
+          {playerPhase && (
             <>
               <button
                 type="button"
                 onClick={endTurn}
-                className="rounded-lg border border-amber-300/30 bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-500/30"
+                disabled={animating}
+                className={cn(
+                  "rounded-lg border border-amber-300/30 bg-amber-500/20 px-2.5 py-1 text-xs font-semibold text-amber-100 transition-colors hover:bg-amber-500/30",
+                  animating && "cursor-not-allowed opacity-40 hover:bg-amber-500/20",
+                )}
               >
                 End Turn
               </button>
               <button
                 type="button"
                 onClick={() => setFleeConfirm(true)}
-                className="flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-xs font-semibold text-white/60 transition-colors hover:bg-white/10"
+                disabled={animating}
+                className={cn(
+                  "flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-xs font-semibold text-white/60 transition-colors hover:bg-white/10",
+                  animating && "cursor-not-allowed opacity-40 hover:bg-white/5",
+                )}
                 title="Flee the battle"
               >
                 <Flag size={13} />
@@ -1311,10 +1372,11 @@ export function TacticalCombatUI({
                       label="Move"
                       color="text-sky-300"
                       onClick={commitMove}
+                      disabled={animating}
                     />
                   )}
                   {getTargetsInRange(stagedState ?? liveState, selectedUnit.id, stagedMove ?? undefined).length > 0 && (
-                    <ActionButton icon={Sword} label="Attack" color="text-red-300" onClick={() => chooseAction("attack")} />
+                    <ActionButton icon={Sword} label="Attack" color="text-red-300" onClick={() => chooseAction("attack")} disabled={animating} />
                   )}
                   {selectedUnit.skills.length > 0 && (
                     <ActionButton
@@ -1322,17 +1384,19 @@ export function TacticalCombatUI({
                       label="Skills"
                       color="text-sky-300"
                       onClick={() => chooseAction("skills")}
+                      disabled={animating}
                     />
                   )}
-                  <ActionButton icon={Backpack} label="Item" color="text-emerald-300" onClick={() => chooseAction("item")} />
-                  <ActionButton icon={Shield} label="Defend" color="text-amber-300" onClick={() => chooseAction("defend")} />
-                  <ActionButton icon={Hourglass} label="Wait" color="text-white/70" onClick={() => chooseAction("wait")} />
+                  <ActionButton icon={Backpack} label="Item" color="text-emerald-300" onClick={() => chooseAction("item")} disabled={animating} />
+                  <ActionButton icon={Shield} label="Defend" color="text-amber-300" onClick={() => chooseAction("defend")} disabled={animating} />
+                  <ActionButton icon={Hourglass} label="Wait" color="text-white/70" onClick={() => chooseAction("wait")} disabled={animating} />
                   {stagedMove && (
                     <ActionButton
                       icon={Wind}
                       label="Reset Move"
                       color="text-white/60"
                       onClick={() => setStagedMove(null)}
+                      disabled={animating}
                     />
                   )}
                 </div>
@@ -1344,7 +1408,7 @@ export function TacticalCombatUI({
               <div className="flex flex-col gap-1.5">
                 {selectedUnit.skills.map((skill) => {
                   const cd = selectedUnit.skillCooldowns[skill.name] ?? 0;
-                  const ready = cd <= 0 && selectedUnit.mp >= skill.mpCost;
+                  const ready = cd <= 0 && selectedUnit.mp >= skill.mpCost && !animating;
                   return (
                     <button
                       type="button"
@@ -1391,13 +1455,31 @@ export function TacticalCombatUI({
                           ? "Select an enemy"
                           : "Select an ally"}
                 </p>
-                {targetIds.size === 0 && <p className="text-xs italic text-white/40">No valid targets in range.</p>}
+                {targetIds.size === 0 && (
+                  <p className="text-xs italic text-white/50">
+                    {(() => {
+                      const isAttack = ui.action === "attack" || (ui.action === "skill" && ui.skill?.type === "attack");
+                      if (isAttack) {
+                        const range = selectedUnit.attackRange;
+                        const rng = range.min === range.max ? `${range.min}` : `${range.min}-${range.max}`;
+                        if (range.min > 1) {
+                          const cls = unitClassOf(selectedUnit);
+                          const plural = `${CLASS_PROFILES[cls].label.toLowerCase()}s`;
+                          return `No targets in range ${rng} — ${plural} can't strike adjacent foes.`;
+                        }
+                        return `No targets in range ${rng}.`;
+                      }
+                      if (ui.action === "skill" && ui.skill?.type === "debuff") return "No enemies in range.";
+                      return "No allies in range.";
+                    })()}
+                  </p>
+                )}
 
                 {forecast && forecastTargetId && (
                   <ForecastPanel
                     forecast={forecast}
-                    attackerName={selectedUnit.name}
-                    defenderName={liveState.units.find((u) => u.id === forecastTargetId)?.name ?? "Target"}
+                    attacker={selectedUnit}
+                    defender={liveState.units.find((u) => u.id === forecastTargetId) ?? null}
                   />
                 )}
 
@@ -1406,7 +1488,11 @@ export function TacticalCombatUI({
                     <button
                       type="button"
                       onClick={confirmTarget}
-                      className="flex-1 rounded-lg bg-red-500/80 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-red-500"
+                      disabled={animating}
+                      className={cn(
+                        "flex-1 rounded-lg bg-red-500/80 px-3 py-2 text-sm font-bold text-white transition-colors hover:bg-red-500",
+                        animating && "cursor-not-allowed opacity-40 hover:bg-red-500/80",
+                      )}
                     >
                       Confirm
                     </button>
@@ -1544,6 +1630,7 @@ function UnitToken({
   const cellW = 100 / gridW;
   const sprite = resolveSprite(unit.sprite);
   const ring = ringColorFor(unit.id, unit.side);
+  const ClassIcon = CLASS_ICONS[unitClassOf(unit)];
   const hpPct = unit.maxHp > 0 ? Math.max(0, (hp / unit.maxHp) * 100) : 0;
   const hpColor = hpPct > 60 ? "bg-emerald-500" : hpPct > 25 ? "bg-amber-500" : "bg-red-500";
   const mpPct = unit.maxMp > 0 ? Math.max(0, (unit.mp / unit.maxMp) * 100) : 0;
@@ -1595,6 +1682,18 @@ function UnitToken({
           <Skull className="absolute -top-2 left-1/2 h-3 w-3 -translate-x-1/2 text-red-300 drop-shadow" />
         )}
         {dead && <SkullIcon className="absolute inset-0 m-auto h-1/2 w-1/2 text-white/70" />}
+        {/* Class badge (corner, side-tinted) */}
+        {!dead && (
+          <span
+            className="absolute -bottom-0.5 -right-0.5 flex h-[13px] w-[13px] items-center justify-center rounded-full border shadow-sm"
+            style={{
+              backgroundColor: unit.side === "party" ? "rgba(30,58,90,0.95)" : "rgba(90,30,40,0.95)",
+              borderColor: ring,
+            }}
+          >
+            <ClassIcon className="h-2 w-2 text-white/90" />
+          </span>
+        )}
       </div>
       {/* HP bar */}
       <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-black/60">
@@ -1614,17 +1713,23 @@ function ActionButton({
   label,
   color,
   onClick,
+  disabled,
 }: {
   icon: typeof Sword;
   label: string;
   color: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-1 py-2.5 text-[0.68rem] font-semibold text-white/85 transition-colors hover:bg-white/15 active:scale-95"
+      disabled={disabled}
+      className={cn(
+        "flex flex-col items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-1 py-2.5 text-[0.68rem] font-semibold text-white/85 transition-colors hover:bg-white/15 active:scale-95",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-white/5 active:scale-100",
+      )}
     >
       <Icon className={cn("h-5 w-5", color)} />
       {label}
@@ -1634,12 +1739,12 @@ function ActionButton({
 
 function ForecastPanel({
   forecast,
-  attackerName,
-  defenderName,
+  attacker,
+  defender,
 }: {
   forecast: ReturnType<typeof forecastAttack>;
-  attackerName: string;
-  defenderName: string;
+  attacker: TacticalUnit;
+  defender: TacticalUnit | null;
 }) {
   return (
     <motion.div
@@ -1648,16 +1753,16 @@ function ForecastPanel({
       className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-black/40 p-2 text-xs"
     >
       <ForecastSide
-        title={attackerName}
+        unit={attacker}
         tone="text-sky-200"
         headerBg="bg-sky-500/20"
         damage={forecast.damage}
         hit={forecast.hitChance}
         crit={forecast.critChance}
       />
-      {forecast.counter ? (
+      {forecast.counter && defender ? (
         <ForecastSide
-          title={defenderName}
+          unit={defender}
           tone="text-red-200"
           headerBg="bg-red-500/20"
           label="counters"
@@ -1666,8 +1771,9 @@ function ForecastPanel({
           crit={forecast.counter.critChance}
         />
       ) : (
-        <div className="flex flex-col items-center justify-center rounded-lg bg-white/5 text-center text-[0.65rem] text-white/40">
-          <span className="font-semibold">{defenderName}</span>
+        <div className="flex flex-col items-center justify-center gap-1 rounded-lg bg-white/5 text-center text-[0.65rem] text-white/40">
+          <span className="font-semibold">{defender?.name ?? "Target"}</span>
+          {defender && <ClassChip unit={defender} muted />}
           <span>no counter</span>
         </div>
       )}
@@ -1676,7 +1782,7 @@ function ForecastPanel({
 }
 
 function ForecastSide({
-  title,
+  unit,
   tone,
   headerBg,
   label,
@@ -1684,7 +1790,7 @@ function ForecastSide({
   hit,
   crit,
 }: {
-  title: string;
+  unit: TacticalUnit;
   tone: string;
   headerBg: string;
   label?: string;
@@ -1695,10 +1801,13 @@ function ForecastSide({
   return (
     <div className="overflow-hidden rounded-lg bg-white/5">
       <div className={cn("truncate px-1.5 py-1 text-[0.65rem] font-bold", headerBg, tone)}>
-        {title}
+        {unit.name}
         {label && <span className="font-normal text-white/50"> {label}</span>}
       </div>
       <div className="px-1.5 pb-1.5 pt-1">
+        <div className="mb-1">
+          <ClassChip unit={unit} />
+        </div>
         <div className="flex items-baseline gap-1">
           <Sword className="h-3 w-3 text-white/50" />
           <span className="text-base font-black text-white">{damage}</span>
@@ -1709,6 +1818,25 @@ function ForecastSide({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Class chip: lucide icon + label + attack-range text ──
+function ClassChip({ unit, muted }: { unit: TacticalUnit; muted?: boolean }) {
+  const cls = unitClassOf(unit);
+  const profile = CLASS_PROFILES[cls];
+  const Icon = CLASS_ICONS[cls];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded bg-white/10 px-1.5 py-0.5 text-[0.6rem] font-semibold",
+        muted ? "text-white/50" : "text-white/80",
+      )}
+    >
+      <Icon className={cn("h-3 w-3", muted ? "text-white/50" : "text-sky-300")} />
+      <span>{profile.label}</span>
+      <span className="text-white/45">· {rangeText(unit.attackRange)}</span>
+    </span>
   );
 }
 
@@ -1744,6 +1872,9 @@ function TileInspect({
             {unit.isBoss && <Skull className="h-3 w-3 text-red-300" />}
             <span className="truncate">{unit.name}</span>
             <span className="ml-auto text-[0.6rem] text-white/40">Lv {unit.level}</span>
+          </div>
+          <div className="mt-1">
+            <ClassChip unit={unit} />
           </div>
           <div className="mt-1 flex items-center gap-1 text-[0.65rem] text-white/70">
             <Heart className="h-3 w-3 text-red-400" />

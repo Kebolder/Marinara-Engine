@@ -8,7 +8,8 @@
 // compute from the exact same primitives (forecast MUST match applyAction
 // statistically).
 
-import type { CombatSkill, CombatStatusEffect } from "../../types/game.js";
+import type { CombatStatusEffect } from "../../types/game.js";
+import { CLASS_PROFILES } from "./classes.js";
 import { TERRAIN_DATA, type TacticalCoord, type TacticalDifficulty, type TacticalGrid, type TacticalTerrain, type TacticalUnit } from "./types.js";
 
 export function clamp(value: number, lo: number, hi: number): number {
@@ -36,15 +37,9 @@ export function isImpassable(grid: TacticalGrid, x: number, y: number): boolean 
   return !!terrainInfoAt(grid, x, y).impassable;
 }
 
-/** Movement points per turn from speed. */
+/** Movement points per turn from speed (class moveBonus is applied at unit creation). */
 export function deriveMovement(speed: number): number {
   return clamp(3 + Math.floor(speed / 10), 3, 6);
-}
-
-/** A unit with any attack-type skill is treated as having reach 2 (ranged caster). */
-export function deriveAttackRange(skills: CombatSkill[] | undefined): { min: number; max: number } {
-  const ranged = (skills ?? []).some((s) => s.type === "attack" && (s.power ?? 0) > 0);
-  return { min: 1, max: ranged ? 2 : 1 };
 }
 
 // ── Difficulty ──
@@ -130,9 +125,10 @@ export function hitChance(grid: TacticalGrid, attacker: TacticalUnit, defender: 
   return clamp(Math.round(raw), 30, 100);
 }
 
-/** 0–60 chance of a x2 critical. */
+/** 0–60 chance of a x2 critical. Adds the attacker's class crit bonus (absent class → fighter, +0). */
 export function critChance(attacker: TacticalUnit, defender: TacticalUnit): number {
-  return clamp(Math.round(5 + Math.max(0, effectiveSpeed(attacker) - effectiveSpeed(defender))), 0, 60);
+  const critBonus = CLASS_PROFILES[attacker.unitClass ?? "fighter"].critBonus;
+  return clamp(Math.round(5 + Math.max(0, effectiveSpeed(attacker) - effectiveSpeed(defender)) + critBonus), 0, 60);
 }
 
 export interface DamageInputs {

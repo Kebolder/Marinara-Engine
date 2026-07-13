@@ -62,6 +62,15 @@ export type TacticalEnvironment =
 
 export type TacticalFormation = "line" | "ambush" | "surrounded" | "skirmish" | "defense";
 
+// ── Classes ──
+// Round 3: each unit resolves to a tactical class (fighter/knight/rogue/archer/
+// mage/healer) that fixes its basic-attack reach, a movement bonus, and a crit
+// bonus. Derivation + the profile table live in `classes.ts`; this union is the
+// only class symbol in types.ts so both the engine and the client can reference
+// it without pulling in the derivation logic.
+
+export type TacticalClass = "fighter" | "knight" | "rogue" | "archer" | "mage" | "healer";
+
 // ── Grid ──
 
 export interface TacticalGrid {
@@ -114,9 +123,16 @@ export interface TacticalUnit {
   // ── tactical fields ──
   x: number;
   y: number;
-  /** Tiles this unit can traverse per turn: clamp(3 + floor(speed/10), 3, 6). */
+  /**
+   * Tactical class (Round 3). Fixes the stored attackRange + movement bonus at
+   * creation and feeds the crit bonus at resolve time. Optional so legacy
+   * snapshots (created before classes existed) still parse — every read site
+   * treats an absent value as "fighter".
+   */
+  unitClass?: TacticalClass;
+  /** Tiles this unit can traverse per turn: clamp(deriveMovement(speed) + class moveBonus, 2, 7). */
   movement: number;
-  /** Basic-attack reach in Manhattan distance. */
+  /** Basic-attack reach in Manhattan distance (from the unit's class profile). */
   attackRange: TacticalAttackRange;
   hasMoved: boolean;
   hasActed: boolean;

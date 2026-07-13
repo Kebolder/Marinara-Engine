@@ -9,12 +9,13 @@
 // refresh-safe). The LLM only narrates the aftermath via `buildTacticalSummary`.
 
 import type { Combatant, CombatSkill, CombatStatusEffect, CombatSummary } from "../../types/game.js";
+import { CLASS_PROFILES, deriveClass } from "./classes.js";
 import { generateGrid, placeSpawns } from "./grid-gen.js";
 import {
+  clamp,
   computeDamage,
   computeHeal,
   critChance,
-  deriveAttackRange,
   deriveMovement,
   elementMultiplier,
   hitChance,
@@ -78,6 +79,10 @@ function normalizeFormation(value?: string): TacticalFormation {
 
 function combatantToUnit(c: Combatant, side: "party" | "enemy", isBoss: boolean): TacticalUnit {
   const skills = (c.skills ?? []).map((s) => ({ ...s }));
+  // Class fixes reach + movement bonus once at creation; both are STORED on the
+  // unit so old snapshots (missing unitClass) keep working from their stored values.
+  const unitClass = deriveClass(c);
+  const profile = CLASS_PROFILES[unitClass];
   return {
     id: c.id,
     name: c.name,
@@ -97,8 +102,9 @@ function combatantToUnit(c: Combatant, side: "party" | "enemy", isBoss: boolean)
     isBoss,
     x: 0,
     y: 0,
-    movement: deriveMovement(c.speed),
-    attackRange: deriveAttackRange(skills),
+    unitClass,
+    movement: clamp(deriveMovement(c.speed) + profile.moveBonus, 2, 7),
+    attackRange: { ...profile.attackRange },
     hasMoved: false,
     hasActed: false,
     defending: false,

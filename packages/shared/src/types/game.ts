@@ -331,6 +331,8 @@ export interface Combatant {
   element?: string;
   /** Current elemental aura applied to this combatant */
   elementAura?: { element: string; gauge: number; sourceId: string } | null;
+  /** Tactical-combat class hint (fighter/knight/rogue/archer/mage/healer). Classic combat ignores this. */
+  combatClass?: string;
 }
 
 export interface CombatStatusEffect {

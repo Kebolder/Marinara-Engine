@@ -50,10 +50,10 @@ function buildAttackOptions(state: TacticalCombatState, unit: TacticalUnit): Att
   const evaluate = (
     tile: TacticalCoord,
     target: TacticalUnit,
-    opts: { power?: number; element?: string; skillName?: string; rangeMax: number },
+    opts: { power?: number; element?: string; skillName?: string; rangeMin: number; rangeMax: number },
   ): void => {
     const d = manhattan(tile, target);
-    if (d < 1 || d > opts.rangeMax) return;
+    if (d < opts.rangeMin || d > opts.rangeMax) return;
     const fc = forecastFrom(state, unit, target, tile, { power: opts.power, element: opts.element });
     const hitP = fc.hitChance / 100;
     const expValue = hitP * fc.damage;
@@ -75,15 +75,16 @@ function buildAttackOptions(state: TacticalCombatState, unit: TacticalUnit): Att
 
   for (const tile of tiles) {
     for (const target of targets) {
-      // Basic attack.
-      evaluate(tile, target, { rangeMax: unit.attackRange.max });
-      // Attack skills.
+      // Basic attack — bounded by the unit's class reach (archers never strike below min).
+      evaluate(tile, target, { rangeMin: unit.attackRange.min, rangeMax: unit.attackRange.max });
+      // Attack skills — always reachable from 1, with a floor of 2 on max.
       for (const skill of unit.skills) {
         if (skill.type !== "attack" || !skillReady(unit, skill)) continue;
         evaluate(tile, target, {
           power: Math.max(1, skill.power),
           element: skill.element,
           skillName: skill.name,
+          rangeMin: 1,
           rangeMax: Math.max(unit.attackRange.max, 2),
         });
       }
