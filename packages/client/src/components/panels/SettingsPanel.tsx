@@ -194,6 +194,7 @@ type SettingsSectionId =
   | "input-editing"
   | "text-rules"
   | "game-playback"
+  | "overall-generations"
   | "image-generation"
   | "video-generation"
   | "game-assets"
@@ -252,7 +253,7 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "notifications",
     tab: "general",
     label: "Notifications",
-    description: "Notification sounds and browser notifications by mode.",
+    description: "Notification sounds and background notifications by mode.",
     aliases: ["notifications", "sound", "ping", "browser", "background replies", "conversation", "roleplay", "game"],
   },
   {
@@ -297,11 +298,18 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     aliases: ["game", "text speed", "auto play", "middle mouse", "navigation", "vn"],
   },
   {
+    id: "overall-generations",
+    tab: "generations",
+    label: "Overall Generations",
+    description: "Shared behavior for image and video generation requests.",
+    aliases: ["media", "image", "video", "queue", "prompt review", "generation"],
+  },
+  {
     id: "image-generation",
     tab: "generations",
     label: "Image Generation",
-    description: "Prompt review, image canvas defaults, and style profiles.",
-    aliases: ["image", "background", "portrait", "selfie", "style profiles", "prompt review"],
+    description: "Image canvas defaults and style profiles.",
+    aliases: ["image", "background", "portrait", "selfie", "style profiles"],
   },
   {
     id: "video-generation",
@@ -546,6 +554,14 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     kind: "Toggle",
   },
   {
+    id: "mobile-background-notifications",
+    sectionId: "notifications",
+    label: "Background replies mobile notifications",
+    description: "Show native Android notifications for background Conversation replies.",
+    aliases: ["mobile", "android", "notifications", "conversation"],
+    kind: "Toggle",
+  },
+  {
     id: "enable-streaming",
     sectionId: "responses",
     label: "Enable streaming",
@@ -674,16 +690,16 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     kind: "Slider",
   },
   {
-    id: "queue-image-generation",
-    sectionId: "image-generation",
-    label: "Queue image generation requests",
-    description: "Send image generation jobs one at a time.",
-    aliases: ["image", "queue", "generation"],
+    id: "queue-media-generation",
+    sectionId: "overall-generations",
+    label: "Queue media generation requests",
+    description: "Send image and video generation jobs one at a time per connection.",
+    aliases: ["media", "image", "video", "queue", "generation"],
     kind: "Toggle",
   },
   {
     id: "image-prompt-review",
-    sectionId: "image-generation",
+    sectionId: "overall-generations",
     label: "Expose media prompts before sending",
     description: "Review generated image and Gallery video prompts before sending.",
     aliases: [
@@ -2665,7 +2681,7 @@ function GeneralSettings() {
 
       <SettingsSection
         title="Notifications"
-        description="Notification sounds and browser notifications by mode."
+        description="Notification sounds and background notifications by mode."
         icon={<Bell size="0.875rem" />}
         {...getSettingsSectionAnchorProps("notifications")}
       >
@@ -2967,11 +2983,40 @@ function GeneralSettings() {
   );
 }
 
-function ImageGenerationSettings() {
+function OverallGenerationSettings() {
   const queueImageGenerationRequests = useUIStore((s) => s.queueImageGenerationRequests);
   const setQueueImageGenerationRequests = useUIStore((s) => s.setQueueImageGenerationRequests);
   const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
   const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
+
+  return (
+    <SettingsSection
+      title="Overall Generations"
+      description="Choose behavior shared by image and video generation."
+      icon={<WandSparkles size="0.875rem" />}
+      {...getSettingsSectionAnchorProps("overall-generations")}
+    >
+      <div className="flex flex-col gap-2.5">
+        <ToggleSetting
+          anchorId={getSettingsControlAnchorId("queue-media-generation")}
+          label="Queue media generation requests"
+          checked={queueImageGenerationRequests}
+          onChange={setQueueImageGenerationRequests}
+          help="Sends supported image and video generation jobs one at a time per connection. Keep this on for providers that reject simultaneous requests."
+        />
+        <ToggleSetting
+          anchorId={getSettingsControlAnchorId("image-prompt-review")}
+          label="Expose media prompts before sending"
+          checked={reviewImagePromptsBeforeSend}
+          onChange={setReviewImagePromptsBeforeSend}
+          help="Pauses supported user-started media generation so you can review and edit the final prompt before provider submission. This applies across Game and Roleplay images, Conversation Gallery selfies, Gallery Video and Animate actions, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
+        />
+      </div>
+    </SettingsSection>
+  );
+}
+
+function ImageGenerationSettings() {
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
   const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
   const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
@@ -2990,26 +3035,11 @@ function ImageGenerationSettings() {
   return (
     <SettingsSection
       title="Image Generation"
-      description="Review generated prompts, set image canvas defaults, and tune prompt style profiles."
+      description="Set image canvas defaults and tune prompt style profiles."
       icon={<Image size="0.875rem" />}
       {...getSettingsSectionAnchorProps("image-generation")}
     >
       <div className="flex flex-col gap-2.5">
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("queue-image-generation")}
-          label="Queue image generation requests"
-          checked={queueImageGenerationRequests}
-          onChange={setQueueImageGenerationRequests}
-          help="Sends supported image generation jobs one at a time, including Game assets and Roleplay Gallery illustrations. Keep this on for providers that reject simultaneous requests."
-        />
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("image-prompt-review")}
-          label="Expose media prompts before sending"
-          checked={reviewImagePromptsBeforeSend}
-          onChange={setReviewImagePromptsBeforeSend}
-          help="Pauses supported user-started media generation so you can review and edit the final prompt before provider submission. This applies across Game and Roleplay images, Conversation Gallery selfies, Gallery Video and Animate actions, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
-        />
-
         <ImageDimensionRow
           controlId="image-background-size"
           label="Backgrounds"
@@ -5135,6 +5165,7 @@ function GenerationsSettings() {
         Global defaults for generated images, generated videos, and reusable prompt templates.
       </SettingsIntro>
 
+      <OverallGenerationSettings />
       <ImageGenerationSettings />
       <VideoGenerationSettings />
       <div id={getSettingsSectionAnchorId("prompt-overrides")} className="flex flex-col gap-3">

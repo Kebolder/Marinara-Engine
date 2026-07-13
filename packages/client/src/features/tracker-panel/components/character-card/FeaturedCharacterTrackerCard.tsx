@@ -18,6 +18,7 @@ import type {
   TrackerThoughtBubbleDisplay,
 } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
+import { trackerEditableText } from "../../lib/tracker-display";
 import {
   makeUniqueCharacterCustomFieldName,
   normalizeCharacterCustomFieldName,
@@ -126,7 +127,9 @@ export function FeaturedCharacterTrackerCard({
   const thoughtBubbleRef = useRef<HTMLDivElement | null>(null);
   const thoughtControlRef = useRef<HTMLButtonElement | null>(null);
   const [thoughtsOpen, setThoughtsOpen] = useState(false);
-  const customFields = Object.entries(character.customFields ?? {});
+  const customFields = Object.entries(character.customFields ?? {}).map(
+    ([name, value]) => [name, trackerEditableText(value)] as const,
+  );
   const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasEditableStatAdd = !!onUpdate && addMode;
   const hasEditableCustomFieldAdd = !!onUpdate && addMode;

@@ -672,6 +672,7 @@ interface UIState {
   gameNotificationSound: boolean;
   notificationSoundsOnlyWhenUnfocused: boolean;
   conversationBrowserNotifications: boolean;
+  conversationMobileNotifications: boolean;
 
   // ── Custom Conversation Prompt ──
   /** User's custom default system prompt for new conversations (null = built-in default). */
@@ -921,6 +922,7 @@ interface UIState {
   setGameNotificationSound: (v: boolean) => void;
   setNotificationSoundsOnlyWhenUnfocused: (v: boolean) => void;
   setConversationBrowserNotifications: (v: boolean) => void;
+  setConversationMobileNotifications: (v: boolean) => void;
   setCustomConversationPrompt: (v: string | null) => void;
   setScheduleGenerationPreferences: (v: string) => void;
   rememberGameSetupOptions: (
@@ -1133,6 +1135,7 @@ export function pickSyncedSettings(state: UIState) {
     gameNotificationSound: state.gameNotificationSound,
     notificationSoundsOnlyWhenUnfocused: state.notificationSoundsOnlyWhenUnfocused,
     conversationBrowserNotifications: state.conversationBrowserNotifications,
+    conversationMobileNotifications: state.conversationMobileNotifications,
     customConversationPrompt: state.customConversationPrompt,
     scheduleGenerationPreferences: state.scheduleGenerationPreferences,
     impersonatePromptTemplate: state.impersonatePromptTemplate,
@@ -1304,6 +1307,7 @@ export const useUIStore = create<UIState>()(
       gameNotificationSound: true,
       notificationSoundsOnlyWhenUnfocused: false,
       conversationBrowserNotifications: false,
+      conversationMobileNotifications: false,
       customConversationPrompt: null,
       scheduleGenerationPreferences: "",
       learnedGameSetupOptions: DEFAULT_GAME_SETUP_LEARNED_OPTIONS,
@@ -1970,6 +1974,7 @@ export const useUIStore = create<UIState>()(
       setGameNotificationSound: (v) => set({ gameNotificationSound: v }),
       setNotificationSoundsOnlyWhenUnfocused: (v) => set({ notificationSoundsOnlyWhenUnfocused: v }),
       setConversationBrowserNotifications: (v) => set({ conversationBrowserNotifications: v }),
+      setConversationMobileNotifications: (v) => set({ conversationMobileNotifications: v }),
       setCustomConversationPrompt: (v) => set({ customConversationPrompt: v }),
       setScheduleGenerationPreferences: (v) => set({ scheduleGenerationPreferences: v }),
       rememberGameSetupOptions: (options, text) =>
@@ -2057,7 +2062,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 71,
+      version: 72,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2391,6 +2396,9 @@ export const useUIStore = create<UIState>()(
         // v38 -> v39: opt-in browser notifications for background replies.
         if (version <= 38 && persisted.conversationBrowserNotifications === undefined) {
           persisted.conversationBrowserNotifications = false;
+        }
+        if (version <= 71 && persisted.conversationMobileNotifications === undefined) {
+          persisted.conversationMobileNotifications = false;
         }
         // v39 -> v40: selectable Conversation message layout.
         persisted.conversationMessageStyle = normalizeConversationMessageStyle(persisted.conversationMessageStyle);
@@ -2735,6 +2743,7 @@ export const useUIStore = create<UIState>()(
         gameNotificationSound: state.gameNotificationSound,
         notificationSoundsOnlyWhenUnfocused: state.notificationSoundsOnlyWhenUnfocused,
         conversationBrowserNotifications: state.conversationBrowserNotifications,
+        conversationMobileNotifications: state.conversationMobileNotifications,
         customConversationPrompt: state.customConversationPrompt,
         scheduleGenerationPreferences: state.scheduleGenerationPreferences,
         impersonatePromptTemplate: state.impersonatePromptTemplate,

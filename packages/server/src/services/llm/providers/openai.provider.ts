@@ -205,14 +205,27 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   private static extractSseJsonPayload(raw: string): string | null {
     const lines = raw.split(/\r?\n/);
+    let fallbackPayload: string | null = null;
     for (const line of lines) {
       const trimmed = line.trim();
       const payload = OpenAIProvider.extractSseData(trimmed);
       if (payload == null) continue;
       if (!payload || payload === "[DONE]") continue;
-      return payload;
+      fallbackPayload = payload;
+      try {
+        const parsed = JSON.parse(payload) as Record<string, unknown>;
+        const firstChoice = Array.isArray(parsed.choices)
+          ? (parsed.choices[0] as { message?: { content?: unknown }; delta?: { content?: unknown } } | undefined)
+          : undefined;
+        const content = firstChoice?.message?.content ?? firstChoice?.delta?.content;
+        if ((typeof content === "string" && content.trim()) || (Array.isArray(content) && content.length > 0)) {
+          return payload;
+        }
+      } catch {
+        // Keep scanning. parseJsonBody reports the detailed error if recovery fails.
+      }
     }
-    return null;
+    return fallbackPayload;
   }
 
   private static extractSseData(trimmedLine: string): string | null {
@@ -1176,27 +1189,35 @@ export class OpenAIProvider extends BaseLLMProvider {
             }
             continue;
           }
-          const choice0 = parsed.choices[0] as { finish_reason?: string | null } | undefined;
+          const choice0 = parsed.choices[0] as
+            | {
+                finish_reason?: string | null;
+                delta?: Record<string, unknown> & { content?: string | unknown[]; refusal?: string };
+                message?: Record<string, unknown> & { content?: string | unknown[] | null; refusal?: string };
+              }
+            | undefined;
           if (choice0?.finish_reason) finishReason = choice0.finish_reason;
-          const delta = (
-            parsed.choices[0] as
-              | { delta?: Record<string, unknown> & { content?: string | unknown[]; refusal?: string } }
-              | undefined
-          )?.delta;
-          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta);
-          const reasoning = OpenAIProvider.extractReasoning(delta);
+          const delta = choice0?.delta;
+          const message = choice0?.message;
+          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta ?? message);
+          const reasoning = OpenAIProvider.extractReasoning(delta ?? message);
           if (reasoning && options.onThinking) {
             options.onThinking(reasoning);
           }
           // Handle OpenRouter content block arrays (Anthropic-style)
-          const blocks = OpenAIProvider.extractContentBlocks(delta?.content);
+          const content = delta?.content ?? message?.content;
+          const refusal =
+            (typeof delta?.refusal === "string" && delta.refusal) ||
+            (typeof message?.refusal === "string" && message.refusal) ||
+            "";
+          const blocks = OpenAIProvider.extractContentBlocks(content);
           if (blocks) {
             if (!reasoning && blocks.thinking && options.onThinking) options.onThinking(blocks.thinking);
             if (blocks.text) yield blocks.text;
-          } else if (delta?.content) {
-            yield delta.content as string;
-          } else if (typeof delta?.refusal === "string" && delta.refusal) {
-            yield delta.refusal;
+          } else if (typeof content === "string" && content) {
+            yield content;
+          } else if (refusal) {
+            yield refusal;
           }
         }
         if (done) break;
@@ -1462,9 +1483,14 @@ export class OpenAIProvider extends BaseLLMProvider {
 
           const choice = (
             parsed.choices as Array<{
-              delta: Record<string, unknown> & {
+              delta?: Record<string, unknown> & {
                 content?: string | unknown[];
+                refusal?: string;
                 tool_calls?: unknown;
+              };
+              message?: Record<string, unknown> & {
+                content?: string | unknown[] | null;
+                refusal?: string;
               };
               finish_reason?: string;
             }>
@@ -1476,28 +1502,34 @@ export class OpenAIProvider extends BaseLLMProvider {
           }
 
           const delta = choice.delta;
-          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta);
+          const message = choice.message;
+          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta ?? message);
 
           // Stream reasoning/thinking
-          const reasoning = OpenAIProvider.extractReasoning(delta);
+          const reasoning = OpenAIProvider.extractReasoning(delta ?? message);
           if (reasoning && options.onThinking) {
             options.onThinking(reasoning);
           }
 
           // Handle OpenRouter content block arrays (Anthropic-style)
-          const blocks = OpenAIProvider.extractContentBlocks(delta?.content);
+          const textContent = delta?.content ?? message?.content;
+          const refusal =
+            (typeof delta?.refusal === "string" && delta.refusal) ||
+            (typeof message?.refusal === "string" && message.refusal) ||
+            "";
+          const blocks = OpenAIProvider.extractContentBlocks(textContent);
           if (blocks) {
             if (!reasoning && blocks.thinking && options.onThinking) options.onThinking(blocks.thinking);
             if (blocks.text) {
               content += blocks.text;
               await options.onToken?.(blocks.text);
             }
-          } else if (delta?.content) {
-            content += delta.content as string;
-            await options.onToken?.(delta.content as string);
-          } else if (typeof delta?.refusal === "string" && delta.refusal) {
-            content += delta.refusal;
-            await options.onToken?.(delta.refusal);
+          } else if (typeof textContent === "string" && textContent) {
+            content += textContent;
+            await options.onToken?.(textContent);
+          } else if (refusal) {
+            content += refusal;
+            await options.onToken?.(refusal);
           }
 
           // Accumulate tool call deltas. Some OpenAI-compatible backends (including llama.cpp)

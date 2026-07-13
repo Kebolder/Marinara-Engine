@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { findKnownModel } from "../../packages/shared/src/constants/model-lists.js";
 import {
   applyGlmThinkingParameters,
@@ -8,7 +9,10 @@ import {
   NOODLE_JSON_OUTPUT_HEADING,
   noodleResponseFormat,
 } from "../../packages/server/src/services/noodle/noodle-response-format.js";
-import { normalizeOpenAIChatCompletionsResponseFormat } from "../../packages/server/src/services/llm/providers/openai.provider.js";
+import {
+  normalizeOpenAIChatCompletionsResponseFormat,
+  OpenAIProvider,
+} from "../../packages/server/src/services/llm/providers/openai.provider.js";
 import {
   isOpenRouterApiUrl,
   OPENROUTER_APP_REFERER,
@@ -67,6 +71,42 @@ async function collectProviderOutput(provider: BaseLLMProvider, options: ChatOpt
   let output = "";
   for await (const chunk of provider.chat([{ role: "user", content: "test" }], options)) output += chunk;
   return output;
+}
+
+const gatewaySseBody = [
+  ": x-omniroute-cache-hit=false",
+  'data: {"choices":[{"delta":{},"finish_reason":null}]}',
+  'data: {"choices":[{"message":{"content":"recovered final message"},"finish_reason":"stop"}]}',
+  "data: [DONE]",
+].join("\n");
+const gatewayServer = createServer((_request, response) => {
+  response.writeHead(200, { "content-type": "text/event-stream" });
+  response.end(gatewaySseBody);
+});
+await new Promise<void>((resolve) => gatewayServer.listen(0, "127.0.0.1", resolve));
+try {
+  const address = gatewayServer.address();
+  assert.ok(address && typeof address === "object");
+  const provider = new OpenAIProvider(
+    `http://127.0.0.1:${address.port}/v1`,
+    "test",
+    undefined,
+    undefined,
+    undefined,
+    "custom",
+  );
+  assert.equal(
+    await collectProviderOutput(provider, { model: "custom-model", stream: true }),
+    "recovered final message",
+  );
+  assert.equal(
+    await collectProviderOutput(provider, { model: "custom-model", stream: false }),
+    "recovered final message",
+  );
+} finally {
+  await new Promise<void>((resolve, reject) =>
+    gatewayServer.close((error) => (error ? reject(error) : resolve())),
+  );
 }
 
 function assertStrictObjects(value: unknown): void {

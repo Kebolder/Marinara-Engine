@@ -3773,6 +3773,24 @@ strong {
   animation: pulse-ring 2s ease-out infinite;
 }
 
+/* Phones reserve continuous compositing for meaningful live content.
+   Loading and progress animations remain active. */
+@media (hover: none) and (pointer: coarse) {
+  .animate-ping,
+  .animate-pulse,
+  .animate-float,
+  .animate-pulse-ring,
+  .pulse-glow,
+  .bunny-glow,
+  .retro-card,
+  .y2k-star,
+  .y2k-star-md,
+  .y2k-star-lg,
+  .gradient-border::before {
+    animation-play-state: paused !important;
+  }
+}
+
 @keyframes fadeSlideIn {
   from {
     opacity: 0;

@@ -18,7 +18,7 @@ import type {
   TrackerThoughtBubbleDisplay,
 } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
-import { visibleText } from "../../lib/tracker-display";
+import { trackerEditableText, visibleText } from "../../lib/tracker-display";
 import {
   makeUniqueCharacterCustomFieldName,
   normalizeCharacterCustomFieldName,
@@ -223,7 +223,9 @@ export function CharacterTrackerCard({
     );
   }
 
-  const customFields = Object.entries(character.customFields ?? {});
+  const customFields = Object.entries(character.customFields ?? {}).map(
+    ([name, value]) => [name, trackerEditableText(value)] as const,
+  );
   const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasDeleteAction = !!onRemove && deleteMode;
   const avatarMedia = characterPicture ?? character.avatarPath ?? null;

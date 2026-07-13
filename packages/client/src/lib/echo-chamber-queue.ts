@@ -1,5 +1,12 @@
-export const ECHO_CHAMBER_MESSAGE_INTERVAL_MS = 1_800;
+export const ECHO_CHAMBER_MESSAGE_INTERVAL_MIN_MS = 10_000;
+export const ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS = 30_000;
 export const ECHO_CHAMBER_MESSAGE_LIMIT = 500;
+
+export function getEchoChamberMessageInterval(randomValue = Math.random()): number {
+  const normalizedRandom = Math.min(1, Math.max(0, randomValue));
+  const intervalRange = ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS - ECHO_CHAMBER_MESSAGE_INTERVAL_MIN_MS;
+  return ECHO_CHAMBER_MESSAGE_INTERVAL_MIN_MS + Math.floor(normalizedRandom * intervalRange);
+}
 
 export type EchoChamberMessage = {
   characterName: string;

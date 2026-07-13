@@ -873,6 +873,8 @@ export function ChatSettingsDrawer({
   const imageSelfieWidth = useUIStore((s) => s.imageSelfieWidth);
   const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
   const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
+  const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
   const setMusicPlayerSource = useUIStore((s) => s.setMusicPlayerSource);
   const openToolDetail = useUIStore((s) => s.openToolDetail);
@@ -1141,6 +1143,10 @@ export function ChatSettingsDrawer({
       },
     });
   }, [chat.id, conversationCommandToggles, selfieFeatureEnabled, updateMeta]);
+  const openGenerationSettings = useCallback(() => {
+    setSettingsTab("generations");
+    openRightPanel("settings");
+  }, [openRightPanel, setSettingsTab]);
   const inactiveCharacterIds = useMemo<string[]>(
     () =>
       Array.isArray(metadata.inactiveCharacterIds)
@@ -5639,6 +5645,24 @@ export function ChatSettingsDrawer({
                       </p>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={openGenerationSettings}
+                    className="mari-chat-option-field flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/60"
+                    title="Open Settings, Generations"
+                  >
+                    <Settings2 size="0.8125rem" className="shrink-0 text-[var(--primary)]" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                        Image generation settings
+                      </span>
+                      <span className="mt-0.5 block text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                        Adjust generation behavior, image sizes, and styles in Settings → Generations.
+                      </span>
+                    </span>
+                    <ChevronRight size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                  </button>
 
                   <button
                     type="button"

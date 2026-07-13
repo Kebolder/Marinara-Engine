@@ -535,30 +535,36 @@ function NoodlePostContent({
 function NoodlePollCard({
   poll,
   votes,
+  accountById,
   selectedOptionId,
   disabled,
   pending,
   onVote,
+  onOpenProfile,
 }: {
   poll: NoodlePoll;
   votes: NoodleInteraction[];
+  accountById: Map<string, NoodleAccount>;
   selectedOptionId: string | null;
   disabled: boolean;
   pending: boolean;
   onVote: (optionId: string) => void;
+  onOpenProfile: (account: NoodleAccount) => void;
 }) {
   const totalVotes = votes.length;
+  const [showVoters, setShowVoters] = useState(false);
   return (
     <section className="mt-3" aria-label={`Poll: ${poll.question}`} data-noodle-poll>
       <h3 className="text-sm font-bold leading-5">{poll.question}</h3>
       <div className="mt-2 space-y-2">
         {poll.options.map((option) => {
-          const optionVotes = votes.filter((vote) => vote.content === option.id).length;
+          const matchingVotes = votes.filter((vote) => vote.content === option.id);
+          const optionVotes = matchingVotes.length;
           const percentage = totalVotes > 0 ? Math.round((optionVotes / totalVotes) * 100) : 0;
           const selected = selectedOptionId === option.id;
           return (
-            <button
-              key={option.id}
+            <Fragment key={option.id}>
+              <button
               type="button"
               onClick={() => onVote(option.id)}
               disabled={disabled || pending}
@@ -582,15 +588,44 @@ function NoodlePollCard({
                 <span className="min-w-0 flex-1 break-words">{option.label}</span>
                 <span className="shrink-0 text-[var(--muted-foreground)]">{percentage}%</span>
               </span>
-            </button>
+              </button>
+              {showVoters && optionVotes > 0 && (
+                <div className="flex flex-wrap gap-1 px-1" aria-label={`Voters for ${option.label}`}>
+                  {matchingVotes.map((vote) => {
+                    const voterAccount = accountById.get(vote.actorAccountId) ?? null;
+                    const voter = voterAccount ?? vote.actorSnapshot;
+                    return voter ? (
+                      <button
+                        key={vote.id}
+                        type="button"
+                        onClick={() => {
+                          if (voterAccount) onOpenProfile(voterAccount);
+                        }}
+                        disabled={!voterAccount}
+                        className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full bg-[var(--noodle-blue)]/8 pr-2 text-[0.6875rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--noodle-blue)]/15 hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--noodle-blue)]/70 disabled:cursor-default"
+                      >
+                        <Avatar account={voter} size="sm" />
+                        <span className="max-w-32 truncate">@{voter.handle}</span>
+                      </button>
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </Fragment>
           );
         })}
       </div>
-      <p className="mt-2 text-[0.68rem] text-[var(--muted-foreground)]">
+      <button
+        type="button"
+        onClick={() => setShowVoters((visible) => !visible)}
+        aria-expanded={showVoters}
+        className="mt-2 rounded-sm text-[0.68rem] text-[var(--muted-foreground)] transition-colors hover:text-[var(--noodle-blue)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--noodle-blue)]/70"
+      >
         {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
         {selectedOptionId ? " · You voted" : ""}
         {pending ? " · Saving…" : ""}
-      </p>
+        {totalVotes > 0 ? (showVoters ? " · Hide voters" : " · View voters") : ""}
+      </button>
     </section>
   );
 }
@@ -3452,10 +3487,12 @@ export function NoodleView() {
               <NoodlePollCard
                 poll={poll}
                 votes={pollVotes}
+                accountById={accountById}
                 selectedOptionId={personaPollVote}
                 disabled={!personaAccount}
                 pending={pollVotePending}
                 onVote={(optionId) => voteInPoll(post, optionId, personaPollVote)}
+                onOpenProfile={openProfile}
               />
             )}
             {post.imageUrl ? (

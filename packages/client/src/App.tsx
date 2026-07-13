@@ -587,6 +587,7 @@ export function App() {
       ? getCssGradientColorStops(animatedAccentSource, animatedSolidAccent)
       : [animatedSolidAccent];
     const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode || themeAccentPulseConfig.enabled;
+    const usesTimerDrivenAccentAnimation = accentAnimationEnabled;
 
     let accentAnimationTimer: ReturnType<typeof window.setTimeout> | null = null;
     let cursorRecolorFreezeTimer: ReturnType<typeof window.setTimeout> | null = null;
@@ -673,14 +674,27 @@ export function App() {
           ? getGradientRgbAccent(animatedGradientStops)
           : getSolidRgbAccent(animatedSolidAccent);
 
-      applyAppAccentVariables({
-        root,
-        accent: liveAccent,
-        gradient: getSolidAccentGradient(liveAccent),
-        surfaceAccent: accentIsGradient ? solidAccent : liveAccent,
-        theme,
-        updateCursor: false,
-      });
+      const liveGradient = getSolidAccentGradient(liveAccent);
+      if (appAccentRgbMode) {
+        applyAppAccentVariables({
+          root,
+          accent: liveAccent,
+          gradient: liveGradient,
+          surfaceAccent: accentIsGradient ? solidAccent : liveAccent,
+          theme,
+          updateCursor: false,
+        });
+      } else {
+        // Pulse only the foreground-facing accent tokens. Recomputing surface,
+        // sidebar, and glow tokens on every tick forces Firefox to restyle most
+        // of the app and can briefly starve an otherwise independent canvas.
+        root.style.setProperty("--primary", liveAccent);
+        root.style.setProperty("--ring", liveAccent);
+        root.style.setProperty("--marinara-app-accent-solid", liveAccent);
+        root.style.setProperty("--marinara-app-accent-gradient", liveGradient);
+        root.style.setProperty("--marinara-chat-chrome-accent", liveAccent);
+        root.style.setProperty("--marinara-chat-chrome-accent-gradient", liveGradient);
+      }
       applyCursorAccent(liveAccent, { slow: true });
       setAccentModeDataset();
     };
@@ -712,8 +726,10 @@ export function App() {
     const startAccentAnimation = () => {
       root.dataset.marinaraAccentAnimation =
         animatedAccentIsGradient && animatedGradientStops.length > 1 ? "gradient" : "solid";
-      applyLiveAccent();
-      queueAccentAnimationTick();
+      if (usesTimerDrivenAccentAnimation) {
+        applyLiveAccent();
+        queueAccentAnimationTick();
+      }
     };
 
     const syncAccentAnimationState = () => {

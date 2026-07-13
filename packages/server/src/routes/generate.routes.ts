@@ -4521,9 +4521,11 @@ export async function generateRoutes(app: FastifyInstance) {
         // ── Determine characters to generate for ──
         // Individual group mode: each character responds separately
         // Merged/single: one generation for the first (or mentioned) character
+        const usesIndividualGroupGeneration =
+          groupChatMode === "individual" || (chatMode === "conversation" && groupResponseOrder === "sequential");
         const useIndividualLoop =
-          isGroupChat && groupChatMode === "individual" && !input.regenerateMessageId && !input.impersonate; // regeneration/impersonate always target one message
-        const regenGroupChatIndividual = isGroupChat && groupChatMode === "individual" && input.regenerateMessageId;
+          isGroupChat && usesIndividualGroupGeneration && !input.regenerateMessageId && !input.impersonate;
+        const regenGroupChatIndividual = isGroupChat && usesIndividualGroupGeneration && input.regenerateMessageId;
         const mentionedConversationCharacters =
           chatMode === "conversation" && isGroupChat && !input.impersonate
             ? charInfo.filter((character) =>
@@ -4646,7 +4648,7 @@ export async function generateRoutes(app: FastifyInstance) {
             }
           }
           const scopedMessagesForGen =
-            isGroupChat && groupChatMode === "individual" && chatMode !== "conversation" && targetCharId
+            isGroupChat && usesIndividualGroupGeneration && targetCharId
               ? scopeIndividualGroupMessagesForTarget(gameAwareMessagesForGen, targetCharId, charInfo)
               : gameAwareMessagesForGen;
           const targetScopedMessagesForGen =
@@ -5450,11 +5452,19 @@ export async function generateRoutes(app: FastifyInstance) {
           // ── Strip character name prefix in individual group mode ──
           // LLMs often prefix the response with the character name even when told not to.
           // Also strip any leftover <speaker> tags from individual mode responses.
-          if (isGroupChat && groupChatMode === "individual" && targetCharId) {
+          if (isGroupChat && usesIndividualGroupGeneration && targetCharId) {
             const charRow = charInfo.find((c) => c.id === targetCharId);
             if (charRow) {
               const cName = charRow.name;
               const escapedName = cName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              if (chatMode === "conversation") {
+                const beforeTimestampStrip = fullResponse;
+                fullResponse = fullResponse
+                  .replace(/^(\s*\[\d{1,2}[:.]\d{2}\]\s*)+/g, "")
+                  .replace(/^(\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/g, "")
+                  .trimStart();
+                if (fullResponse !== beforeTimestampStrip) contentReplaced = true;
+              }
               // Strip <speaker="Name">...</speaker> wrapper if present
               const speakerWrap = new RegExp(`^\\s*<speaker="${escapedName}">[\\s\\S]*?<\\/speaker>\\s*$`, "i");
               const speakerMatch = fullResponse.match(speakerWrap);
@@ -5467,10 +5477,47 @@ export async function generateRoutes(app: FastifyInstance) {
               }
               // Strip plain name prefixes: "Dottore: text" or "Dottore\ntext".
               const beforeNamePrefixStrip = fullResponse;
-              fullResponse = fullResponse
-                .replace(new RegExp(`^\\s*${escapedName}\\s*:\\s*`, "i"), "")
-                .replace(new RegExp(`^\\s*${escapedName}\\s*\\n+`, "i"), "")
-                .trimStart();
+              const targetPrefix = new RegExp(`^\\s*${escapedName}\\s*:\\s*`, "i");
+              const targetLinePrefix = new RegExp(`^\\s*${escapedName}\\s*\\n+`, "i");
+              const stripTargetPrefix = () => {
+                fullResponse = fullResponse.replace(targetPrefix, "").replace(targetLinePrefix, "").trimStart();
+              };
+              const otherNames = charInfo
+                .filter((character) => character.id !== targetCharId)
+                .map((character) => character.name)
+                .filter((name): name is string => Boolean(name))
+                .filter((name) => name.trim().toLocaleLowerCase() !== cName.trim().toLocaleLowerCase())
+                .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+              const otherSpeakerPrefix =
+                otherNames.length > 0 ? new RegExp(`^\\s*(?:${otherNames.join("|")})\\s*:\\s*`, "i") : null;
+
+              stripTargetPrefix();
+              let prunePasses = 0;
+              while (otherSpeakerPrefix?.test(fullResponse) && prunePasses++ < 6) {
+                const embeddedTargetPrefix = new RegExp(`(?:^|\\n\\s*\\n)\\s*${escapedName}\\s*:\\s*`, "i");
+                const targetMatch = fullResponse.match(embeddedTargetPrefix);
+                if (targetMatch?.index != null && targetMatch.index > 0) {
+                  fullResponse = fullResponse.slice(targetMatch.index).trimStart();
+                  stripTargetPrefix();
+                  continue;
+                }
+                const paragraphBreak = fullResponse.search(/\n\s*\n/);
+                if (paragraphBreak < 0) {
+                  logger.warn(
+                    {
+                      chatId: input.chatId,
+                      targetCharId,
+                      targetName: cName,
+                      responsePreview: fullResponse.slice(0, 240),
+                    },
+                    "[generate] Dropping wrong-speaker-only individual group response",
+                  );
+                  sendSseEvent(reply, { type: "content_replace", data: "" });
+                  return null;
+                }
+                fullResponse = fullResponse.slice(paragraphBreak).trimStart();
+                stripTargetPrefix();
+              }
               if (fullResponse !== beforeNamePrefixStrip) {
                 contentReplaced = true;
               }
@@ -5488,7 +5535,7 @@ export async function generateRoutes(app: FastifyInstance) {
               : null;
             fullResponse = stripConversationResponseEnvelope(fullResponse, {
               speakerName: conversationSpeakerName,
-              preserveSpeakerPrefix: isGroupChat && groupChatMode !== "individual",
+              preserveSpeakerPrefix: isGroupChat && !usesIndividualGroupGeneration,
             });
             if (fullResponse !== beforeStrip) {
               contentReplaced = true;
@@ -5528,6 +5575,20 @@ export async function generateRoutes(app: FastifyInstance) {
           // no surrounding prose, treat the commands as the useful output. Skip saving
           // a blank assistant bubble but still return the commands so they execute.
           if (!fullResponse.trim()) {
+            logger.warn(
+              {
+                chatId: input.chatId,
+                targetCharId,
+                parsedCommandCount: parsedCommands.length,
+                parsedRawCommandCount,
+                providerThinkingLength: providerThinking.length,
+                fullThinkingLength: fullThinking.length,
+                contentReplaced,
+                chatMode,
+                groupChatMode,
+              },
+              "[generate] Empty response after post-processing",
+            );
             if (!input.impersonate && (parsedCommands.length > 0 || parsedRawCommandCount > 0)) {
               logger.info(
                 "[generate] Model emitted %d enabled command(s) (%d parsed) with no visible prose for chat %s; saving hidden command anchor",
@@ -5802,8 +5863,8 @@ export async function generateRoutes(app: FastifyInstance) {
         // are declared above the follow-up loop so they survive iterations.)
 
         const generationGuideInstruction = buildGenerationGuideInstruction(input.generationGuide, promptMacroContext);
-        const filterManualTargetProfileBlocks = (messages: typeof finalMessages, targetCharId: string) => {
-          if (groupResponseOrder !== "manual") return messages;
+        const filterTargetProfileBlocks = (messages: typeof finalMessages, targetCharId: string) => {
+          if (chatMode !== "conversation") return messages;
           const otherNames = charInfo.filter((c) => c.id !== targetCharId).map((c) => c.name);
           if (otherNames.length === 0) return messages;
           return messages.filter((message) => {
@@ -5815,7 +5876,20 @@ export async function generateRoutes(app: FastifyInstance) {
           if (chatMode !== "conversation") {
             return groupTurnPromptEnabled ? `Respond ONLY as ${charName}.` : null;
           }
-          if (groupResponseOrder !== "manual") return `Respond ONLY as ${charName}.`;
+          if (groupResponseOrder !== "manual") {
+            const otherNames = charInfo.filter((character) => character.id !== charId).map((character) => character.name);
+            return [
+              `Respond ONLY as ${charName}.`,
+              `Your entire answer is ${charName}'s next message only.`,
+              `Do not write dialogue, narration, labels, or actions for anyone except ${charName}.`,
+              otherNames.length > 0
+                ? `Forbidden speaker labels for this turn: ${otherNames.join(", ")}. Do not start any line with those names.`
+                : null,
+              `If another character should react, stop after ${charName}'s message and let their own turn handle it.`,
+            ]
+              .filter(Boolean)
+              .join("\n");
+          }
           const latestOtherSender = latestVisibleSenderOtherThan(charId);
           return [
             `Respond ONLY as ${charName}.`,
@@ -5849,7 +5923,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
             // Append "Respond ONLY as [name]" instruction
             const charInstruction = buildCharacterInstruction(charId, charName);
-            const messagesWithInstruction = [...filterManualTargetProfileBlocks(runningMessages, charId)];
+            const messagesWithInstruction = [...filterTargetProfileBlocks(runningMessages, charId)];
             // Add as a system message at the end (just before any trailing user message)
             if (charInstruction) {
               messagesWithInstruction.push({ role: "system", content: charInstruction });

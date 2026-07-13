@@ -26,6 +26,7 @@ The Android app is a Termux bootstrap + WebView shell for Marinara Engine. It is
 - First-run bootstrap actions for Termux install/start handoff
 - Automatic retry while the local server is still starting
 - File upload support for character cards, images, and similar assets
+- Native Android notifications for background Conversation replies, enabled from **Settings > General > Notifications**
 - Back button navigation inside the WebView
 - External links open in your default browser
 - Android backup is disabled for the wrapper app, and the WebView disallows file URL access and mixed-content loading.
@@ -116,6 +117,8 @@ To skip the update check and start the already-installed local copy, run `./star
 Then open the **Marinara Engine** app from your home screen. The app shows "Connecting..." until the local server is ready, then loads automatically.
 
 Because the APK points at `http://127.0.0.1:<PORT>`, it only works while the Marinara Engine server is running on the same Android device and using the same port value.
+
+On Android 13 and newer, enabling **Mobile app** under **Background Notifications** opens Android's notification permission prompt. Browser notifications remain a separate setting. Notifications conceal reply content and ask the user to open Marinara to read the message.
 
 ## Pre-built APKs
 
