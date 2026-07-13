@@ -2248,3 +2248,116 @@ test("mobile topbar remains reachable while sidebars switch", async ({ page }, t
 
   expect(errors).toEqual([]);
 });
+
+test("hierarchical map editor creates and saves an oriented location tree", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const errors = collectUnexpectedErrors(page);
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "Hierarchical Map Editor Smoke",
+      mode: "roleplay",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+  const mobile = testInfo.project.name.includes("mobile");
+
+  try {
+    await page.addInitScript(
+      ({ chatId, openEditor }) => {
+        localStorage.setItem("marinara-active-chat-id", chatId);
+        if (!openEditor) return;
+        localStorage.setItem(
+          "marinara-engine-ui",
+          JSON.stringify({
+            state: {
+              hasCompletedOnboarding: true,
+              rightPanelOpen: false,
+              sidebarOpen: false,
+              spatialMapDetailChatId: chatId,
+            },
+            version: 72,
+          }),
+        );
+      },
+      { chatId: chat.id, openEditor: mobile },
+    );
+    await page.route("**/api/backgrounds/file/Black.jpg", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.goto("/");
+
+    if (!mobile) {
+      await page.getByRole("button", { name: "Chat Settings" }).click();
+      const drawer = page.locator(".mari-chat-settings-drawer");
+      await expect(drawer.getByRole("heading", { name: "Chat Settings" })).toBeVisible();
+      await drawer.getByText("Hierarchical map", { exact: true }).click();
+      await drawer.getByRole("button", { name: "Create hierarchical map" }).click();
+    }
+
+    await expect(page.getByRole("heading", { name: "Hierarchical map" })).toBeVisible();
+    await page.getByRole("button", { name: "Create starting location" }).click();
+    const visibleInspector = page.locator('section[aria-label^="Details for"]:visible');
+    await visibleInspector.getByLabel("Name", { exact: true }).fill("Atlas");
+    const visibleHierarchy = page.locator('section[aria-label="Location hierarchy"]:visible');
+    const visibleLocalView = page.locator('section[aria-label="Local location view"]:visible');
+    await visibleInspector.getByLabel("Public description").fill("A broad coastal region used to orient the story.");
+
+    if (mobile) await page.getByRole("button", { name: "hierarchy", exact: true }).click();
+    await visibleHierarchy.getByRole("button", { name: "Add child" }).click();
+    await visibleInspector.getByLabel("Name", { exact: true }).fill("Harbor");
+    await visibleInspector.getByLabel("Private model memory").fill("Ships arrive from the eastern sea.");
+
+    if (mobile) await page.getByRole("button", { name: "hierarchy", exact: true }).click();
+    await visibleHierarchy.getByRole("button", { name: "Atlas region" }).click();
+    await visibleInspector.getByLabel("Child presentation").selectOption("map");
+
+    if (mobile) await page.getByRole("button", { name: "hierarchy", exact: true }).click();
+    await visibleHierarchy.getByRole("button", { name: "Enter Atlas" }).click();
+    await expect(visibleLocalView.getByRole("button", { name: "Harbor" })).toBeVisible();
+
+    await page.getByLabel("Disabled", { exact: true }).check();
+    const saveResponse = page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === "PUT" &&
+        candidate.url().endsWith(`/api/chats/${chat.id}/spatial-context`),
+    );
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    expect((await saveResponse).ok()).toBeTruthy();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+    const storedResponse = await page.request.get(`/api/chats/${chat.id}/spatial-context`);
+    expect(storedResponse.ok()).toBeTruthy();
+    const stored = (await storedResponse.json()) as {
+      definition: {
+        enabled: boolean;
+        startingLocationId: string | null;
+        locations: Array<{
+          id: string;
+          parentId: string | null;
+          name: string;
+          modelMemory?: string;
+          placement?: { x: number; y: number };
+        }>;
+      };
+    };
+    expect(stored.definition.enabled).toBe(true);
+    expect(stored.definition.locations).toHaveLength(2);
+    const atlas = stored.definition.locations.find((location) => location.name === "Atlas");
+    const harbor = stored.definition.locations.find((location) => location.name === "Harbor");
+    expect(atlas).toBeTruthy();
+    expect(harbor).toMatchObject({
+      parentId: atlas?.id,
+      modelMemory: "Ships arrive from the eastern sea.",
+      placement: { x: 50, y: 50 },
+    });
+    expect(stored.definition.startingLocationId).toBe(atlas?.id);
+
+    expect(errors).toEqual([]);
+    await page.getByRole("button", { name: "Back to chat" }).click();
+    await expect(page.getByRole("heading", { name: "Hierarchical map" })).not.toBeVisible();
+  } finally {
+    if (!mobile) await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});

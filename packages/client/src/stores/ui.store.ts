@@ -465,6 +465,8 @@ interface UIState {
   personaDetailId: string | null;
   /** When set, the main area shows the full-page regex script editor */
   regexDetailId: string | null;
+  /** When set, the main area shows the hierarchical map editor for this chat */
+  spatialMapDetailChatId: string | null;
   /** Pre-selected target characters for a NEW regex script opened via openRegexDetail("__new__") */
   regexDetailDefaultCharacterIds: string[] | null;
   /** Where to return when the regex editor closes — e.g. back to a character's Advanced tab */
@@ -822,6 +824,8 @@ interface UIState {
     options?: { defaultCharacterIds?: string[]; returnTo?: { characterId: string; tab?: string } },
   ) => void;
   closeRegexDetail: () => void;
+  openSpatialMapDetail: (chatId: string) => void;
+  closeSpatialMapDetail: () => void;
   openCharacterLibrary: () => void;
   closeCharacterLibrary: () => void;
   openBotBrowser: () => void;
@@ -1191,6 +1195,7 @@ export const useUIStore = create<UIState>()(
       toolDetailId: null,
       personaDetailId: null,
       regexDetailId: null,
+      spatialMapDetailChatId: null,
       regexDetailDefaultCharacterIds: null,
       regexDetailReturn: null,
       characterDetailInitialTab: null,
@@ -1477,6 +1482,7 @@ export const useUIStore = create<UIState>()(
             toolDetailId: null,
             personaDetailId: null,
             regexDetailId: null,
+            spatialMapDetailChatId: null,
             characterLibraryOpen: preserveCharacterLibrary ? s.characterLibraryOpen : false,
             characterLibrarySelectedId: preserveCharacterLibrary ? id : s.characterLibrarySelectedId,
             botBrowserOpen: false,
@@ -1505,6 +1511,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closeLorebookDetail: () =>
@@ -1527,6 +1534,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closePresetDetail: () =>
@@ -1549,6 +1557,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closeConnectionDetail: () =>
@@ -1571,6 +1580,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closeAgentDetail: () =>
@@ -1593,6 +1603,7 @@ export const useUIStore = create<UIState>()(
           connectionDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closeToolDetail: () =>
@@ -1615,6 +1626,7 @@ export const useUIStore = create<UIState>()(
           agentDetailId: null,
           toolDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closePersonaDetail: () =>
@@ -1639,6 +1651,7 @@ export const useUIStore = create<UIState>()(
           connectionDetailId: null,
           agentDetailId: null,
           toolDetailId: null,
+          spatialMapDetailChatId: null,
           ...getMobileDetailReturnState(s),
         })),
       closeRegexDetail: () =>
@@ -1662,6 +1675,29 @@ export const useUIStore = create<UIState>()(
             ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
           };
         }),
+      openSpatialMapDetail: (chatId) =>
+        set((s) => ({
+          spatialMapDetailChatId: chatId,
+          characterDetailId: null,
+          lorebookDetailId: null,
+          presetDetailId: null,
+          connectionDetailId: null,
+          agentDetailId: null,
+          toolDetailId: null,
+          personaDetailId: null,
+          regexDetailId: null,
+          characterLibraryOpen: false,
+          botBrowserOpen: false,
+          gameAssetsBrowserOpen: false,
+          noodleOpen: false,
+          ...getMobileDetailReturnState(s),
+        })),
+      closeSpatialMapDetail: () =>
+        set((s) => ({
+          spatialMapDetailChatId: null,
+          editorDirty: false,
+          ...restoreMobileDetailReturnPanel(s.detailReturnRightPanel),
+        })),
       openCharacterLibrary: () =>
         set({
           characterLibraryOpen: true,
@@ -1673,6 +1709,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           botBrowserOpen: false,
           noodleOpen: false,
           editorDirty: false,
@@ -1688,6 +1725,7 @@ export const useUIStore = create<UIState>()(
           characterLibraryOpen: false,
           detailReturnRightPanel: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           personaDetailId: null,
           characterDetailId: null,
           lorebookDetailId: null,
@@ -1706,6 +1744,7 @@ export const useUIStore = create<UIState>()(
           characterLibraryOpen: false,
           detailReturnRightPanel: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           personaDetailId: null,
           characterDetailId: null,
           lorebookDetailId: null,
@@ -1724,6 +1763,7 @@ export const useUIStore = create<UIState>()(
           characterLibraryOpen: false,
           detailReturnRightPanel: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           personaDetailId: null,
           characterDetailId: null,
           lorebookDetailId: null,
@@ -1748,6 +1788,7 @@ export const useUIStore = create<UIState>()(
           s.toolDetailId ||
           s.personaDetailId ||
           s.regexDetailId ||
+          s.spatialMapDetailChatId ||
           s.characterLibraryOpen ||
           s.botBrowserOpen ||
           s.gameAssetsBrowserOpen ||
@@ -1764,6 +1805,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           characterLibraryOpen: false,
           botBrowserOpen: false,
           gameAssetsBrowserOpen: false,
@@ -1784,6 +1826,7 @@ export const useUIStore = create<UIState>()(
           toolDetailId: null,
           personaDetailId: null,
           regexDetailId: null,
+          spatialMapDetailChatId: null,
           characterLibraryOpen: false,
           botBrowserOpen: false,
           gameAssetsBrowserOpen: false,
@@ -2597,6 +2640,7 @@ export const useUIStore = create<UIState>()(
         toolDetailId: state.toolDetailId,
         personaDetailId: state.personaDetailId,
         regexDetailId: state.regexDetailId,
+        spatialMapDetailChatId: state.spatialMapDetailChatId,
         botBrowserOpen: state.botBrowserOpen,
         gameAssetsBrowserOpen: state.gameAssetsBrowserOpen,
         noodleOpen: state.noodleOpen,

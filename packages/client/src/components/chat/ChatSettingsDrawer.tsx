@@ -76,6 +76,7 @@ import { LorebooksSection } from "../../features/chat-settings/sections/Lorebook
 import { PromptPresetSection } from "../../features/chat-settings/sections/PromptPresetSection";
 import { SceneInstructionsSection } from "../../features/chat-settings/sections/SceneInstructionsSection";
 import { TranslationSection } from "../../features/chat-settings/sections/TranslationSection";
+import { SpatialContextSettingsSection } from "../../features/spatial-context/SpatialContextSettingsSection";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -747,6 +748,7 @@ const CHAT_SETTINGS_ORDER = {
   scopedRegex: -750,
   connectedChat: -700,
   connectedNotes: -690,
+  spatialMap: -650,
   lorebooks: -600,
   agents: -500,
   widgets: -450,
@@ -6367,6 +6369,17 @@ export function ChatSettingsDrawer({
                 />
               </div>
             </Section>
+          )}
+
+          {(chatMode === "roleplay" || chatMode === "game") && (
+            <SpatialContextSettingsSection
+              chatId={chat.id}
+              style={{ order: CHAT_SETTINGS_ORDER.spatialMap }}
+              onOpenEditor={() => {
+                onClose();
+                useUIStore.getState().openSpatialMapDetail(chat.id);
+              }}
+            />
           )}
 
           <div style={{ order: CHAT_SETTINGS_ORDER.lorebooks }}>
