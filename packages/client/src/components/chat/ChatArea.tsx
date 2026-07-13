@@ -791,6 +791,7 @@ export function ChatArea() {
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
   const peekPrompt = usePeekPrompt();
   const branchChat = useBranchChat();
+  const branchPendingRef = useRef(false);
   const { generate, retryAgents } = useGenerate();
   const generateGallerySelfie = useGenerateGallerySelfie(activeChatId ?? "");
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
@@ -2168,11 +2169,26 @@ export function ChatArea() {
   );
 
   const handleBranch = useCallback(
-    (messageId: string) => {
-      if (!activeChatId || branchChat.isPending) return;
+    async (messageId: string) => {
+      const chatId = activeChatId;
+      if (!chatId || branchChat.isPending || branchPendingRef.current) return;
+      branchPendingRef.current = true;
+      const confirmed = await showConfirmDialog({
+        title: "Create a new branch?",
+        message: "This will copy the chat through this message and open the new branch.",
+        confirmLabel: "Create branch",
+      });
+      if (
+        !confirmed ||
+        useChatStore.getState().activeChatId !== chatId ||
+        branchChat.isPending
+      ) {
+        branchPendingRef.current = false;
+        return;
+      }
       const branchToastId = toast.loading("Creating branch...");
       branchChat.mutate(
-        { chatId: activeChatId, upToMessageId: messageId },
+        { chatId, upToMessageId: messageId },
         {
           onSuccess: (newChat) => {
             if (newChat) useChatStore.getState().setActiveChatId(newChat.id);
@@ -2182,6 +2198,7 @@ export function ChatArea() {
             toast.error(error instanceof Error ? `Branch failed: ${error.message}` : "Branch failed.");
           },
           onSettled: () => {
+            branchPendingRef.current = false;
             toast.dismiss(branchToastId);
           },
         },

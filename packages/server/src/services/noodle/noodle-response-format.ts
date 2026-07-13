@@ -29,13 +29,13 @@ const timelineSchema = {
         type: "object",
         properties: {
           tempId: { type: "string" },
-          authorEntityId: { type: "string" },
+          authorHandle: { type: "string" },
           content: { type: "string" },
           imagePrompt: nullableString,
           attachGalleryImage: { type: "boolean" },
           poll: pollSchema,
         },
-        required: ["tempId", "authorEntityId", "content", "imagePrompt", "attachGalleryImage", "poll"],
+        required: ["tempId", "authorHandle", "content", "imagePrompt", "attachGalleryImage", "poll"],
         additionalProperties: false,
       },
     },
@@ -44,7 +44,7 @@ const timelineSchema = {
       items: {
         type: "object",
         properties: {
-          actorEntityId: { type: "string" },
+          actorHandle: { type: "string" },
           targetTempId: nullableString,
           targetPostId: nullableString,
           parentInteractionId: nullableString,
@@ -53,7 +53,7 @@ const timelineSchema = {
           pollOptionIndex: nullableInteger,
         },
         required: [
-          "actorEntityId",
+          "actorHandle",
           "targetTempId",
           "targetPostId",
           "parentInteractionId",
@@ -69,10 +69,10 @@ const timelineSchema = {
       items: {
         type: "object",
         properties: {
-          actorEntityId: { type: "string" },
-          targetEntityId: { type: "string" },
+          actorHandle: { type: "string" },
+          targetHandle: { type: "string" },
         },
-        required: ["actorEntityId", "targetEntityId"],
+        required: ["actorHandle", "targetHandle"],
         additionalProperties: false,
       },
     },

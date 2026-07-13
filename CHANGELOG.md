@@ -33,6 +33,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed NovelAI connection tests calling a retired subscription endpoint. Connection setup now directs users to Test Image, which verifies the real generation path (#3582).
+- Added a confirmation step before branching a chat from a message, preventing accidental branch creation from tightly spaced mobile Roleplay controls (#3583).
+- Fixed Noodle timeline prompts exposing internal character and account IDs, mentioning disabled random users, and repeatedly favoring the same early invited characters. Timeline generation now identifies accounts only by handle, omits random-user guidance when disabled, rotates the eligible roster fairly, and still prioritizes accounts involved in recent persona mentions or replies (#3584).
+
 - Fixed desktop top-bar navigation dismissing open chat tools such as Chat Settings, Gallery, Branches, Active Context, and Conversation Presence. Desktop shell panels now reflow those tools alongside the chat, while mobile navigation continues to dismiss floating chat UI.
 - Fixed Presets list metadata wrapping Regex AI/User badges above their patterns and Function badges below their names. Patterns and function names now truncate first so their badges remain beside them on one line.
 - Fixed Professor Mari's chat opening below the usable mobile viewport and hiding its composer on iPhones. The expanded chat now fills the app content area beneath the top bar and reserves the device's bottom safe area (#3569).

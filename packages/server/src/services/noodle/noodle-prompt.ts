@@ -49,10 +49,10 @@ export const NOODLE_RANDOM_USER_TREATMENT_INSTRUCTION =
  * only affects the UNEDITED default — once a user customizes the override, their text is used
  * regardless of the setting.
  */
-export function noodleTimelineVoiceDefaultText(enhanced: boolean): string {
+export function noodleTimelineVoiceDefaultText(enhanced: boolean, allowRandomUsers = true): string {
   return [
     ...(enhanced ? NOODLE_TONE_INSTRUCTIONS : [NOODLE_LEGACY_TONE_INSTRUCTION]),
-    NOODLE_RANDOM_USER_TREATMENT_INSTRUCTION,
+    ...(allowRandomUsers ? [NOODLE_RANDOM_USER_TREATMENT_INSTRUCTION] : []),
     ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
     ...(enhanced ? [NOODLE_CONGRUENCY_INSTRUCTION] : []),
   ].join("\n");
@@ -322,7 +322,7 @@ export function noodleTimelineFeatureInstructions(settings: NoodleTimelineFeatur
   return [
     ...(settings.allowRandomUsers
       ? [
-          "- Use only the active accounts listed by entityId. Do not invent accounts.",
+          "- Use only the active accounts listed by @handle. Do not invent accounts.",
           "- Character accounts are the primary cast. Random-user activity should be occasional supporting texture and must never dominate the generated posts or interactions.",
           "- A small minority of posts from random_user accounts may be obvious parody advertisements or absurd fake crypto scams. Usually generate none and never more than one per refresh. Keep every company, product, coin, ticker, price, and financial claim invented, visibly ridiculous, and non-actionable. Never imitate a real company or include real or usable links, wallet addresses, financial advice, or scam instructions.",
         ]

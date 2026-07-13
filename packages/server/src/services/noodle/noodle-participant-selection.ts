@@ -48,18 +48,12 @@ export function chooseNoodleParticipantAccounts(input: {
     const inactiveOthers = ordinary.filter(
       (account) => !followedAccountIds.has(account.id) && !recentlyActiveAccountIds.has(account.id),
     );
-    const recentFollowed = ordinary.filter(
-      (account) => followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
-    );
-    const recentOthers = ordinary.filter(
-      (account) => !followedAccountIds.has(account.id) && recentlyActiveAccountIds.has(account.id),
-    );
+    const recent = ordinary.filter((account) => recentlyActiveAccountIds.has(account.id));
     return [
       ...shuffleWith(priority, random),
-      ...shuffleWith(inactiveFollowed, random),
       ...shuffleWith(inactiveOthers, random),
-      ...shuffleWith(recentFollowed, random),
-      ...shuffleWith(recentOthers, random),
+      ...shuffleWith(inactiveFollowed, random),
+      ...shuffleWith(recent, random),
     ];
   };
 

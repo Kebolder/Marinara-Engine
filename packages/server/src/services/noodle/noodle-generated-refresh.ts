@@ -6,6 +6,7 @@ import {
   noodleGeneratedRefreshSchema,
   type NoodleGeneratedRefresh,
 } from "@marinara-engine/shared";
+import { normalizeNoodleHandle } from "./noodle-handle.js";
 
 type RefreshCollection = keyof NoodleGeneratedRefresh;
 
@@ -22,20 +23,22 @@ export type RejectedNoodleGeneratedRefreshItem = {
  */
 export function validateNoodleGeneratedRefresh(
   refresh: NoodleGeneratedRefresh,
-  allowedActorEntityIds: ReadonlySet<string>,
-  knownEntityIds: ReadonlySet<string>,
+  allowedActorHandles: ReadonlySet<string>,
+  knownHandles: ReadonlySet<string>,
 ): string | null {
   const hasActivity =
     refresh.posts.length + refresh.interactions.length + refresh.follows.length + refresh.digests.length > 0;
   if (!hasActivity) return "the response contained no timeline activity";
 
   const hasUsableAttribution =
-    refresh.posts.some((post) => allowedActorEntityIds.has(post.authorEntityId)) ||
-    refresh.interactions.some((interaction) => allowedActorEntityIds.has(interaction.actorEntityId)) ||
+    refresh.posts.some((post) => allowedActorHandles.has(normalizeNoodleHandle(post.authorHandle))) ||
+    refresh.interactions.some((interaction) => allowedActorHandles.has(normalizeNoodleHandle(interaction.actorHandle))) ||
     refresh.follows.some(
-      (follow) => allowedActorEntityIds.has(follow.actorEntityId) && knownEntityIds.has(follow.targetEntityId),
+      (follow) =>
+        allowedActorHandles.has(normalizeNoodleHandle(follow.actorHandle)) &&
+        knownHandles.has(normalizeNoodleHandle(follow.targetHandle)),
     );
-  return hasUsableAttribution ? null : "the response used no selected participant entityId";
+  return hasUsableAttribution ? null : "the response used no selected participant handle";
 }
 
 const collectionSchemas = {
