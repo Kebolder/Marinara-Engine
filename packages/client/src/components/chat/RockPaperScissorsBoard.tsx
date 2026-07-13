@@ -86,7 +86,7 @@ export function RockPaperScissorsBoard({ chatId }: Props) {
     if (!isMyTurn || disabled) return;
     if (castRevealTimer.current != null) window.clearTimeout(castRevealTimer.current);
     setCastClash({ yourChoice: choice, opponentChoice: null, outcome: null, phase: "casting" });
-    rpsThrow.mutate({ move: { type: "throw", choice } });
+    rpsThrow.mutate({ move: { type: "throw", choice } }, { onError: () => setCastClash(null) });
   };
 
   const onPlayAgain = () => {

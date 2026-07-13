@@ -13,6 +13,7 @@ import type {
   TerminalResult,
   TurnGameEngine,
 } from "../engine.types.js";
+import { cloneState, nameOfSeat, recordEvent, setLastAction } from "../engine-utils.js";
 import { TIC_TAC_TOE_TOOL_MANIFESTS } from "./tools.js";
 import {
   DEFAULT_TIC_TAC_TOE_CONFIG,
@@ -31,13 +32,10 @@ import {
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
-function clone(state: TicTacToeState): TicTacToeState {
-  return JSON.parse(JSON.stringify(state)) as TicTacToeState;
-}
-
-function nameOf(state: TicTacToeState, seatId: string): string {
-  return state.seatNames[seatId] ?? seatId;
-}
+const clone = cloneState<TicTacToeState>;
+const nameOf = nameOfSeat;
+const record = (state: TicTacToeState, event: GameEvent): void => recordEvent(state, event, TIC_TAC_TOE_LOG_CAP);
+const setLast = setLastAction;
 
 function seatForMark(state: TicTacToeState, mark: TicTacToeMark): string {
   return mark === "X" ? state.xSeatId : state.oSeatId;
@@ -47,15 +45,6 @@ function markOfSeat(state: TicTacToeState, seatId: string): TicTacToeMark | null
   if (seatId === state.xSeatId) return "X";
   if (seatId === state.oSeatId) return "O";
   return null;
-}
-
-function record(state: TicTacToeState, event: GameEvent): void {
-  state.log.push(event);
-  if (state.log.length > TIC_TAC_TOE_LOG_CAP) state.log.splice(0, state.log.length - TIC_TAC_TOE_LOG_CAP);
-}
-
-function setLast(state: TicTacToeState, seatId: string, summary: string): void {
-  state.lastAction = { seatId, summary };
 }
 
 /** Whose mark moves next, derived from the count of filled cells (X always goes first). */

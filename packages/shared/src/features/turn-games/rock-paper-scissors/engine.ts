@@ -15,6 +15,7 @@ import type {
   TerminalResult,
   TurnGameEngine,
 } from "../engine.types.js";
+import { cloneState, nameOfSeat, recordEvent, setLastAction } from "../engine-utils.js";
 import { ROCK_PAPER_SCISSORS_TOOL_MANIFESTS } from "./tools.js";
 import {
   DEFAULT_ROCK_PAPER_SCISSORS_CONFIG,
@@ -34,25 +35,14 @@ import {
 
 // ── small helpers ───────────────────────────────────────────────────────────
 
-function clone(state: RockPaperScissorsState): RockPaperScissorsState {
-  return JSON.parse(JSON.stringify(state)) as RockPaperScissorsState;
-}
-
-function nameOf(state: RockPaperScissorsState, seatId: string): string {
-  return state.seatNames[seatId] ?? seatId;
-}
+const clone = cloneState<RockPaperScissorsState>;
+const nameOf = nameOfSeat;
+const record = (state: RockPaperScissorsState, event: GameEvent): void =>
+  recordEvent(state, event, ROCK_PAPER_SCISSORS_LOG_CAP);
+const setLast = setLastAction;
 
 function opponentOf(state: RockPaperScissorsState, seatId: string): string {
   return state.seatIds[0] === seatId ? state.seatIds[1] : state.seatIds[0];
-}
-
-function record(state: RockPaperScissorsState, event: GameEvent): void {
-  state.log.push(event);
-  if (state.log.length > ROCK_PAPER_SCISSORS_LOG_CAP) state.log.splice(0, state.log.length - ROCK_PAPER_SCISSORS_LOG_CAP);
-}
-
-function setLast(state: RockPaperScissorsState, seatId: string, summary: string): void {
-  state.lastAction = { seatId, summary };
 }
 
 /** The seat that still needs to throw this round, or null once both have (round is resolved immediately, so this is momentary). */
@@ -349,9 +339,7 @@ export const rockPaperScissorsEngine: TurnGameEngine<
   parseToolCall(name, args) {
     if (name !== "rock_paper_scissors_throw") return null;
     const raw = typeof args.choice === "string" ? args.choice.trim().toLowerCase() : "";
-    const choice = (RPS_CHOICES as readonly string[]).includes(raw) ? (raw as RpsChoice) : "rock";
-    // Best-effort: an invalid call still returns a move that applyMove can
-    // process (rock is a legal, if arbitrary, throw), matching the fallback contract.
+    const choice = (RPS_CHOICES as readonly string[]).includes(raw) ? (raw as RpsChoice) : (raw as RpsChoice);
     return { type: "throw", choice };
   },
 };
