@@ -16,6 +16,7 @@ import {
 } from "../../packages/server/src/services/spatial-context/definition.service.js";
 import { createChatsStorage } from "../../packages/server/src/services/storage/chats.storage.js";
 import { createGameStateStorage } from "../../packages/server/src/services/storage/game-state.storage.js";
+import { createSpatialContextStorage } from "../../packages/server/src/services/storage/spatial-context.storage.js";
 
 const storageDir = mkdtempSync(join(tmpdir(), "marinara-spatial-persistence-"));
 process.env.FILE_STORAGE_DIR = storageDir;
@@ -139,6 +140,61 @@ try {
   assert.equal(updated.definition?.revision, 2);
   assert.equal(updated.currentLocationId, "tower");
   assert.equal((await db.select().from(spatialContextSnapshots)).length, 1);
+
+  const historyAnchor = await createChatsStorage(db).createMessage({
+    chatId: chat.id,
+    role: "assistant",
+    content: "The campaign begins in the tower.",
+    characterId: null,
+  });
+  await createSpatialContextStorage(db).create({
+    chatId: chat.id,
+    messageId: historyAnchor.id,
+    swipeIndex: 0,
+    currentLocationId: "tower",
+    definitionRevision: 2,
+    source: "assistant_swipe",
+  });
+  assert.equal((await reopenedService.get(chat.id)).hasCommittedSpatialHistory, true);
+
+  await assert.rejects(
+    reopenedService.update(chat.id, {
+      expectedRevision: 2,
+      expectedCurrentLocationId: "tower",
+      definition: {
+        ...definition,
+        revision: 2,
+        locations: [{ ...definition.locations[1]!, parentId: null }],
+      },
+    }),
+    (error: unknown) =>
+      error instanceof SpatialContextServiceError && error.code === "spatial_history_location_removal_forbidden",
+  );
+
+  const expanded = await reopenedService.update(chat.id, {
+    expectedRevision: 2,
+    expectedCurrentLocationId: "tower",
+    definition: {
+      ...definition,
+      revision: 2,
+      locations: [
+        ...definition.locations,
+        {
+          id: "observatory",
+          parentId: "tower",
+          name: "Observatory",
+          kind: "room",
+          description: "A brass-domed observatory.",
+          childPresentation: "list",
+          links: [],
+          status: "active",
+          sortOrder: 0,
+        },
+      ],
+    },
+  });
+  assert.equal(expanded.definition?.revision, 3);
+  assert.equal(expanded.hasCommittedSpatialHistory, true);
 } finally {
   await fileDb._fileStore.close();
   rmSync(storageDir, { recursive: true, force: true });
@@ -190,6 +246,15 @@ try {
   assert.deepEqual(clonedTracker?.manualOverrides ? JSON.parse(clonedTracker.manualOverrides as string) : null, {
     weather: "Rain",
   });
+  await createSpatialContextStorage(legacyDb).create({
+    chatId: legacyChat.id,
+    messageId: trackerAnchor.id,
+    swipeIndex: 0,
+    currentLocationId: "tower",
+    definitionRevision: 1,
+    source: "assistant_swipe",
+  });
+  assert.equal((await legacyService.get(legacyChat.id)).hasCommittedSpatialHistory, true);
 
   const rowsBefore = {
     chats: await legacyDb.select().from(chats),
@@ -213,6 +278,18 @@ try {
       },
     } as UpdateSpatialContextRequestInput),
     (error: unknown) => error instanceof SpatialContextServiceError && error.code === "spatial_replacement_invalid",
+  );
+  await assert.rejects(
+    legacyService.update(legacyChat.id, {
+      expectedRevision: 1,
+      expectedCurrentLocationId: "tower",
+      definition: {
+        ...gameDefinition,
+        locations: [{ ...gameDefinition.locations[1]!, parentId: null }],
+      },
+    }),
+    (error: unknown) =>
+      error instanceof SpatialContextServiceError && error.code === "spatial_history_location_removal_forbidden",
   );
   assert.deepEqual(await legacyDb.select().from(chats), rowsBefore.chats);
   assert.deepEqual(await legacyDb.select().from(spatialContextSnapshots), rowsBefore.snapshots);

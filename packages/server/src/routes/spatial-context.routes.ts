@@ -11,7 +11,12 @@ import { isDebugAgentsEnabled } from "../config/runtime-config.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import { parseGameJsonish } from "../services/game/jsonish.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
-import { buildSpatialMapDraftPrompt, normalizeSpatialMapPlan } from "../services/spatial-context/ai-draft.js";
+import {
+  buildSpatialMapDraftPrompt,
+  buildSpatialMapExpansionPrompt,
+  normalizeSpatialMapExpansionPlan,
+  normalizeSpatialMapPlan,
+} from "../services/spatial-context/ai-draft.js";
 import {
   createSpatialContextService,
   SpatialContextServiceError,
@@ -188,6 +193,44 @@ export async function spatialContextRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Chat not found.", code: "spatial_chat_missing" });
     }
     const ownerMode = chat.mode as SpatialOwnerMode;
+    const operation = parsed.data.operation;
+    const existingDefinition = spatial.definition;
+    const hasExistingMap = Boolean(existingDefinition?.locations.length);
+    if (operation === "create" && hasExistingMap) {
+      return reply.status(409).send({
+        error: "This chat already has a hierarchical map. Expand it, or replace it before campaign history begins.",
+        code: "spatial_ai_map_already_exists",
+      });
+    }
+    if (operation === "replace" && !hasExistingMap) {
+      return reply.status(409).send({
+        error: "There is no existing map to replace. Create the first map instead.",
+        code: "spatial_ai_map_missing",
+      });
+    }
+    if (operation === "replace" && spatial.hasCommittedSpatialHistory) {
+      return reply.status(409).send({
+        error: "Campaign history uses this map. Expand it instead of replacing existing location IDs.",
+        code: "spatial_ai_replacement_protected",
+      });
+    }
+    if (operation === "expand" && !hasExistingMap) {
+      return reply.status(409).send({
+        error: "Create the first map before expanding it.",
+        code: "spatial_ai_map_missing",
+      });
+    }
+    if (
+      operation === "expand" &&
+      !existingDefinition?.locations.some(
+        (location) => location.id === parsed.data.targetLocationId && location.status === "active",
+      )
+    ) {
+      return reply.status(400).send({
+        error: "Choose an active location to expand.",
+        code: "spatial_ai_target_invalid",
+      });
+    }
 
     let resolved;
     try {
@@ -200,12 +243,29 @@ export async function spatialContextRoutes(app: FastifyInstance) {
     }
 
     const sourceContext = await buildDraftSourceContext(chat, characters);
-    const prompt = buildSpatialMapDraftPrompt({
-      ownerMode,
-      size: parsed.data.size,
-      sourceContext,
-      instructions: parsed.data.instructions,
-    });
+    let prompt;
+    try {
+      prompt =
+        operation === "expand"
+          ? buildSpatialMapExpansionPrompt({
+              definition: existingDefinition!,
+              targetLocationId: parsed.data.targetLocationId!,
+              size: parsed.data.size,
+              sourceContext,
+              instructions: parsed.data.instructions,
+            })
+          : buildSpatialMapDraftPrompt({
+              ownerMode,
+              size: parsed.data.size,
+              sourceContext,
+              instructions: parsed.data.instructions,
+            });
+    } catch (error) {
+      return reply.status(409).send({
+        error: error instanceof Error ? error.message : "This location cannot be expanded.",
+        code: "spatial_ai_expansion_unavailable",
+      });
+    }
     const debugOverrideEnabled = parsed.data.debugMode || isDebugAgentsEnabled();
     logDebugOverride(
       debugOverrideEnabled,
@@ -241,23 +301,38 @@ export async function spatialContextRoutes(app: FastifyInstance) {
         raw.length,
         raw,
       );
-      const definition = normalizeSpatialMapPlan(parseGameJsonish(raw), {
-        ownerMode,
-        revision: spatial.definition?.revision ?? 0,
-        enabled: spatial.definition?.enabled ?? false,
-        size: parsed.data.size,
-      });
+      const parsedPlan = parseGameJsonish(raw);
+      const definition =
+        operation === "expand"
+          ? normalizeSpatialMapExpansionPlan(parsedPlan, {
+              definition: existingDefinition!,
+              targetLocationId: parsed.data.targetLocationId!,
+              size: parsed.data.size,
+            })
+          : normalizeSpatialMapPlan(parsedPlan, {
+              ownerMode,
+              revision: existingDefinition?.revision ?? 0,
+              enabled: existingDefinition?.enabled ?? false,
+              size: parsed.data.size,
+            });
+      const generatedLocationCount =
+        operation === "expand"
+          ? definition.locations.length - existingDefinition!.locations.length
+          : definition.locations.length;
       logger.info(
-        "[spatial/map-draft] Generated %d locations for chat %s with model %s",
-        definition.locations.length,
+        "[spatial/map-draft] Generated %d %s locations for chat %s with model %s",
+        generatedLocationCount,
+        operation,
         chat.id,
         resolved.connection.model ?? "",
       );
       return {
         definition,
+        operation,
         size: parsed.data.size,
         source: ownerMode === "game" ? "game_setup" : "roleplay_setup",
-        generatedLocationCount: definition.locations.length,
+        generatedLocationCount,
+        ...(operation === "expand" ? { targetLocationId: parsed.data.targetLocationId } : {}),
       } satisfies GenerateSpatialMapDraftResponse;
     } catch (error) {
       logger.error(error, "[spatial/map-draft] Generation failed for chat %s", chat.id);

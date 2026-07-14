@@ -666,6 +666,26 @@ Gate: creators can build and repair nested maps without drag, hover, or precisio
 
 Gate: a nontechnical creator can describe a world, receive a valid nested map, inspect it, and decline or apply it without changing persisted state until Save.
 
+#### Package E.1.1: history-safe AI map expansion
+
+- Treat whole-map AI creation as a pre-campaign workflow. Once message-linked spatial history exists, preserve every existing location ID server-side.
+- Replace the active-campaign generator with an add-only expansion workflow scoped to a selected active location.
+- Preserve the current location, starting location, existing descriptions, links, layout, archived nodes, and future Game bindings. Assign new stable IDs only to added locations.
+- Keep expansion based on bounded setup and selected-location context, not ordinary turn history.
+- Preview new locations as a local draft and retain the existing Apply and Save boundary.
+- Allow whole-map replacement only before committed spatial history exists, with expansion as the safer default when a map is already present.
+
+Gate: AI can grow an active campaign map without orphaning turn snapshots, changing current location, or replacing existing IDs.
+
+#### Package E.2: Game setup wizard map option
+
+- Add an optional `Draft a hierarchical world map` choice to the existing Features step, with a simple size selection.
+- Run map generation only after `/game/setup` persists the world overview and story arc. A gameplay turn is not required.
+- Open the normal review flow after generation and allow Skip, Apply, and Save before play continues.
+- Do not embed the full map editor into the narrow setup wizard or silently enable and persist a generated definition.
+
+Gate: a creator can request a richer initial map during setup without generating from incomplete local wizard state or bypassing review.
+
 #### Package F: Roleplay and Game runtime UI
 
 - Add the shared runtime bar and per-chat pending-transition persistence.

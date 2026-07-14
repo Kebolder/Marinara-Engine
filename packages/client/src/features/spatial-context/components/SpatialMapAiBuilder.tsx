@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { AlertCircle, Check, LoaderCircle, RefreshCw, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Check, LoaderCircle, RefreshCw, ShieldCheck, Sparkles, X } from "lucide-react";
 import type {
   GenerateSpatialMapDraftResponse,
   SpatialContextDefinition,
+  SpatialMapDraftOperation,
   SpatialMapDraftSize,
   SpatialOwnerMode,
 } from "@marinara-engine/shared";
@@ -14,7 +15,9 @@ interface SpatialMapAiBuilderProps {
   chatId: string;
   ownerMode: SpatialOwnerMode;
   open: boolean;
-  hasLocations: boolean;
+  definition: SpatialContextDefinition;
+  currentLocationId: string | null;
+  hasCommittedSpatialHistory: boolean;
   dirty: boolean;
   onClose: () => void;
   onApply: (definition: SpatialContextDefinition) => void;
@@ -36,30 +39,76 @@ function sourceCopy(ownerMode: SpatialOwnerMode): string {
     : "Uses the chat setup and character cards. Turn history is not included.";
 }
 
+function operationTitle(operation: SpatialMapDraftOperation): string {
+  if (operation === "expand") return "Expand the map with AI";
+  if (operation === "replace") return "Replace the map draft with AI";
+  return "Draft the map with AI";
+}
+
 export function SpatialMapAiBuilder({
   chatId,
   ownerMode,
   open,
-  hasLocations,
+  definition,
+  currentLocationId,
+  hasCommittedSpatialHistory,
   dirty,
   onClose,
   onApply,
 }: SpatialMapAiBuilderProps) {
   const debugMode = useUIStore((state) => state.debugMode);
   const generateDraft = useGenerateSpatialMapDraft();
+  const hasLocations = definition.locations.length > 0;
+  const activeLocations = useMemo(
+    () =>
+      definition.locations
+        .filter((location) => location.status === "active")
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [definition.locations],
+  );
+  const defaultTargetLocationId =
+    (currentLocationId && activeLocations.some((location) => location.id === currentLocationId)
+      ? currentLocationId
+      : definition.startingLocationId) ??
+    activeLocations[0]?.id ??
+    "";
+  const [operation, setOperation] = useState<SpatialMapDraftOperation>(hasLocations ? "expand" : "create");
+  const [targetLocationId, setTargetLocationId] = useState(defaultTargetLocationId);
   const [size, setSize] = useState<SpatialMapDraftSize>("medium");
   const [instructions, setInstructions] = useState("");
   const [result, setResult] = useState<GenerateSpatialMapDraftResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    setOperation(hasLocations ? "expand" : "create");
+    setTargetLocationId(defaultTargetLocationId);
+    setResult(null);
+    setError(null);
+  }, [chatId, defaultTargetLocationId, hasLocations, open]);
+
+  useEffect(() => {
+    if (!open || !hasCommittedSpatialHistory || operation !== "replace") return;
+    setOperation("expand");
+    setTargetLocationId(defaultTargetLocationId);
+    setResult(null);
+    setError(null);
+  }, [defaultTargetLocationId, hasCommittedSpatialHistory, open, operation]);
+
   if (!open) return null;
 
+  const resetResult = () => {
+    setResult(null);
+    setError(null);
+  };
   const generate = async () => {
     setError(null);
     try {
       const generated = await generateDraft.mutateAsync({
         chatId,
+        operation,
         size,
+        ...(operation === "expand" ? { targetLocationId } : {}),
         instructions: instructions.trim() || undefined,
         debugMode,
       });
@@ -69,7 +118,17 @@ export function SpatialMapAiBuilder({
       setError(generationError instanceof Error ? generationError.message : "The map draft could not be generated.");
     }
   };
-  const rootLocations = result?.definition.locations.filter((location) => location.parentId === null) ?? [];
+  const existingIds = new Set(definition.locations.map((location) => location.id));
+  const previewLocations =
+    result?.operation === "expand"
+      ? result.definition.locations.filter((location) => !existingIds.has(location.id))
+      : (result?.definition.locations ?? []);
+  const previewIds = new Set(previewLocations.map((location) => location.id));
+  const previewRoots = previewLocations.filter(
+    (location) => location.parentId === null || !previewIds.has(location.parentId),
+  );
+  const generationDisabled =
+    generateDraft.isPending || dirty || (operation === "expand" && targetLocationId.length === 0);
 
   return (
     <section
@@ -81,9 +140,11 @@ export function SpatialMapAiBuilder({
           <Sparkles size="1rem" />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-[var(--marinara-editor-title)]">Draft the map with AI</h2>
+          <h2 className="text-sm font-semibold text-[var(--marinara-editor-title)]">{operationTitle(operation)}</h2>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[var(--marinara-editor-muted)]">
-            Describe the world in everyday language. The result stays local until you apply it, then Save confirms it.
+            {operation === "expand"
+              ? "Add new places while preserving the current map, campaign state, and every existing location ID."
+              : "Describe the world in everyday language. The result stays local until you apply it, then Save confirms it."}
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close AI map builder" className="mari-editor-action">
@@ -93,8 +154,66 @@ export function SpatialMapAiBuilder({
 
       <div className="grid min-h-0 gap-px bg-[var(--marinara-editor-divider)] lg:grid-cols-[minmax(20rem,0.9fr)_minmax(22rem,1.1fr)]">
         <div className="bg-[var(--marinara-editor-bg)] p-4">
+          {hasLocations && !hasCommittedSpatialHistory && (
+            <fieldset className="mb-4">
+              <legend className="text-xs font-semibold text-[var(--marinara-editor-title)]">AI action</legend>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {(["expand", "replace"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={operation === value}
+                    disabled={generateDraft.isPending}
+                    onClick={() => {
+                      setOperation(value);
+                      resetResult();
+                    }}
+                    className={cn(
+                      "min-h-12 rounded-lg border px-3 py-2 text-left text-xs transition-colors duration-200 disabled:opacity-60",
+                      operation === value
+                        ? "border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-highlight-bg)] text-[var(--marinara-chat-chrome-button-text-active)]"
+                        : "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] text-[var(--marinara-editor-muted)]",
+                    )}
+                  >
+                    <span className="block font-semibold">{value === "expand" ? "Expand current map" : "Replace draft"}</span>
+                    <span className="mt-0.5 block text-[0.625rem]">
+                      {value === "expand" ? "Keep existing location IDs" : "Available before campaign history"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
+
+          {operation === "expand" && (
+            <div className="mb-4">
+              <label
+                className="text-xs font-semibold text-[var(--marinara-editor-title)]"
+                htmlFor="spatial-ai-target"
+              >
+                Expand beneath
+              </label>
+              <select
+                id="spatial-ai-target"
+                value={targetLocationId}
+                disabled={generateDraft.isPending}
+                onChange={(event) => {
+                  setTargetLocationId(event.target.value);
+                  resetResult();
+                }}
+                className="mt-2 min-h-11 w-full rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--background)] px-3 text-sm outline-none focus:border-[var(--marinara-chat-chrome-button-border-active)] focus:ring-2 focus:ring-[var(--marinara-chat-chrome-highlight-bg)] disabled:opacity-60"
+              >
+                {activeLocations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <label className="text-xs font-semibold text-[var(--marinara-editor-title)]" htmlFor="spatial-ai-request">
-            What should this world include?
+            {operation === "expand" ? "What should be added?" : "What should this world include?"}
           </label>
           <textarea
             id="spatial-ai-request"
@@ -102,12 +221,15 @@ export function SpatialMapAiBuilder({
             disabled={generateDraft.isPending}
             onChange={(event) => {
               setInstructions(event.target.value);
-              setResult(null);
-              setError(null);
+              resetResult();
             }}
             maxLength={4_000}
             rows={4}
-            placeholder="A misty coastal city with a harbor, market, haunted inn, lighthouse, and sewers beneath the old district."
+            placeholder={
+              operation === "expand"
+                ? "Add a haunted inn, riverside market, lighthouse, and old sewers beneath the district."
+                : "A misty coastal city with a harbor, market, haunted inn, lighthouse, and sewers beneath the old district."
+            }
             className="mt-2 w-full resize-y rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--background)] px-3 py-2 text-sm leading-relaxed outline-none focus:border-[var(--marinara-chat-chrome-button-border-active)] focus:ring-2 focus:ring-[var(--marinara-chat-chrome-highlight-bg)] disabled:cursor-wait disabled:opacity-60"
           />
           <p className="mt-1 text-[0.625rem] leading-relaxed text-[var(--marinara-editor-muted)]">
@@ -115,7 +237,9 @@ export function SpatialMapAiBuilder({
           </p>
 
           <fieldset className="mt-4">
-            <legend className="text-xs font-semibold text-[var(--marinara-editor-title)]">Map size</legend>
+            <legend className="text-xs font-semibold text-[var(--marinara-editor-title)]">
+              {operation === "expand" ? "Expansion size" : "Map size"}
+            </legend>
             <div className="mt-2 grid grid-cols-3 gap-2">
               {SIZE_OPTIONS.map((option) => (
                 <button
@@ -125,8 +249,7 @@ export function SpatialMapAiBuilder({
                   disabled={generateDraft.isPending}
                   onClick={() => {
                     setSize(option.value);
-                    setResult(null);
-                    setError(null);
+                    resetResult();
                   }}
                   className={cn(
                     "min-h-14 rounded-lg border px-2 py-2 text-left transition-colors duration-200 disabled:cursor-wait disabled:opacity-60",
@@ -145,16 +268,28 @@ export function SpatialMapAiBuilder({
           <p className="mt-4 text-[0.625rem] leading-relaxed text-[var(--marinara-editor-muted)]">
             {sourceCopy(ownerMode)}
           </p>
-          {(hasLocations || dirty) && (
+          {hasCommittedSpatialHistory && (
+            <p className="mt-2 flex items-start gap-2 text-xs text-emerald-300">
+              <ShieldCheck size="0.75rem" className="mt-0.5 shrink-0" />
+              Campaign history is protected. AI can add places, but it cannot replace or remove the current map.
+            </p>
+          )}
+          {operation === "replace" && (
             <p className="mt-2 flex items-start gap-2 text-xs text-amber-300">
               <AlertCircle size="0.75rem" className="mt-0.5 shrink-0" />
-              Applying the result replaces the current working map. Nothing changes on the server until Save.
+              Applying this result replaces the current working map. Nothing changes on the server until Save.
+            </p>
+          )}
+          {dirty && (
+            <p className="mt-2 flex items-start gap-2 text-xs text-amber-300" role="alert">
+              <AlertCircle size="0.75rem" className="mt-0.5 shrink-0" />
+              Save or discard the current map edits before using AI.
             </p>
           )}
           <button
             type="button"
             onClick={() => void generate()}
-            disabled={generateDraft.isPending}
+            disabled={generationDisabled}
             className="mari-editor-action mari-editor-action--primary mt-4 inline-flex min-h-11 px-4 text-xs disabled:opacity-50"
           >
             {generateDraft.isPending ? (
@@ -167,7 +302,7 @@ export function SpatialMapAiBuilder({
               </>
             ) : (
               <>
-                <Sparkles size="0.8125rem" /> Generate draft
+                <Sparkles size="0.8125rem" /> {operation === "expand" ? "Generate expansion" : "Generate draft"}
               </>
             )}
           </button>
@@ -198,10 +333,12 @@ export function SpatialMapAiBuilder({
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-300">
                   <Check size="0.6875rem" /> Validated
                 </span>
-                <span className="text-[var(--marinara-editor-muted)]">{result.generatedLocationCount} locations</span>
+                <span className="text-[var(--marinara-editor-muted)]">
+                  {result.generatedLocationCount} new {result.generatedLocationCount === 1 ? "location" : "locations"}
+                </span>
               </div>
               <div className="mt-3 divide-y divide-[var(--marinara-editor-divider)] border-y border-[var(--marinara-editor-divider)]">
-                {rootLocations.slice(0, 5).map((location) => {
+                {previewRoots.slice(0, 5).map((location) => {
                   const childCount = result.definition.locations.filter(
                     (candidate) => candidate.parentId === location.id,
                   ).length;
@@ -221,8 +358,9 @@ export function SpatialMapAiBuilder({
                 })}
               </div>
               <p className="mt-3 text-xs leading-relaxed text-[var(--marinara-editor-muted)]">
-                Apply the draft to inspect every description, private memory, link, layer, and map position before
-                saving.
+                {result.operation === "expand"
+                  ? "Apply the expansion to inspect every new place before saving. Existing locations remain unchanged."
+                  : "Apply the draft to inspect every description, private memory, link, layer, and map position before saving."}
               </p>
               <div className="mt-auto flex flex-wrap justify-end gap-2 pt-4">
                 <button
@@ -237,7 +375,12 @@ export function SpatialMapAiBuilder({
                   onClick={() => onApply(result.definition)}
                   className="mari-editor-action mari-editor-action--primary inline-flex min-h-11 px-4 text-xs"
                 >
-                  <Check size="0.8125rem" /> {hasLocations ? "Replace working draft" : "Use this draft"}
+                  <Check size="0.8125rem" />{" "}
+                  {result.operation === "expand"
+                    ? "Add to working map"
+                    : hasLocations
+                      ? "Replace working draft"
+                      : "Use this draft"}
                 </button>
               </div>
             </div>
@@ -246,10 +389,12 @@ export function SpatialMapAiBuilder({
               <div className="max-w-xs">
                 <Sparkles className="mx-auto text-[var(--marinara-editor-muted)]" size="1.25rem" />
                 <p className="mt-3 text-sm font-medium text-[var(--marinara-editor-title)]">
-                  Your generated hierarchy appears here
+                  {operation === "expand" ? "New places appear here" : "Your generated hierarchy appears here"}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-[var(--marinara-editor-muted)]">
-                  It is validated before you can apply it.
+                  {operation === "expand"
+                    ? "Existing locations and campaign state remain untouched."
+                    : "The draft is validated before you can apply it."}
                 </p>
               </div>
             </div>

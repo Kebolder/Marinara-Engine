@@ -15,6 +15,8 @@ import {
 } from "../../packages/shared/src/index.js";
 import {
   buildSpatialMapDraftPrompt,
+  buildSpatialMapExpansionPrompt,
+  normalizeSpatialMapExpansionPlan,
   normalizeSpatialMapPlan,
 } from "../../packages/server/src/services/spatial-context/ai-draft.js";
 import {
@@ -252,6 +254,65 @@ assert.throws(
   () =>
     normalizeSpatialMapPlan({ locations: [] }, { ownerMode: "roleplay", revision: 0, enabled: false, size: "small" }),
   /did not return any locations/,
+);
+
+const expansionPrompt = buildSpatialMapExpansionPrompt({
+  definition: validDefinition,
+  targetLocationId: "capital",
+  size: "small",
+  sourceContext: '{"setting":"foggy coast"}',
+  instructions: "Add a riverside district with an inn.",
+});
+assert.match(expansionPrompt.messages[0]!.content, /Return only new locations/);
+assert.match(expansionPrompt.messages[1]!.content, /Capital City/);
+assert.match(expansionPrompt.messages[1]!.content, /riverside district/);
+
+const expandedDefinition = normalizeSpatialMapExpansionPlan(
+  {
+    locations: [
+      {
+        key: "riverside",
+        parentKey: null,
+        name: "Riverside District",
+        kind: "place",
+        description: "A working district along the capital river.",
+        childPresentation: "map",
+      },
+      {
+        key: "silver-inn",
+        parentKey: "riverside",
+        name: "Silver Minnow Inn",
+        kind: "building",
+        description: "A crowded inn for river traders.",
+      },
+      {
+        key: "cellar",
+        parentKey: "silver-inn",
+        name: "Flooded Cellar",
+        kind: "room",
+        description: "A cellar connected to old drainage tunnels.",
+      },
+    ],
+  },
+  { definition: validDefinition, targetLocationId: "capital", size: "small" },
+);
+assert.equal(spatialContextDefinitionSchema.safeParse(expandedDefinition).success, true);
+assert.equal(expandedDefinition.startingLocationId, validDefinition.startingLocationId);
+assert.equal(expandedDefinition.revision, validDefinition.revision);
+assert.deepEqual(expandedDefinition.locations.slice(0, validDefinition.locations.length), validDefinition.locations);
+const riverside = expandedDefinition.locations.find((entry) => entry.name === "Riverside District")!;
+const silverInn = expandedDefinition.locations.find((entry) => entry.name === "Silver Minnow Inn")!;
+assert.equal(riverside.parentId, "capital");
+assert.ok(riverside.placement);
+assert.equal(silverInn.parentId, riverside.id);
+assert.ok(expandedDefinition.locations.slice(validDefinition.locations.length).every((entry) => entry.id.startsWith("loc_")));
+assert.throws(
+  () =>
+    normalizeSpatialMapExpansionPlan(
+      { locations: [{ key: "x", name: "X" }] },
+      { definition: validDefinition, targetLocationId: "missing", size: "small" },
+    ),
+  /active location/,
 );
 
 assert.deepEqual(

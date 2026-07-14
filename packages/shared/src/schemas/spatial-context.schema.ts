@@ -15,6 +15,7 @@ export const spatialChildPresentationSchema = z.enum(["map", "layers", "list"]);
 export const spatialLocationStatusSchema = z.enum(["active", "archived"]);
 export const spatialLinkStateSchema = z.enum(["available", "hidden", "blocked"]);
 export const spatialMapDraftSizeSchema = z.enum(["small", "medium", "large"]);
+export const spatialMapDraftOperationSchema = z.enum(["create", "replace", "expand"]);
 
 export const spatialLocationPlacementSchema = z
   .object({
@@ -119,12 +120,30 @@ export const updateSpatialContextRequestSchema = z
 
 export const generateSpatialMapDraftRequestSchema = z
   .object({
+    operation: spatialMapDraftOperationSchema.default("create"),
     size: spatialMapDraftSizeSchema.default("medium"),
+    targetLocationId: spatialIdSchema.optional(),
     instructions: z.string().trim().max(4_000).optional(),
     connectionId: z.string().trim().min(1).optional(),
     debugMode: z.boolean().optional().default(false),
   })
-  .strict();
+  .strict()
+  .superRefine((request, ctx) => {
+    if (request.operation === "expand" && !request.targetLocationId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a location to expand.",
+        path: ["targetLocationId"],
+      });
+    }
+    if (request.operation !== "expand" && request.targetLocationId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A target location is used only when expanding an existing map.",
+        path: ["targetLocationId"],
+      });
+    }
+  });
 
 export type SpatialContextDefinitionInput = z.input<typeof spatialContextDefinitionSchema>;
 export type SpatialContextDefinitionOutput = z.output<typeof spatialContextDefinitionSchema>;

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { SpatialContextSnapshot, SpatialSnapshotSource } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { spatialContextSnapshots } from "../../db/schema/index.js";
@@ -68,6 +68,15 @@ export function createSpatialContextStorage(db: SpatialSnapshotConnection) {
     async listForChat(chatId: string): Promise<SpatialContextSnapshot[]> {
       const rows = await db.select().from(spatialContextSnapshots).where(eq(spatialContextSnapshots.chatId, chatId));
       return rows.map(mapSnapshot);
+    },
+
+    async hasMessageSnapshots(chatId: string): Promise<boolean> {
+      const rows = await db
+        .select({ id: spatialContextSnapshots.id })
+        .from(spatialContextSnapshots)
+        .where(and(eq(spatialContextSnapshots.chatId, chatId), ne(spatialContextSnapshots.messageId, "")))
+        .limit(1);
+      return rows.length > 0;
     },
 
     async getLatest(chatId: string): Promise<SpatialContextSnapshot | null> {

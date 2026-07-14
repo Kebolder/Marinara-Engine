@@ -72,6 +72,42 @@ const generatedDefinition = {
   ],
 } as const;
 
+const expandedDefinition = {
+  ...generatedDefinition,
+  enabled: true,
+  revision: 1,
+  locations: [
+    ...generatedDefinition.locations,
+    {
+      id: "ai_riverside",
+      parentId: "ai_world",
+      name: "Riverside Ward",
+      kind: "place",
+      description: "A lantern-lit district beside the tidal river.",
+      modelMemory: "The ward ferrymen know which tunnels remain dry.",
+      icon: "🏮",
+      childPresentation: "list",
+      placement: { x: 82, y: 58 },
+      links: [],
+      status: "active",
+      sortOrder: 3,
+    },
+    {
+      id: "ai_minnow",
+      parentId: "ai_riverside",
+      name: "Silver Minnow Inn",
+      kind: "building",
+      description: "A crowded inn for ferrymen and river traders.",
+      modelMemory: "A hidden cellar door opens at low tide.",
+      icon: "🍺",
+      childPresentation: "list",
+      links: [],
+      status: "active",
+      sortOrder: 0,
+    },
+  ],
+} as const;
+
 test("AI map builder previews a validated local draft before save", async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   const response = await page.request.post("/api/chats", {
@@ -87,11 +123,13 @@ test("AI map builder previews a validated local draft before save", async ({ pag
 
   await page.route(`**/api/chats/${chat.id}/spatial-context/generate`, async (route) => {
     const request = route.request().postDataJSON() as {
+      operation: string;
       size: string;
       instructions?: string;
       debugMode: boolean;
     };
     expect(request).toMatchObject({
+      operation: "create",
       size: "small",
       instructions: "A foggy port with a lighthouse and secret sewers.",
       debugMode: false,
@@ -100,6 +138,7 @@ test("AI map builder previews a validated local draft before save", async ({ pag
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
+        operation: "create",
         size: "small",
         source: "roleplay_setup",
         generatedLocationCount: generatedDefinition.locations.length,
@@ -146,7 +185,7 @@ test("AI map builder previews a validated local draft before save", async ({ pag
     await page.getByRole("button", { name: /Small About 8 places/ }).click();
     await page.getByRole("button", { name: "Generate draft" }).click();
     await expect(page.getByText("Validated", { exact: true })).toBeVisible();
-    await expect(page.getByText("4 locations", { exact: true })).toBeVisible();
+    await expect(page.getByText("4 new locations", { exact: true })).toBeVisible();
     await expect(page.getByText("Shrouded Coast", { exact: true })).toBeVisible();
 
     const beforeApply = await page.request.get(`/api/chats/${chat.id}/spatial-context`);
@@ -174,6 +213,140 @@ test("AI map builder previews a validated local draft before save", async ({ pag
       "Gloam Harbor",
       "Blackglass Lighthouse",
       "Old Sewers",
+    ]);
+  } finally {
+    if (!mobile) await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("AI map expansion preserves a campaign map and its current location", async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  const response = await page.request.post("/api/chats", {
+    data: {
+      name: "AI Map Expansion Smoke",
+      mode: "roleplay",
+      characterIds: [],
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const chat = (await response.json()) as { id: string };
+  const mobile = testInfo.project.name.includes("mobile");
+
+  const anchorResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+    data: {
+      role: "assistant",
+      content: "The campaign begins on the Shrouded Coast.",
+    },
+  });
+  expect(anchorResponse.ok()).toBeTruthy();
+  const initialSave = await page.request.put(`/api/chats/${chat.id}/spatial-context`, {
+    data: {
+      expectedRevision: 0,
+      expectedCurrentLocationId: null,
+      definition: { ...generatedDefinition, enabled: true },
+    },
+  });
+  expect(initialSave.ok()).toBeTruthy();
+  expect(((await initialSave.json()) as { hasCommittedSpatialHistory: boolean }).hasCommittedSpatialHistory).toBe(true);
+
+  await page.route(`**/api/chats/${chat.id}/spatial-context/generate`, async (route) => {
+    const request = route.request().postDataJSON() as {
+      operation: string;
+      targetLocationId?: string;
+      size: string;
+      instructions?: string;
+      debugMode: boolean;
+    };
+    expect(request).toMatchObject({
+      operation: "expand",
+      targetLocationId: "ai_world",
+      size: "small",
+      instructions: "Add a riverside ward with an inn for ferrymen.",
+      debugMode: false,
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        operation: "expand",
+        targetLocationId: "ai_world",
+        size: "small",
+        source: "roleplay_setup",
+        generatedLocationCount: 2,
+        definition: expandedDefinition,
+      }),
+    });
+  });
+
+  try {
+    await page.addInitScript(
+      ({ chatId, openEditor }) => {
+        localStorage.setItem("marinara-active-chat-id", chatId);
+        if (!openEditor) return;
+        localStorage.setItem(
+          "marinara-engine-ui",
+          JSON.stringify({
+            state: {
+              hasCompletedOnboarding: true,
+              rightPanelOpen: false,
+              sidebarOpen: false,
+              spatialMapDetailChatId: chatId,
+            },
+            version: 72,
+          }),
+        );
+      },
+      { chatId: chat.id, openEditor: mobile },
+    );
+    await page.route("**/api/backgrounds/file/Black.jpg", async (route) => {
+      await route.fulfill({ status: 204, body: "" });
+    });
+    await page.goto("/");
+
+    if (!mobile) {
+      await page.getByRole("button", { name: "Chat Settings" }).click();
+      const drawer = page.locator(".mari-chat-settings-drawer");
+      await drawer.getByText("Hierarchical map", { exact: true }).click();
+      await drawer.getByRole("button", { name: "Edit hierarchical map" }).click();
+    }
+
+    await page.getByRole("button", { name: "Expand with AI" }).click();
+    await expect(page.getByRole("heading", { name: "Expand the map with AI" })).toBeVisible();
+    await expect(page.getByText(/Campaign history is protected/)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Replace draft/ })).toHaveCount(0);
+    await expect(page.getByLabel("Expand beneath")).toHaveValue("ai_world");
+    await page.getByLabel("What should be added?").fill("Add a riverside ward with an inn for ferrymen.");
+    await page.getByRole("button", { name: /Small About 8 places/ }).click();
+    await page.getByRole("button", { name: "Generate expansion" }).click();
+    await expect(page.getByText("Validated", { exact: true })).toBeVisible();
+    await expect(page.getByText("2 new locations", { exact: true })).toBeVisible();
+    await expect(page.getByText("Riverside Ward", { exact: true })).toBeVisible();
+
+    const beforeApply = await page.request.get(`/api/chats/${chat.id}/spatial-context`);
+    expect(((await beforeApply.json()) as { definition: { locations: unknown[] } }).definition.locations).toHaveLength(4);
+
+    await page.getByRole("button", { name: "Add to working map" }).click();
+    await expect(page.getByText("AI expansion added to the working map. Review it, then Save.")).toBeVisible();
+
+    const afterApply = await page.request.get(`/api/chats/${chat.id}/spatial-context`);
+    expect(((await afterApply.json()) as { definition: { locations: unknown[] } }).definition.locations).toHaveLength(4);
+
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+
+    const storedResponse = await page.request.get(`/api/chats/${chat.id}/spatial-context`);
+    const stored = (await storedResponse.json()) as {
+      currentLocationId: string;
+      definition: { locations: Array<{ id: string }> };
+    };
+    expect(stored.currentLocationId).toBe("ai_world");
+    expect(stored.definition.locations.map((location) => location.id)).toEqual([
+      "ai_world",
+      "ai_harbor",
+      "ai_lighthouse",
+      "ai_sewers",
+      "ai_riverside",
+      "ai_minnow",
     ]);
   } finally {
     if (!mobile) await page.request.delete(`/api/chats/${chat.id}`);

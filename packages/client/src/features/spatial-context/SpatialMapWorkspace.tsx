@@ -315,15 +315,20 @@ export function SpatialMapWorkspace({ chatId }: SpatialMapWorkspaceProps) {
   const applyGeneratedDraft = useCallback(
     (generated: SpatialContextDefinition) => {
       if (!draft) return;
+      const previousIds = new Set(draft.locations.map((location) => location.id));
       const next = {
         ...cloneSpatialDefinition(generated),
         ownerMode,
         enabled: draft.enabled,
         revision: baseDefinition?.revision ?? generated.revision,
       };
+      const firstAddedLocation = next.locations.find((location) => !previousIds.has(location.id));
+      const expandedExistingMap =
+        draft.locations.length > 0 &&
+        draft.locations.every((location) => next.locations.some((candidate) => candidate.id === location.id));
       applyDraft(next);
-      setSelectedId(next.startingLocationId ?? next.locations[0]?.id ?? null);
-      setEnteredParentId(null);
+      setSelectedId(firstAddedLocation?.id ?? next.startingLocationId ?? next.locations[0]?.id ?? null);
+      setEnteredParentId(firstAddedLocation?.parentId ?? null);
       setMobilePane("hierarchy");
       setArchiveRequestId(null);
       setArchiveReplacementId("");
@@ -335,7 +340,11 @@ export function SpatialMapWorkspace({ chatId }: SpatialMapWorkspaceProps) {
           : null,
       );
       setAiBuilderOpen(false);
-      toast.success("AI map draft applied. Review it, then Save.");
+      toast.success(
+        expandedExistingMap
+          ? "AI expansion added to the working map. Review it, then Save."
+          : "AI map draft applied. Review it, then Save.",
+      );
     },
     [applyDraft, baseDefinition?.revision, currentLocationId, draft, ownerMode],
   );
@@ -553,11 +562,14 @@ export function SpatialMapWorkspace({ chatId }: SpatialMapWorkspaceProps) {
         <div className="mari-editor-actions flex max-md:w-full max-md:justify-end max-md:border-t max-md:border-[var(--marinara-editor-divider)] max-md:pt-2">
           <button
             type="button"
-            onClick={() => setAiBuilderOpen(true)}
+            onClick={() => {
+              void spatial.refetch();
+              setAiBuilderOpen(true);
+            }}
             disabled={aiBuilderOpen || conflict || updateSpatial.isPending}
             className="mari-editor-action inline-flex min-h-11 px-3 text-xs disabled:opacity-45"
           >
-            <Sparkles size="0.8125rem" /> Build with AI
+            <Sparkles size="0.8125rem" /> {draft.locations.length > 0 ? "Expand with AI" : "Build with AI"}
           </button>
           <span className={cn("mari-editor-status mr-2", status.className)}>
             {status.icon}
@@ -587,7 +599,9 @@ export function SpatialMapWorkspace({ chatId }: SpatialMapWorkspaceProps) {
         chatId={chatId}
         ownerMode={ownerMode}
         open={aiBuilderOpen}
-        hasLocations={draft.locations.length > 0}
+        definition={draft}
+        currentLocationId={currentLocationId}
+        hasCommittedSpatialHistory={spatial.data?.hasCommittedSpatialHistory ?? false}
         dirty={dirty}
         onClose={() => setAiBuilderOpen(false)}
         onApply={applyGeneratedDraft}

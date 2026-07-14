@@ -24,7 +24,8 @@ export type SpatialContextServiceErrorCode =
   | "spatial_definition_stale"
   | "spatial_current_location_stale"
   | "spatial_replacement_required"
-  | "spatial_replacement_invalid";
+  | "spatial_replacement_invalid"
+  | "spatial_history_location_removal_forbidden";
 
 export class SpatialContextServiceError extends Error {
   constructor(
@@ -76,6 +77,7 @@ function buildResponse(
   definition: SpatialContextDefinition | null,
   currentLocationId: string | null,
   corrupt = false,
+  hasCommittedSpatialHistory = false,
 ): SpatialContextResponse {
   if (!definition) {
     return {
@@ -83,6 +85,7 @@ function buildResponse(
       currentLocationId: null,
       breadcrumb: [],
       destinations: [],
+      hasCommittedSpatialHistory,
       warnings: corrupt
         ? [
             {
@@ -104,6 +107,7 @@ function buildResponse(
     breadcrumb: resolveSpatialBreadcrumb(definition, effectiveCurrentId).map(({ id, name }) => ({ id, name })),
     destinations: resolveSpatialDestinations(definition, effectiveCurrentId),
     warnings: [],
+    hasCommittedSpatialHistory,
   };
 }
 
@@ -115,11 +119,12 @@ export function createSpatialContextService(db: DB) {
       if (!chat) throw new SpatialContextServiceError("chat_not_found", "Chat not found.", 404);
       assertSupportedMode(chat.mode);
 
+      const hasCommittedSpatialHistory = await createSpatialContextStorage(db).hasMessageSnapshots(chatId);
       const stored = readDefinition(parseMetadata(chat.metadata));
-      if (!stored.definition) return buildResponse(null, null, stored.corrupt);
+      if (!stored.definition) return buildResponse(null, null, stored.corrupt, hasCommittedSpatialHistory);
 
       const state = await resolveEffectiveSpatialState(db, chatId);
-      return buildResponse(stored.definition, state.currentLocationId);
+      return buildResponse(stored.definition, state.currentLocationId, false, hasCommittedSpatialHistory);
     },
 
     async update(chatId: string, input: UpdateSpatialContextRequestInput): Promise<SpatialContextResponse> {
@@ -170,6 +175,20 @@ export function createSpatialContextService(db: DB) {
             parsedDefinition.error.issues[0]?.message ?? "The hierarchical map is invalid.",
             400,
           );
+        }
+
+        const spatialStorage = createSpatialContextStorage(db);
+        const hasCommittedSpatialHistory = await spatialStorage.hasMessageSnapshots(chatId);
+        if (hasCommittedSpatialHistory && stored.definition) {
+          const nextIds = new Set(definition.locations.map((location) => location.id));
+          const removedLocation = stored.definition.locations.find((location) => !nextIds.has(location.id));
+          if (removedLocation) {
+            throw new SpatialContextServiceError(
+              "spatial_history_location_removal_forbidden",
+              `Campaign history uses this map. Keep ${removedLocation.name || "every existing location"} and archive locations instead of removing them.`,
+              409,
+            );
+          }
         }
 
         const byId = buildSpatialLocationIndex(definition);
@@ -230,7 +249,12 @@ export function createSpatialContextService(db: DB) {
           }
         });
 
-        return buildResponse(definition, nextCurrentLocationId ?? definition.startingLocationId);
+        return buildResponse(
+          definition,
+          nextCurrentLocationId ?? definition.startingLocationId,
+          false,
+          hasCommittedSpatialHistory || Boolean(state.visibleAnchor),
+        );
       });
     },
   };

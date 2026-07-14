@@ -170,12 +170,17 @@ export interface SpatialContextResponse {
   breadcrumb: Array<{ id: string; name: string }>;
   destinations: SpatialDestination[];
   warnings: SpatialDefinitionIssue[];
+  hasCommittedSpatialHistory: boolean;
 }
 
 export type SpatialMapDraftSize = "small" | "medium" | "large";
 
+export type SpatialMapDraftOperation = "create" | "replace" | "expand";
+
 export interface GenerateSpatialMapDraftRequest {
+  operation: SpatialMapDraftOperation;
   size: SpatialMapDraftSize;
+  targetLocationId?: string;
   instructions?: string;
   connectionId?: string;
   debugMode?: boolean;
@@ -183,7 +188,9 @@ export interface GenerateSpatialMapDraftRequest {
 
 export interface GenerateSpatialMapDraftResponse {
   definition: SpatialContextDefinition;
+  operation: SpatialMapDraftOperation;
   size: SpatialMapDraftSize;
   source: "game_setup" | "roleplay_setup";
   generatedLocationCount: number;
+  targetLocationId?: string;
 }
