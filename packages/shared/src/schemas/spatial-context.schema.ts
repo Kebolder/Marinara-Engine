@@ -100,7 +100,7 @@ export const spatialContextSnapshotSchema = z
   .object({
     id: z.string().trim().min(1).max(SPATIAL_CONTEXT_LIMITS.maxIdLength),
     chatId: z.string().trim().min(1),
-    messageId: z.string(),
+    messageId: z.string().trim().min(1),
     swipeIndex: z.number().int().nonnegative(),
     currentLocationId: spatialIdSchema.nullable(),
     definitionRevision: z.number().int().nonnegative().safe(),

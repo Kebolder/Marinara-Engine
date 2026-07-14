@@ -9,6 +9,7 @@ import {
   resolveSpatialBreadcrumb,
   resolveSpatialDestinations,
   spatialContextDefinitionSchema,
+  spatialContextSnapshotSchema,
   validateSpatialArchive,
   validateSpatialContextDefinition,
   validateSpatialTransition,
@@ -70,6 +71,21 @@ function definition(
 function issueCodes(value: SpatialContextDefinition): SpatialDefinitionIssueCode[] {
   return validateSpatialContextDefinition(value).issues.map((entry) => entry.code);
 }
+
+const snapshotInput = {
+  id: "snapshot-1",
+  chatId: "chat-1",
+  messageId: "message-1",
+  swipeIndex: 0,
+  currentLocationId: null,
+  definitionRevision: 0,
+  source: "bootstrap" as const,
+  transitionCommandId: null,
+  transitionPayloadHash: null,
+  createdAt: new Date(0).toISOString(),
+};
+assert.equal(spatialContextSnapshotSchema.safeParse(snapshotInput).success, true);
+assert.equal(spatialContextSnapshotSchema.safeParse({ ...snapshotInput, messageId: "" }).success, false);
 
 const validDefinition = definition(
   [
