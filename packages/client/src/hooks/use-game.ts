@@ -31,6 +31,9 @@ import type {
   CombatPlayerAction,
   HudWidget,
   GameBlueprint,
+  TacticalCombatState,
+  TacticalAction,
+  TacticalEvent,
 } from "@marinara-engine/shared";
 import type { Chat } from "@marinara-engine/shared";
 
@@ -781,6 +784,36 @@ export function useCombatRound() {
       playerAction?: CombatPlayerAction;
       mechanics?: import("@marinara-engine/shared").CombatMechanic[];
     }) => api.post<{ result: CombatRoundResult; combatants: Combatant[] }>("/game/combat/round", data),
+  });
+}
+
+// ── Tactical (grid) combat ──
+// Mirrors useCombatRound's shape: thin mutations over the pure shared engine that
+// lives server-side behind these endpoints. State round-trips through the client
+// exactly like classic combat (no new DB table); the client persists the returned
+// snapshot to chat metadata.
+
+/** Start a fresh tactical battle. Server builds the seeded grid + spawns. */
+export function useTacticalCombatStart() {
+  return useMutation({
+    mutationFn: (data: {
+      chatId: string;
+      party: Combatant[];
+      enemies: Combatant[];
+      seed?: number;
+      /** Blueprint scene context — themes the terrain (styleNotes.environmentType). */
+      environment?: string;
+      /** Blueprint battlefield.formation — drives spawn placement. */
+      formation?: string;
+    }) => api.post<{ state: TacticalCombatState }>("/game/combat/tactical/start", data),
+  });
+}
+
+/** Apply one tactical action; server validates + resolves, running the enemy phase if it flips. */
+export function useTacticalCombatAction() {
+  return useMutation({
+    mutationFn: (data: { chatId: string; state: TacticalCombatState; action: TacticalAction }) =>
+      api.post<{ state: TacticalCombatState; events: TacticalEvent[] }>("/game/combat/tactical/action", data),
   });
 }
 

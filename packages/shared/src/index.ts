@@ -101,6 +101,9 @@ export * from "./features/turn-games/rock-paper-scissors/types.js";
 export * from "./features/turn-games/rock-paper-scissors/tools.js";
 export { rockPaperScissorsEngine } from "./features/turn-games/rock-paper-scissors/engine.js";
 
+// Tactical (grid) combat for Game Mode (classic combat's alternative style)
+export * from "./features/tactical-combat/index.js";
+
 // Utils
 export * from "./utils/macro-engine.js";
 export * from "./utils/xml-wrapper.js";

@@ -2,7 +2,7 @@
 // Routes: Game Mode
 // ──────────────────────────────────────────────
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomInt, randomUUID } from "crypto";
 import { existsSync, readFileSync } from "fs";
 import { basename, extname, join } from "path";
 import { z } from "zod";
@@ -127,6 +127,11 @@ import {
   parseTrackerHiddenFields,
   normalizeRpgStatPools,
   resolveGameSetupArtStylePrompt,
+  createTacticalCombat,
+  applyAction as applyTacticalAction,
+  runEnemyPhase as runTacticalEnemyPhase,
+  isTerminal as isTacticalTerminal,
+  TERRAIN_DATA,
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { mergeCustomParameters, parseGameStateRow, resolveBaseUrl } from "./generate/generate-route-utils.js";
@@ -161,6 +166,9 @@ import type {
   PartyArc,
   HudWidget,
   AgentPromptTemplateOption,
+  Combatant,
+  TacticalCombatState,
+  TacticalAction,
 } from "@marinara-engine/shared";
 import { getAssetManifest, GAME_ASSETS_DIR } from "../services/game/asset-manifest.service.js";
 import {
@@ -1517,6 +1525,7 @@ const gameSetupConfigSchema = z.object({
   setting: z.string().min(1),
   tone: z.string().min(1).max(200),
   difficulty: z.string().min(1).max(100),
+  combatStyle: z.enum(["classic", "tactical"]).optional(),
   playerGoals: z.string().max(2000).default(""),
   gmMode: z.enum(["standalone", "character"]),
   rating: z.enum(["sfw", "nsfw"]).default("sfw"),
@@ -8699,6 +8708,189 @@ export async function gameRoutes(app: FastifyInstance) {
     );
 
     return { result, combatants };
+  });
+
+  // ── Tactical (grid) combat ──
+  // Alternative to classic menu combat. The battle engine lives in the shared
+  // package (pure, deterministic, seeded); these endpoints are thin adapters.
+  // State round-trips through the client exactly like classic combat — no DB
+  // table; the client persists the snapshot to chat metadata.
+
+  // A combatant blob from the client. The engine reads a fixed set of numeric
+  // fields; everything else (mp/skills/statusEffects/element/sprite/side) passes
+  // through untouched so hydration stays lossless.
+  const tacticalCombatantSchema = z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      hp: z.number(),
+      maxHp: z.number(),
+      attack: z.number(),
+      defense: z.number(),
+      speed: z.number(),
+      level: z.number(),
+    })
+    .passthrough();
+
+  // Known terrain keys, derived at runtime from the shared engine's own data
+  // so this list can never drift from what `terrainInfoAt` actually handles.
+  const KNOWN_TERRAIN_TYPES = new Set(Object.keys(TERRAIN_DATA));
+
+  // The persisted TacticalCombatState blob. Validated defensively at the
+  // envelope level only — the shared engine owns the full invariants and never
+  // throws on unexpected shapes. Dimensions/array sizes are bounded and the
+  // grid is cross-checked against its declared width/height so a malformed
+  // round-tripped state fails fast with a 400 instead of crashing the engine
+  // (see `terrainInfoAt` in shared/tactical-combat/math.ts, which indexes
+  // TERRAIN_DATA unconditionally).
+  const tacticalStateSchema = z
+    .object({
+      schemaVersion: z.literal(1),
+      grid: z
+        .object({
+          width: z.number().int().min(1).max(64),
+          height: z.number().int().min(1).max(64),
+          tiles: z.array(z.array(z.string())),
+        })
+        .passthrough()
+        .superRefine((grid, ctx) => {
+          if (grid.tiles.length !== grid.height) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["tiles"],
+              message: "grid.tiles does not match declared dimensions",
+            });
+            return;
+          }
+          for (let y = 0; y < grid.tiles.length; y++) {
+            const row = grid.tiles[y];
+            if (!row || row.length !== grid.width) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tiles", y],
+                message: "grid.tiles does not match declared dimensions",
+              });
+              continue;
+            }
+            for (let x = 0; x < row.length; x++) {
+              const cell = row[x];
+              if (cell === undefined || !KNOWN_TERRAIN_TYPES.has(cell)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: ["tiles", y, x],
+                  message: "unknown terrain type",
+                });
+              }
+            }
+          }
+        }),
+      units: z.array(z.record(z.unknown())).max(40),
+      phase: z.enum(["player", "enemy"]),
+      round: z.number().int().min(1).max(10000),
+      seed: z.number().int(),
+      actionCounter: z.number().int().min(0).max(1_000_000),
+      log: z.array(z.record(z.unknown())).max(2000),
+      difficulty: z.string(),
+      outcome: z.enum(["victory", "defeat", "fled"]).optional(),
+    })
+    .passthrough();
+
+  // A player action. The `type` gate is enforced here; legality (unit exists,
+  // in range, tile reachable, MP/cooldown) is validated by the engine, which
+  // returns `{ ok: false, error }` for illegal input.
+  const tacticalActionSchema = z
+    .object({
+      type: z.enum(["move", "attack", "skill", "item", "defend", "wait", "endTurn", "flee"]),
+    })
+    .passthrough();
+
+  // ── POST /game/combat/tactical/start ──
+  app.post("/combat/tactical/start", async (req, reply) => {
+    const schema = z.object({
+      chatId: z.string().min(1),
+      // Caps mirror /action's units .max(40) so a battle /start accepts can
+      // never produce a state /action rejects.
+      party: z.array(tacticalCombatantSchema).min(1).max(20),
+      enemies: z.array(tacticalCombatantSchema).min(1).max(20),
+      seed: z.number().int().optional(),
+      // Scene-derived battlefield theming (Round 2). Unknown strings normalize
+      // in the engine (environment → default, formation → "line").
+      environment: z.string().optional(),
+      formation: z.string().optional(),
+    });
+    const { chatId, party, enemies, seed, environment, formation } = schema.parse(req.body);
+
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.getById(chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    const meta = parseMeta(chat.metadata);
+    const difficulty = ((meta.gameSetupConfig as Record<string, unknown>)?.difficulty as string) ?? "normal";
+    // Determinism only matters once the seed exists, so any source is fine here.
+    const resolvedSeed = seed ?? randomInt(0, 0x1_0000_0000);
+
+    const state = createTacticalCombat(party as unknown as Combatant[], enemies as unknown as Combatant[], {
+      seed: resolvedSeed,
+      difficulty,
+      environment,
+      formation,
+    });
+
+    logger.info(
+      "Tactical combat started for chat %s (%d party, %d enemies, difficulty=%s, seed=%d)",
+      chatId,
+      party.length,
+      enemies.length,
+      difficulty,
+      resolvedSeed,
+    );
+
+    return { state };
+  });
+
+  // ── POST /game/combat/tactical/action ──
+  app.post("/combat/tactical/action", async (req, reply) => {
+    const schema = z.object({
+      chatId: z.string().min(1),
+      state: tacticalStateSchema,
+      action: tacticalActionSchema,
+    });
+    const { chatId, state, action } = schema.parse(req.body);
+
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.getById(chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found" });
+
+    // The schema only validates the envelope; the engine assumes further
+    // internal invariants that a hand-crafted round-tripped state could still
+    // violate. Guard against that so a malformed request fails cleanly with a
+    // 400 instead of an unhandled 500.
+    try {
+      const applied = applyTacticalAction(
+        state as unknown as TacticalCombatState,
+        action as unknown as TacticalAction,
+      );
+      if (!applied.ok) {
+        return reply.status(400).send({ error: applied.error });
+      }
+
+      let nextState = applied.state;
+      const events = [...applied.events];
+
+      // The player action auto-advances the phase once every party unit has acted.
+      // Resolve the enemy phase in the same round-trip and append its events after
+      // the player's, so the client animates one continuous sequence.
+      if (nextState.phase === "enemy" && !isTacticalTerminal(nextState)) {
+        const enemyResult = runTacticalEnemyPhase(nextState);
+        nextState = enemyResult.state;
+        events.push(...enemyResult.events);
+      }
+
+      return { state: nextState, events };
+    } catch (err) {
+      logger.warn(err, "Tactical action failed on round-tripped state for chat %s", chatId);
+      return reply.status(400).send({ error: "Invalid tactical combat state" });
+    }
   });
 
   // ── POST /game/combat/loot ──

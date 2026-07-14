@@ -10,6 +10,13 @@ export type GameActiveState = "exploration" | "dialogue" | "combat" | "travel_re
 /** How the Game Master is controlled. */
 export type GameGmMode = "standalone" | "character";
 
+/**
+ * Combat presentation preference for Game Mode.
+ * - `classic`: existing cinematic JRPG menu combat (GameCombatUI + combat.service).
+ * - `tactical`: Fire Emblem / FFT style grid battle (tactical-combat feature engine).
+ */
+export type GameCombatStyle = "classic" | "tactical";
+
 /** Status of a game session. */
 export type GameSessionStatus = "setup" | "active" | "concluded";
 
@@ -166,6 +173,8 @@ export interface GameSetupConfig {
   gmMode: GameGmMode;
   /** Content rating: sfw or nsfw */
   rating: "sfw" | "nsfw";
+  /** Combat presentation preference (classic menu battles vs tactical grid battles). Defaults to "classic". */
+  combatStyle?: GameCombatStyle;
   /** Character ID to use as GM (only when gmMode is "character") */
   gmCharacterId?: string | null;
   /** Party member IDs; library character IDs or `npc:<slug>` tracked-NPC IDs. */
@@ -322,6 +331,8 @@ export interface Combatant {
   element?: string;
   /** Current elemental aura applied to this combatant */
   elementAura?: { element: string; gauge: number; sourceId: string } | null;
+  /** Tactical-combat class hint (fighter/knight/rogue/archer/mage/healer). Classic combat ignores this. */
+  combatClass?: string;
 }
 
 export interface CombatStatusEffect {

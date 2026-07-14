@@ -66,6 +66,7 @@ import { PickerDropdown } from "../../features/chat-settings/PickerDropdown";
 import { ChatSettingsSection as Section } from "../../features/chat-settings/ChatSettingsSection";
 import { AdvancedParametersSection } from "../../features/chat-settings/sections/AdvancedParametersSection";
 import { ChatNameSection } from "../../features/chat-settings/sections/ChatNameSection";
+import { CombatStyleSection } from "../../features/chat-settings/sections/CombatStyleSection";
 import { ConnectionSection } from "../../features/chat-settings/sections/ConnectionSection";
 import { ConversationPromptSection } from "../../features/chat-settings/sections/ConversationPromptSection";
 import { DiscordMirrorControls } from "../../features/chat-settings/sections/DiscordMirrorSection";
@@ -226,7 +227,7 @@ import {
   resolveDefaultAgentPromptTemplateId,
   resolveAgentPromptTemplate,
 } from "@marinara-engine/shared";
-import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
+import type { Chat, CharacterGroup, Lorebook, GameCombatStyle } from "@marinara-engine/shared";
 import {
   isCustomToolSelectable,
   useCustomToolCapabilities,
@@ -740,6 +741,7 @@ const CHAT_SETTINGS_ORDER = {
   connection: -1300,
   promptPreset: -1200,
   advancedParameters: -1100,
+  combatStyle: -1050,
   persona: -1000,
   characters: -900,
   cardTheming: -850,
@@ -1718,6 +1720,10 @@ export function ChatSettingsDrawer({
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
   const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
   const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
+  const effectiveCombatStyle: GameCombatStyle =
+    (metadata.gameCombatStyle as GameCombatStyle | undefined) ??
+    (metadata.gameSetupConfig?.combatStyle as GameCombatStyle | undefined) ??
+    "classic";
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
   const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
@@ -4113,6 +4119,15 @@ export function ChatSettingsDrawer({
                 onOpenPromptPreset={openSelectedModePromptPreset}
               />
             </div>
+          )}
+
+          {/* Combat Style — game mode only */}
+          {isGame && (
+            <CombatStyleSection
+              style={{ order: CHAT_SETTINGS_ORDER.combatStyle }}
+              combatStyle={effectiveCombatStyle}
+              onCombatStyleChange={(gameCombatStyle) => updateMeta.mutate({ id: chat.id, gameCombatStyle })}
+            />
           )}
 
           {/* Scene System Prompt — shown only for scene-created chats */}

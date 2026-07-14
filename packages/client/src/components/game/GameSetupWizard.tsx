@@ -40,6 +40,7 @@ import {
   type GameInitialSetupLabels,
   type GameSetupConfig,
   type GameGmMode,
+  type GameCombatStyle,
 } from "@marinara-engine/shared";
 import { getCharacterTitle } from "../../lib/character-display";
 import { api } from "../../lib/api-client";
@@ -390,6 +391,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [tones, setTones] = useState<string[]>(["Heroic"]);
   const [customTone, setCustomTone] = useState("");
   const [difficulty, setDifficulty] = useState("Normal");
+  const [combatStyle, setCombatStyle] = useState<GameCombatStyle>("classic");
   const [gmMode, setGmMode] = useState<GameGmMode>("standalone");
   const [gmCharacterId, setGmCharacterId] = useState<string | null>(null);
   const [partyCharacterIds, setPartyCharacterIds] = useState<string[]>([]);
@@ -813,6 +815,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         setting: setting || `A ${(genres[0] ?? "fantasy").toLowerCase()} world`,
         tone: tones.join(", ") || "Heroic",
         difficulty,
+        combatStyle,
         rating,
         gmMode,
         gmCharacterId: gmMode === "character" && gmCharacterId ? gmCharacterId : undefined,
@@ -1202,6 +1205,39 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                     {d}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Combat Preference — single-select */}
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">Combat Preference</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCombatStyle("classic")}
+                  className={cn(
+                    "flex-1 rounded-lg p-3 text-left text-xs transition-colors ring-1",
+                    combatStyle === "classic"
+                      ? "bg-[var(--primary)]/10 ring-[var(--primary)]/40"
+                      : "bg-[var(--secondary)] ring-[var(--border)] hover:ring-[var(--primary)]/20",
+                  )}
+                >
+                  <div className="font-medium text-[var(--foreground)]">Classic</div>
+                  <div className="mt-1 text-[var(--muted-foreground)]">Cinematic menu battles (current style)</div>
+                </button>
+                <button
+                  onClick={() => setCombatStyle("tactical")}
+                  className={cn(
+                    "flex-1 rounded-lg p-3 text-left text-xs transition-colors ring-1",
+                    combatStyle === "tactical"
+                      ? "bg-[var(--primary)]/10 ring-[var(--primary)]/40"
+                      : "bg-[var(--secondary)] ring-[var(--border)] hover:ring-[var(--primary)]/20",
+                  )}
+                >
+                  <div className="font-medium text-[var(--foreground)]">Tactical</div>
+                  <div className="mt-1 text-[var(--muted-foreground)]">
+                    Fire Emblem-style grid battles: movement, terrain, forecasts
+                  </div>
+                </button>
               </div>
             </div>
 

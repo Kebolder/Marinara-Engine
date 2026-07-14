@@ -96,6 +96,8 @@ export interface CombatPartyMember {
   items: string[];
   statuses: CombatStatus[];
   isPlayer: boolean;
+  /** Tactical-combat class hint (fighter/knight/rogue/archer/mage/healer). Classic combat ignores this. */
+  class?: string;
 }
 
 /** An enemy in the encounter. */
@@ -107,6 +109,8 @@ export interface CombatEnemy {
   statuses: CombatStatus[];
   description: string;
   sprite: string;
+  /** Tactical-combat class hint (fighter/knight/rogue/archer/mage/healer). Classic combat ignores this. */
+  class?: string;
 }
 
 /** AI-chosen visual styling hints for the combat environment. */

@@ -484,6 +484,10 @@ export interface ChatMetadata {
   gameCombatChatId?: string | null;
   /** Live combat encounter snapshot — restored on page refresh while a fight is in progress. */
   gameCombatState?: import("./game.js").GameCombatStateSnapshot | null;
+  /** Runtime override for combat presentation style (Pattern B). Takes effect next battle. */
+  gameCombatStyle?: import("./game.js").GameCombatStyle;
+  /** Live tactical (grid) battle snapshot — restored on page refresh while a tactical fight is in progress. */
+  gameTacticalCombatSnapshot?: import("../features/tactical-combat/types.js").TacticalCombatState | null;
   /** User's initial game setup preferences */
   gameSetupConfig?: import("./game.js").GameSetupConfig | null;
   /** Immutable creation-time setup retained for viewing and sharing after the campaign changes. */
