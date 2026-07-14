@@ -14,13 +14,14 @@ The feature is a hierarchical map and spatial-orientation system, not a generic 
 
 The supported owner modes are Roleplay and Game. The legacy `visual_novel` enum value is compatibility residue and is not a supported product mode.
 
-The MVP has four layers:
+The plan has five focused layers:
 
 | Layer | Responsibility | Example |
 | --- | --- | --- |
 | Map definition | Stable spatial truth | The Library is inside the Wizard Tower |
 | Runtime state | The current scene location | The scene is currently in the Library |
 | Prompt projection | Bounded model orientation | Breadcrumb, current memory, reachable exits |
+| Visual identity | Optional place-specific art references | The Library keeps its arches, windows, and materials across scenes |
 | Transition | Validated state change | Move from Library to Observatory |
 
 The state machine is deliberately small:
@@ -40,6 +41,8 @@ Manual movement ships first. Later, a constrained model tool such as `change_loc
 Add a shared Hierarchical Map feature for Roleplay and Game. It provides an author-defined location hierarchy, one authoritative focal location, bounded current-location prompt context, and server-validated movement.
 
 Lorebooks remain the canonical source for reusable world facts. The hierarchy may reference existing lorebook entries by stable ID so the active location can select relevant lore without copying or rewriting it. AI map drafting may use explicitly selected lorebooks as grounded source material, and it must distinguish source-backed locations from inferred or invented additions.
+
+A location may also own an optional visual identity kit: a short visual anchor plus stable references to profile-gallery images. The location remains a spatial entity, not an image. The chat's image style profile controls overall rendering style, location references preserve the place, and character or persona references preserve the people in it.
 
 Connected Conversation can later read a safe projection of the linked story location, but it never owns or changes spatial state.
 
@@ -72,7 +75,10 @@ These decisions resolve the open questions from V2:
 10. Lorebooks own canonical reusable world facts; the map owns spatial identity, containment, navigation, and current-location state. Map locations reference lorebook entries by stable ID and never copy their content.
 11. A location attachment is an explicit chat-scoped activation source. While that exact location is current, its enabled entries may activate without a keyword match, but disabled or explicitly excluded books and entries remain disabled.
 12. Lorebook-grounded map drafting follows the owner runtime UI and precedes Connected Conversation. When source lorebooks are selected, the draft must expose which locations are source-backed, inferred, or invented instead of presenting unsupported geography as canon.
-13. Model-requested movement remains a later phase.
+13. A location is never replaced by an image. It may reference optional visual identity assets by stable image ID, with one primary establishing reference and bounded supporting references.
+14. Location visual references feed only eligible image-generation paths. Text generation, lore activation, and Connected Conversation never receive image bytes or image-only notes.
+15. Storyboard is a downstream consumer of the same visual resolver. Each storyboard freezes a message-and-swipe-anchored reference manifest so later regeneration does not silently adopt newer location or character art.
+16. Model-requested movement remains a later phase.
 
 ## Scope
 
@@ -104,6 +110,7 @@ The editor is a lazy-loaded map workspace, not a narrow settings form:
 - Each parent presents children as a positioned map, ordered layers, or an accessible list.
 - Duplicate subtree supports creator reuse without requiring cross-chat templates in the MVP.
 - Each location has a progressive `Linked lore` section that searches existing lorebook entries, shows disabled or missing references, and supports Open entry and Detach without copying or deleting lore content.
+- Each location has a progressive `Visual identity` section with a primary image, supporting references, usage notes, and explicit gallery, upload, or generate actions. Images never replace the location name, icon, or accessible navigation label.
 
 ### Lorebook-grounded drafting
 
@@ -117,6 +124,44 @@ The AI map builder offers lorebook grounding when the owner chat has selected or
 - When selected lorebooks exist, `Canon with expansion` is the approachable default. The builder keeps `Strict canon` one control away for lorebook-heavy creators.
 
 Every generated node in the draft preview shows `Lore-backed`, `Inferred`, or `Added by AI`. Lore-backed nodes list their source entries and provide Open entry. The label proves a valid source reference, not that the model interpreted the prose perfectly, so creator review remains the semantic authority. Apply changes only the local working copy, and Save remains the persistence boundary.
+
+### Location visual identity and reference art
+
+Location images should improve scene consistency without turning the hierarchy into a gallery or another source of spatial truth.
+
+- A creator may upload an image, select an existing profile-gallery image, promote a generated scene, or generate an establishing reference from the location's breadcrumb, public description, visual anchor, linked lore, and selected image style profile.
+- Attaching a chat-gallery image, generated Game background, or other temporary source first creates a durable profile-gallery asset. The map stores the stable gallery image ID, never a file path, external URL, or base64 payload.
+- One `identity` image may be primary. Supporting images may describe a distinctive detail, an alternate view, a layout, or an inheritable art-style cue.
+- `layout` references remain editor aids unless a specialized background or floor-plan request explicitly asks for them. They are not automatically sent to ordinary scene illustration because they can distort composition.
+- Only `style` references may opt into descendant inheritance. Identity and detail images apply to the exact location, so a city skyline is not silently used as the visual identity of every room inside it.
+- Generated scene art never becomes canon automatically. `Set as location reference` is an explicit review action, preventing repeated generation from amplifying accidental details or style drift.
+- The selected location inspector shows the primary image and reference roles. Dense hierarchy and map views stay name-first; they may show a small thumbnail when space permits, but navigation never depends on image recognition.
+- The image-generation preview names every resolved location and character reference, its role, and any reference omitted by provider limits. It never logs or displays raw base64 in diagnostics.
+
+The intended consistency stack is:
+
+```text
+chat image style profile  -> shared rendering language
+current location refs     -> stable architecture and place identity
+character/persona refs    -> stable people and appearance
+scene prompt              -> current action, framing, weather, and lighting
+```
+
+Reference art is visual evidence, not automatic lore. Adding an image never creates locations, changes containment, or writes lorebook facts. Image-to-map inference remains a separately reviewed future workflow.
+
+### Storyboard reference continuity
+
+Storyboard should consume the reviewed visual identities from the completed GM turn without making the spatial feature depend on Storyboard.
+
+- The profile gallery and entity galleries form a reference bank that may contain several reviewed images for a location, character, or persona. A generated keyframe receives only a provider-sized reference payload selected from that bank.
+- Creating a storyboard resolves the exact spatial snapshot for its source message and swipe. The chat's latest location is never substituted for an earlier turn.
+- The storyboard freezes the resolved location, ordered candidate image IDs, per-keyframe selections, omissions, and provider capacity in a visual-reference manifest. Regeneration reuses that manifest until the creator explicitly chooses `Refresh references`.
+- The same primary location candidate is available to every keyframe. Character and persona candidates vary by the frame's visible-character list, so off-screen cast members do not consume reference slots.
+- The first version automatically selects one primary image per depicted entity and at most one supporting location image. Richer banks remain useful for manual selection and future shot-aware angle, outfit, expression, or detail matching, but Marinara does not send every stored image on every frame.
+- If only one automatic slot remains, a keyframe with visible characters selects the lead visible character; an establishing keyframe with no visible characters selects the primary location. With two or more slots, the primary location is selected before additional visible-character references.
+- A higher-capacity provider does not silently add references to an existing storyboard. A lower-capacity provider produces an inline `Review references` conflict instead of silently changing the frozen payload.
+- Each keyframe preview has one progressive `Visual sources` disclosure listing the resolved location, selected characters, image roles, ordering, and omission reasons. `Refresh references` is available there without adding a separate Storyboard asset manager or blocking modal.
+- Generated keyframes never become character or location references automatically. Existing explicit promotion actions remain the only persistence boundary.
 
 ### Runtime movement
 
@@ -137,6 +182,17 @@ Definitions belong in chat metadata. Runtime position belongs in snapshot histor
 ```ts
 export type SpatialOwnerMode = "roleplay" | "game";
 
+export type LocationVisualReferenceRole = "identity" | "detail" | "layout" | "style";
+
+export interface LocationVisualReference {
+  imageId: string;
+  role: LocationVisualReferenceRole;
+  primary?: boolean;
+  usageNote?: string;
+  inheritToDescendants?: boolean;
+  sortOrder: number;
+}
+
 export interface ChatLocation {
   id: string;
   name: string;
@@ -149,6 +205,8 @@ export interface ChatLocation {
   placement?: { x: number; y: number };
   layerOrder?: number;
   awarenessSummary?: string;
+  visualIdentity?: string;
+  visualReferences: LocationVisualReference[];
   lorebookEntryIds: string[];
   links: ChatLocationLink[];
   status: "active" | "archived";
@@ -191,7 +249,7 @@ export interface PendingSpatialTransition {
 
 Do not store `ownerChatId` inside `SpatialContextDefinition`; the containing chat is the owner. Stable opaque IDs survive renames and reparenting.
 
-The first owner MVP treats a missing `lorebookEntryIds` field as an empty array, so the lorebook package can extend schema version 1 without eagerly rewriting existing definitions. Entry references are stable IDs only. Lorebook names, entry names, keys, and content are resolved at read or prompt time and are never copied into the spatial definition.
+The first owner MVP treats a missing `lorebookEntryIds` or `visualReferences` field as an empty array, so later packages can extend schema version 1 without eagerly rewriting existing definitions. Entry references and image references are stable IDs only. Lorebook names, entry names, keys, content, image paths, and image bytes are resolved at use time and are never copied into the spatial definition. `imageId` resolves through the durable profile gallery; attaching a temporary or chat-scoped image promotes a durable copy first.
 
 ## Graph rules
 
@@ -214,6 +272,10 @@ Reject:
 - More than 50 links per location
 - More than 50 lorebook entry references per location
 - Duplicate lorebook entry references on one location
+- More than 6 visual references per location
+- Duplicate visual image references on one location
+- More than one primary visual reference, or a primary reference whose role is not `identity`
+- Descendant inheritance on a role other than `style`
 - Placement coordinates outside 0 to 100
 - Invalid or duplicate layer ordering within a layer parent
 - Movement to archived, hidden, blocked, or unreachable locations
@@ -227,6 +289,8 @@ Text limits:
 - Description: 4,000 characters
 - Awareness summary: 1,000 characters
 - Private model memory: 8,000 characters
+- Visual identity: 800 characters
+- Visual-reference usage note: 300 characters
 
 Direct-link cycles are valid. Parent cycles are not.
 
@@ -239,6 +303,8 @@ Direct-link cycles are valid. Parent cycles are not.
 - Missing lorebook references appear as warnings, not graph corruption.
 - Archiving or deleting a location never deletes its referenced lorebook entries.
 - Deleting a lorebook or entry never silently rewrites the map. The location retains a repairable broken reference until the creator detaches or replaces it.
+- Archiving or deleting a location never deletes a shared profile-gallery image.
+- Deleting a gallery image that is still referenced by a location or frozen Storyboard manifest is blocked until the creator detaches it or refreshes every dependent manifest. Missing image references remain repairable warnings and never become raw-path fallbacks.
 
 ## Persistence and history
 
@@ -304,7 +370,7 @@ Added in Phase 3. Include only:
 - Read-only instruction
 - Character presence only when authoritative state proves it
 
-Never include private model memory, internal IDs, hidden destinations, the complete hierarchy, location-attached lorebook IDs, or location-attached lorebook content.
+Never include private model memory, internal IDs, hidden destinations, the complete hierarchy, location-attached lorebook IDs or content, location visual-reference IDs, visual identity notes, usage notes, image paths, or image bytes.
 
 Game may prove presence through its committed `presentCharacters` state. Roleplay uses neutral wording such as “The linked story's current scene is…” until it gains an explicit presence source. Never infer presence by character name.
 
@@ -318,6 +384,45 @@ The same projection resolver must feed:
 - Live Peek Prompt assembly
 
 Cached Peek Prompt continues to display the exact prompt originally sent. Debug logging includes the final projection but must not log private model memory at normal levels.
+
+### Current-location visual projection for image generation
+
+Visual references use a separate resolver from the story prompt. It resolves the spatial snapshot applicable to the image target, not merely the chat's latest location. Automatic Game art uses the snapshot committed for that assistant message. Retrying art for an earlier swipe and invoking Illustrator from an earlier message use that message and swipe's resolved location.
+
+Eligible paths are Game automatic scene art, Game manual scene illustration, and Roleplay Illustrator scene or background generation when the per-chat location-reference control is enabled. Portrait, selfie, avatar, and sprite generation do not attach location references automatically.
+
+Two chat-metadata controls mirror the existing avatar-reference controls: `illustratorUseLocationReferences` and `gameImageUseLocationReferences`. Missing or false remains off for backward compatibility. When the creator sets the first primary location image, the same Save flow offers `Use this location in scene art`, checked by default but explicit, so image bytes are never sent to a provider merely because an image is displayed in the map editor.
+
+Candidate order is deterministic and provider-aware:
+
+1. Explicit references selected for this image request.
+2. The exact resolved location's primary `identity` reference.
+3. Referenced characters and persona in scene order.
+4. The exact location's supporting `identity` and `detail` references in `sortOrder`.
+5. The nearest ancestor's inheritable `style` reference.
+
+No sibling or name-based fallback is allowed. At most two location images are candidates for an ordinary scene request, and the existing provider adapter applies its total image limit. Explicit request references always consume slots first. For the remaining automatic slots, a background request prioritizes location identity over character references, while an illustration chooses the primary location reference before additional depicted-person references. If a provider cannot accept both the place and every requested person, the preview reports the deterministic tradeoff and every omission reason.
+
+The image prompt compiler adds the location breadcrumb, bounded `visualIdentity`, and each selected reference's bounded `usageNote`. The chat's selected `ImageStyleProfile` remains the style authority. Reference images preserve place or subject identity and must not silently replace the profile's style text, positive tags, negative tags, or prompt mode.
+
+Reference roles express creator intent and selection priority; they do not guarantee that every provider will interpret an image as identity, detail, layout, or style. Provider capability notes and the generated preview keep the creator as the visual authority.
+
+Text-model requests receive none of these image bytes or image-only usage notes. Connected Conversation receives neither the visual-reference IDs nor their contents. Image debug logs may include image IDs, location IDs, roles, selection reasons, and omissions, but never base64 or filesystem paths.
+
+### Storyboard visual-reference manifests
+
+The Storyboard adapter resolves visual candidates once for the completed GM turn, after its message and swipe are committed. It stores a frozen bank and the provider-sized payload chosen for each keyframe. This separates durable reference identity from a provider request that may accept only a small subset.
+
+Selection is deterministic:
+
+1. Explicit keyframe references consume slots first.
+2. With one automatic slot remaining, an establishing frame selects the location primary and a frame with visible characters selects the lead visible character.
+3. With two or more automatic slots remaining, select the exact location primary, then one primary reference for each visible character or persona in narrative order.
+4. Use remaining capacity for one supporting exact-location identity or detail, then secondary depicted-entity references, then the nearest inheritable location style.
+
+Storyboard never creates a contact sheet or composite reference implicitly. Those techniques can change provider interpretation and remain a future provider-specific optimization. Missing images, a changed provider, or a reduced provider limit marks the manifest `needs_review`; it does not silently choose a different entity. Increasing capacity also preserves the frozen payload until `Refresh references` is confirmed.
+
+The manifest stores IDs, labels, roles, ordering, selection reasons, omissions, source message and swipe, resolved location ID, definition revision, provider identity, and the reference limit used. It stores no image bytes or filesystem paths. Debug output may describe that manifest but follows the same no-base64 and no-path rules as ordinary image generation.
 
 ## Game compatibility
 
@@ -415,12 +520,38 @@ Exit condition: creators can explicitly bind existing lore to locations, and onl
 
 Exit condition: a lorebook-literate creator can generate a map grounded directly in selected canon, identify every unsupported addition, and decline or edit it before persistence.
 
+### Phase 2C: location visual identity and scene references
+
+- Add bounded `visualIdentity` and `visualReferences` fields with empty compatibility defaults.
+- Reuse durable profile-gallery image IDs and the existing secure gallery upload, metadata, and image-generation paths. Never persist raw paths, external URLs, or base64 in the definition.
+- Add the parallel per-chat Illustrator and Game location-reference controls. The first-primary Save flow obtains explicit consent before enabling provider use.
+- Generate an establishing reference from bounded exact-location context and enabled attached lore only. Do not scan unrelated lorebooks or hierarchy branches.
+- Add inline primary, supporting, role, usage-note, gallery selection, upload, generate, detach, broken-reference, and backlink states to the Location Editor.
+- Resolve the message and swipe's exact location into eligible Game and Roleplay scene-art requests, then merge location, character, persona, and explicit references under provider-specific limits.
+- Add explicit `Set as location reference` promotion for generated art. Never promote generated scenes automatically.
+- Preserve visual reference IDs through branches and JSONL metadata export, warn on missing destination assets, and include the assets in profile backup and restore.
+- Prove that story prompts and Connected Conversation receive neither location image IDs, bytes, paths, nor image-only notes.
+
+Exit condition: a creator can establish a place visually, generate multiple scenes that reuse its reviewed identity, see exactly which visual references were sent, and remove or replace those references without changing spatial or lore truth.
+
+### Phase 2D: Storyboard visual-reference manifests
+
+- Add a downstream Storyboard adapter around the Phase 2C visual resolver rather than coupling spatial persistence to Storyboard.
+- Resolve the source message and swipe's spatial snapshot, then freeze the location and entity reference bank plus per-keyframe provider payloads.
+- Reuse the exact location primary across keyframes when capacity permits, while selecting character and persona references from each frame's visible-character list.
+- Persist provider identity, reference capacity, ordered selections, and omission reasons so regeneration is reproducible.
+- Add inline `Visual sources`, `Review references`, and explicit `Refresh references` states to Storyboard preview and regeneration.
+- Reject silent reselection when an image is missing or provider capacity shrinks. Do not auto-fill newly available capacity.
+- Preserve the manifest through the existing Storyboard lifecycle and prove that keyframe image-to-video continues to use only the rendered keyframe as its first-frame input.
+
+Exit condition: every Storyboard keyframe can explain and reproduce its visual inputs, repeated frames share the correct historical place identity, and provider limitations never silently swap the location or depicted people.
+
 ### Phase 3: connected Conversation
 
 - Resolve the latest owner state through `connectedChatId` at generation time.
 - Add a bounded read-only projection.
 - Use conservative presence wording.
-- Exclude location-attached lore IDs and content even when the owner prompt activates them.
+- Exclude location-attached lore IDs and content, visual-reference IDs and metadata, image paths, and image bytes even when owner-mode generation uses them.
 - Cover unlink, relink, deleted owner, malformed links, concluded stories, and location-lore negative controls.
 
 ### Phase 4: model-requested movement
@@ -453,6 +584,8 @@ Planning baseline: `hierarchical-locations` after merging `staging` at `4fd752ea
 | Game travel | Game maps already have grid and node positions plus a pending map move that becomes visible `*moves to ...*` text. | Add optional stable-ID bindings. Bound destinations use structured spatial requests without visible prose; unbound movement keeps the existing tactical flow. |
 | Storage backends | File-native storage is the default; legacy libSQL remains supported. Small transactions are used, while large transaction loops are avoided for Windows stability. | Keep the owner-turn transaction constant-size and prove it against both storage backends before expanding the feature. |
 | Lorebook processing | Lorebook activation already supports explicit chat IDs, keyword and semantic matching, macros, recursion, ordering, and prompt markers. Initial Game setup scans with no chat messages, so ordinary keyword entries do not directly ground the later map draft. | Add forced current-location candidates to the shared lorebook processor and give map drafting a separate explicit, bounded source-catalog path. Do not infer map canon from the world overview alone. |
+| Image consistency | Image style profiles control prompt style, character and persona avatars can already be sent as references, and providers accept different maximum reference counts. Galleries store stable image IDs separately from file paths. | Keep place identity separate from global style and character identity. Resolve the applicable spatial snapshot, attach stable gallery images only to eligible scene-art requests, and trim candidates deterministically through existing provider adapters. |
+| Storyboard references | Storyboard already plans visible characters per keyframe, resolves provider-specific reference limits, sends character images through preview and render, stores its source message and swipe, and uses each rendered keyframe as the video first frame. | Add a frozen visual-reference manifest that resolves the historical location once, varies characters per keyframe, and preserves ordered selections across regeneration. Keep image-to-video input unchanged. |
 
 ### Target module map
 
@@ -469,6 +602,8 @@ New server modules:
 - `packages/server/src/services/storage/spatial-context.storage.ts`: snapshot reads, writes, branch copies, swipe shifts, command lookup, and cleanup.
 - `packages/server/src/services/spatial-context/state-resolution.ts`: effective snapshot resolution for bootstrap, visible swipe, regeneration, branching, and checkpoints.
 - `packages/server/src/services/spatial-context/projection.ts`: structured owner and connected projections plus bounded text formatting.
+- `packages/server/src/services/spatial-context/visual-reference-resolution.ts`: snapshot-aware location visual selection, inheritance, provider candidates, and safe diagnostics.
+- `packages/server/src/services/spatial-context/storyboard-reference-manifest.ts`: frozen Storyboard banks, per-keyframe payload selection, provider-capacity review, refresh, and safe serialization.
 - `packages/server/src/services/spatial-context/owner-turn.ts`: validation and constant-size atomic move plus user-message commit.
 - `packages/server/src/services/spatial-context/game-map-binding.ts`: authoritative breadcrumb projection plus explicit Game map, cell, and node binding resolution.
 - `packages/server/src/routes/spatial-context.routes.ts`: dedicated GET and revisioned PUT routes.
@@ -491,6 +626,7 @@ Existing integration files expected to change:
 - Chat lifecycle: `packages/server/src/routes/chats.routes.ts`, `packages/server/src/routes/generate.routes.ts`, and `packages/shared/src/schemas/chat.schema.ts`.
 - Prompt paths: `packages/server/src/routes/generate/dry-run-route.ts`, `packages/server/src/services/generation/game-gm-prompt-runtime.ts`, and the live-preview portion of `packages/server/src/routes/chats.routes.ts`.
 - Lorebook grounding and activation: `packages/server/src/services/lorebook/`, `packages/server/src/routes/spatial-context.routes.ts`, `packages/client/src/features/spatial-context/components/LocationInspector.tsx`, the lorebook editor, and the Active Context UI.
+- Location reference art: `packages/server/src/db/schema/gallery.ts`, gallery storage and routes, `packages/server/src/services/image/`, `packages/server/src/routes/generate/illustrator-references.ts`, Game illustration and Storyboard assembly in `packages/server/src/routes/game.routes.ts`, `packages/server/src/services/storage/game-storyboards.storage.ts`, the shared Storyboard prompt contracts, `packages/client/src/features/spatial-context/components/LocationInspector.tsx`, and the image-generation and Storyboard preview UIs.
 - Client routing and send paths: `packages/client/src/stores/ui.store.ts`, `packages/client/src/stores/chat.store.ts`, `packages/client/src/components/layout/AppShell.tsx`, `packages/client/src/components/chat/ChatSettingsDrawer.tsx`, `packages/client/src/components/chat/ChatArea.tsx`, `packages/client/src/components/chat/ChatRoleplaySurface.tsx`, `packages/client/src/components/chat/ChatInput.tsx`, `packages/client/src/components/game/GameSurface.tsx`, and `packages/client/src/components/game/GameInput.tsx`.
 - Portability and proof: native chat import/export code in `packages/server/src/routes/chats.routes.ts` and `packages/server/src/services/import/`, `scripts/regressions/`, `e2e/core-flows.e2e.ts`, and root `package.json` scripts.
 
@@ -589,6 +725,54 @@ interface ResolvedOwnerSpatialProjection {
   destinations: Array<{ id: string; name: string; label?: string }>;
   omittedDestinationCount: number;
 }
+
+interface ResolvedLocationVisualProjection {
+  chatId: string;
+  messageId: string | null;
+  swipeIndex: number | null;
+  locationId: string;
+  breadcrumb: Array<{ id: string; name: string }>;
+  visualIdentity: string | null;
+  references: Array<{
+    imageId: string;
+    role: LocationVisualReferenceRole;
+    usageNote: string | null;
+    sourceLocationId: string;
+    inherited: boolean;
+  }>;
+}
+
+interface StoryboardVisualReferenceCandidate {
+  imageId: string;
+  source: "explicit" | "location" | "character" | "persona" | "inherited_style";
+  entityId?: string;
+  label: string;
+  role: string;
+  order: number;
+}
+
+interface StoryboardKeyframeReferencePayload {
+  keyframeIndex: number;
+  imageIds: string[];
+  omitted: Array<{
+    imageId: string;
+    reason: "provider_limit" | "not_visible" | "missing" | "setting_disabled";
+  }>;
+}
+
+interface StoryboardVisualReferenceManifest {
+  sourceMessageId: string;
+  sourceSwipeIndex: number;
+  locationId: string | null;
+  definitionRevision: number | null;
+  provider: string;
+  model: string;
+  providerReferenceLimit: number;
+  status: "ready" | "needs_review";
+  candidates: StoryboardVisualReferenceCandidate[];
+  keyframes: StoryboardKeyframeReferencePayload[];
+  createdAt: string;
+}
 ```
 
 Prompt limits are separate from storage limits:
@@ -598,6 +782,8 @@ Prompt limits are separate from storage limits:
 - At most 8,000 characters of private model memory.
 - At most 50 destinations in deterministic `sortOrder`, name, then ID order, followed only by an omitted count.
 - At most 50 current-location lorebook references before the lorebook processor applies entry and token budgets.
+- At most 6 stored visual references per location and at most 2 location-reference candidates for an ordinary scene request before the provider's total reference limit.
+- A Storyboard manifest may retain all resolved candidate IDs for audit and refresh, but every keyframe payload is capped by the provider limit captured when the manifest is created.
 - At most 1,000 characters for a connected `awarenessSummary` or fallback public-description excerpt.
 
 One formatter produces the shared structured owner block. Roleplay and Game use thin adapters around that block. The formatter never serializes `lorebookEntryIds`; the owner prompt pipeline consumes them through the lorebook processor. A second formatter, introduced only in Phase 3, produces the privacy-reduced Conversation block and receives no location-lore field.
@@ -683,6 +869,9 @@ The Location Editor follows the existing full-page editor route:
 - The local view renders children as positioned map nodes, ordered layers, or an accessible list.
 - Selecting previews a location; a distinct Enter action navigates to it.
 - The inspector contains name, kind, public description, private model memory, icon, presentation, placement or layer order, status, parent, direct links, and linked lore.
+- Visual identity is an inline inspector section, not a blocking modal. It shows the primary preview first, then supporting references, role, usage note, inheritance state, broken state, and image-source metadata.
+- Gallery selection and upload reuse existing image controls. `Generate establishing reference` opens a preview; accepting the image and setting it as primary are explicit actions.
+- A generated scene offers `Set as location reference` from its existing image actions. It never mutates the location merely because the scene was generated there.
 - Linked lore uses an inline searchable disclosure rather than a blocking modal. Results group entries by lorebook and expose disabled or excluded state before attachment.
 - Attached rows provide Open entry and Detach. Detach never deletes lore, and duplicate subtree copies bindings.
 - The lorebook editor shows current-chat map backlinks so a creator can find every location using an entry.
@@ -715,6 +904,10 @@ Native Marinara chat export must carry:
 Import creates new chat, message, and snapshot IDs while preserving location IDs inside the definition. Malformed imported graphs disable Spatial Context, preserve the raw definition for repair, and return warnings. They are never silently name-matched or partially activated.
 
 Chat JSONL export preserves location-to-entry IDs because they are part of the definition, but it does not silently bundle lorebook content. Import resolves references against the destination profile and reports missing entries as repairable warnings without name matching. Profile backup and restore preserve working references because they carry both spatial definitions and lorebook tables. A future explicit campaign package may bundle referenced lorebooks for cross-profile portability.
+
+Chat JSONL also preserves location-to-image IDs, roles, usage notes, and ordering, but does not inline image bytes. Import resolves those IDs against the destination profile and reports missing images as repairable warnings without path or filename matching. Profile backup and restore include profile-gallery records and files. A future explicit campaign package may offer `Include location images`, with an asset count, total size, and licensing reminder before export.
+
+When the existing Storyboard lifecycle is exported or copied, its visual manifest preserves the source message ordinal and swipe, resolved location ID, candidate image IDs, and keyframe ordering without embedding bytes. Import remaps message and storyboard IDs, resolves gallery image IDs in the destination profile, and marks missing assets `needs_review`. Legacy storyboards without a manifest resolve one from their saved source message and swipe on first regeneration; they never fall back to name matching or the latest chat location.
 
 Profile backup and restore include the new table through `FILE_BACKED_TABLES`. Chat deletion, bulk deletion, expunge, branch deletion, swipe deletion, and message deletion follow the existing cascade and application-cleanup paths. Existing chats need no eager migration because absent metadata means disabled Spatial Context.
 
@@ -828,16 +1021,40 @@ Gate: moving between locations activates only the destination's enabled attached
 
 Gate: selected lorebook facts ground the generated hierarchy directly, every unsupported location is visible before Save, and strict mode cannot persist an unreferenced generated node.
 
+#### Package F.3: location visual identity and scene-art references
+
+- Add bounded visual identity text and stable profile-gallery bindings to the location schema and editor working copy.
+- Add the inline visual identity editor, primary and supporting roles, explicit style inheritance, gallery backlinks, and broken-reference repair.
+- Add the parallel per-chat Illustrator and Game provider-use controls, with first-primary consent and backward-compatible off defaults.
+- Add on-demand establishing-reference generation and explicit promotion of reviewed generated scenes.
+- Resolve the applicable message and swipe location for Roleplay Illustrator and Game scene-art requests.
+- Merge explicit, location, character, persona, and inherited-style candidates deterministically under each provider's existing limit, with visible omission reasons.
+- Preserve IDs and metadata through branches and JSONL, include binaries in profile backup and restore, and add story-prompt and Conversation negative controls.
+
+Gate: repeated art in one location can reuse a reviewed place identity with deterministic, visible tradeoffs against character references, historical message art resolves its historical location, and no visual-only data leaks into text prompts.
+
+#### Package F.3.1: Storyboard visual-reference manifests
+
+- Keep F.3.1 as a downstream consumer of F.3 and a separate reviewable change; it does not expand the F.3 persistence gate.
+- Add a frozen reference bank and ordered per-keyframe payload manifest to Storyboard metadata.
+- Anchor location resolution to the Storyboard's source message and swipe, then reuse the same place candidate across its frames.
+- Select character and persona references from each keyframe's visible-character list and never spend capacity on off-screen cast members.
+- Apply explicit, single-slot, multi-slot, supporting, and inherited-style priorities deterministically through the existing provider-capability resolver.
+- Add progressive Visual sources, omission reasons, needs-review conflicts, and explicit Refresh references to preview and regeneration.
+- Preserve legacy Storyboard behavior when Spatial Context is disabled or no eligible location reference exists.
+
+Gate: regenerating a keyframe reuses its frozen payload, location and character selections are historically correct and inspectable, and changing provider capacity cannot silently alter an existing storyboard.
+
 #### Package G: connected Conversation
 
-- Implement only after Packages A through F.2 are stable.
+- Implement only after Packages A through F.3.1 are stable.
 - Resolve the linked owner at generation time and use the reduced projection formatter.
 - Add conservative presence wording and read-only UI.
 - Prove unlink, relink, deleted owner, malformed reciprocal links, cycles, and concluded story behavior.
 
-Gate: Conversation never receives private model memory, internal IDs, hidden destinations, location-attached lore IDs or content, or mutation capability.
+Gate: Conversation never receives private model memory, internal IDs, hidden destinations, location-attached lore IDs or content, location visual-reference IDs or contents, or mutation capability.
 
-Model-requested movement, creator templates, portable campaign packages, and per-character positions remain separate later packages after the owner and lorebook-grounding work ships.
+Model-requested movement, creator templates, portable campaign packages, image-to-map inference, bulk location-art generation, automatic multi-view character-reference selection, and per-character positions remain separate later packages after the owner grounding, visual-identity, and Storyboard-manifest work ships.
 
 ### Issue and pull-request boundaries
 
@@ -856,8 +1073,10 @@ Suggested issue split:
 4. Owner editor and runtime movement UI.
 5. Location lorebook bindings and owner runtime activation.
 6. Lorebook-grounded map drafting.
-7. Connected Conversation read-only projection.
-8. Model-requested movement.
+7. Location visual identity and scene-art reference resolution.
+8. Storyboard frozen visual-reference manifests.
+9. Connected Conversation read-only projection.
+10. Model-requested movement.
 
 ### Proof matrix
 
@@ -865,21 +1084,34 @@ Suggested issue split:
 | --- | --- | --- |
 | Location lore activation is exact and bounded | Fixtures cover accepted movement, pending and rejected movement, disabled and excluded entries, duplicate activation sources, token truncation, reload, swipes, and branches | Move between two differently linked locations in Roleplay and Game, then inspect Active Context and Peek Prompt |
 | Lorebook grounding is inspectable | Strict-mode fixtures reject unreferenced nodes; expansion fixtures preserve validated source keys and label unsupported nodes; catalog caps and omission counts are deterministic | Draft from a large existing lorebook, open source excerpts, compare Strict canon and Canon with expansion, and reject an invented location |
+| Location art stays consistent and bounded | Fixtures cover exact-location selection, historical swipe resolution, explicit style inheritance, missing images, provider limits, request kinds, and deterministic omission reasons | Set a primary reference, generate several Game and Roleplay scenes in the same place, move elsewhere, retry art on an older swipe, and inspect the visual-source preview |
+| Storyboard references are reproducible | Fixtures cover source swipe anchoring, frozen banks, visible-character selection, single-slot and multi-slot providers, missing assets, lower and higher replacement capacity, legacy manifests, and explicit refresh | Generate a multi-frame storyboard, move locations, change a character and location primary, regenerate before and after Refresh references, and inspect every frame's Visual sources |
 | Graph validation is deterministic | Dedicated spatial regression script with positive and negative fixtures | Inspect inline editor errors for representative invalid nodes |
 | Move and user message are atomic | Injected storage failure before and after each transaction write on both backends | Force a stale revision while a draft and destination are pending |
 | History restores the right location | Snapshot regression covering reload, swipes, regeneration, branch cutoff, and checkpoint | Exercise each flow in Roleplay and Game |
 | Prompt paths agree | Compare normalized blocks from generation helper, dry run, and live Peek Prompt | Inspect Peek Prompt and debug output for one chat per owner mode |
 | Context stays bounded | Wide and long-text fixtures assert character and destination caps | Inspect a deep and wide hierarchy in the editor and destination picker |
-| Privacy holds | Negative assertions for private memory, hidden links, inactive nodes, unrelated descriptions, and location-attached lore IDs and content | Link a Conversation chat and inspect its prompt in Phase 3 |
+| Privacy holds | Negative assertions for private memory, hidden links, inactive nodes, unrelated descriptions, location-attached lore IDs and content, and all location visual-reference fields and bytes | Link a Conversation chat and inspect its text and image request previews in Phase 3 |
 | Game has one location authority | Reject legacy patches; validate bound transitions; preserve unbound movement | Try tracker edit, bound and unbound map moves, checkpoint load, enable, and disable |
 | UI is resilient | Playwright flow for create, edit, pending move, conflict, and mobile navigation | Verify dark, light, SillyTavern, keyboard, touch, long names, and empty states |
-| Portability preserves IDs and state | Native export/import and profile backup/restore round trips cover spatial bindings; missing destination lore produces warnings | Export a branched chat, import it with and without its lorebooks, and inspect the breadcrumb, history, bindings, and warnings |
+| Portability preserves IDs and state | Native export/import and profile backup/restore round trips cover spatial, lore, image, and Storyboard-manifest bindings; missing destination lore or images produce warnings | Export a branched chat with a storyboard, import it with and without its lorebooks and gallery assets, and inspect the breadcrumb, history, bindings, frozen keyframe sources, and warnings |
 
 Add `scripts/regressions/spatial-context.regression.ts` and a `regression:spatial` package script, then include it in `pnpm regression`. Do not add permanent `.test.ts` files. Each implementation PR still runs the narrow spatial regression plus the repository checks appropriate to its scope.
 
 ## Acceptance criteria
 
 - A map location stores lorebook entry references, never copied lore content.
+- A location stores optional visual identity metadata and stable gallery image references, never raw paths, external URLs, or image bytes.
+- Image style profiles control rendering style, location references control place identity, and character or persona references control subject identity.
+- Eligible scene-art requests resolve the exact location for their message and swipe, including historical retries, and never fuzzy-match a location by name.
+- Generated art becomes a location reference only after an explicit creator action.
+- Layout references never enter ordinary scene generation automatically, and only style references may inherit to descendants.
+- Text prompts and Connected Conversation receive no location visual-reference IDs, bytes, paths, or image-only notes.
+- Storyboard resolves location from its source message and swipe, freezes its reference bank and ordered keyframe payloads, and reuses them during regeneration until explicit refresh.
+- Each Storyboard keyframe selects references only for its resolved location and visible people; off-screen cast members never consume capacity.
+- Single-slot and multi-slot provider behavior is deterministic and visible, and provider changes never silently add, remove, or replace frozen references.
+- Storyboard manifests store stable IDs and metadata, never image bytes or filesystem paths.
+- Legacy storyboards without manifests never use location-name matching or the latest chat location as an implicit repair.
 - Only the accepted exact current location force-activates attached lore, subject to disabled, exclusion, deduplication, ordering, entry-limit, and token-budget rules.
 - Active Context identifies current-location activation, combined activation sources, and deterministic truncation.
 - Grounded drafting reads explicitly selected lore entries directly rather than depending on keyword scans or generated world-overview summaries.
@@ -900,7 +1132,7 @@ Add `scripts/regressions/spatial-context.regression.ts` and a `regression:spatia
 
 ## Validation
 
-Deterministic coverage must include graph limits, cycles, navigation directions, hidden and blocked links, stale revisions, idempotency, branch points, swipes, checkpoints, lorebook reference limits, forced activation, exclusions, deduplication, token truncation, grounding catalog caps, source-key validation, strict-mode rejection, provenance, privacy boundaries, and inactive-location negative controls.
+Deterministic coverage must include graph limits, cycles, navigation directions, hidden and blocked links, stale revisions, idempotency, branch points, swipes, checkpoints, lorebook reference limits, forced activation, exclusions, deduplication, token truncation, grounding catalog caps, source-key validation, strict-mode rejection, provenance, visual-reference limits, primary and inheritance rules, historical visual resolution, provider trimming, missing-image warnings, request-kind exclusions, Storyboard source anchoring, frozen-manifest regeneration, visible-character filtering, single-slot and multi-slot selection, provider-capacity changes, explicit refresh, legacy-manifest fallback, privacy boundaries, and inactive-location negative controls.
 
 Repository checks:
 
@@ -910,7 +1142,7 @@ pnpm regression:prompt
 pnpm smoke:ui
 ```
 
-Manual verification covers desktop and mobile authoring, deep breadcrumbs, layers, positioned maps, long names, conflict recovery, archive protections, Roleplay, Game, bound and unbound map movement, reload, branching, checkpoint restore, linked-lore attachment and backlinks, disabled and broken references, large-source omission warnings, Strict canon and Canon with expansion previews, Active Context, and Peek Prompt. PR validation checkboxes remain unchecked for human verification.
+Manual verification covers desktop and mobile authoring, deep breadcrumbs, layers, positioned maps, long names, conflict recovery, archive protections, Roleplay, Game, bound and unbound map movement, reload, branching, checkpoint restore, linked-lore attachment and backlinks, disabled and broken lore, large-source omission warnings, Strict canon and Canon with expansion previews, visual upload and gallery selection, primary and supporting references, explicit scene promotion, inherited style, broken images, provider omission reporting, historical-swipe art, Storyboard Visual sources, single-slot and multi-slot providers, frozen regeneration, provider-change review, explicit refresh, legacy Storyboards, Active Context, and Peek Prompt. PR validation checkboxes remain unchecked for human verification.
 
 ## Deferred
 
@@ -920,3 +1152,8 @@ Manual verification covers desktop and mobile authoring, deep breadcrumbs, layer
 - Location templates and scenario packages
 - Per-character spatial knowledge
 - Shareable location lore in Conversation
+- Automatic image-to-map inference
+- Automatic promotion of generated scenes into location canon
+- Bulk generation of reference art for every location
+- Automatic shot-aware selection among multiple character outfits, angles, expressions, and detail references
+- Provider-specific composite or contact-sheet reference generation
