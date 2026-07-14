@@ -17,6 +17,8 @@ You might edit configuration when you want to:
 
 Almost everything else, like your AI provider keys, characters, and chat options, is set inside the app, not here. To add an AI provider, see [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
 
+Optional first-party agents are also managed inside the app. Open **Agents → Download Agents** to install, update, or uninstall them. Package sources, manifests, artifacts, and the complete catalog live in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). Installed packages live under `DATA_DIR/capability-packages`, so Docker volumes, custom data directories, backups, and normal upgrades preserve them. Installed packages work offline; catalog browsing and installation require outbound HTTPS access to that official repository. Server-runtime package changes require a full Marinara restart.
+
 ## Where the .env file is
 
 Configuration lives in a file named `.env`. This is a plain text file with one setting per line, in the form `KEY=value`. Lines that start with `#` are comments and the server ignores them.

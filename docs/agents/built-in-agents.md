@@ -1,14 +1,14 @@
-# Built-in Agents Reference
+# Downloadable Agents Reference
 
-This guide lists every agent that ships with Marinara Engine, grouped by category. For each one it tells you what the agent does, when it runs, which chat modes allow it, and the main settings. For what agents are and how to turn them on, read the [Agents overview](agents-overview.md) first.
+This guide lists all 29 official first-party packages available through **Agents → Download Agents**, grouped by category. Agents do not ship inside a fresh Marinara Engine installation. Their package sources, manifests, artifacts, and machine-readable catalog are published in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). For each one, this guide explains what the agent does, when it runs or integrates, which chat modes allow it, and the main settings. For installation and activation, read the [Agents overview](agents-overview.md) first.
 
 ## How to read this reference
 
-An agent is a small AI helper that runs automatically alongside your main chat reply. Agents are turned on and set up per chat, not per character card. Every agent is off until you add it to a chat. See the [Agents overview](agents-overview.md) for the panel, the per-chat setup, and the cost warning.
+An agent is a small AI helper that runs automatically alongside your main chat reply. Install it from the catalog first, then turn it on and set it up per chat, not per character card. See the [Agents overview](agents-overview.md) for downloading, updating, uninstalling, per-chat setup, and the cost warning.
 
 Each agent below shows three quick facts.
 
-- **Phase**: when the agent runs. **Pre-Generation** runs before the reply and can add text to the prompt. **Parallel** runs at the same time as the reply and does not see the finished text. **Post-Processing** runs after the reply is complete and can read it (some can also rewrite it).
+- **Phase or integration**: when a normal pipeline agent runs. **Pre-Generation** runs before the reply and can add text to the prompt. **Parallel** runs at the same time as the reply and does not see the finished text. **Post-Processing** runs after the reply is complete and can read it (some can also rewrite it). Feature packages such as Maps, Calls, and Conversation games integrate directly into their chat surface instead.
 - **Where it works**: the chat modes that let you add the agent. Most agents work in **Roleplay** chats. A few work in other modes, and each entry says which.
 - **Key settings**: the settings you are most likely to change. You set these when you add the agent, or later in the agent's setup card in **Chat Settings**.
 
@@ -35,6 +35,14 @@ Fixes concrete logic errors in the latest reply, such as a character being in tw
 - **Phase**: Post-Processing.
 - **Where it works**: Roleplay.
 - **Key settings**: **Hold Message Until Rewrite** toggle.
+
+### Card Evolution Auditor
+
+Watches how a character changes during play and suggests edits to that character's card. It never edits automatically. Every suggestion opens the **Review Character Card Updates** modal for you to approve or reject.
+
+- **Phase**: Post-Processing.
+- **Where it works**: Roleplay.
+- **Key settings**: it runs once every 8 assistant messages by default. See [Agent approvals and the Agent Suite](approvals-and-agent-suite.md).
 
 ### Narrative Director
 
@@ -122,6 +130,14 @@ Tracks fields you define yourself, such as currencies, counters, or flags. Use i
 - **Where it works**: Roleplay.
 - **Key settings**: **Add as Prompt Section** (on by default).
 
+### Hierarchical Maps
+
+Adds persistent nested locations and spatial relationships to a story. You can author regions, areas, rooms, and connections, move between locations, and let the current position contribute spatial context to generation. Game Mode also gains the package's world-map view.
+
+- **Integration**: Feature package; it contributes map UI and chat runtime context instead of running as a normal generation-phase agent.
+- **Where it works**: Roleplay and Game.
+- **Key settings**: enable it for the Roleplay chat from **Chat Settings → Agents**, or select it during Game creation and manage it later from that game's settings. Installing or removing it requires a Marinara restart.
+
 ## Misc agents
 
 Misc agents add extras such as images, music, audience reactions, and card updates.
@@ -136,7 +152,7 @@ Simulates a live audience reacting to your scene, shown as a floating **Echo** w
 
 ### Illustrator
 
-Writes an image prompt for visually important moments, then renders it. This agent needs an image generation connection to actually create pictures.
+Responsible for image and video generations. It writes visual prompts for important moments, then sends them to the configured media provider.
 
 - **Phase**: Post-Processing.
 - **Where it works**: Roleplay.
@@ -149,14 +165,6 @@ Creates and updates lorebook entries from important facts in your chat, so your 
 - **Phase**: Post-Processing.
 - **Where it works**: Roleplay. In Game Mode, a session-end variant called **Game Session Keeper** does the same job at the end of a session.
 - **Key settings**: it runs once every 8 assistant messages by default. A **Target Lorebook** picker chooses where entries go, with an auto-select option.
-
-### Card Evolution Auditor
-
-Watches how a character changes during play and suggests edits to that character's card. It never edits automatically. Every suggestion opens the **Review Character Card Updates** modal for you to approve or reject.
-
-- **Phase**: Post-Processing.
-- **Where it works**: Roleplay.
-- **Key settings**: it runs once every 8 assistant messages by default. See [Agent approvals and the Agent Suite](approvals-and-agent-suite.md).
 
 ### Combat
 
@@ -198,6 +206,62 @@ Adds clickable "What will you do?" choice buttons after each reply, for a choose
 - **Where it works**: Roleplay.
 - **Key settings**: **Edit** to rewrite the choices and **Re-roll** to generate new ones.
 
+### Conversation Calls
+
+Adds live audio and video calls with Conversation characters, including user-started and incoming calls, call-only transcripts, text-to-speech, microphone input, and character video clips.
+
+- **Integration**: Conversation feature package; it adds toolbar, chat-surface, and Chat Settings controls instead of running as a normal generation-phase agent.
+- **Where it works**: Conversation.
+- **Key settings**: open **Chat Settings → Agents → Conversation Calls** to enable calls and choose speech, microphone, ringing, and video behavior. See [Conversation Audio and Video Calls](../conversation/calls.md). Installing or removing it requires a Marinara restart.
+
+### UNO
+
+Adds a rules-enforced UNO table for you and Conversation characters, with configurable house rules and support for two to ten total players.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/uno`; the setup chooses players and house rules. Installing or removing it requires a Marinara restart.
+
+### Chess
+
+Adds a one-on-one Chess board with legal move enforcement, check and checkmate detection, captured pieces, and in-character opponent turns.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/chess`, then choose the opponent and which side you play. Installing or removing it requires a Marinara restart.
+
+### Poker
+
+Adds a Texas Hold'em table for two to eight total players, with blinds, betting rounds, side pots, showdown evaluation, and in-character opponents.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/poker`, then choose the players, starting chips, and blind values. Installing or removing it requires a Marinara restart.
+
+### 8-Ball Pool
+
+Adds a one-on-one pool table with solids and stripes, aiming and shot strength, fouls, ball-in-hand, and in-character opponent shots.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/8ball`, then choose the opponent. Installing or removing it requires a Marinara restart.
+
+### Tic-Tac-Toe
+
+Adds a one-on-one Tic-Tac-Toe board with selectable or random marks, legal turn handling, and win and draw detection.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/tictactoe` (alias `/ttt`), then choose the opponent and mark. Installing or removing it requires a Marinara restart.
+
+### Rock-Paper-Scissors
+
+Adds a one-on-one Rock-Paper-Scissors match where both choices stay hidden until reveal.
+
+- **Integration**: Conversation game package.
+- **Where it works**: Conversation.
+- **Key settings**: start it from the games picker or with `/rps`, then choose the opponent and a best-of-three, five, or seven match. Installing or removing it requires a Marinara restart.
+
 ## Related guides
 
 - [Agents overview](agents-overview.md)
@@ -206,3 +270,5 @@ Adds clickable "What will you do?" choice buttons after each reply, for a choose
 - [Haptic Feedback setup](../integrations/haptic-feedback.md)
 - [Knowledge sources](knowledge-sources.md)
 - [Narrative Director and Secret Plot](../roleplay/narrative-director.md)
+- [Conversation Audio and Video Calls](../conversation/calls.md)
+- [Conversation table games](../conversation/table-games.md)

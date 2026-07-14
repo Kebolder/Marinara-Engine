@@ -26,6 +26,7 @@ import { useUIStore } from "../../stores/ui.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useCommitSpatialOwnerTurn } from "../../hooks/use-spatial-context";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, chatKeys } from "../../hooks/use-chats";
 import { characterKeys } from "../../hooks/use-characters";
 import {
@@ -60,7 +61,8 @@ import { SlashCommandFeedback } from "./SlashCommandFeedback";
 import { QuickReplyMenu, type QuickReplyAction } from "./QuickReplyMenu";
 import { getChatInputShellClass } from "./chat-input-styles";
 import { MariSuggestionChips } from "./MariSuggestionChips";
-import { SpatialContextRuntimeBar } from "../../features/spatial-context/components/SpatialContextRuntimeBar";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
+import type { PendingSpatialTransitionDraft } from "../../stores/chat.store";
 
 interface Attachment {
   type: string; // MIME type
@@ -247,6 +249,11 @@ export const ChatInput = memo(function ChatInput({
   const clearResponseQueue = useChatStore((s) => s.clearResponseQueue);
   const activeChat = useChatStore((s) => s.activeChat);
   const chatMetadata = useMemo(() => parseChatMetadata(activeChat?.metadata), [activeChat?.metadata]);
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
+  const availableCapabilityIds = useMemo(
+    () => new Set(installedCapabilities.filter((item) => item.status === "active").map((item) => item.id)),
+    [installedCapabilities],
+  );
   const inactiveCharacterIds = useMemo(
     () =>
       new Set(
@@ -311,6 +318,8 @@ export const ChatInput = memo(function ChatInput({
   );
   const narrativeDirectorActive =
     mode === "roleplay" && chatMetadata.enableAgents === true && activeAgentIds.includes("director");
+  const hierarchicalMapsActive =
+    mode === "roleplay" && chatMetadata.enableAgents === true && activeAgentIds.includes("hierarchical-maps");
   const combatActionActive =
     mode === "roleplay" && combatAgentEnabled === true && typeof onStartEncounter === "function";
   const showRoleplayAgentActions = narrativeDirectorActive || combatActionActive;
@@ -717,6 +726,7 @@ export const ChatInput = memo(function ChatInput({
         ? (characterId, expression) => onExpressionChange(characterId, expression, { immediate: true })
         : undefined,
       illustrate: onIllustrate,
+      availableCapabilityIds,
     };
   }, [
     activeChatId,
@@ -731,6 +741,7 @@ export const ChatInput = memo(function ChatInput({
     lastMessageRole,
     onExpressionChange,
     onIllustrate,
+    availableCapabilityIds,
     qc,
   ]);
 
@@ -818,7 +829,7 @@ export const ChatInput = memo(function ChatInput({
     }
 
     // Check for slash command
-    const match = matchSlashCommand(normalized);
+    const match = matchSlashCommand(normalized, { mode, availableCapabilityIds });
     if (match) {
       const ctx = buildContext();
       if (!ctx) return;
@@ -1011,13 +1022,14 @@ export const ChatInput = memo(function ChatInput({
     quoteFormat,
     canSubmitSpatialMove,
     pendingSpatialTransition,
+    availableCapabilityIds,
   ]);
 
   const runQuickSlashCommand = useCallback(
     async (commandLine: string, fallbackError: string) => {
       if (!activeChatId) return;
       const submittingChatId = activeChatId;
-      const match = matchSlashCommand(commandLine);
+      const match = matchSlashCommand(commandLine, { mode, availableCapabilityIds });
       const baseCtx = buildContext();
       if (!match || !baseCtx) return;
       const generationStatus: { succeeded?: boolean } = {};
@@ -1073,7 +1085,16 @@ export const ChatInput = memo(function ChatInput({
         toast.error(msg);
       }
     },
-    [activeChatId, buildContext, clearInputDraft, completions, setInputDraft, syncInputState],
+    [
+      activeChatId,
+      availableCapabilityIds,
+      buildContext,
+      clearInputDraft,
+      completions,
+      mode,
+      setInputDraft,
+      syncInputState,
+    ],
   );
 
   const handleImpersonateQuickButton = useCallback(async () => {
@@ -1100,7 +1121,7 @@ export const ChatInput = memo(function ChatInput({
     if (!hasText && !hasFiles) return;
 
     const normalized = formatTextQuotes(raw.trim(), quoteFormat);
-    if (shouldExecuteQuickPostAsCommand(normalized)) {
+    if (shouldExecuteQuickPostAsCommand(normalized, { mode, availableCapabilityIds })) {
       await handleSend();
       return;
     }
@@ -1216,6 +1237,8 @@ export const ChatInput = memo(function ChatInput({
     clearResponseQueue,
     handleSend,
     quoteFormat,
+    mode,
+    availableCapabilityIds,
   ]);
 
   const handleGuidedGenerationButton = useCallback(async () => {
@@ -1378,7 +1401,7 @@ export const ChatInput = memo(function ChatInput({
     // Slash command autocomplete
     const trimmed = fixed.trim();
     if (trimmed.startsWith("/") && !trimmed.includes(" ")) {
-      const matches = getSlashCompletions(trimmed);
+      const matches = getSlashCompletions(trimmed, { mode, availableCapabilityIds });
       setCompletions(matches);
       setSelectedCompletion(0);
     } else {
@@ -1636,7 +1659,25 @@ export const ChatInput = memo(function ChatInput({
       {/* Feedback toast */}
       {feedback && <SlashCommandFeedback feedback={feedback} onDismiss={() => setFeedback(null)} className="mb-2" />}
 
-      {mode === "roleplay" && <SpatialContextRuntimeBar chatId={activeChatId} disabled={isInputBusy} />}
+      {hierarchicalMapsActive && activeChatId ? (
+        <CapabilityElement
+          packageId="hierarchical-maps"
+          view="runtime"
+          capabilityProps={{
+            chatId: activeChatId,
+            disabled: isInputBusy,
+            onPendingTransitionChange: (pending: unknown) => {
+              if (pending && typeof pending === "object") {
+                useChatStore
+                  .getState()
+                  .setPendingSpatialTransition(activeChatId, pending as PendingSpatialTransitionDraft);
+              } else {
+                useChatStore.getState().clearPendingSpatialTransition(activeChatId);
+              }
+            },
+          }}
+        />
+      ) : null}
 
       {showRoleplayAgentActions && (
         <div className="flex flex-wrap justify-center gap-2 py-1">

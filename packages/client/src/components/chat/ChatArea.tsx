@@ -125,10 +125,9 @@ import {
 
 export type { CharacterMap };
 
-const BUILT_IN_AGENT_ID_SET = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
-const BUILT_IN_TRACKER_AGENT_ID_SET = new Set(
-  BUILT_IN_AGENTS.filter((agent) => agent.category === "tracker" && !agent.libraryHidden).map((agent) => agent.id),
-);
+const isBuiltInAgentType = (agentType: string) => BUILT_IN_AGENTS.some((agent) => agent.id === agentType);
+const isBuiltInTrackerAgentType = (agentType: string) =>
+  BUILT_IN_AGENTS.some((agent) => agent.id === agentType && agent.category === "tracker" && !agent.libraryHidden);
 
 function compareMessagesByCursor(left: MessageWithSwipes, right: MessageWithSwipes): number {
   const createdAtCompare = left.createdAt.localeCompare(right.createdAt);
@@ -1763,7 +1762,7 @@ export function ChatArea() {
   const manualTrackerTypes = useMemo(() => {
     const set = new Set<string>();
     for (const type of enabledAgentTypes) {
-      if (!BUILT_IN_TRACKER_AGENT_ID_SET.has(type)) continue;
+      if (!isBuiltInTrackerAgentType(type)) continue;
       if (chatMeta.manualTrackers === true || manualTrackerAgentTypes[type] === true) set.add(type);
     }
     return set;
@@ -2075,7 +2074,7 @@ export function ChatArea() {
       manualTypes.length > 0
         ? manualTypes
         : Array.from(enabledAgentTypes).filter(
-            (type) => BUILT_IN_TRACKER_AGENT_ID_SET.has(type) || !BUILT_IN_AGENT_ID_SET.has(type),
+            (type) => isBuiltInTrackerAgentType(type) || !isBuiltInAgentType(type),
           );
     if (types.length === 0) return;
     await retryAgents(activeChatId, types);
@@ -2084,7 +2083,7 @@ export function ChatArea() {
   const handleRerunSingleTracker = useCallback(
     async (agentType: string) => {
       if (!activeChatId || isStreaming || agentProcessing) return;
-      if (!BUILT_IN_TRACKER_AGENT_ID_SET.has(agentType) || !enabledAgentTypes.has(agentType)) return;
+      if (!isBuiltInTrackerAgentType(agentType) || !enabledAgentTypes.has(agentType)) return;
       await retryAgents(activeChatId, [agentType]);
     },
     [activeChatId, isStreaming, agentProcessing, enabledAgentTypes, retryAgents],

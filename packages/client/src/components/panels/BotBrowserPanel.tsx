@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useCharacters, useDeleteCharacter } from "../../hooks/use-characters";
 import { useStartChatFromCharacter } from "../../hooks/use-start-chat-from-character";
 import { useUIStore, type ResourcePanelSort } from "../../stores/ui.store";
-import { Search, User, Globe, Wand2, MessageCircle, Trash2, ArrowUpDown } from "lucide-react";
+import { Search, User, Bot, Wand2, MessageCircle, Trash2, ArrowUpDown } from "lucide-react";
 import { cn, getAvatarCropStyle } from "../../lib/utils";
 import { sortBasicPanelItems } from "../../lib/panel-sort";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
@@ -114,7 +114,7 @@ export function BotBrowserPanel() {
           botBrowserOpen && "mari-chrome-control--selected",
         )}
       >
-        <Globe size="0.875rem" />
+        <Bot size="0.875rem" />
         Browse Online
       </button>
 

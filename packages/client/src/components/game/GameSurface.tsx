@@ -2361,7 +2361,11 @@ function GameSurfaceComponent({
   useRenderTimer("game-surface"); // [#3104 diagnostic]
   // Sync game metadata → store
   useSyncGameState(activeChatId, chatMeta);
-  const spatialContext = useSpatialContext(activeChatId);
+  const hierarchicalMapsActive =
+    chatMeta.enableAgents === true &&
+    Array.isArray(chatMeta.activeAgentIds) &&
+    (chatMeta.activeAgentIds as string[]).includes("hierarchical-maps");
+  const spatialContext = useSpatialContext(activeChatId, hierarchicalMapsActive);
 
   useEffect(() => {
     return () => {
@@ -11566,6 +11570,7 @@ function GameSurfaceComponent({
                               draftKey={activeChatId}
                               focusToken={gameInputFocusToken}
                               onIllustrate={handleManualSceneIllustration}
+                              spatialCapabilityEnabled={hierarchicalMapsActive}
                               interruptMode={pendingInterruptMode}
                             />
                           }
@@ -11653,6 +11658,7 @@ function GameSurfaceComponent({
                           draftKey={activeChatId}
                           focusToken={gameInputFocusToken}
                           onIllustrate={handleManualSceneIllustration}
+                          spatialCapabilityEnabled={hierarchicalMapsActive}
                           interruptMode={pendingInterruptMode}
                         />
                       }

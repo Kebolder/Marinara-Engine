@@ -106,11 +106,11 @@ export function getSpatialContextProblem(error: unknown): SpatialContextProblem 
   };
 }
 
-export function useSpatialContext(chatId: string | null) {
+export function useSpatialContext(chatId: string | null, enabled = true) {
   return useQuery({
     queryKey: spatialContextKeys.detail(chatId ?? ""),
     queryFn: () => api.get<SpatialContextResponse>(`/chats/${chatId}/spatial-context`),
-    enabled: !!chatId,
+    enabled: !!chatId && enabled,
     staleTime: 30_000,
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;

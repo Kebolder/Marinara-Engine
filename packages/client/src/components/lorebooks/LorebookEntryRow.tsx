@@ -1219,7 +1219,7 @@ function FilterPills({
   }
 
   return (
-    <div className="flex max-h-20 flex-wrap gap-1 overflow-y-auto pr-1">
+    <div className="flex max-h-20 flex-wrap items-start gap-1 overflow-y-auto p-px pr-1.5">
       {values.map((item) => {
         const active = selected.includes(item.value);
         return (
@@ -1228,10 +1228,10 @@ function FilterPills({
             type="button"
             onClick={() => onChange(toggleStringValue(selected, item.value))}
             className={cn(
-              "rounded-full px-2 py-0.5 text-[0.625rem] ring-1 transition-colors",
+              "mari-editor-chip min-h-6 max-w-full px-2 py-1 text-[0.625rem] leading-none transition-colors",
               active
-                ? "mari-chrome-accent-surface mari-accent-animated"
-                : "mari-editor-chip text-[var(--marinara-editor-muted)] hover:text-[var(--marinara-editor-text)]",
+                ? "mari-editor-chip--accent mari-chrome-accent-surface mari-accent-animated"
+                : "text-[var(--marinara-editor-muted)] hover:text-[var(--marinara-editor-text)]",
             )}
           >
             {item.label}

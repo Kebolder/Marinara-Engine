@@ -3,7 +3,6 @@
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { chatsRoutes } from "./chats.routes.js";
-import { spatialContextRoutes } from "./spatial-context.routes.js";
 import { charactersRoutes } from "./characters.routes.js";
 import { lorebooksRoutes } from "./lorebooks.routes.js";
 import { promptsRoutes } from "./prompts.routes.js";
@@ -29,7 +28,6 @@ import { youtubeRoutes } from "./youtube.routes.js";
 import { knowledgeSourcesRoutes } from "./knowledge-sources.routes.js";
 import { gifsRoutes } from "./gifs.routes.js";
 import { conversationRoutes } from "./conversation.routes.js";
-import { conversationCallsRoutes } from "./conversation-calls.routes.js";
 import { backupRoutes } from "./backup.routes.js";
 import { translateRoutes } from "./translate.routes.js";
 import { hapticRoutes } from "./haptic.routes.js";
@@ -57,10 +55,10 @@ import { promptOverridesRoutes } from "./prompt-overrides.routes.js";
 import { csrfDiagnosticsRoutes } from "./csrf-diagnostics.routes.js";
 import { professorMariWorkspaceRoutes } from "./professor-mari-workspace.routes.js";
 import { noodleRoutes } from "./noodle.routes.js";
+import { capabilityPackagesRoutes } from "./capability-packages.routes.js";
 
 export async function registerRoutes(app: FastifyInstance) {
   await app.register(chatsRoutes, { prefix: "/api/chats" });
-  await app.register(spatialContextRoutes, { prefix: "/api/chats" });
   await app.register(chatFoldersRoutes, { prefix: "/api/chat-folders" });
   await app.register(chatPresetsRoutes, { prefix: "/api/chat-presets" });
   await app.register(charactersRoutes, { prefix: "/api/characters" });
@@ -89,7 +87,6 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(knowledgeSourcesRoutes, { prefix: "/api/knowledge-sources" });
   await app.register(gifsRoutes, { prefix: "/api/gifs" });
   await app.register(conversationRoutes, { prefix: "/api/conversation" });
-  await app.register(conversationCallsRoutes, { prefix: "/api/conversation-calls" });
   await app.register(backupRoutes, { prefix: "/api/backup" });
   await app.register(translateRoutes, { prefix: "/api/translate" });
   await app.register(hapticRoutes, { prefix: "/api/haptic" });
@@ -113,6 +110,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await app.register(csrfDiagnosticsRoutes, { prefix: "/api/csrf" });
   await app.register(professorMariWorkspaceRoutes, { prefix: "/api/professor-mari/workspace" });
   await app.register(noodleRoutes, { prefix: "/api/noodle" });
+  await app.register(capabilityPackagesRoutes, { prefix: "/api/capability-packages" });
   if (process.env.MARINARA_LITE !== "true" && process.env.MARINARA_LITE !== "1") {
     await app.register(sidecarRoutes, { prefix: "/api/sidecar" });
   }

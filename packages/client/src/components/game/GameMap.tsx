@@ -6,7 +6,8 @@ import { motion } from "framer-motion";
 import type { GameMap, GameActiveState, SpatialContextResponse } from "@marinara-engine/shared";
 import { GameGridMap } from "./GameGridMap";
 import { GameNodeMap } from "./GameNodeMap";
-import { GameWorldMap } from "./GameWorldMap";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
+import { useChatStore, type PendingSpatialTransitionDraft } from "../../stores/chat.store";
 import {
   ChevronDown,
   ChevronUp,
@@ -51,6 +52,14 @@ function hasActiveSpatialWorldMap(spatialContext?: SpatialContextResponse | null
     spatialContext?.definition?.enabled &&
       spatialContext.definition.locations.some((location) => location.status === "active"),
   );
+}
+
+function syncPackageSpatialTransition(chatId: string, pending: unknown): void {
+  if (pending && typeof pending === "object") {
+    useChatStore.getState().setPendingSpatialTransition(chatId, pending as PendingSpatialTransitionDraft);
+  } else {
+    useChatStore.getState().clearPendingSpatialTransition(chatId);
+  }
 }
 
 type EditableTimePhase = "dawn" | "morning" | "afternoon" | "evening" | "night" | "midnight";
@@ -747,7 +756,16 @@ export function GameMapPanel({
       )}
       {!collapsed &&
         (effectiveMapView === "world" && spatialContext ? (
-          <GameWorldMap chatId={chatId} spatial={spatialContext} disabled={disabled} />
+          <CapabilityElement
+            packageId="hierarchical-maps"
+            view="world-map"
+            capabilityProps={{
+              chatId,
+              disabled,
+              onPendingTransitionChange: (pending: unknown) => syncPackageSpatialTransition(chatId, pending),
+            }}
+            className="block h-full min-h-0"
+          />
         ) : !map ? (
           <div className="flex flex-col items-center justify-center gap-2 py-3">
             <span className="text-[0.625rem] text-[var(--marinara-chat-chrome-panel-muted)]">
@@ -1039,12 +1057,19 @@ export function MobileMapButton({
             {/* Map body */}
             <div className="min-h-0 overflow-auto p-2 overscroll-contain">
               {effectiveMapView === "world" && spatialContext ? (
-                <GameWorldMap
-                  chatId={chatId}
-                  spatial={spatialContext}
-                  disabled={disabled}
-                  compact
-                  onDestinationQueued={() => setOpen(false)}
+                <CapabilityElement
+                  packageId="hierarchical-maps"
+                  view="world-map"
+                  capabilityProps={{
+                    chatId,
+                    disabled,
+                    compact: true,
+                    onPendingTransitionChange: (pending: unknown) => {
+                      syncPackageSpatialTransition(chatId, pending);
+                      if (pending) setOpen(false);
+                    },
+                  }}
+                  className="block h-full min-h-0"
                 />
               ) : !map ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-8 text-[var(--muted-foreground)]">

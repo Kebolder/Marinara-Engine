@@ -8,7 +8,7 @@ An agent is a small AI helper that runs automatically for one chat. The **Illust
 
 The Illustrator does not draw every message. By default, after it makes an image it waits about 5 assistant replies before it can make another one. If it decides a moment is not worth illustrating, it skips it and makes no image. Every image it creates is saved to the chat **Gallery**.
 
-You can use the Illustrator in **Roleplay** and **Game Mode** chats. It is not available in **Conversation** mode. Its short description in the app reads: "Generates image prompts for key scenes (requires image generation API)." The setup steps and settings in this guide are for Roleplay chats. Game Mode uses one simple switch instead, covered in the Game Mode section below.
+You can use the Illustrator in **Roleplay** and **Game Mode** chats, and installing it also unlocks Conversation selfies. Its short description in the app reads: "Responsible for image and video generations." The setup steps and settings in this guide are for Roleplay chats. Game Mode uses one simple switch instead, covered in the Game Mode section below.
 
 ## Before you start
 
@@ -16,7 +16,7 @@ The Illustrator writes the image prompt, but it needs a separate image connectio
 
 Set up an image connection first. You have two ways to give the Illustrator one:
 
-1. Mark one image connection as the default. Open the **Connections** panel, open your image connection, and turn on **Default for Illustrator**.
+1. Mark one image connection as the default. Open the **Connections** panel, expand **Defaults**, and choose it under **Images**.
 2. Or give the Illustrator its own image connection from its full setup screen (see **Open Setup** below).
 
 If no image connection can be found, the picture fails and the app asks you to choose one. See [Image Generation Providers and Setup](image-providers.md) to add a provider.
@@ -57,7 +57,7 @@ The Illustrator uses two different connections, and it helps to keep them straig
 
 The **Prompt Model** is the text model that writes the image prompt. It is not the model that draws the picture. Pick it from the **Prompt Model** dropdown on the Illustrator card. The default is **Main chat model**, which reuses the same connection your chat already uses. Choose another text connection if you want a different model to write the prompts.
 
-The image connection is the image provider that draws the final picture. You set it as described in **Before you start**, either with **Default for Illustrator** or from the agent's own setup screen.
+The image connection is the image provider that draws the final picture. You set it as described in **Before you start**, either under **Defaults → Images** or from the agent's own setup screen.
 
 ## Attach Card Appearance and Send Avatar References
 

@@ -1,6 +1,7 @@
 import { ChevronRight, Gamepad2 } from "lucide-react";
-import { CONVERSATION_GAMES } from "../../lib/conversation-games";
 import { Modal } from "../ui/Modal";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
+import { useConversationGamesStore } from "../../stores/conversation-games.store";
 
 interface Props {
   chatId: string;
@@ -9,20 +10,29 @@ interface Props {
 }
 
 export function ConversationGamesPicker({ chatId, open, onClose }: Props) {
-  const startGame = (openSetup: (chatId: string) => void) => {
-    onClose();
-    openSetup(chatId);
+  const { data: installed = [] } = useInstalledCapabilityPackages(open);
+  const openSetup = useConversationGamesStore((state) => state.openSetup);
+  const games = installed.filter(
+    (item) =>
+      item.status === "active" &&
+      item.manifest.kind.includes("turn-game") &&
+      item.manifest.entrypoints.client &&
+      item.manifest.contributions?.conversationGame,
+  );
+
+  const handleStart = (packageId: string) => {
+    openSetup(packageId, chatId);
   };
 
   return (
     <Modal open={open} onClose={onClose} title="Start a game" width="max-w-lg">
       <div className="space-y-3">
         <div className="grid gap-2 sm:grid-cols-2">
-          {CONVERSATION_GAMES.map((game) => (
+          {games.map((game) => (
             <button
               key={game.id}
               type="button"
-              onClick={() => startGame(game.openSetup)}
+              onClick={() => handleStart(game.id)}
               className="group flex min-h-28 w-full flex-col justify-between rounded-lg border border-[var(--border)] bg-[var(--secondary)]/45 p-3 text-left transition-colors hover:border-[var(--primary)]/60 hover:bg-[var(--accent)]/60 focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/40"
             >
               <span className="flex items-start justify-between gap-3">
@@ -31,8 +41,12 @@ export function ConversationGamesPicker({ chatId, open, onClose }: Props) {
                     <Gamepad2 size="1rem" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{game.name}</span>
-                    <span className="mt-0.5 block text-xs text-[var(--muted-foreground)]">{game.playerLabel}</span>
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">
+                      {game.manifest.name}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-[var(--muted-foreground)]">
+                      {game.manifest.contributions!.conversationGame!.playerLabel}
+                    </span>
                   </span>
                 </span>
                 <ChevronRight
@@ -40,13 +54,22 @@ export function ConversationGamesPicker({ chatId, open, onClose }: Props) {
                   className="mt-1 shrink-0 text-[var(--muted-foreground)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--primary)]"
                 />
               </span>
-              <span className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">{game.description}</span>
+              <span className="mt-3 text-xs leading-5 text-[var(--muted-foreground)]">
+                {game.manifest.description}
+              </span>
             </button>
           ))}
         </div>
-        <p className="text-xs text-[var(--muted-foreground)]">
-          You can also start these directly with {CONVERSATION_GAMES.map((game) => game.command).join(", ")}.
-        </p>
+        {games.length > 0 ? (
+          <p className="text-xs text-[var(--muted-foreground)]">
+            You can also start these directly with{" "}
+            {games.map((game) => game.manifest.contributions!.conversationGame!.command).join(", ")}.
+          </p>
+        ) : (
+          <p className="rounded-lg border border-dashed border-[var(--border)] p-4 text-center text-xs text-[var(--muted-foreground)]">
+            No conversation games are installed. Open Agents → Download Agents to add one.
+          </p>
+        )}
       </div>
     </Modal>
   );

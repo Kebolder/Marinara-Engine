@@ -72,6 +72,7 @@ import { useDefaultPreset, usePresets } from "../../hooks/use-presets";
 import { useCharacterGroups, usePersonas } from "../../hooks/use-characters";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useLorebooks } from "../../hooks/use-lorebooks";
+import { useCapabilityAgentRegistry } from "../../hooks/use-capability-packages";
 import { useGameAssetStore } from "../../stores/game-asset.store";
 import { useUIStore } from "../../stores/ui.store";
 
@@ -226,7 +227,7 @@ const GAME_SETUP_STEPS = [
   {
     key: "features",
     title: "Features",
-    body: "Choose optional visual, storyboard, music, lore, and HUD features for the session.",
+    body: "Choose installed agent features, audio behavior, and HUD options for the session.",
   },
   {
     key: "gm",
@@ -484,6 +485,8 @@ export function GameSetupWizard({
   const learnedGameSetupOptions = useUIStore((s) => s.learnedGameSetupOptions);
   const rememberGameSetupOptions = useUIStore((s) => s.rememberGameSetupOptions);
   const forgetGameSetupOption = useUIStore((s) => s.forgetGameSetupOption);
+  const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const sidecarAvailable = !!sidecarConfig.modelPath && sidecarStatus !== "not_downloaded";
 
   // Fetch sidecar status on mount so the dropdown is populated without visiting Connections first
@@ -519,6 +522,16 @@ export function GameSetupWizard({
   const { data: personasList } = usePersonas();
   const { data: characterGroupsList } = useCharacterGroups();
   const { data: lorebooksList } = useLorebooks();
+  const { data: installedAgentManifests = [], isLoading: installedAgentsLoading } = useCapabilityAgentRegistry();
+  const installedAgentIds = useMemo(
+    () => new Set(installedAgentManifests.map((agent) => agent.id)),
+    [installedAgentManifests],
+  );
+  const hasInstalledAgents = installedAgentIds.size > 0;
+  const hierarchicalMapsInstalled = installedAgentIds.has("hierarchical-maps");
+  const musicDjInstalled = installedAgentIds.has("spotify");
+  const lorebookKeeperInstalled = installedAgentIds.has("lorebook-keeper");
+  const illustratorInstalled = installedAgentIds.has("illustrator");
   const spotifyPlaylistsQuery = useQuery({
     queryKey: ["spotify", "playlists", 50],
     queryFn: () =>
@@ -531,7 +544,7 @@ export function GameSetupWizard({
           owned: boolean | null;
         }>;
       }>("/spotify/playlists?limit=50"),
-    enabled: enableSpotifyDj && gameSpotifySourceType === "playlist",
+    enabled: musicDjInstalled && enableSpotifyDj && gameSpotifySourceType === "playlist",
     staleTime: 60_000,
     retry: false,
   });
@@ -760,6 +773,24 @@ export function GameSetupWizard({
     }
   }, [effectiveGameSystemPrompt, gameSystemPromptEdited]);
 
+  useEffect(() => {
+    if (installedAgentsLoading) return;
+    if (!hierarchicalMapsInstalled) setDraftSpatialMap(false);
+    if (!musicDjInstalled) setEnableSpotifyDj(false);
+    if (!lorebookKeeperInstalled) setEnableLorebookKeeper(false);
+    if (!illustratorInstalled) {
+      setEnableSpriteGeneration(false);
+      setEnableStoryboardIllustrations(false);
+      setEnableStoryboardAnimations(false);
+    }
+  }, [
+    hierarchicalMapsInstalled,
+    illustratorInstalled,
+    installedAgentsLoading,
+    lorebookKeeperInstalled,
+    musicDjInstalled,
+  ]);
+
   const handlePromptPresetChange = useCallback((presetId: string | null) => {
     setPromptPresetTouched(true);
     setPromptPresetId(presetId);
@@ -767,8 +798,17 @@ export function GameSetupWizard({
 
   const canStart = !!gmConnectionId;
   const normalizedLanguage = normalizeGameLanguage(language);
-  const storyboardIllustrationsEnabled = enableSpriteGeneration && enableStoryboardIllustrations;
+  const illustratorEnabled = illustratorInstalled && enableSpriteGeneration;
+  const musicDjEnabled = musicDjInstalled && enableSpotifyDj;
+  const lorebookKeeperEnabled = lorebookKeeperInstalled && enableLorebookKeeper;
+  const storyboardIllustrationsEnabled = illustratorEnabled && enableStoryboardIllustrations;
   const storyboardAnimationsEnabled = storyboardIllustrationsEnabled && enableStoryboardAnimations && !!videoConnectionId;
+
+  const openDownloadAgents = useCallback(() => {
+    onCancel();
+    openRightPanel("agents");
+    openAgentCatalog();
+  }, [onCancel, openAgentCatalog, openRightPanel]);
 
   const toggleVisualGeneration = () => {
     const nextEnabled = !enableSpriteGeneration;
@@ -856,14 +896,14 @@ export function GameSetupWizard({
         playerGoals: playerGoals || "Have an adventure",
         personaId: personaId ?? undefined,
         sceneConnectionId: sceneModelValue && sceneModelValue !== "local" ? sceneModelValue : undefined,
-        enableSpriteGeneration: enableSpriteGeneration || undefined,
-        imageConnectionId: enableSpriteGeneration && imageConnectionId ? imageConnectionId : undefined,
-        videoConnectionId: enableSpriteGeneration && videoConnectionId ? videoConnectionId : undefined,
-        gameStoryboardAutoIllustrationsEnabled: enableSpriteGeneration
+        enableSpriteGeneration: illustratorEnabled || undefined,
+        imageConnectionId: illustratorEnabled && imageConnectionId ? imageConnectionId : undefined,
+        videoConnectionId: illustratorEnabled && videoConnectionId ? videoConnectionId : undefined,
+        gameStoryboardAutoIllustrationsEnabled: illustratorEnabled
           ? enableStoryboardIllustrations
           : undefined,
         gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
-        gameStoryboardKeyframeCount: storyboardKeyframeCount,
+        gameStoryboardKeyframeCount: illustratorEnabled ? storyboardKeyframeCount : undefined,
         gameGmPromptTemplateId: gamePresentation === "anime" ? ANIME_GAME_PROMPT_TEMPLATE_ID : null,
         gameStoryboardAnimationPromptTemplateId:
           gamePresentation === "anime" ? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID : null,
@@ -875,19 +915,19 @@ export function GameSetupWizard({
         enableCustomWidgets,
         customHudWidgets:
           enableCustomWidgets && manualWidgetSetupEnabled ? normalizeGameHudWidgets(customHudWidgets) : undefined,
-        enableSpotifyDj: enableSpotifyDj || undefined,
-        spotifySourceType: enableSpotifyDj ? gameSpotifySourceType : undefined,
+        enableSpotifyDj: musicDjEnabled || undefined,
+        spotifySourceType: musicDjEnabled ? gameSpotifySourceType : undefined,
         spotifyPlaylistId:
-          enableSpotifyDj && gameSpotifySourceType === "playlist"
+          musicDjEnabled && gameSpotifySourceType === "playlist"
             ? gameSpotifyPlaylistId.trim() || undefined
             : undefined,
         spotifyPlaylistName:
-          enableSpotifyDj && gameSpotifySourceType === "playlist"
+          musicDjEnabled && gameSpotifySourceType === "playlist"
             ? gameSpotifyPlaylistName.trim() || undefined
             : undefined,
         spotifyArtist:
-          enableSpotifyDj && gameSpotifySourceType === "artist" ? gameSpotifyArtist.trim() || undefined : undefined,
-        enableLorebookKeeper: enableLorebookKeeper || undefined,
+          musicDjEnabled && gameSpotifySourceType === "artist" ? gameSpotifyArtist.trim() || undefined : undefined,
+        enableLorebookKeeper: lorebookKeeperEnabled || undefined,
         language: normalizedLanguage || undefined,
         generationParameters: customizeParameters ? generationParameters : undefined,
         promptPresetId,
@@ -917,7 +957,7 @@ export function GameSetupWizard({
         },
       },
       gameName.trim() || undefined,
-      draftSpatialMap
+      hierarchicalMapsInstalled && draftSpatialMap
         ? {
             size: spatialMapDraftSize,
             groundingMode: spatialMapGroundingMode,
@@ -996,7 +1036,7 @@ export function GameSetupWizard({
                   </option>
                 ))}
               </select>
-              <p className="mt-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[0.6875rem] leading-relaxed text-amber-800 dark:text-amber-100">
+              <p className="mt-2 rounded-lg border border-[var(--primary)]/35 bg-[var(--primary)]/10 px-3 py-2 text-[0.6875rem] leading-relaxed text-[var(--primary)]">
                 Use a strong model for the initial world generation. You can change it later in Chat Settings.
               </p>
               <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
@@ -1290,22 +1330,26 @@ export function GameSetupWizard({
               <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">Content Rating</label>
               <div className="flex gap-1.5">
                 <button
+                  type="button"
                   onClick={() => setRating("sfw")}
+                  aria-pressed={rating === "sfw"}
                   className={cn(
                     "rounded-full px-3 py-1 text-xs transition-colors",
                     rating === "sfw"
-                      ? "bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/40"
+                      ? "bg-[var(--primary)]/20 text-[var(--primary)] ring-1 ring-[var(--primary)]/40"
                       : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
                   )}
                 >
                   SFW
                 </button>
                 <button
+                  type="button"
                   onClick={() => setRating("nsfw")}
+                  aria-pressed={rating === "nsfw"}
                   className={cn(
                     "rounded-full px-3 py-1 text-xs transition-colors",
                     rating === "nsfw"
-                      ? "bg-[var(--destructive)]/20 text-[var(--destructive)] ring-1 ring-[var(--destructive)]/40"
+                      ? "bg-[var(--primary)]/20 text-[var(--primary)] ring-1 ring-[var(--primary)]/40"
                       : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]",
                   )}
                 >
@@ -1664,7 +1708,33 @@ export function GameSetupWizard({
             <div>
               <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">Game Features</label>
               <div className="space-y-2">
-                <div>
+                {installedAgentsLoading ? (
+                  <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--border)] px-4 py-4 text-xs text-[var(--muted-foreground)]">
+                    <Loader2 size={13} className="animate-spin" />
+                    Loading installed agents…
+                  </div>
+                ) : (
+                  !hasInstalledAgents && (
+                    <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/35 px-4 py-4 text-center">
+                      <p className="text-xs font-medium text-[var(--foreground)]">No agents downloaded yet.</p>
+                      <p className="mx-auto mt-1 max-w-sm text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                        Download agents to add maps, Illustrator, Music DJ, Lorebook Keeper, and other optional game
+                        features.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={openDownloadAgents}
+                        className={cn(GAME_SETUP_PRIMARY_BUTTON_CLASS, "mx-auto mt-3 gap-2")}
+                      >
+                        <Sparkles size={13} />
+                        Download Agents
+                      </button>
+                    </div>
+                  )
+                )}
+
+                {musicDjInstalled && (
+                  <div>
                   <button
                     type="button"
                     onClick={() => setEnableSpotifyDj((prev) => !prev)}
@@ -1798,18 +1868,20 @@ export function GameSetupWizard({
                       )}
                     </div>
                   )}
-                </div>
+                  </div>
+                )}
 
-                <button
-                  type="button"
-                  onClick={() => setEnableLorebookKeeper((prev) => !prev)}
-                  className={cn(
-                    "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
-                    enableLorebookKeeper
-                      ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                      : "bg-[var(--secondary)] ring-1 ring-transparent hover:ring-[var(--border)]",
-                  )}
-                >
+                {lorebookKeeperInstalled && (
+                  <button
+                    type="button"
+                    onClick={() => setEnableLorebookKeeper((prev) => !prev)}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                      enableLorebookKeeper
+                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                        : "bg-[var(--secondary)] ring-1 ring-transparent hover:ring-[var(--border)]",
+                    )}
+                  >
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">
                     <BookOpen
                       size={14}
@@ -1835,9 +1907,11 @@ export function GameSetupWizard({
                       )}
                     />
                   </div>
-                </button>
+                  </button>
+                )}
 
-                <div>
+                {illustratorInstalled && (
+                  <div>
                   <button
                     type="button"
                     onClick={toggleVisualGeneration}
@@ -1853,7 +1927,7 @@ export function GameSetupWizard({
                       className={enableSpriteGeneration ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
                     />
                     <div className="flex-1">
-                      <span className="block text-xs font-medium text-[var(--foreground)]">Visual Generation</span>
+                      <span className="block text-xs font-medium text-[var(--foreground)]">Illustrator</span>
                       <span className="block text-[0.575rem] text-[var(--muted-foreground)]">
                         Generate NPC portraits, location backgrounds, scene images, and optional storyboards
                       </span>
@@ -2047,7 +2121,8 @@ export function GameSetupWizard({
                       </div>
                     </div>
                   )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2279,12 +2354,13 @@ export function GameSetupWizard({
               </div>
             </div>
 
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">
-                <MapIcon size={12} className="mr-1 inline" />
-                Hierarchical world map
-              </label>
-              <button
+            {hierarchicalMapsInstalled && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">
+                  <MapIcon size={12} className="mr-1 inline" />
+                  Hierarchical world map
+                </label>
+                <button
                 type="button"
                 aria-pressed={draftSpatialMap}
                 onClick={() => setDraftSpatialMap((enabled) => !enabled)}
@@ -2321,10 +2397,10 @@ export function GameSetupWizard({
                     )}
                   />
                 </span>
-              </button>
+                </button>
 
-              {draftSpatialMap && (
-                <div className="mt-2 space-y-3 rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]">
+                {draftSpatialMap && (
+                  <div className="mt-2 space-y-3 rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]">
                   <fieldset>
                     <legend className="text-[0.625rem] font-medium text-[var(--foreground)]">Map size</legend>
                     <div className="mt-2 grid grid-cols-3 gap-2">
@@ -2385,9 +2461,10 @@ export function GameSetupWizard({
                   <p className="text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
                     The draft stays disabled until you review, apply, enable, and save it in the map editor.
                   </p>
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 

@@ -24,6 +24,7 @@ import {
   normalizeTrackerHiddenFields,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
+  getBuiltInAgentDefaultPrompt,
   normalizeRpgStatPools,
   resolveMacros,
 } from "@marinara-engine/shared";
@@ -123,7 +124,7 @@ function musicDjUsesJsonOnlyProvider(config: Pick<AgentExecConfig, "type" | "set
 function getDefaultPromptForAgent(config: Pick<AgentExecConfig, "type" | "settings">): string {
   if (musicDjUsesYoutube(config)) return getDefaultAgentPrompt("youtube");
   if (musicDjUsesCustom(config)) return getDefaultAgentPrompt("local-music");
-  return getDefaultAgentPrompt(config.type);
+  return getBuiltInAgentDefaultPrompt(config.type) || getDefaultAgentPrompt(config.type);
 }
 
 function stringifyAgentSettingMacroValue(value: unknown): string {

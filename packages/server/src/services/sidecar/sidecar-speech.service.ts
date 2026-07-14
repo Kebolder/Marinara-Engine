@@ -250,6 +250,7 @@ class SidecarSpeechService {
   private activeModelId: SidecarSpeechModelId | null = null;
   private pipeline: AsrPipeline | null = null;
   private loadingPromise: Promise<AsrPipeline> | null = null;
+  private removingAllModels = false;
   private downloadProgress: SidecarDownloadProgress | null = null;
   private lastError: string | null = null;
 
@@ -350,6 +351,9 @@ class SidecarSpeechService {
     modelId: SidecarSpeechModelId,
     options: { localFilesOnly: boolean; progress?: (data: TransformersProgress) => void },
   ): Promise<AsrPipeline> {
+    if (this.removingAllModels) {
+      throw new Error("Local Whisper is being removed with the Conversation Calls package.");
+    }
     if (this.pipeline && this.activeModelId === modelId) return this.pipeline;
     if (this.loadingPromise && this.activeModelId === modelId) return this.loadingPromise;
 
@@ -447,6 +451,27 @@ class SidecarSpeechService {
     this.status = this.detectStatus();
     this.lastError = null;
     this.downloadProgress = null;
+  }
+
+  async deleteAllModels(): Promise<void> {
+    this.removingAllModels = true;
+    try {
+      // A disconnected download request can still be finishing on the server.
+      // Wait for it before removing the cache so it cannot recreate package-owned
+      // Whisper files after Conversation Calls has been uninstalled.
+      await this.loadingPromise?.catch(() => undefined);
+      await this.disposeCurrentPipeline();
+      for (const model of SIDECAR_SPEECH_MODELS) {
+        rmSync(safeModelCachePath(model.repoId), { recursive: true, force: true });
+      }
+      rmSync(SPEECH_CONFIG_PATH, { force: true });
+      this.config = { modelId: null };
+      this.status = "not_downloaded";
+      this.lastError = null;
+      this.downloadProgress = null;
+    } finally {
+      this.removingAllModels = false;
+    }
   }
 
   async transcribeWav(buffer: Buffer): Promise<string> {

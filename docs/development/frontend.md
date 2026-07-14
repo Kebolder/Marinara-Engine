@@ -402,7 +402,7 @@ Key files in `packages/shared/src/constants/`:
 - `providers.ts`: exports `PROVIDERS`, the API provider configs (OpenAI, Anthropic, Google, and more) with URLs and auth.
 - `chat-modes.ts`: exports `CHAT_MODES`, the definition record for each chat mode.
 - `model-lists.ts`: static model catalogs per provider, plus `IMAGE_GENERATION_SOURCES` for image generation providers.
-- `agent-prompts.ts`: default system prompts for the built-in agents.
+- `agent-prompts.ts`: base-only summary and secret-plot prompts plus runtime lookup for prompts supplied by installed agent packages.
 
 ### Schemas (Zod)
 
@@ -563,9 +563,9 @@ Retry requests go through `/api/generate/retry-agents` with an explicit `agentTy
 
 Agent memory tools, such as the Narrative Director Secret Plot panel, use `/api/agents/memory/:agentType/:chatId`. The route applies to configured agents that store per-chat memory. Secret Plot memory is stored under `director` in current configs, while `secret-plot-driver` remains accepted for legacy chats.
 
-### Built-in agents
+### First-party downloadable agents
 
-The built-in agent catalog is defined in `packages/shared/src/features/agents/` and re-exported as `BUILT_IN_AGENTS`. Each agent declares an id and a pipeline phase:
+The lightweight Engine ships with an empty runtime agent registry. Packages installed from the public [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog contribute validated agent manifests, client/server feature entrypoints, and UI slots at runtime. The active definitions are exposed through `BUILT_IN_AGENTS` for compatibility, but they come from installed packages rather than bundled implementations. The official catalog contains these packages:
 
 | Agent                    | Phase           | What it does                                                      |
 | ------------------------ | --------------- | ----------------------------------------------------------------- |
@@ -590,7 +590,14 @@ The built-in agent catalog is defined in `packages/shared/src/features/agents/` 
 | `knowledge-router`       | pre_generation  | Routes relevant lorebook and knowledge entries                    |
 | `haptic`                 | post_processing | Sends haptic device commands                                      |
 | `cyoa`                   | post_processing | Generates choice prompts                                          |
-| `about-me-keeper`        | post_processing | Maintains a Conversation-mode About Me profile                    |
+| `conversation-calls`     | feature         | Adds Conversation audio/video calls and related settings          |
+| `hierarchical-maps`      | feature         | Adds Roleplay/Game maps, spatial context, and movement             |
+| `uno`                    | feature         | Adds the Conversation UNO table                                   |
+| `chess`                  | feature         | Adds the Conversation Chess board                                 |
+| `poker`                  | feature         | Adds the Conversation Texas Hold'em table                         |
+| `eightball`              | feature         | Adds the Conversation 8-Ball Pool table                           |
+| `tic-tac-toe`            | feature         | Adds the Conversation Tic-Tac-Toe board                           |
+| `rock-paper-scissors`    | feature         | Adds Conversation Rock-Paper-Scissors matches                     |
 
 ### Agent result types
 

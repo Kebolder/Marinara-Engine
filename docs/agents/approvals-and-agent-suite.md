@@ -37,7 +37,7 @@ If more than one proposal is waiting, the window shows how many are still queued
 
 ## Character Card Update review
 
-Two agents can suggest edits to a character card. The **Card Evolution Auditor** proposes changes to card fields based on what happened during roleplay. The **About Me Keeper** can fill in a character's about-me text. Neither agent edits your card on its own. Both open the **Review Character Card Updates** window so you decide.
+The **Card Evolution Auditor** agent can suggest edits to character-card fields based on what happened during roleplay. Conversation mode's built-in `update_about_me` tool can also propose a public About Me change. Neither path edits your card on its own; both open the **Review Character Card Updates** window so you decide.
 
 The window lists each proposed edit. For every edit you see:
 
@@ -103,5 +103,5 @@ For each cached injection you can:
 ## Related guides
 
 - [Agents Overview](agents-overview.md)
-- [Built-in Agents Reference](built-in-agents.md)
+- [Downloadable Agents Reference](built-in-agents.md)
 - [Creating and Editing Characters](../characters/creating-and-editing-characters.md)

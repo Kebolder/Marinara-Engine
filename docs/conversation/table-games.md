@@ -1,10 +1,12 @@
-# Table Games: UNO, Chess, Poker, and 8-Ball Pool
+# Conversation Table Games
 
-This guide covers the four built-in table games you can play against a chat's characters in Conversation Mode: **UNO**, **Chess**, **Poker**, and **8-Ball Pool**. It explains how to start a game and what each setup option means. It also shows how to play each board and how to let characters start games on their own.
+This guide covers the six optional table-game packages you can play against a chat's characters in Conversation Mode: **UNO**, **Chess**, **Poker**, **8-Ball Pool**, **Tic-Tac-Toe**, and **Rock-Paper-Scissors**. It explains how to start a game and what each setup option means. It also shows how to play each board and how to let characters start games on their own.
 
 ## What table games are
 
 Table games are small tabletop games that run right inside a Conversation Mode chat. Marinara Engine deals the cards or sets up the board, and it enforces every rule for you. Each seated character narrates its own moves in character. A live board appears above the message box while you play.
+
+Install each game you want from **Agents → Download Agents**, then restart Marinara when the catalog asks. An uninstalled game does not appear in the games picker, its slash command is unavailable, and its character command setting stays hidden.
 
 Two facts to keep in mind:
 
@@ -25,6 +27,8 @@ A **slash command** is a short instruction you type in the message box that star
 - **/chess** starts a one-on-one chess game with a character in this chat.
 - **/poker** starts a game of Texas Hold'em poker with the characters in this chat.
 - **/8ball** (or **/pool**) starts a one-on-one game of 8-ball pool with a character in this chat.
+- **/tictactoe** (or **/ttt**) starts a one-on-one game of tic-tac-toe with a character in this chat.
+- **/rps** starts a one-on-one Rock-Paper-Scissors match with a character in this chat.
 
 ### Say it in chat
 
@@ -138,6 +142,14 @@ Click **Start game** to begin. The button reads "Racking up..." while the table 
 
 The board shows a top-down pool table with the real position of every ball. On your turn, the turn line reads "Your turn". On the character's turn it shows their name with "is thinking...". You shoot by picking one of the suggested shots, and the balls then roll on the table using a physics simulation. A line under the table describes the last shot, or reads "Rack over." between racks.
 
+## Tic-Tac-Toe
+
+Tic-Tac-Toe is one-on-one. The setup chooses the opponent and whether you play **X**, **O**, or a random mark. X moves first. During your turn, click an empty square. Marinara blocks illegal moves, asks the character for its move in character, and detects wins and draws automatically.
+
+## Rock-Paper-Scissors
+
+Rock-Paper-Scissors is one-on-one. The setup chooses the opponent and a best-of-three, best-of-five, or best-of-seven match. Pick **Rock**, **Paper**, or **Scissors** each round. Your opponent's choice stays hidden until both choices are ready, then Marinara reveals the result and updates the match score.
+
 ## Ending a game
 
 Every board has a button to end the game early, marked with an X icon.
@@ -146,23 +158,26 @@ Every board has a button to end the game early, marked with an X icon.
 - On the Chess board it is labeled **Resign** and asks "Resign and end this game?" first.
 - On the Poker board it is labeled **End game** while a hand is in play and asks "End this poker game?" first. Once the whole session has finished, it changes to **Close** and needs no confirmation.
 - On the 8-Ball Pool board it is labeled **End game** and asks "End this pool game?" first. Once the match has finished, it changes to **Close** and needs no confirmation.
+- On Tic-Tac-Toe and Rock-Paper-Scissors, use the board's close or end control to clear the current match.
 
 Ending a game deletes its state. No winner is recorded when you end a game early this way.
 
 ## Let characters start games on their own
 
-You control whether a character can offer or accept a game in **Chat Settings**, in the **Commands** section. You can also set these during the new-chat setup wizard, in its **Automation** step.
+You control whether a character can offer or accept a game in **Chat Settings → Agents**, in the **Commands** controls. You can also set these during the new-chat setup wizard, in its **Automation** step.
 
 The master **Commands** toggle is on by default. It controls all character-run commands, including the table games, selfies, memories, and calls. Turning it off stops characters from starting anything on their own.
 
-Under Commands, each game has its own toggle, and all four are on by default:
+Under Commands, each installed game has its own toggle, and all six are on by default:
 
 - **UNO**: "Let characters start a game of UNO at the table when you agree to play."
 - **Chess**: "Let characters accept a one-on-one chess challenge at the table."
 - **Poker**: "Let characters sit down for a game of Texas Hold'em poker at the table."
 - **8-Ball Pool**: "Let characters rack up a game of 8-ball pool at the table."
+- **Tic-Tac-Toe**: "Let characters accept a one-on-one tic-tac-toe challenge at the table."
+- **Rock-Paper-Scissors**: "Let characters accept a one-on-one rock-paper-scissors match at the table."
 
-These toggles only control the character-run path. The **/uno**, **/chess**, **/poker**, and **/8ball** commands and the "let's play" chat phrases always work, no matter how the toggles are set.
+These toggles only control the character-run path. An installed game's slash command and "let's play" chat phrase still work when its character toggle is off.
 
 ## Related guides
 

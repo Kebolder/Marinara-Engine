@@ -1,6 +1,6 @@
 # Agents: AI Helpers for Your Chats
 
-This guide explains what agents are in Marinara Engine, when they run, and how to turn them on for a chat. It covers the **Agents** panel, the per-chat settings, and how to tell when an agent has run. For the full list of built-in agents, see the Related guides at the end.
+This guide explains what agents are in Marinara Engine, how to download them, when they run, and how to turn them on for a chat. It covers the **Agents** panel, the official catalog, per-chat settings, and how to tell when an agent has run. For the full first-party catalog, see the Related guides at the end.
 
 ## What agents are
 
@@ -8,7 +8,7 @@ Agents are small AI helpers that run automatically around your main chat reply. 
 
 Agents are turned on per chat, not per character. There is no agent toggle on a character card. Two chats with the same character can run completely different agents. You choose which agents run in each chat's settings.
 
-Marinara Engine ships many built-in agents, and you can also build your own. This guide is the overview. For the per-agent list of what each one does, see [Built-in Agents Reference](built-in-agents.md). To make your own, see [Creating Custom Agents](custom-agents.md).
+Fresh Marinara Engine installations start without optional agents. This keeps the base app and Termux installation smaller. The official v2.3.0+ catalog contains 29 one-click packages: 6 Writer Agents, 8 Tracker Agents, and 15 Misc Agents, including Maps, Calls, and all six Conversation games. Their source, manifests, downloadable artifacts, and repository-level catalog are public in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). For the complete per-agent guide, see [Downloadable Agents Reference](built-in-agents.md). To make your own, see [Creating Custom Agents](custom-agents.md).
 
 ## The three phases
 
@@ -22,9 +22,13 @@ Every agent runs at one of three points around your reply. This point is called 
 
 Open the **Agents** panel from the right-side panel tabs (the Sparkles icon). Here you browse, create, and organize agents. This is your library. It is not the on or off switch for a single chat.
 
-The panel groups built-in agents into **Writer Agents**, **Tracker Agents**, and **Misc Agents**, plus a **Custom Agents** section for ones you make. Each agent card shows its name, a short description, and its category. You can search agents, sort them, make folders, and import or export agent packages.
+Click **Download Agents** at the top to open the full-screen official catalog. It works on desktop and mobile. Select an item to read its description, supported feature type, download size, permissions, version compatibility, and documentation. Click **Install** to add it. The same screen offers **Update** and **Uninstall** for packages you already have. Follow the restart message when a package contains server code; installed packages work offline afterward.
 
-Deleting a built-in agent only hides it from the library and the chat pickers. It does not remove the feature from the app. Deleting a custom agent removes it for good.
+The in-app catalog is backed by the public [Marinara-Agents repository](https://github.com/Pasta-Devs/Marinara-Agents). You can inspect every package and artifact there, but normal users should install through **Download Agents** so Marinara can validate compatibility, permissions, hashes, archive contents, and restart requirements.
+
+The catalog includes first-party chat agents, Hierarchical Maps, Conversation audio/video calls, and every optional Conversation game. Installed agents are grouped into **Writer Agents**, **Tracker Agents**, and **Misc Agents**, plus a **Custom Agents** section for ones you make. Uninstalling a catalog package removes its code and settings from the Engine while preserving chat messages and history. Deleting a custom agent removes it for good.
+
+When upgrading from an Engine version that bundled these features, Marinara downloads the matching packages once and preserves existing chat selections, agent settings, stored runtime data, and history. If that migration cannot reach the catalog, it retries at the next startup instead of discarding anything.
 
 ## Enabling agents for a chat
 
@@ -52,13 +56,13 @@ This readout turns amber with a warning icon when the load gets heavy. The real 
 
 ## Which agents each mode starts with
 
-Every built-in agent is off by default. To save you setup, Roleplay chats switch on a small starter set when you create the chat. Each chat mode also limits which agents you can add.
+A fresh installation starts with no optional agents installed or active. Each chat mode shows only compatible packages you have installed.
 
-- **Roleplay**: a new chat starts with **World State**, **Prose Guardian**, **Continuity Checker**, and **Expression Engine** active. You can add any other built-in agent that supports Roleplay.
-- **Conversation**: no built-in agents run by default or appear in the picker. You can still attach your own custom agents.
-- **Game Mode**: the normal agent picker is hidden. Game Mode has its own built-in world, quest, and combat systems, so Roleplay agents stay out of the way. Instead, Game Mode gives you toggles for **Game Session Keeper** and **Music DJ**, and you can still attach your own custom agents.
+- **Roleplay**: install Roleplay agents from the catalog, then add them in Chat Settings. Hierarchical Maps appears there like any other supported agent.
+- **Conversation**: install Conversation Calls or individual table games from the catalog. Games appear in the games picker and register their slash commands; calls add their toolbar and Chat Settings controls.
+- **Game Mode**: installed Game-compatible agents can be selected during game creation or added later. Hierarchical Maps contributes its map workspace and world-map view only when it is active for that game.
 
-You can add or remove agents at any time, so the starter set is only a starting point.
+You can add or remove compatible agents at any time.
 
 ## Telling whether an agent ran
 
@@ -73,7 +77,8 @@ Did an agent you expected not run? Check that **Enable Agents** is on. Check tha
 
 ## Related guides
 
-- [Built-in Agents Reference](built-in-agents.md)
+- [Downloadable Agents Reference](built-in-agents.md)
+- [Official Marinara Agents repository](https://github.com/Pasta-Devs/Marinara-Agents)
 - [Creating Custom Agents](custom-agents.md)
 - [Agent Approvals and the Agent Suite](approvals-and-agent-suite.md)
 - [Roleplay HUD and Trackers](../roleplay/hud-and-trackers.md)

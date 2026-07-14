@@ -28,7 +28,8 @@ import {
   type AgentContext,
   type ChatMLMessage,
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
-  DEFAULT_AGENT_PROMPTS,
+  getDefaultAgentPrompt,
+  replaceBuiltInAgentDefinitions,
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE,
@@ -60,6 +61,49 @@ import {
   parseDeferredConditionalPayload,
   selectConditionalPayloadBranch,
 } from "../../packages/shared/src/index.js";
+import { replaceBuiltInAgentDefinitions as replaceBuiltInAgentDefinitionsDist } from "../../packages/shared/dist/index.js";
+
+const REGRESSION_AGENT_IDS = [
+  "about-me-keeper", "background", "card-evolution-auditor", "character-tracker", "combat", "continuity",
+  "conversation-calls", "custom-tracker", "cyoa", "director", "echo-chamber", "eightball", "expression", "haptic",
+  "html", "illustrator", "knowledge-retrieval", "knowledge-router", "lorebook-keeper", "persona-stats", "poker",
+  "prose-guardian", "quest", "rock-paper-scissors", "spotify", "tic-tac-toe", "uno", "world-state", "chess",
+] as const;
+
+// The production Engine intentionally carries no optional agent definitions.
+// Prompt regressions install a small synthetic registry so they exercise the
+// generic pipeline without copying package-owned prompts back into the base.
+const regressionAgentDefinitions = REGRESSION_AGENT_IDS.map((id) => ({
+  id,
+  name: id === "html" ? "Immersive HTML" : id === "illustrator" ? "Illustrator" : id,
+  description: id === "html"
+    ? "Post-processes the latest Roleplay response with diegetic HTML/CSS/JS visual artifacts without changing the story meaning."
+    : `Regression fixture for ${id}`,
+  phase: "post_processing" as const,
+  enabledByDefault: false,
+  category: "misc" as const,
+  defaultTools: [],
+  defaultPromptTemplate: id === "html"
+    ? "You are Immersive HTML, a post-processing visual enhancer. Rewrite only the assistant response."
+    : id === "illustrator"
+      ? "Create an image-generation prompt for a visually important moment."
+      : `Run the ${id} agent.`,
+  ...(id === "html" ? {
+    resultType: "text_rewrite" as const,
+    defaultSettings: { resultType: "text_rewrite", contextSize: 5, maxTokens: 4096, holdForRewrite: true },
+  } : {}),
+  ...(id === "illustrator" ? {
+    defaultSettings: { defaultPromptTemplateId: "default" },
+    promptTemplates: [{
+      id: "background",
+      name: "Background",
+      description: "Background-only plate.",
+      promptTemplate: "Create a background-only prompt with no characters.",
+    }],
+  } : {}),
+}));
+replaceBuiltInAgentDefinitions(regressionAgentDefinitions);
+replaceBuiltInAgentDefinitionsDist(regressionAgentDefinitions);
 import {
   compactGameStateForAgentContext,
   executeAgent,
@@ -147,6 +191,11 @@ import {
   mergeIllustratorNegativePrompt,
   resolveIllustratorCharacterReferences,
 } from "../../packages/server/src/routes/generate/illustrator-references.js";
+import {
+  OFFICIAL_AGENT_KNOWLEDGE_ENTRIES,
+  PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE,
+} from "../../packages/server/src/services/professor-mari/official-agent-knowledge.js";
+import { filterEnabledConversationCommands } from "../../packages/server/src/services/generation/conversation-command-runtime.js";
 
 type RegressionCase = {
   name: string;
@@ -244,6 +293,78 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "installed Conversation feature commands do not require per-chat agent attachment",
+    run() {
+      const commands = [
+        { type: "uno" },
+        { type: "chess" },
+        { type: "call" },
+        { type: "selfie" },
+        { type: "note", content: "remember this" },
+      ] as Parameters<typeof filterEnabledConversationCommands>[0];
+      const withoutLegacyAttachment = filterEnabledConversationCommands(commands, {
+        enableAgents: false,
+        activeAgentIds: [],
+      });
+      assert.deepEqual(withoutLegacyAttachment.map((command) => command.type), [
+        "uno",
+        "chess",
+        "call",
+        "selfie",
+        "note",
+      ]);
+
+      const withUnoDisabled = filterEnabledConversationCommands(commands, {
+        enableAgents: false,
+        activeAgentIds: [],
+        conversationCommandToggles: { uno: false },
+      });
+      assert.deepEqual(withUnoDisabled.map((command) => command.type), ["chess", "call", "selfie", "note"]);
+    },
+  },
+  {
+    name: "Professor Mari and the public reference cover every official downloadable agent",
+    run() {
+      const publicReference = readFileSync(
+        new URL("../../docs/agents/built-in-agents.md", import.meta.url),
+        "utf8",
+      );
+      const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+      const seededMariSource = readFileSync(
+        new URL("../../packages/server/src/db/seed-mari.ts", import.meta.url),
+        "utf8",
+      );
+      const workspaceMariSource = readFileSync(
+        new URL("../../packages/server/src/services/professor-mari/workspace-agent.service.ts", import.meta.url),
+        "utf8",
+      );
+
+      assert.equal(OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.length, 29);
+      assert.equal(new Set(OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.map((entry) => entry.id)).size, 29);
+      assert.deepEqual(
+        Object.fromEntries(
+          (["writer", "tracker", "misc"] as const).map((category) => [
+            category,
+            OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.filter((entry) => entry.category === category).length,
+          ]),
+        ),
+        { writer: 6, tracker: 8, misc: 15 },
+      );
+
+      for (const entry of OFFICIAL_AGENT_KNOWLEDGE_ENTRIES) {
+        assert.ok(
+          PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE.includes(`- ${entry.name} (package \`${entry.id}\`;`),
+          `Professor Mari knowledge is missing ${entry.name}`,
+        );
+        assert.ok(publicReference.includes(`### ${entry.name}\n`), `Public agent reference is missing ${entry.name}`);
+        assert.ok(readme.includes(entry.name), `README agent catalog is missing ${entry.name}`);
+      }
+
+      assert.match(seededMariSource, /\$\{PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE\}/u);
+      assert.match(workspaceMariSource, /\$\{PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE\}/u);
+    },
+  },
   {
     name: "game narration preserves angle-bracket status readouts and rejects transformed empty steps",
     run() {
@@ -1456,12 +1577,12 @@ const cases: RegressionCase[] = [
         id: "builtin:illustrator",
         type: "illustrator",
         name: "Illustrator",
-        description: "Generates image prompts for key scenes (requires image generation API).",
+        description: "Responsible for image and video generations.",
         phase: "post_processing",
         enabled: "false",
         connectionId: null,
         imagePath: null,
-        promptTemplate: DEFAULT_AGENT_PROMPTS.illustrator,
+        promptTemplate: getDefaultAgentPrompt("illustrator"),
         settings: JSON.stringify({ defaultPromptTemplateId: "background" }),
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1729,7 +1850,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(settings.contextSize, 5);
       assert.equal(settings.maxTokens, 4096);
       assert.deepEqual(settings.promptTemplates, []);
-      assert.match(DEFAULT_AGENT_PROMPTS.html, /post-processing visual enhancer/);
+      assert.match(getDefaultAgentPrompt("html"), /post-processing visual enhancer/);
     },
   },
   {
@@ -2815,11 +2936,6 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
   {
     name: "tracker custom fields remain part of the model contract and survive omitted agent output",
     run() {
-      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /worldCustomFields/);
-      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /do not add, rename, reorder, or remove fields/i);
-      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /customFields/);
-      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /Do not add, rename, or remove custom fields/i);
-
       assert.deepEqual(
         normalizeWorldCustomFields([
           { name: " Moon Phase ", value: "Waxing", icon: "Moon" },
@@ -2962,7 +3078,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         id: "builtin:character-tracker",
         type: "character-tracker",
         name: "Character Tracker",
-        promptTemplate: DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "Track characters.",
+        promptTemplate: getDefaultAgentPrompt("character-tracker") || "Track characters.",
         settings: { resultType: "character_tracker_update" },
       });
       const context = makeRegressionAgentContext({

@@ -6,7 +6,7 @@
 // instead of scattering mode checks across large components.
 
 import type { ChatMode } from "../types/chat.js";
-import { BUILT_IN_AGENTS, isRetiredBuiltInAgentId } from "../types/agent.js";
+import { BUILT_IN_AGENTS, isRetiredBuiltInAgentId, type BuiltInAgentMeta } from "../types/agent.js";
 
 export type ChatParticipantModel = "chat-participants" | "game-party";
 
@@ -85,29 +85,21 @@ export const ROLEPLAY_AGENT_PICKER_HIDDEN_IDS = [] as const;
 
 export const CONVERSATION_AGENT_IDS = [] as const;
 
-// Conversation-only opt-in agents: available to add in Convo mode, but not on by default.
-export const CONVERSATION_ALLOWED_AGENT_IDS = ["about-me-keeper"] as const;
+// Conversation mode's About Me profile and update_about_me tool are core features,
+// not downloadable agents. Conversation still permits user-authored custom agents.
+export const CONVERSATION_ALLOWED_AGENT_IDS = [] as const;
 
-export const ROLEPLAY_DEFAULT_AGENT_IDS = [
-  "world-state",
-  "prose-guardian",
-  "continuity",
-  "expression",
-] as const;
+// Optional packages are never activated implicitly. Existing chats retain their
+// selections through the one-time legacy package migration.
+export const ROLEPLAY_DEFAULT_AGENT_IDS = [] as const;
 
-export const VISUAL_NOVEL_DEFAULT_AGENT_IDS = [
-  "world-state",
-  "prose-guardian",
-  "expression",
-] as const;
+export const VISUAL_NOVEL_DEFAULT_AGENT_IDS = [] as const;
 
 // Game mode has native GM/world-state/quest/combat/knowledge systems.
 // Roleplay helper agents must not be exposed as per-game agent toggles here.
 export const GAME_AGENT_IDS = [] as const;
 
 export const GAME_OPTIONAL_AGENT_IDS = [] as const;
-
-const BUILT_IN_AGENT_ID_SET = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 
 export const CHAT_MODE_CAPABILITIES: Record<ChatMode, ChatModeCapabilities> = {
   conversation: {
@@ -196,15 +188,22 @@ export function getChatModeCapabilities(mode: ChatMode | null | undefined): Chat
   return CHAT_MODE_CAPABILITIES[mode ?? "roleplay"] ?? CHAT_MODE_CAPABILITIES.roleplay;
 }
 
+export function isAgentManifestAvailableInChatMode(
+  mode: ChatMode | null | undefined,
+  agent: Pick<BuiltInAgentMeta, "id" | "modeAllowlist" | "execution">,
+): boolean {
+  if (isRetiredBuiltInAgentId(agent.id)) return false;
+  const normalizedMode = mode ?? "roleplay";
+  if (agent.modeAllowlist?.length && !agent.modeAllowlist.includes(normalizedMode)) return false;
+  if (agent.execution === "feature") return true;
+  const policy = getChatModeCapabilities(mode).agentPolicy;
+  return policy.kind === "all" || policy.allowedAgentIds.includes(agent.id);
+}
+
 export function isAgentAvailableInChatMode(mode: ChatMode | null | undefined, agentId: string): boolean {
   if (isRetiredBuiltInAgentId(agentId)) return false;
-  const normalizedMode = mode ?? "roleplay";
   const builtIn = BUILT_IN_AGENTS.find((agent) => agent.id === agentId);
-  if (builtIn?.modeAllowlist?.length && !builtIn.modeAllowlist.includes(normalizedMode)) return false;
-  const policy = getChatModeCapabilities(mode).agentPolicy;
-  if (policy.kind === "all") return true;
-  if (!BUILT_IN_AGENT_ID_SET.has(agentId)) return true;
-  return policy.allowedAgentIds.includes(agentId);
+  return builtIn ? isAgentManifestAvailableInChatMode(mode, builtIn) : true;
 }
 
 export function isAgentHiddenFromChatSettingsPicker(mode: ChatMode | null | undefined, agentId: string): boolean {

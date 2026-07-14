@@ -127,7 +127,7 @@ Uploading sprites is only half the job. You also decide when and how they appear
 
 ### Roleplay Mode
 
-In **Roleplay Mode**, an agent called the **Expression Engine** drives sprite display. An agent is an AI helper that runs alongside your chat. The Expression Engine reads the mood of each message and picks a matching expression sprite. See [Built-in Agents Reference](../agents/built-in-agents.md) for how to add it.
+In **Roleplay Mode**, the optional **Expression Engine** agent drives sprite display. Download it from **Agents → Download Agents**, then add it to the chat. It reads the mood of each message and picks a matching expression sprite. See [Downloadable Agents Reference](../agents/built-in-agents.md) for details.
 
 For sprites to appear in a Roleplay chat, all of the following must be true:
 
@@ -164,4 +164,4 @@ The **Clips** category in the **Sprites** tab is a different feature. It makes s
 - [Game Mode: Getting Started](../game/getting-started.md)
 - [Conversation Audio and Video Calls](../conversation/calls.md)
 - [Animated Expressions](../media/animated-expressions.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)

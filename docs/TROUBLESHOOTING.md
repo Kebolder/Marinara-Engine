@@ -61,6 +61,16 @@ Sometimes the server is running but the browser shows a blank page, or the app l
 
 **Refresh App** clears the browser service worker (a background script that caches the web app) and the browser cache, then reloads. It does not change your data. Your chats, settings, and other local data stay intact. It also does not update the server code, so it is not a substitute for a real update. See [Upgrading Marinara Engine](UPGRADING.md) to update the app itself.
 
+## Downloadable agent problems
+
+If **Agents → Download Agents** says the catalog is unavailable, the machine running the Marinara server—not only the browser—must be able to reach the official [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog over GitHub HTTPS. Installed agents continue to work offline. Restore the server connection and click **Refresh** or **Try again**.
+
+If an installed map, call, or Conversation game does not appear, close Marinara Engine completely and start it again. Packages containing server or client runtime code deliberately remain in **Restart required** state until the next process start. Then enable the agent for the chat in Chat Settings; Game-compatible agents can also be selected during game creation.
+
+If an older installation cannot complete its first package migration, do not delete the `data/capability-packages` folder or your chat data. Marinara leaves the migration incomplete and retries on the next startup. Existing chat selections and settings remain stored while the catalog is unreachable.
+
+Package downloads are rejected when their checksum, declared file list, Engine version range, or archive paths do not match the official catalog. Update Marinara Engine first, refresh the catalog, and retry. Do not manually extract an artifact into the data directory.
+
 ## Accessing Marinara from another device
 
 If you cannot access Marinara from a phone, tablet, or another computer on your network, work through these checks.
@@ -178,7 +188,7 @@ If starting a game fails because the model returned broken JSON, Marinara opens 
 ## Voice, calls, and TTS
 
 - If characters do not speak during a call, Text to Speech is not set up. Open **Connections** > **Text to Speech**, enable it, choose a source, enter your key, pick a voice, and save. A character with no voice appears as text only.
-- If the microphone is not working, you may need the local speech model. Open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition.
+- If the microphone is not working, you may need the local speech model. Install **Conversation Calls** from **Agents > Download Agents**, then open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition. Uninstalling Conversation Calls deletes its Whisper models to reclaim disk space.
 - On a Lite build, the message **Local Whisper is disabled in Lite mode** means that small build cannot run the local speech model. Use a full Marinara install instead.
 
 ### Music DJ Spotify login fails on a remote or network install

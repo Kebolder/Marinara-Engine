@@ -22,6 +22,8 @@ import { useBackgroundAutonomousPolling } from "../../hooks/use-background-auton
 import { useClearAutonomousUnread } from "../../hooks/use-chats";
 import { useIdleDetection } from "../../hooks/use-idle-detection";
 import { usePageActivity } from "../../hooks/use-page-activity";
+import { useCapabilityAgentRegistry, useCapabilityClientModules } from "../../hooks/use-capability-packages";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
 import { getCssBackgroundStyle } from "../../lib/css-colors";
 import { cn } from "../../lib/utils";
 import { parseChatMetadata } from "../../lib/chat-display";
@@ -46,6 +48,9 @@ const CharacterEditor = lazy(() =>
 const CharacterLibraryView = lazy(() =>
   import("../characters/CharacterLibraryView").then((module) => ({ default: module.CharacterLibraryView })),
 );
+const AgentCatalogView = lazy(() =>
+  import("../agents/AgentCatalogView").then((module) => ({ default: module.AgentCatalogView })),
+);
 const LorebookEditor = lazy(() =>
   import("../lorebooks/LorebookEditor").then((module) => ({ default: module.LorebookEditor })),
 );
@@ -60,11 +65,6 @@ const PersonaEditor = lazy(() =>
 );
 const RegexScriptEditor = lazy(() =>
   import("../agents/RegexScriptEditor").then((module) => ({ default: module.RegexScriptEditor })),
-);
-const SpatialMapWorkspace = lazy(() =>
-  import("../../features/spatial-context/SpatialMapWorkspace").then((module) => ({
-    default: module.SpatialMapWorkspace,
-  })),
 );
 const BotBrowserView = lazy(() =>
   import("../bot-browser/BotBrowserView").then((module) => ({ default: module.BotBrowserView })),
@@ -83,9 +83,6 @@ const ChatNotificationBubbles = lazy(() =>
 const OnboardingTutorial = lazy(() =>
   import("../onboarding/OnboardingTutorial").then((module) => ({ default: module.OnboardingTutorial })),
 );
-const ConversationCallFloatingHost = lazy(() =>
-  import("../chat/ConversationCallFloatingHost").then((module) => ({ default: module.ConversationCallFloatingHost })),
-);
 
 function clampWidth(width: number, min: number, max: number) {
   return Math.max(min, Math.min(max, width));
@@ -101,7 +98,6 @@ const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
 const TRACKER_PANEL_DESKTOP_EXIT_MS = 240;
 const TRACKER_PANEL_DESKTOP_EASE = [0.16, 1, 0.3, 1] as const;
 const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
-const DESKTOP_SHELL_PANEL_EXIT_MS = 160;
 const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
@@ -184,22 +180,10 @@ function SidePanelFallback() {
   return <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>;
 }
 
-function useExitPresence(open: boolean, exitMs: number) {
-  const [present, setPresent] = useState(open);
-
-  useEffect(() => {
-    if (open) {
-      setPresent(true);
-      return;
-    }
-    const timeout = window.setTimeout(() => setPresent(false), exitMs);
-    return () => window.clearTimeout(timeout);
-  }, [exitMs, open]);
-
-  return open || present;
-}
-
 export function AppShell() {
+  useCapabilityAgentRegistry();
+  useCapabilityClientModules();
+
   // Background autonomous polling for inactive conversation chats
   useBackgroundAutonomousPolling();
 
@@ -248,6 +232,9 @@ export function AppShell() {
   const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
   const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
+  const spatialMapDetailChatId = useUIStore((s) => s.spatialMapDetailChatId);
+  const pendingSpatialMapDraftReview = useUIStore((s) => s.pendingSpatialMapDraftReview);
+  const closeSpatialMapDetail = useUIStore((s) => s.closeSpatialMapDetail);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
   const [sidebarDragWidth, setSidebarDragWidth] = useState<number | null>(null);
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
@@ -295,15 +282,13 @@ export function AppShell() {
   }, []);
 
   const shellOverlayMode = isMobile;
-  const desktopSidebarPresent = useExitPresence(sidebarOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
-  const desktopRightPanelPresent = useExitPresence(rightPanelOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
   const [rightPanelEverOpened, setRightPanelEverOpened] = useState(rightPanelOpen);
   useEffect(() => {
     if (rightPanelOpen) setRightPanelEverOpened(true);
   }, [rightPanelOpen]);
 
-  const layoutSidebarOpen = shellOverlayMode ? sidebarOpen : desktopSidebarPresent;
-  const layoutRightPanelOpen = shellOverlayMode ? rightPanelOpen : desktopRightPanelPresent;
+  const layoutSidebarOpen = sidebarOpen;
+  const layoutRightPanelOpen = rightPanelOpen;
   const desktopReservedSidebarWidth = layoutSidebarOpen ? liveSidebarWidth : 0;
   const desktopReservedRightPanelWidth = layoutRightPanelOpen ? liveRightPanelWidth : 0;
   const desktopCenterWidth = Math.max(0, viewportWidth - desktopReservedSidebarWidth - desktopReservedRightPanelWidth);
@@ -402,6 +387,7 @@ export function AppShell() {
 
   const characterDetailId = useUIStore((s) => s.characterDetailId);
   const characterLibraryOpen = useUIStore((s) => s.characterLibraryOpen);
+  const agentCatalogOpen = useUIStore((s) => s.agentCatalogOpen);
   const lorebookDetailId = useUIStore((s) => s.lorebookDetailId);
   const presetDetailId = useUIStore((s) => s.presetDetailId);
   const connectionDetailId = useUIStore((s) => s.connectionDetailId);
@@ -409,7 +395,6 @@ export function AppShell() {
   const toolDetailId = useUIStore((s) => s.toolDetailId);
   const personaDetailId = useUIStore((s) => s.personaDetailId);
   const regexDetailId = useUIStore((s) => s.regexDetailId);
-  const spatialMapDetailChatId = useUIStore((s) => s.spatialMapDetailChatId);
   const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const gameAssetsBrowserOpen = useUIStore((s) => s.gameAssetsBrowserOpen);
   const noodleOpen = useUIStore((s) => s.noodleOpen);
@@ -561,9 +546,7 @@ export function AppShell() {
     [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth],
   );
 
-  const detailView = spatialMapDetailChatId ? (
-    <SpatialMapWorkspace chatId={spatialMapDetailChatId} />
-  ) : regexDetailId ? (
+  const detailView = regexDetailId ? (
     <RegexScriptEditor />
   ) : personaDetailId ? (
     <PersonaEditor />
@@ -579,6 +562,8 @@ export function AppShell() {
     <CharacterEditor />
   ) : characterLibraryOpen ? (
     <CharacterLibraryView />
+  ) : agentCatalogOpen ? (
+    <AgentCatalogView />
   ) : lorebookDetailId ? (
     <LorebookEditor />
   ) : null;
@@ -866,34 +851,36 @@ export function AppShell() {
       {/* Left sidebar - Chat list */}
       <aside
         data-tour="sidebar"
-        data-component="ChatSidebarPanel"
+        data-component="ChatSidebarSlot"
         aria-label="Chat list"
         aria-hidden={!sidebarOpen}
         inert={!sidebarOpen}
         className={cn(
-          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
-          shellOverlayMode && "backdrop-blur-xl",
-          sidebarDragWidth == null &&
-            (shellOverlayMode
-              ? "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
-              : "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]"),
-          !shellOverlayMode &&
-            (sidebarOpen
-              ? "mari-shell-panel-enter-left translate-x-0 opacity-100"
-              : "pointer-events-none -translate-x-3 opacity-0"),
-          sidebarOpen && !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right md:relative",
+          "mari-shell-panel-slot flex-shrink-0 overflow-hidden md:relative",
+          sidebarDragWidth != null && "!transition-none",
+          !sidebarOpen && "pointer-events-none",
           shellOverlayMode &&
             cn(
               "fixed bottom-0 left-0 z-40 max-h-none pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl",
               MOBILE_SHELL_PANEL_TOP_CLASS,
             ),
-          !sidebarOpen && shellOverlayMode && "!w-0",
         )}
         style={{
-          width: shellOverlayMode ? (sidebarOpen ? "100vw" : 0) : desktopSidebarPresent ? liveSidebarWidth : 0,
+          width: shellOverlayMode ? "100vw" : sidebarOpen ? liveSidebarWidth : 0,
         }}
       >
-        <div className="h-full" style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}>
+        <div
+          data-component="ChatSidebarPanel"
+          aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen}
+          className={cn(
+            "mari-sidebar mari-shell-panel-motion absolute inset-y-0 left-0 overflow-hidden bg-[var(--background)]/95",
+            shellOverlayMode && "backdrop-blur-xl",
+            sidebarOpen ? "mari-shell-panel-enter-left" : "mari-shell-panel-exit-left pointer-events-none",
+            !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right",
+          )}
+          style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}
+        >
           <ChatSidebar />
         </div>
       </aside>
@@ -967,9 +954,6 @@ export function AppShell() {
               )}
             </Suspense>
           </div>
-          <Suspense fallback={null}>
-            <ConversationCallFloatingHost />
-          </Suspense>
         </div>
         {/* Floating avatar notification bubbles (right edge) */}
         <Suspense fallback={null}>
@@ -1050,28 +1034,35 @@ export function AppShell() {
         </AnimatePresence>
       ) : (
         <aside
-          data-component="RightPanelDesktop"
+          data-component="RightPanelDesktopSlot"
           aria-label="Settings and tools panel"
           aria-hidden={!rightPanelOpen}
           inert={!rightPanelOpen}
           className={cn(
-            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
-            rightPanelDragWidth == null &&
-              "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]",
-            rightPanelOpen
-              ? "mari-shell-panel-enter-right translate-x-0 opacity-100"
-              : "pointer-events-none translate-x-3 opacity-0",
-            rightPanelOpen && "mari-shell-panel-edge mari-shell-panel-edge--left relative",
+            "mari-shell-panel-slot relative flex-shrink-0 overflow-hidden",
+            rightPanelDragWidth != null && "!transition-none",
+            !rightPanelOpen && "pointer-events-none",
           )}
           style={
             {
-              width: desktopRightPanelPresent ? liveRightPanelWidth : 0,
+              width: rightPanelOpen ? liveRightPanelWidth : 0,
               "--mari-right-panel-width": `${liveRightPanelWidth}px`,
             } as CSSProperties
           }
         >
           {(rightPanelOpen || rightPanelEverOpened) && (
-            <div className="h-full" style={{ width: liveRightPanelWidth }}>
+            <div
+              data-component="RightPanelDesktop"
+              aria-hidden={!rightPanelOpen}
+              inert={!rightPanelOpen}
+              className={cn(
+                "mari-right-panel mari-shell-panel-motion mari-shell-panel-edge mari-shell-panel-edge--left absolute inset-y-0 right-0 overflow-hidden bg-[var(--background)]/95",
+                rightPanelOpen
+                  ? "mari-shell-panel-enter-right"
+                  : "mari-shell-panel-exit-right pointer-events-none",
+              )}
+              style={{ width: liveRightPanelWidth }}
+            >
               <Suspense fallback={<SidePanelFallback />}>
                 <RightPanel />
               </Suspense>
@@ -1115,6 +1106,18 @@ export function AppShell() {
         />
       )}
 
+      {spatialMapDetailChatId ? (
+        <CapabilityElement
+          packageId="hierarchical-maps"
+          view="workspace"
+          capabilityProps={{
+            chatId: spatialMapDetailChatId,
+            pendingDraftReview: pendingSpatialMapDraftReview,
+            onClose: closeSpatialMapDetail,
+          }}
+        />
+      ) : null}
+
       {/* First-time onboarding tutorial */}
       {!hasCompletedOnboarding && (
         <Suspense fallback={null}>
@@ -1122,11 +1125,7 @@ export function AppShell() {
         </Suspense>
       )}
       <ProfessorMariFloatingAssistantHost active={professorMariFloatingActive} />
-      <div
-        data-component="MobileMusicWidgetLayer"
-        className={spatialMapDetailChatId ? "hidden" : "contents"}
-        aria-hidden={spatialMapDetailChatId ? true : undefined}
-      >
+      <div data-component="MobileMusicWidgetLayer" className="contents">
         <SpotifyMobileWidget />
         <YouTubeMobileWidget />
         <LocalMusicMobileWidget />

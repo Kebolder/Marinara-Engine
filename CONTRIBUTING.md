@@ -68,6 +68,8 @@ Guidelines:
 - `docs/` — Docs and repo media assets
 - `start.bat`, `start.sh`, `start-termux.sh` — platform launchers
 
+Official downloadable package sources, manifests, artifacts, and catalog validation live in the separate [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) repository. Package-only changes should use that repository's issues and target its `staging` branch; Engine integration and capability API changes remain in Marinara Engine.
+
 ## Validation
 
 Baseline validation:

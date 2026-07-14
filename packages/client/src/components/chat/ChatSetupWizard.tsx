@@ -21,7 +21,6 @@ import {
   Sparkles,
   Feather,
   RotateCcw,
-  Phone,
   Dices,
   FolderOpen,
 } from "lucide-react";
@@ -33,31 +32,28 @@ import { useLorebooks } from "../../hooks/use-lorebooks";
 import { useUpdateChat, useUpdateChatMetadata, useCreateMessage, chatKeys } from "../../hooks/use-chats";
 import { useChatPresets, useApplyChatPreset } from "../../hooks/use-chat-presets";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
+import { useCapabilityAgentRegistry } from "../../hooks/use-capability-packages";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
 import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
-import {
-  characterMatchesSearch,
-  getCharacterTitle,
-  parseCharacterDisplayData,
-} from "../../lib/character-display";
+import { characterMatchesSearch, getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import {
-  BUILT_IN_AGENTS,
+  CONVERSATION_COMMAND_AGENT_IDS,
   CONVERSATION_COMMAND_KEYS,
   DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_AGENT_CONTEXT_SIZE,
   DEFAULT_AGENT_MAX_TOKENS,
-  DEFAULT_AGENT_PROMPTS,
   DEFAULT_AGENT_TOOLS,
   MIN_AGENT_MAX_TOKENS,
   getAgentPromptTemplateOptions,
+  getDefaultAgentPrompt,
   resolveDefaultAgentPromptTemplateId,
-  isAgentAvailableInChatMode,
+  isAgentManifestAvailableInChatMode,
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
@@ -176,7 +172,11 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "react", label: "Reactions", description: "Let characters react to messages with emoji badges." },
   { id: "uno", label: "UNO", description: "Let characters start a game of UNO at the table when you agree to play." },
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
-  { id: "poker", label: "Poker", description: "Let characters sit down for a game of Texas Hold'em poker at the table." },
+  {
+    id: "poker",
+    label: "Poker",
+    description: "Let characters sit down for a game of Texas Hold'em poker at the table.",
+  },
   { id: "eightball", label: "8-Ball Pool", description: "Let characters rack up a game of 8-ball pool at the table." },
   {
     id: "tic_tac_toe",
@@ -239,6 +239,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
+  execution?: "pipeline" | "feature";
 };
 
 type AgentAddPreview = {
@@ -674,10 +675,12 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: allCharacters } = useCharacters();
   const { data: allCharacterGroups } = useCharacterGroups();
   const { data: allPersonas } = usePersonas();
+  const { data: installedAgentManifests = [], isLoading: installedAgentsLoading } = useCapabilityAgentRegistry();
   const updateChat = useUpdateChat();
   const updateMeta = useUpdateChatMetadata();
   const queryClient = useQueryClient();
   const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const [scheduleState, setScheduleState] = useState<"idle" | "generating" | "done">("idle");
   const [autonomousEnabled, setAutonomousEnabled] = useState(true);
   const [generateSchedule, setGenerateSchedule] = useState(false);
@@ -688,6 +691,23 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const selectedConnectionChatIdRef = useRef(chat.id);
   const latestChatConnectionIdRef = useRef(chat.connectionId);
   const [selectedConnectionId, setSelectedConnectionId] = useState(chat.connectionId ?? "");
+  const installedAgentIds = useMemo(
+    () => new Set(installedAgentManifests.map((agent) => agent.id)),
+    [installedAgentManifests],
+  );
+  const availableConversationCommandOptions = useMemo(() => {
+    return CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => {
+      const agentId = CONVERSATION_COMMAND_AGENT_IDS[command.id];
+      return !agentId || installedAgentIds.has(agentId);
+    });
+  }, [installedAgentIds]);
+  const hasConversationCommands = availableConversationCommandOptions.length > 0;
+  const hasInstalledAgents = installedAgentIds.size > 0;
+  const openDownloadAgents = useCallback(() => {
+    onFinish();
+    openRightPanel("agents");
+    openAgentCatalog();
+  }, [onFinish, openAgentCatalog, openRightPanel]);
 
   useEffect(() => {
     setSelectedPromptPresetId(chat.promptPresetId ?? null);
@@ -769,7 +789,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const metadata = useMemo(() => {
     return readChatMetadata(chat);
   }, [chat]);
-  const [callsEnabled, setCallsEnabled] = useState(() => metadata.conversationCallsEnabled === true);
   const [commandsEnabled, setCommandsEnabled] = useState(() => metadata.characterCommands !== false);
   const [conversationCommandToggles, setConversationCommandToggles] = useState<
     Partial<Record<ConversationCommandKey, boolean>>
@@ -805,10 +824,6 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   useEffect(() => {
     setCustomizeParameters(!!parseEditableGenerationParameters(metadata.chatParameters));
   }, [metadata.chatParameters]);
-
-  useEffect(() => {
-    setCallsEnabled(metadata.conversationCallsEnabled === true);
-  }, [metadata.conversationCallsEnabled]);
 
   const persistedChatCharIds: string[] = useMemo(() => {
     return typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds ?? []);
@@ -1022,8 +1037,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
       id: chat.id,
       autonomousMessages: autonomousEnabled,
       conversationSchedulesEnabled: autonomousEnabled && generateSchedule,
-      conversationCallsEnabled: callsEnabled,
-      characterCommands: commandsEnabled,
+      characterCommands: hasConversationCommands && commandsEnabled,
       conversationCommandToggles,
       chatParameters: customizeParameters ? generationParameters : null,
       customSystemPrompt,
@@ -1054,11 +1068,11 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     chatCharIds,
     onFinish,
     autonomousEnabled,
-    callsEnabled,
     generateSchedule,
     updateMeta,
     customizeParameters,
     generationParameters,
+    hasConversationCommands,
     commandsEnabled,
     conversationCommandToggles,
     queryClient,
@@ -1450,82 +1464,45 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
         </button>
       )}
 
-      <div
-        className={cn(
-          "mari-chat-option-field rounded-lg transition-all",
-          callsEnabled && "mari-chat-option-field--active",
-        )}
-      >
+      {hasConversationCommands && (
         <button
-          type="button"
-          onClick={() => setCallsEnabled((value) => !value)}
-          className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+          onClick={() => setCommandsEnabled((value) => !value)}
+          className={cn(
+            "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+            commandsEnabled && "mari-chat-option-field--active",
+          )}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Phone
+            <Sparkles
               size="0.875rem"
-              className={callsEnabled ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+              className={commandsEnabled ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
             />
             <div>
-              <span className="text-xs font-medium">Audio/Video Calls</span>
+              <span className="text-xs font-medium">Commands</span>
               <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                Add a call button and call-only transcript to this conversation.
+                Choose which built-in and installed-agent actions characters may use.
               </p>
             </div>
           </div>
           <div
             className={cn(
               "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-              callsEnabled && "mari-chat-option-switch--active",
+              commandsEnabled && "mari-chat-option-switch--active",
             )}
           >
             <div
               className={cn(
                 "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                callsEnabled && "translate-x-3.5",
+                commandsEnabled && "translate-x-3.5",
               )}
             />
           </div>
         </button>
-      </div>
+      )}
 
-      <button
-        onClick={() => setCommandsEnabled((value) => !value)}
-        className={cn(
-          "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-          commandsEnabled && "mari-chat-option-field--active",
-        )}
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Sparkles
-            size="0.875rem"
-            className={commandsEnabled ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
-          />
-          <div>
-            <span className="text-xs font-medium">Commands</span>
-            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-              Let characters use hidden actions like selfies, scenes, music, notes, and haptics.
-            </p>
-          </div>
-        </div>
-        <div
-          className={cn(
-            "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-            commandsEnabled && "mari-chat-option-switch--active",
-          )}
-        >
-          <div
-            className={cn(
-              "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-              commandsEnabled && "translate-x-3.5",
-            )}
-          />
-        </div>
-      </button>
-
-      {commandsEnabled && (
+      {hasConversationCommands && commandsEnabled && (
         <div className="grid gap-1.5 pt-1 sm:grid-cols-2">
-          {CONVERSATION_COMMAND_TOGGLE_OPTIONS.map((command) => {
+          {availableConversationCommandOptions.map((command) => {
             const enabled = isConversationCommandToggleEnabled(conversationCommandToggles, command.id);
             return (
               <button
@@ -1565,6 +1542,23 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
               </button>
             );
           })}
+        </div>
+      )}
+
+      {!installedAgentsLoading && !hasInstalledAgents && (
+        <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/35 px-4 py-4 text-center">
+          <p className="text-xs font-medium text-[var(--foreground)]">No agents downloaded yet.</p>
+          <p className="mx-auto mt-1 max-w-sm text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+            Download agents to add Selfies, Calls, Music, Haptics, and Conversation games.
+          </p>
+          <button
+            type="button"
+            onClick={openDownloadAgents}
+            className={cn(WIZARD_PRIMARY_BUTTON_CLASS, "mx-auto mt-3 gap-2")}
+          >
+            <Sparkles size="0.8125rem" />
+            Download Agents
+          </button>
         </div>
       )}
     </div>
@@ -1658,7 +1652,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: allCharacters } = useCharacters();
   const { data: allCharacterGroups } = useCharacterGroups();
   const { data: lorebooks } = useLorebooks();
-  const { data: agentConfigs } = useAgentConfigs();
+  const { data: agentConfigs, isLoading: agentConfigsLoading } = useAgentConfigs();
+  const { data: installedAgentManifests = [], isLoading: installedAgentsLoading } = useCapabilityAgentRegistry();
 
   // Chat-settings presets for the shortcut view
   const supportsNarrativeDirectorSecretPlot = (chat as unknown as { mode?: string }).mode === "roleplay";
@@ -1771,11 +1766,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     }
     return map;
   }, [agentConfigs]);
+  const installedAgentIds = useMemo(
+    () => new Set(installedAgentManifests.map((agent) => agent.id)),
+    [installedAgentManifests],
+  );
   const availableAgents = useMemo(() => {
     const agents: AvailableAgent[] = [];
-    for (const agent of BUILT_IN_AGENTS) {
+    for (const agent of installedAgentManifests) {
       if (agent.libraryHidden) continue;
-      if (!isAgentAvailableInChatMode(activeChatMode, agent.id)) continue;
+      if (!isAgentManifestAvailableInChatMode(activeChatMode, agent)) continue;
       if (isAgentHiddenFromChatSettingsPicker(activeChatMode, agent.id)) continue;
       const existing = agentConfigsByType.get(agent.id);
       if (existing && isAgentConfigDeleted(existing.settings)) continue;
@@ -1787,12 +1786,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         phase: normalizeAgentPhaseForType(agent.id, existing?.phase ?? agent.phase),
         builtIn: true,
         runtimeDisabled: isBuiltInAgentRuntimeDisabled(agent.id),
+        execution: agent.execution,
       });
     }
     for (const config of (agentConfigs ?? []) as AgentConfigRow[]) {
       if (isAgentConfigDeleted(config.settings)) continue;
       if (isRetiredBuiltInAgentId(config.type)) continue;
-      if (BUILT_IN_AGENTS.some((agent) => agent.id === config.type)) continue;
+      if (installedAgentIds.has(config.type)) continue;
       agents.push({
         id: config.type,
         name: config.name,
@@ -1801,10 +1801,11 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         phase: normalizeAgentPhaseForType(config.type, config.phase),
         builtIn: false,
         runtimeDisabled: false,
+        execution: "pipeline",
       });
     }
     return agents;
-  }, [activeChatMode, agentConfigs, agentConfigsByType]);
+  }, [activeChatMode, agentConfigs, agentConfigsByType, installedAgentIds, installedAgentManifests]);
 
   const getPromptOptionsForAgent = useCallback(
     (agentId: string) => {
@@ -1812,7 +1813,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       const settings = mergeBuiltInAgentSettings(agentId, config?.settings);
       return getAgentPromptTemplateOptions({
         promptTemplate: config?.promptTemplate || "",
-        fallbackPromptTemplate: DEFAULT_AGENT_PROMPTS[agentId] || "",
+        fallbackPromptTemplate: getDefaultAgentPrompt(agentId),
         settings,
       });
     },
@@ -2027,7 +2028,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       await createInitialGreetingForCharacter(charId);
     }
     onFinish();
-  }, [chat.id, chatCharIds, createInitialGreetingForCharacter, customizeParameters, generationParameters, onFinish, updateMeta]);
+  }, [
+    chat.id,
+    chatCharIds,
+    createInitialGreetingForCharacter,
+    customizeParameters,
+    generationParameters,
+    onFinish,
+    updateMeta,
+  ]);
 
   const seedInitialGreetingsIfEmpty = useCallback(async () => {
     if (chatCharIds.length === 0) return;
@@ -2144,7 +2153,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const confirmAddAgent = useCallback(async () => {
     if (!agentAddPreview) return;
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
-    const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
+    const builtInMeta = installedAgentManifests.find((entry) => entry.id === agent.id) ?? null;
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
       contextSize,
@@ -2166,7 +2175,9 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
 
     setAddingAgentToChat(true);
     try {
-      if (config) {
+      if (builtInMeta?.execution === "feature") {
+        // Feature packages own their settings and runtime; chat activation is enough.
+      } else if (config) {
         await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
@@ -2200,6 +2211,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     agentAddPreview,
     chat.id,
     createAgent,
+    installedAgentManifests,
     metadata,
     readLatestActiveAgentIds,
     supportsNarrativeDirectorSecretPlot,
@@ -2598,6 +2610,39 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       ? getAgentRunIntervalMeta(agentAddPreview.agent.id, agentAddPreview.agent.builtIn)
       : null;
 
+    if (agentConfigsLoading || installedAgentsLoading) {
+      return (
+        <div className="flex min-h-40 items-center justify-center gap-2 text-xs text-[var(--muted-foreground)]">
+          <Loader2 size="0.875rem" className="animate-spin" />
+          Loading agents…
+        </div>
+      );
+    }
+
+    if (availableAgents.length === 0) {
+      return (
+        <div
+          data-component="ChatSetupWizard.AgentEmptyState"
+          className="flex min-h-52 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-[var(--border)] bg-[var(--secondary)]/35 px-5 py-8 text-center"
+        >
+          <p className="max-w-sm text-sm font-medium leading-6 text-[var(--muted-foreground)]">
+            No agents downloaded yet. Head to Agents tab and click Download Agents to get some!
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              onFinish();
+              openRightPanel("agents");
+            }}
+            className={cn(WIZARD_PRIMARY_BUTTON_CLASS, "gap-2")}
+          >
+            <Sparkles size="0.8125rem" />
+            Open Agents tab
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="space-y-3">
         <button
@@ -2653,9 +2698,9 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                   </div>
                 </div>
 
-                {agentAddPreview.agent.runtimeDisabled ? (
+                {agentAddPreview.agent.execution === "feature" ? (
                   <p className="rounded-lg bg-[var(--accent)] px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                    This adds instructions to the Roleplay prompt without making a separate model call.
+                    This activates the downloaded feature for this chat. It does not make a separate agent model call.
                   </p>
                 ) : (
                   <div className="grid gap-3 sm:grid-cols-2">

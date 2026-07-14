@@ -5,6 +5,7 @@ import {
   BUILT_IN_TOOLS,
   DEFAULT_AGENT_TOOLS,
   getDefaultAgentPrompt,
+  getBuiltInAgentDefaultPrompt,
   applyQuestUpdatesToPlayerStats,
   applyTrackerFieldLocksToGameStatePatch,
   getDefaultBuiltInAgentSettings,
@@ -192,7 +193,7 @@ type ResolvedRetryAgent = {
   agentModel: string;
 };
 
-const BUILT_IN_AGENT_TYPE_SET = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
+const isBuiltInAgentType = (agentType: string) => BUILT_IN_AGENTS.some((agent) => agent.id === agentType);
 
 function findRetryResultAgent(result: AgentResult, agents: ResolvedRetryAgent[]): ResolvedAgent | null {
   return (
@@ -206,13 +207,13 @@ function customAgentCanApplyRetryResult(
   agents: ResolvedRetryAgent[],
   capability: Parameters<typeof customAgentHasCapability>[1],
 ): boolean {
-  if (BUILT_IN_AGENT_TYPE_SET.has(result.agentType)) return true;
+  if (isBuiltInAgentType(result.agentType)) return true;
   const agent = findRetryResultAgent(result, agents);
   return agent ? customAgentHasCapability(agent.settings, capability) : false;
 }
 
 function customAgentCanEmitRetryResult(result: AgentResult, agents: ResolvedRetryAgent[]): boolean {
-  if (BUILT_IN_AGENT_TYPE_SET.has(result.agentType)) return true;
+  if (isBuiltInAgentType(result.agentType)) return true;
   switch (result.type) {
     case "text_rewrite":
       return customAgentCanApplyRetryResult(result, agents, "edit_messages");
@@ -243,7 +244,7 @@ function applyDefaultBuiltInAgentTools(agentType: string, settings: unknown): Re
     settings && typeof settings === "object" && !Array.isArray(settings)
       ? { ...(settings as Record<string, unknown>) }
       : {};
-  if (!BUILT_IN_AGENT_TYPE_SET.has(agentType)) return next;
+  if (!isBuiltInAgentType(agentType)) return next;
 
   const currentTools = next.enabledTools;
   if (!Array.isArray(currentTools)) {
@@ -460,7 +461,7 @@ function getRetryAgentFallbackPrompt(agentType: string, settings: Record<string,
   if (agentType === "spotify" && musicAgentUsesCustom(settings)) {
     return getDefaultAgentPrompt("local-music");
   }
-  return getDefaultAgentPrompt(agentType);
+  return getBuiltInAgentDefaultPrompt(agentType) || getDefaultAgentPrompt(agentType);
 }
 
 function getGameImageStylePrompt(chat: any, chatMeta: Record<string, unknown>): string {
@@ -2822,7 +2823,7 @@ async function applyRetryResultEffects(args: {
       try {
         if (isAgentWriteApprovalEnvelope(result.data)) continue;
         const resultAgent = findRetryResultAgent(result, resolvedAgents);
-        const isBuiltInLorebookAgent = BUILT_IN_AGENT_TYPE_SET.has(result.agentType);
+        const isBuiltInLorebookAgent = isBuiltInAgentType(result.agentType);
         const customCanEditLorebooks =
           isBuiltInLorebookAgent ||
           (resultAgent ? customAgentHasCapability(resultAgent.settings, "edit_lorebooks") : false);
@@ -2996,7 +2997,7 @@ async function applyRetryResultEffects(args: {
           let imgConnFull = imageConnectionOverride ? await conns.getWithKey(imageConnectionOverride) : null;
           if (imageConnectionOverride && !imgConnFull) {
             logger.warn(
-              "[retry-agents] Illustrator image connection %s could not be resolved; falling back to default Illustrator connection",
+              "[retry-agents] Illustrator image connection %s could not be resolved; falling back to the default Images connection",
               imageConnectionOverride,
             );
           }
@@ -3255,7 +3256,7 @@ async function applyRetryResultEffects(args: {
                 agentType: "illustrator",
                 agentName: illustratorFailureName,
                 error:
-                  "No image generation connection set on the Illustrator agent, and no default Illustrator image connection is configured. Go to Settings -> Connections and mark an image generation connection as the default for Illustrator, or assign one directly in Settings -> Agents -> Illustrator.",
+                  "No image generation connection is set on the Illustrator agent or under Settings -> Connections -> Defaults -> Images. Choose one there, or assign one directly in Settings -> Agents -> Illustrator.",
               },
             });
           }

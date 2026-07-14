@@ -2329,11 +2329,11 @@ function PersonaColorsTab({
                   : { backgroundColor: "rgba(255, 255, 255, 0.12)" }
               }
             >
-              <span className="text-neutral-100">*You step forward confidently.* </span>
+              <span className="text-neutral-100">I turn around and raise my hand. </span>
               <strong
                 style={formData.dialogueColor ? { color: formData.dialogueColor } : { color: "rgb(255, 255, 255)" }}
               >
-                &ldquo;I&apos;m ready for this.&rdquo;
+                &ldquo;General Kenobi.&rdquo;
               </strong>
             </div>
           </div>
@@ -2518,7 +2518,7 @@ function PersonaStatsTab({
               <button
                 type="button"
                 onClick={addBar}
-                className="flex items-center gap-1 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[0.6875rem] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25"
+                className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
               >
                 <Plus size="0.75rem" />
                 Add

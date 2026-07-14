@@ -51,6 +51,8 @@ export * from "./schemas/app-settings.schema.js";
 export * from "./schemas/conversation-call.schema.js";
 export * from "./schemas/noodle.schema.js";
 export * from "./schemas/spatial-context.schema.js";
+export * from "./schemas/capability-package.schema.js";
+export * from "./schemas/folder.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -84,24 +86,6 @@ export * from "./features/folder-packages/manifest-package.js";
 // Turn-game framework (UNO and future turn-based games)
 export * from "./features/turn-games/engine.types.js";
 export * from "./features/turn-games/registry.js";
-export * from "./features/turn-games/uno/types.js";
-export * from "./features/turn-games/uno/tools.js";
-export { unoEngine, cardLabel } from "./features/turn-games/uno/engine.js";
-export * from "./features/turn-games/chess/types.js";
-export * from "./features/turn-games/chess/tools.js";
-export { chessEngine } from "./features/turn-games/chess/engine.js";
-export * from "./features/turn-games/poker/types.js";
-export * from "./features/turn-games/poker/tools.js";
-export { pokerEngine, buildPots } from "./features/turn-games/poker/engine.js";
-export * from "./features/turn-games/eightball/types.js";
-export * from "./features/turn-games/eightball/tools.js";
-export { eightBallEngine } from "./features/turn-games/eightball/engine.js";
-export * from "./features/turn-games/tic-tac-toe/types.js";
-export * from "./features/turn-games/tic-tac-toe/tools.js";
-export { ticTacToeEngine } from "./features/turn-games/tic-tac-toe/engine.js";
-export * from "./features/turn-games/rock-paper-scissors/types.js";
-export * from "./features/turn-games/rock-paper-scissors/tools.js";
-export { rockPaperScissorsEngine } from "./features/turn-games/rock-paper-scissors/engine.js";
 
 // Tactical (grid) combat for Game Mode (classic combat's alternative style)
 export * from "./features/tactical-combat/index.js";

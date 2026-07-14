@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import {
   BUILT_IN_AGENTS,
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
-  DEFAULT_AGENT_PROMPTS,
+  getDefaultAgentPrompt,
   getDefaultBuiltInAgentSettings,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateOptions,
@@ -58,7 +58,7 @@ function normalizedText(value: string): string {
 
 function defaultPromptHashes(agentType: string, currentDefault?: string): Set<string> {
   const hashes = new Set(LEGACY_V1_DEFAULT_AGENT_PROMPT_HASHES[agentType] ?? []);
-  const current = currentDefault ?? DEFAULT_AGENT_PROMPTS[agentType];
+  const current = currentDefault ?? getDefaultAgentPrompt(agentType);
   if (current?.trim()) hashes.add(normalizedPromptHash(current));
   return hashes;
 }

@@ -52,7 +52,6 @@ import {
   ShieldCheck,
   Loader2,
   Wrench,
-  Phone,
 } from "lucide-react";
 import {
   ROLEPLAY_POPOVER_CLOSE_BUTTON,
@@ -77,13 +76,14 @@ import { LorebooksSection } from "../../features/chat-settings/sections/Lorebook
 import { PromptPresetSection } from "../../features/chat-settings/sections/PromptPresetSection";
 import { SceneInstructionsSection } from "../../features/chat-settings/sections/SceneInstructionsSection";
 import { TranslationSection } from "../../features/chat-settings/sections/TranslationSection";
-import { SpatialContextSettingsSection } from "../../features/spatial-context/SpatialContextSettingsSection";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
 import { cn, getAvatarCropStyle, type AvatarCrop } from "../../lib/utils";
 import { showAlertDialog, showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ExpandedTextarea } from "../ui/ExpandedTextarea";
 import { Modal } from "../ui/Modal";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
+import { SettingsSwitch } from "../panels/settings/SettingControls";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
@@ -92,9 +92,9 @@ import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from 
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
 import { useConnections } from "../../hooks/use-connections";
-import { useTTSConfig, useUpdateTTSConfig } from "../../hooks/use-tts";
 import { useKnowledgeSources, useUploadKnowledgeSource } from "../../hooks/use-knowledge-sources";
 import { useGenerate } from "../../hooks/use-generate";
+import { useCapabilityAgentRegistry, useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import {
   useUpdateChat,
   useUpdateChatMetadata,
@@ -133,11 +133,7 @@ import {
   parseCadenceInputValue,
   stepCadenceValue,
 } from "../../lib/agent-cadence";
-import {
-  characterMatchesSearch,
-  getCharacterTitle,
-  parseCharacterDisplayData,
-} from "../../lib/character-display";
+import { characterMatchesSearch, getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { extractCreatorNotesCss } from "../../lib/creator-notes-css";
 import { isLorebookScopeActiveForChat } from "../../lib/lorebook-scope";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
@@ -173,8 +169,6 @@ import type {
   Message,
   PromptPreset,
   WeekSchedule,
-  TTSConfig,
-  TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
@@ -186,7 +180,6 @@ import {
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
-  DEFAULT_AGENT_PROMPTS,
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES,
@@ -197,6 +190,7 @@ import {
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES,
+  getDefaultAgentPrompt,
   GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
@@ -213,9 +207,10 @@ import {
   includesTextForMatch,
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
+  CONVERSATION_COMMAND_AGENT_IDS,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
-  isAgentAvailableInChatMode,
+  isAgentManifestAvailableInChatMode,
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
   isBuiltInAgentRuntimeDisabled,
@@ -406,9 +401,7 @@ function getGameStoryboardPromptTemplateOptions(
   selectedAnimationTemplateId?: string | null,
 ): AgentPromptTemplateOption[] {
   const builtInTemplates =
-    kind === "animation"
-      ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES
-      : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
+    kind === "animation" ? GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES : GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES;
   return [
     ...builtInTemplates,
     ...customTemplates.filter(
@@ -496,10 +489,7 @@ function getGameVideoPromptTemplateOptions(customTemplates: AgentPromptTemplateO
   return [...GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES, ...customTemplates];
 }
 
-function resolveSelectedGameVideoPromptTemplateId(
-  value: unknown,
-  options: AgentPromptTemplateOption[],
-): string {
+function resolveSelectedGameVideoPromptTemplateId(value: unknown, options: AgentPromptTemplateOption[]): string {
   const selected = typeof value === "string" ? value.trim() : "";
   if (selected && options.some((option) => option.id === selected)) return selected;
   return GAME_VIDEO_PROMPT_TEMPLATE_ID;
@@ -771,6 +761,7 @@ type AvailableAgent = {
   phase: AgentPhase;
   builtIn: boolean;
   runtimeDisabled?: boolean;
+  execution?: "pipeline" | "feature";
 };
 
 type DrawerPersona = {
@@ -940,6 +931,7 @@ export function ChatSettingsDrawer({
   const imageSelfieHeight = useUIStore((s) => s.imageSelfieHeight);
   const imageStyleProfiles = useUIStore((s) => s.imageStyleProfiles);
   const openRightPanel = useUIStore((s) => s.openRightPanel);
+  const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
   const setMusicPlayerSource = useUIStore((s) => s.setMusicPlayerSource);
@@ -951,6 +943,8 @@ export function ChatSettingsDrawer({
   const { data: lorebooks } = useLorebooks();
   const { data: presets } = usePresets();
   const { data: defaultPromptPreset } = useDefaultPreset();
+  const { data: installedAgentManifests = [] } = useCapabilityAgentRegistry();
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages(open);
   const chatMode = (chat as unknown as { mode?: ChatMode }).mode ?? "roleplay";
   const isConversation = chatMode === "conversation";
   const isGame = chatMode === "game";
@@ -1035,8 +1029,6 @@ export function ChatSettingsDrawer({
     );
   }, [effectiveModePromptPresetId, fallbackPromptPreset, promptPresetOptions]);
   const { data: connections } = useConnections();
-  const { data: ttsConfig } = useTTSConfig();
-  const updateTtsConfig = useUpdateTTSConfig();
   const imageConnectionsList = useMemo(
     () =>
       ((connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? []).filter(
@@ -1057,16 +1049,6 @@ export function ChatSettingsDrawer({
         (connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? [],
       ),
     [connections],
-  );
-  const patchConversationCallTtsConfig = useCallback(
-    (patch: Partial<TTSConfig>) => {
-      if (!ttsConfig) {
-        toast.error("Conversation call settings are still loading.");
-        return;
-      }
-      updateTtsConfig.mutate({ ...ttsConfig, callSttConnectionId: "", callSttModel: "", ...patch });
-    },
-    [ttsConfig, updateTtsConfig],
   );
   const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
   const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
@@ -1185,14 +1167,6 @@ export function ChatSettingsDrawer({
     [metadata.conversationCommandToggles],
   );
   const conversationCommandsEnabled = metadata.characterCommands !== false;
-  const callAudioEnabled = ttsConfig?.callAudioEnabled === true;
-  const callAudioInputMode = ttsConfig?.callAudioInputMode ?? "local_whisper";
-  const callVideoInputEnabled = ttsConfig?.callVideoInputEnabled === true;
-  const callCharacterVideoEnabled = ttsConfig?.callCharacterVideoEnabled === true;
-  const callAutomaticVideoClipsEnabled =
-    callCharacterVideoEnabled && ttsConfig?.callAutomaticVideoClipsEnabled === true;
-  const callCustomVideoClipsEnabled = callCharacterVideoEnabled && ttsConfig?.callCustomVideoClipsEnabled === true;
-  const callSettingsDisabled = !ttsConfig || updateTtsConfig.isPending;
   const selfieConnectionId = typeof metadata.imageGenConnectionId === "string" ? metadata.imageGenConnectionId : "";
   const selfieCommandAllowed = conversationCommandToggles.selfie !== false;
   const selfieSettingsOpen =
@@ -1213,6 +1187,11 @@ export function ChatSettingsDrawer({
     setSettingsTab("generations");
     openRightPanel("settings");
   }, [openRightPanel, setSettingsTab]);
+  const openDownloadAgents = useCallback(() => {
+    onClose();
+    openRightPanel("agents");
+    openAgentCatalog();
+  }, [onClose, openAgentCatalog, openRightPanel]);
   const inactiveCharacterIds = useMemo<string[]>(
     () =>
       Array.isArray(metadata.inactiveCharacterIds)
@@ -1287,15 +1266,19 @@ export function ChatSettingsDrawer({
     }
     return map;
   }, [agentConfigs]);
+  const installedAgentIds = useMemo(
+    () => new Set(installedAgentManifests.map((agent) => agent.id)),
+    [installedAgentManifests],
+  );
   const deletedBuiltInAgentTypes = useMemo(
     () =>
       new Set(
         ((agentConfigs ?? []) as AgentConfigRow[])
-          .filter((config) => BUILT_IN_AGENTS.some((agent) => agent.id === config.type))
+          .filter((config) => installedAgentIds.has(config.type))
           .filter((config) => isAgentConfigDeleted(config.settings))
           .map((config) => config.type),
       ),
-    [agentConfigs],
+    [agentConfigs, installedAgentIds],
   );
   const activeAgentIds = useMemo<string[]>(
     () =>
@@ -1304,6 +1287,27 @@ export function ChatSettingsDrawer({
       ),
     [deletedBuiltInAgentTypes, metadata.activeAgentIds],
   );
+  const mapsPackage = installedCapabilities.find(
+    (item) =>
+      item.status === "active" &&
+      item.manifest.kind.includes("maps") &&
+      item.manifest.entrypoints.client &&
+      activeAgentIds.includes(item.id),
+  );
+  const callsPackage = installedCapabilities.find(
+    (item) =>
+      item.status === "active" &&
+      item.manifest.kind.includes("conversation-calls") &&
+      item.manifest.entrypoints.client,
+  );
+  const availableConversationCommandOptions = useMemo(() => {
+    return CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => {
+      const agentId = CONVERSATION_COMMAND_AGENT_IDS[command.id];
+      return !agentId || installedAgentIds.has(agentId);
+    });
+  }, [installedAgentIds]);
+  const hasConversationCommands = availableConversationCommandOptions.length > 0;
+  const illustratorInstalled = installedAgentIds.has("illustrator");
   const readLatestActiveAgentIds = useCallback(() => {
     const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
     const ids = latestChat ? getChatActiveAgentIds(latestChat) : [...activeAgentIds];
@@ -1450,7 +1454,7 @@ export function ChatSettingsDrawer({
       const settings = mergeBuiltInAgentSettings(agentId, cfg?.settings);
       return getAgentPromptTemplateOptions({
         promptTemplate: cfg?.promptTemplate || "",
-        fallbackPromptTemplate: DEFAULT_AGENT_PROMPTS[agentId] || "",
+        fallbackPromptTemplate: getDefaultAgentPrompt(agentId),
         settings,
       });
     },
@@ -1468,9 +1472,9 @@ export function ChatSettingsDrawer({
   // Custom agents are user-authored and can be attached to any chat mode.
   const availableAgents = useMemo(() => {
     const agents: AvailableAgent[] = [];
-    for (const a of BUILT_IN_AGENTS) {
+    for (const a of installedAgentManifests) {
       if (a.libraryHidden) continue;
-      if (!isAgentAvailableInChatMode(chatMode, a.id)) continue;
+      if (!isAgentManifestAvailableInChatMode(chatMode, a)) continue;
       if (isAgentHiddenFromChatSettingsPicker(chatMode, a.id)) continue;
       const existing = agentConfigsByType.get(a.id);
       if (existing && isAgentConfigDeleted(existing.settings)) continue;
@@ -1482,6 +1486,7 @@ export function ChatSettingsDrawer({
         phase: normalizeAgentPhaseForType(a.id, existing?.phase ?? a.phase),
         builtIn: true,
         runtimeDisabled: isBuiltInAgentRuntimeDisabled(a.id),
+        execution: a.execution,
       });
     }
     // Custom agents from DB
@@ -1489,7 +1494,7 @@ export function ChatSettingsDrawer({
       for (const c of agentConfigs as AgentConfigRow[]) {
         if (isAgentConfigDeleted(c.settings)) continue;
         if (isRetiredBuiltInAgentId(c.type)) continue;
-        if (!BUILT_IN_AGENTS.some((b) => b.id === c.type)) {
+        if (!installedAgentIds.has(c.type)) {
           agents.push({
             id: c.type,
             name: c.name,
@@ -1498,12 +1503,13 @@ export function ChatSettingsDrawer({
             phase: normalizeAgentPhaseForType(c.type, c.phase),
             builtIn: false,
             runtimeDisabled: false,
+            execution: "pipeline",
           });
         }
       }
     }
     return agents;
-  }, [agentConfigs, agentConfigsByType, chatMode]);
+  }, [agentConfigs, agentConfigsByType, chatMode, installedAgentIds, installedAgentManifests]);
   const visibleActiveAgentIds = useMemo(
     () => activeAgentIds.filter((agentId) => availableAgents.some((agent) => agent.id === agentId)),
     [activeAgentIds, availableAgents],
@@ -1548,14 +1554,14 @@ export function ChatSettingsDrawer({
   const getAgentDisplayMeta = useCallback(
     (agentId: string, fallback: { name: string; description: string }) => {
       const available = availableAgents.find((agent) => agent.id === agentId);
-      const builtIn = BUILT_IN_AGENTS.find((agent) => agent.id === agentId);
+      const builtIn = installedAgentManifests.find((agent) => agent.id === agentId);
       const config = agentConfigsByType.get(agentId);
       return {
         name: available?.name ?? builtIn?.name ?? config?.name ?? fallback.name,
         description: available?.description ?? config?.description ?? builtIn?.description ?? fallback.description,
       };
     },
-    [agentConfigsByType, availableAgents],
+    [agentConfigsByType, availableAgents, installedAgentManifests],
   );
   const lorebookKeeperAgentMeta = getAgentDisplayMeta("lorebook-keeper", {
     name: "Lorebook Keeper",
@@ -1587,7 +1593,7 @@ export function ChatSettingsDrawer({
   });
   const illustratorAgentMeta = getAgentDisplayMeta("illustrator", {
     name: "Illustrator",
-    description: "Generates image prompts for key scenes (requires image generation API).",
+    description: "Responsible for image and video generations.",
   });
   const echoChamberAgentMeta = getAgentDisplayMeta("echo-chamber", {
     name: "Echo Chamber",
@@ -1622,7 +1628,7 @@ export function ChatSettingsDrawer({
       const promptTemplate = resolveAgentPromptTemplate({
         agentType: id,
         promptTemplate: cfg?.promptTemplate || "",
-        fallbackPromptTemplate: DEFAULT_AGENT_PROMPTS[id] || "",
+        fallbackPromptTemplate: getDefaultAgentPrompt(id),
         settings,
         selectedPromptTemplateId: agentPromptTemplateSelections[id] ?? null,
       });
@@ -1732,9 +1738,7 @@ export function ChatSettingsDrawer({
   const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
   const selectedGameGmPromptTemplateId = useMemo(() => {
     const selected = typeof metadata.gameGmPromptTemplateId === "string" ? metadata.gameGmPromptTemplateId.trim() : "";
-    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected)
-      ? selected
-      : null;
+    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected) ? selected : null;
   }, [metadata.gameGmPromptTemplateId]);
   const updateGameGmPromptTemplateSelection = useCallback(
     (templateId: string | null) => {
@@ -1891,7 +1895,10 @@ export function ChatSettingsDrawer({
     ],
   );
   const patchGameStoryboardPromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameStoryboardPromptTemplates(
         gameStoryboardPromptTemplates.map((template) =>
           template.id === templateId ? { ...template, ...patch } : template,
@@ -1968,14 +1975,13 @@ export function ChatSettingsDrawer({
         createGameStoryboardImageCustomPromptTemplate(gameStoryboardImagePromptTemplates, source),
       ]);
     },
-    [
-      gameStoryboardImagePromptOptions,
-      gameStoryboardImagePromptTemplates,
-      updateGameStoryboardImagePromptTemplates,
-    ],
+    [gameStoryboardImagePromptOptions, gameStoryboardImagePromptTemplates, updateGameStoryboardImagePromptTemplates],
   );
   const patchGameStoryboardImagePromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameStoryboardImagePromptTemplates(
         gameStoryboardImagePromptTemplates.map((template) =>
           template.id === templateId ? { ...template, ...patch } : template,
@@ -2061,7 +2067,8 @@ export function ChatSettingsDrawer({
   const addGameVideoPromptTemplate = useCallback(
     (sourceTemplateId: string) => {
       const source =
-        gameVideoPromptOptions.find((option) => option.id === sourceTemplateId) ?? GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0];
+        gameVideoPromptOptions.find((option) => option.id === sourceTemplateId) ??
+        GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES[0];
       updateGameVideoPromptTemplates([
         ...gameVideoPromptTemplates,
         createGameVideoCustomPromptTemplate(gameVideoPromptTemplates, source),
@@ -2070,11 +2077,12 @@ export function ChatSettingsDrawer({
     [gameVideoPromptOptions, gameVideoPromptTemplates, updateGameVideoPromptTemplates],
   );
   const patchGameVideoPromptTemplate = useCallback(
-    (templateId: string, patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>) => {
+    (
+      templateId: string,
+      patch: Partial<Pick<AgentPromptTemplateOption, "name" | "description" | "promptTemplate">>,
+    ) => {
       updateGameVideoPromptTemplates(
-        gameVideoPromptTemplates.map((template) =>
-          template.id === templateId ? { ...template, ...patch } : template,
-        ),
+        gameVideoPromptTemplates.map((template) => (template.id === templateId ? { ...template, ...patch } : template)),
       );
     },
     [gameVideoPromptTemplates, updateGameVideoPromptTemplates],
@@ -3305,7 +3313,7 @@ export function ChatSettingsDrawer({
 
     const { agent, config, contextSize, maxTokens, runInterval, setup } = agentAddPreview;
     const normalizedMaxTokens = normalizeAgentMaxTokens(maxTokens);
-    const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.id) ?? null;
+    const builtInMeta = installedAgentManifests.find((entry) => entry.id === agent.id) ?? null;
     let nextSettings: Record<string, unknown> = {
       ...mergeBuiltInAgentSettings(agent.id, config?.settings),
       contextSize,
@@ -3329,7 +3337,9 @@ export function ChatSettingsDrawer({
 
     setAddingAgentToChat(true);
     try {
-      if (config) {
+      if (builtInMeta?.execution === "feature") {
+        // Feature packages own their settings and runtime; chat activation is enough.
+      } else if (config) {
         await updateAgentConfig.mutateAsync({ id: config.id, settings: nextSettings });
       } else if (builtInMeta) {
         await createAgent.mutateAsync({
@@ -3366,7 +3376,7 @@ export function ChatSettingsDrawer({
 
   const ensureMusicDjAgent = useCallback(
     async (provider: MusicProvider) => {
-      const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === "spotify");
+      const builtInMeta = installedAgentManifests.find((entry) => entry.id === "spotify");
       if (!builtInMeta) throw new Error("Music DJ agent metadata is missing.");
       const config = agentConfigsByType.get("spotify") ?? null;
       const nextSettings: Record<string, unknown> = {
@@ -3392,7 +3402,7 @@ export function ChatSettingsDrawer({
         settings: nextSettings,
       });
     },
-    [agentConfigsByType, createAgent, customMusicFolder, updateAgentConfig],
+    [agentConfigsByType, createAgent, customMusicFolder, installedAgentManifests, updateAgentConfig],
   );
 
   const changeMusicDjProvider = useCallback(
@@ -3522,6 +3532,7 @@ export function ChatSettingsDrawer({
     ? getAgentRunIntervalMeta(agentAddPreview.agent.id, agentAddPreview.agent.builtIn)
     : null;
   const agentAddIsRuntimeDisabled = agentAddPreview?.agent.runtimeDisabled === true;
+  const agentAddIsFeature = agentAddPreview?.agent.execution === "feature";
 
   const snapshotCurrentPresetSettings = useCallback((): ChatPresetSettings => {
     return {
@@ -3803,9 +3814,7 @@ export function ChatSettingsDrawer({
                 </div>
                 <AgentPromptTemplateSelect
                   options={promptOptions}
-                  selectedId={
-                    agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)
-                  }
+                  selectedId={agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)}
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -4368,9 +4377,7 @@ export function ChatSettingsDrawer({
                 >
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    )
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch))
                     .map((c) => {
                       const name = charName(c);
                       const title = charTitle(c);
@@ -4693,9 +4700,7 @@ export function ChatSettingsDrawer({
                 >
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    )
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch))
                     .map((c) => {
                       const name = charName(c);
                       const title = charTitle(c);
@@ -4737,9 +4742,7 @@ export function ChatSettingsDrawer({
                     })}
                   {selectableCharacters
                     .filter((c) => !chatCharIds.includes(c.id))
-                    .filter(
-                      (c) => characterMatchesSearch(getCharacterInfo(c), charSearch),
-                    ).length === 0 && (
+                    .filter((c) => characterMatchesSearch(getCharacterInfo(c), charSearch)).length === 0 && (
                     <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                       {selectableCharacters.filter((c) => !chatCharIds.includes(c.id)).length === 0
                         ? "All characters already added."
@@ -5428,9 +5431,12 @@ export function ChatSettingsDrawer({
                     <div className="mt-2 space-y-1.5">
                       <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Edit schedules</span>
                       {chatCharIds.map((charId) => {
-                        const schedule = (metadata.characterSchedules as Record<string, WeekSchedule> | undefined)?.[charId];
+                        const schedule = (metadata.characterSchedules as Record<string, WeekSchedule> | undefined)?.[
+                          charId
+                        ];
                         const scheduledDayCount = schedule?.days
-                          ? Object.values(schedule.days).filter((blocks) => Array.isArray(blocks) && blocks.length > 0).length
+                          ? Object.values(schedule.days).filter((blocks) => Array.isArray(blocks) && blocks.length > 0)
+                              .length
                           : 0;
                         return (
                           <button
@@ -5457,611 +5463,283 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {/* Commands — conversation mode only */}
+          {/* Conversation feature packages expose commands and settings as soon as they are installed. */}
           {isConversation && (
             <Section
-              label="Commands"
+              style={{ order: CHAT_SETTINGS_ORDER.agents }}
+              label="Agents"
               icon={<Sparkles size="0.875rem" />}
-              help="Allow characters to use hidden command tags for actions that happen outside the visible message."
+              help="Configure Conversation commands and the settings supplied by installed feature packages."
             >
               <div className="space-y-3">
-                <button
-                  onClick={() => {
-                    updateMeta.mutate({ id: chat.id, characterCommands: !conversationCommandsEnabled });
-                  }}
-                  className={cn(
-                    "mari-chat-option-field flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                    conversationCommandsEnabled && "mari-chat-option-field--active",
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <span className="text-xs font-medium">Commands</span>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Allow models to interact with you via commands. This way, they can send you selfies, play songs
-                      for you, change their schedules, start scenes, and do much more!
-                    </p>
-                  </div>
-                  <div
-                    className={cn(
-                      "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                      conversationCommandsEnabled && "mari-chat-option-switch--active",
-                    )}
-                  >
-                    <div
+                {hasConversationCommands && (
+                  <div className="space-y-3">
+                    <SettingsSwitch
+                      label="Commands"
+                      description="Allow models to interact with you through installed commands, including schedules, scenes, media, reactions, and games."
+                      checked={conversationCommandsEnabled}
+                      onChange={(enabled) => updateMeta.mutate({ id: chat.id, characterCommands: enabled })}
+                      labelPosition="start"
                       className={cn(
-                        "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                        conversationCommandsEnabled && "translate-x-3.5",
+                        "justify-between rounded-lg px-3 py-2.5 text-left",
+                        conversationCommandsEnabled
+                          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
                       )}
+                      labelClassName="text-xs font-medium"
                     />
-                  </div>
-                </button>
 
-                {conversationCommandsEnabled && (
-                  <div className="grid gap-1.5 sm:grid-cols-2">
-                    {CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => command.id !== "selfie").map((command) => {
-                      const enabled = isConversationCommandToggleEnabled(conversationCommandToggles, command.id);
-                      return (
-                        <button
-                          key={command.id}
-                          type="button"
-                          onClick={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              conversationCommandToggles: {
-                                ...conversationCommandToggles,
-                                [command.id]: !enabled,
-                              },
-                            })
-                          }
-                          className={cn(
-                            "mari-chat-option-field flex min-h-[4.125rem] items-start justify-between gap-2 rounded-lg px-3 py-2 text-left transition-all",
-                            enabled && "mari-chat-option-field--active",
-                          )}
-                          aria-pressed={enabled}
-                        >
+                    {conversationCommandsEnabled && (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {availableConversationCommandOptions.map((command) => {
+                          const enabled = isConversationCommandToggleEnabled(conversationCommandToggles, command.id);
+                          return (
+                            <SettingsSwitch
+                              key={command.id}
+                              label={command.label}
+                              description={command.description}
+                              checked={enabled}
+                              onChange={(nextEnabled) =>
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  conversationCommandToggles: {
+                                    ...conversationCommandToggles,
+                                    [command.id]: nextEnabled,
+                                  },
+                                })
+                              }
+                              labelPosition="start"
+                              className={cn(
+                                "h-full min-h-[4.125rem] items-center justify-between rounded-lg px-3 py-2.5 text-left",
+                                enabled
+                                  ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                                  : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+                              )}
+                              labelClassName="text-[0.6875rem] font-medium"
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {illustratorInstalled && (
+                      <div
+                        className={cn(
+                          "mari-chat-option-field space-y-3 rounded-lg px-3 py-2.5 transition-all",
+                          selfieFeatureEnabled && "mari-chat-option-field--active",
+                        )}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)]">
+                            <Image size="0.875rem" />
+                          </div>
                           <div className="min-w-0 flex-1">
-                            <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                              {command.label}
+                            <span className="block text-xs font-medium text-[var(--foreground)]">
+                              Illustrator Settings
                             </span>
-                            <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                              {command.description}
+                            <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                              Configure Illustrator&apos;s [selfie] command, image connection, prompt model, style,
+                              references, and resolution for this conversation.
                             </p>
                           </div>
-                          <div
-                            className={cn(
-                              "mari-chat-option-switch mt-0.5 h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                              enabled && "mari-chat-option-switch--active",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                enabled && "translate-x-3",
-                              )}
-                            />
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <div
-                  className={cn(
-                    "mari-chat-option-field space-y-3 rounded-lg px-3 py-2.5 transition-all",
-                    (metadata.conversationCallsEnabled === true || callAudioEnabled) &&
-                      "mari-chat-option-field--active",
-                  )}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)]">
-                      <Phone size="0.875rem" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-xs font-medium text-[var(--foreground)]">Conversation Calls</span>
-                      <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                        Per-chat call access, microphone handling, camera/screen input, and character video setup.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateMeta.mutate({
-                          id: chat.id,
-                          conversationCallsEnabled: metadata.conversationCallsEnabled === true ? false : true,
-                        });
-                      }}
-                      className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                          Audio/Video Calls
-                        </span>
-                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                          Show the call button for you in this conversation.
-                        </p>
-                      </div>
-                      <div
-                        className={cn(
-                          "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                          metadata.conversationCallsEnabled === true && "mari-chat-option-switch--active",
-                        )}
-                      >
-                        <div
-                          className={cn(
-                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                            metadata.conversationCallsEnabled === true && "translate-x-3.5",
-                          )}
-                        />
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateMeta.mutate({
-                          id: chat.id,
-                          conversationCallVoiceCues: metadata.conversationCallVoiceCues === false ? true : false,
-                        });
-                      }}
-                      className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                          Generate voice cues in [tags]
-                        </span>
-                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                          Ask call models for cues like [whispering], [laughing], and [sighs] for TTS/video timing.
-                        </p>
-                      </div>
-                      <div
-                        className={cn(
-                          "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                          metadata.conversationCallVoiceCues !== false && "mari-chat-option-switch--active",
-                        )}
-                      >
-                        <div
-                          className={cn(
-                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                            metadata.conversationCallVoiceCues !== false && "translate-x-3.5",
-                          )}
-                        />
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={callSettingsDisabled}
-                      onClick={() => {
-                        patchConversationCallTtsConfig({
-                          callAudioEnabled: !callAudioEnabled,
-                          ...(!callAudioEnabled ? { callAudioInputMode: "local_whisper" } : {}),
-                        });
-                      }}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50",
-                        callSettingsDisabled && "cursor-not-allowed opacity-60 hover:bg-[var(--background)]/35",
-                      )}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                          Call Audio Pipeline
-                        </span>
-                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                          Request microphone access, listen while unmuted, and transcribe speech into the call.
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {updateTtsConfig.isPending && <Loader2 size="0.75rem" className="animate-spin" />}
-                        <div
-                          className={cn(
-                            "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                            callAudioEnabled && "mari-chat-option-switch--active",
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                              callAudioEnabled && "translate-x-3.5",
-                            )}
-                          />
                         </div>
-                      </div>
-                    </button>
-                  </div>
 
-                  {callAudioEnabled ? (
-                    <div className="space-y-2 border-t border-[var(--border)]/60 pt-3">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Audio input mode</span>
-                        <select
-                          value={callAudioInputMode}
-                          disabled={callSettingsDisabled}
-                          onChange={(event) =>
-                            patchConversationCallTtsConfig({
-                              callAudioInputMode: event.target.value as TTSConversationCallAudioInputMode,
-                            })
-                          }
-                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <option value="local_whisper">Mic recording + Local Whisper</option>
-                          <option value="transcribe">Browser speech recognition</option>
-                          <option value="system">Manual system dictation</option>
-                          <option value="auto">Provider-native audio/video</option>
-                        </select>
-                        <span className="text-[0.55rem] leading-snug text-[var(--muted-foreground)]">
-                          Local Whisper records mic audio while you are unmuted, ignores silence, and transcribes speech
-                          locally. Browser speech uses Web Speech where supported and falls back to Local Whisper when
-                          it is not. Manual system dictation only focuses the call input so OS dictation can type there.
-                          Provider-native mode sends media to the selected conversation model.
-                        </span>
-                      </label>
-
-                      <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
                         <button
                           type="button"
-                          disabled={callSettingsDisabled}
-                          onClick={() =>
-                            patchConversationCallTtsConfig({ callVideoInputEnabled: !callVideoInputEnabled })
-                          }
-                          className={cn(
-                            "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
-                            callVideoInputEnabled && "mari-chat-option-field--active",
-                            callSettingsDisabled && "cursor-not-allowed opacity-60",
-                          )}
+                          onClick={openGenerationSettings}
+                          className="mari-chat-option-field flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/60"
+                          title="Open Settings, Generations"
                         >
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
-                            Camera and screen input
-                          </span>
-                          <div
-                            className={cn(
-                              "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                              callVideoInputEnabled && "mari-chat-option-switch--active",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                callVideoInputEnabled && "translate-x-3",
-                              )}
-                            />
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={callSettingsDisabled}
-                          onClick={() =>
-                            patchConversationCallTtsConfig({
-                              callCharacterVideoEnabled: !callCharacterVideoEnabled,
-                              ...(!callCharacterVideoEnabled
-                                ? {}
-                                : {
-                                    callAutomaticVideoClipsEnabled: false,
-                                    callCustomVideoClipsEnabled: false,
-                                  }),
-                            })
-                          }
-                          className={cn(
-                            "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
-                            callCharacterVideoEnabled && "mari-chat-option-field--active",
-                            callSettingsDisabled && "cursor-not-allowed opacity-60",
-                          )}
-                        >
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
-                            Character video presence
-                          </span>
-                          <div
-                            className={cn(
-                              "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                              callCharacterVideoEnabled && "mari-chat-option-switch--active",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                callCharacterVideoEnabled && "translate-x-3",
-                              )}
-                            />
-                          </div>
-                        </button>
-                        {callCharacterVideoEnabled ? (
-                          <button
-                            type="button"
-                            disabled={callSettingsDisabled}
-                            onClick={() =>
-                              patchConversationCallTtsConfig({
-                                callAutomaticVideoClipsEnabled: !callAutomaticVideoClipsEnabled,
-                              })
-                            }
-                            className={cn(
-                              "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
-                              callAutomaticVideoClipsEnabled && "mari-chat-option-field--active",
-                              callSettingsDisabled && "cursor-not-allowed opacity-60",
-                            )}
-                          >
-                            <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
-                              Automatic video clips generation
+                          <Settings2 size="0.8125rem" className="shrink-0 text-[var(--primary)]" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                              Image generation settings
                             </span>
-                            <div
-                              className={cn(
-                                "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                                callAutomaticVideoClipsEnabled && "mari-chat-option-switch--active",
-                              )}
-                            >
-                              <div
-                                className={cn(
-                                  "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                  callAutomaticVideoClipsEnabled && "translate-x-3",
-                                )}
-                              />
-                            </div>
-                          </button>
-                        ) : null}
-                        {callCharacterVideoEnabled ? (
-                          <button
-                            type="button"
-                            disabled={callSettingsDisabled}
-                            onClick={() =>
-                              patchConversationCallTtsConfig({
-                                callCustomVideoClipsEnabled: !callCustomVideoClipsEnabled,
-                              })
-                            }
-                            className={cn(
-                              "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
-                              callCustomVideoClipsEnabled && "mari-chat-option-field--active",
-                              callSettingsDisabled && "cursor-not-allowed opacity-60",
-                            )}
-                          >
-                            <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Custom clips</span>
-                            <div
-                              className={cn(
-                                "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                                callCustomVideoClipsEnabled && "mari-chat-option-switch--active",
-                              )}
-                            >
-                              <div
-                                className={cn(
-                                  "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                  callCustomVideoClipsEnabled && "translate-x-3",
-                                )}
-                              />
-                            </div>
-                          </button>
-                        ) : null}
-                      </div>
-                      {callCharacterVideoEnabled && (
-                        <p className="text-[0.55rem] leading-snug text-[var(--muted-foreground)]">
-                          Character video presence uses Clips from Characters Sprites. The Automatic video clips
-                          generation generates cached idle and talking clips from character avatars. Custom clips let
-                          characters sparsely create one-off requested clips.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                      Turn on the call audio pipeline here to use local mic transcription, browser speech recognition,
-                      manual system dictation, optional provider-native audio/video input, and call controls.
-                    </p>
-                  )}
-                </div>
-
-                <div
-                  className={cn(
-                    "mari-chat-option-field space-y-3 rounded-lg px-3 py-2.5 transition-all",
-                    selfieFeatureEnabled && "mari-chat-option-field--active",
-                  )}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)]">
-                      <Image size="0.875rem" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-xs font-medium text-[var(--foreground)]">Selfies</span>
-                      <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                        Let characters use [selfie], then choose the image connection, prompt model, style, references,
-                        and resolution.
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={openGenerationSettings}
-                    className="mari-chat-option-field flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/60"
-                    title="Open Settings, Generations"
-                  >
-                    <Settings2 size="0.8125rem" className="shrink-0 text-[var(--primary)]" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                        Image generation settings
-                      </span>
-                      <span className="mt-0.5 block text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                        Adjust generation behavior, image sizes, and styles in Settings → Generations.
-                      </span>
-                    </span>
-                    <ChevronRight size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={toggleConversationSelfies}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
-                        Generated Selfies
-                      </span>
-                      <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                        Enable the Selfies command for this conversation.
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                        selfieFeatureEnabled && "mari-chat-option-switch--active",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                          selfieFeatureEnabled && "translate-x-3.5",
-                        )}
-                      />
-                    </div>
-                  </button>
-
-                  {selfieSettingsOpen ? (
-                    <div className="space-y-2 border-t border-[var(--border)]/60 pt-3">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Selfie Connection</span>
-                        <select
-                          value={selfieConnectionId}
-                          onChange={(e) =>
-                            updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
-                          }
-                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                        >
-                          <option value="">None (selfies disabled)</option>
-                          {imageConnectionsList.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} ({c.provider})
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {renderIllustratorPromptConnectionSelect()}
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
-                        <select
-                          value={(metadata.imageStyleProfileId as string) ?? ""}
-                          onChange={(e) =>
-                            updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
-                          }
-                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                        >
-                          <option value="">Use default style from Style Profiles in Advanced settings</option>
-                          {imageStyleProfiles.profiles.map((profile) => (
-                            <option key={profile.id} value={profile.id}>
-                              {profile.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <AgentSettingsToggle
-                        label="Send Avatar References"
-                        description="Send the matching character avatar or sprite as a reference image for generated selfies when the provider supports it."
-                        enabled={selfieUseAvatarReferences}
-                        onToggle={() =>
-                          updateMeta.mutate({
-                            id: chat.id,
-                            selfieUseAvatarReferences: !selfieUseAvatarReferences,
-                          })
-                        }
-                      />
-                      <AgentSettingsToggle
-                        label="Attach Card Appearance"
-                        description="Append the matching character card appearance text to generated selfie prompts."
-                        enabled={selfieIncludeCharacterAppearance}
-                        onToggle={() =>
-                          updateMeta.mutate({
-                            id: chat.id,
-                            selfieIncludeCharacterAppearance: !selfieIncludeCharacterAppearance,
-                          })
-                        }
-                      />
-                      <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                        Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt;
-                        the selfie connection renders the final image.
-                      </p>
-
-                      {selfieConnectionId ? (
-                        <div className="mt-2 space-y-1">
-                          <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
-                            Resolution
+                            <span className="mt-0.5 block text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                              Adjust generation behavior, image sizes, and styles in Settings → Generations.
+                            </span>
                           </span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {[
-                              { label: "512x512", w: 512, h: 512 },
-                              { label: "512x768", w: 512, h: 768 },
-                              { label: "768x768", w: 768, h: 768 },
-                              { label: "768x1024", w: 768, h: 1024 },
-                              { label: "896x1152", w: 896, h: 1152 },
-                              { label: "1024x1024", w: 1024, h: 1024 },
-                            ].map((opt) => {
-                              const current =
-                                (metadata.selfieResolution as string) ?? `${imageSelfieWidth}x${imageSelfieHeight}`;
-                              const val = `${opt.w}x${opt.h}`;
-                              const active = current === val;
-                              return (
-                                <button
-                                  key={val}
-                                  type="button"
-                                  onClick={() => updateMeta.mutate({ id: chat.id, selfieResolution: val })}
-                                  className={cn(
-                                    "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
-                                    active
-                                      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                                  )}
-                                >
-                                  {opt.label}
-                                </button>
-                              );
-                            })}
+                          <ChevronRight size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                        </button>
+
+                        <AgentSettingsToggle
+                          label="Generated Selfies"
+                          description="Enable Illustrator's Selfies command for this conversation."
+                          enabled={selfieFeatureEnabled}
+                          onToggle={toggleConversationSelfies}
+                        />
+
+                        {selfieSettingsOpen ? (
+                          <div className="space-y-2 border-t border-[var(--border)]/60 pt-3">
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
+                                Selfie Connection
+                              </span>
+                              <select
+                                value={selfieConnectionId}
+                                onChange={(e) =>
+                                  updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
+                                }
+                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                              >
+                                <option value="">None (selfies disabled)</option>
+                                {imageConnectionsList.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name} ({c.provider})
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            {renderIllustratorPromptConnectionSelect()}
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
+                              <select
+                                value={(metadata.imageStyleProfileId as string) ?? ""}
+                                onChange={(e) =>
+                                  updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
+                                }
+                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                              >
+                                <option value="">Use default style from Style Profiles in Advanced settings</option>
+                                {imageStyleProfiles.profiles.map((profile) => (
+                                  <option key={profile.id} value={profile.id}>
+                                    {profile.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <AgentSettingsToggle
+                              label="Send Avatar References"
+                              description="Send the matching character avatar or sprite as a reference image for generated selfies when the provider supports it."
+                              enabled={selfieUseAvatarReferences}
+                              onToggle={() =>
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  selfieUseAvatarReferences: !selfieUseAvatarReferences,
+                                })
+                              }
+                            />
+                            <AgentSettingsToggle
+                              label="Attach Card Appearance"
+                              description="Append the matching character card appearance text to generated selfie prompts."
+                              enabled={selfieIncludeCharacterAppearance}
+                              onToggle={() =>
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  selfieIncludeCharacterAppearance: !selfieIncludeCharacterAppearance,
+                                })
+                              }
+                            />
+                            <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                              Used for character selfies when Commands are enabled. The prompt model writes the selfie
+                              prompt; the selfie connection renders the final image.
+                            </p>
+
+                            {selfieConnectionId ? (
+                              <div className="mt-2 space-y-1">
+                                <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                                  Resolution
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {[
+                                    { label: "512x512", w: 512, h: 512 },
+                                    { label: "512x768", w: 512, h: 768 },
+                                    { label: "768x768", w: 768, h: 768 },
+                                    { label: "768x1024", w: 768, h: 1024 },
+                                    { label: "896x1152", w: 896, h: 1152 },
+                                    { label: "1024x1024", w: 1024, h: 1024 },
+                                  ].map((opt) => {
+                                    const current =
+                                      (metadata.selfieResolution as string) ??
+                                      `${imageSelfieWidth}x${imageSelfieHeight}`;
+                                    const val = `${opt.w}x${opt.h}`;
+                                    const active = current === val;
+                                    return (
+                                      <button
+                                        key={val}
+                                        type="button"
+                                        onClick={() => updateMeta.mutate({ id: chat.id, selfieResolution: val })}
+                                        className={cn(
+                                          "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
+                                          active
+                                            ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                                            : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                                        )}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                                Choose a Selfie Connection to let characters generate selfie images.
+                              </p>
+                            )}
                           </div>
-                        </div>
-                      ) : (
-                        <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                          Choose a Selfie Connection to let characters generate selfie images.
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
-                      Turn on Selfies to reveal connection, prompt model, image style, reference, and resolution
-                      settings.
-                    </p>
-                  )}
-                </div>
+                        ) : (
+                          <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                            Turn on Selfies to reveal connection, prompt model, image style, reference, and resolution
+                            settings.
+                          </p>
+                        )}
+                      </div>
+                    )}
 
-                {/* Schedule generation preferences — free-form authorial guidance */}
-                <label className="flex flex-col gap-1.5">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-                    Schedule generation preferences
-                    <HelpTooltip text="Free-form guidance that steers how character schedules are generated. Both directives ('no characters past midnight') and factual constraints ('I work 9-5') work. This setting is global, it applies to every conversation chat." />
-                  </span>
-                  <textarea
-                    value={scheduleGenerationPreferences}
-                    onChange={(e) => setScheduleGenerationPreferences(e.target.value)}
-                    placeholder="e.g. Make everyone go to sleep before midnight. Give characters free time 10am-noon. I work 9-5 on weekdays."
-                    className="min-h-[5rem] resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2.5 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 placeholder:text-[var(--muted-foreground)]/40"
-                  />
-                  <p className="text-[0.59375rem] text-[var(--muted-foreground)]/70">
-                    Global setting. Applies to every conversation chat&apos;s next schedule regeneration, manual or
-                    weekly auto.
-                  </p>
-                </label>
+                    {callsPackage ? (
+                      <div className="min-w-0">
+                        <CapabilityElement
+                          packageId={callsPackage.id}
+                          view="settings"
+                          capabilityProps={{
+                            chatId: chat.id,
+                            metadata,
+                            updateMetadata: (patch: Record<string, unknown>) =>
+                              updateMeta.mutate({ id: chat.id, ...patch }),
+                          }}
+                          className="block"
+                        />
+                      </div>
+                    ) : null}
 
-                {/* Active schedule-generation preference indicator */}
-                {scheduleGenerationPreferences.trim() && (
-                  <div
-                    className="rounded-lg border border-[var(--primary)]/30 bg-[var(--primary)]/10 px-3 py-2.5"
-                    title={scheduleGenerationPreferences.trim()}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-[0.6875rem] font-medium leading-snug text-[var(--foreground)]">
-                        Schedule generation preference active
+                    {/* Schedule generation preferences — free-form authorial guidance */}
+                    <label className="flex flex-col gap-1.5">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                        Schedule generation preferences
+                        <HelpTooltip text="Free-form guidance that steers how character schedules are generated. Both directives ('no characters past midnight') and factual constraints ('I work 9-5') work. This setting is global, it applies to every conversation chat." />
                       </span>
-                      <p className="mt-0.5 truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
-                        "{scheduleGenerationPreferences.trim()}"
+                      <textarea
+                        value={scheduleGenerationPreferences}
+                        onChange={(e) => setScheduleGenerationPreferences(e.target.value)}
+                        placeholder="e.g. Make everyone go to sleep before midnight. Give characters free time 10am-noon. I work 9-5 on weekdays."
+                        className="min-h-[5rem] resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2.5 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 placeholder:text-[var(--muted-foreground)]/40"
+                      />
+                      <p className="text-[0.59375rem] text-[var(--muted-foreground)]/70">
+                        Global setting. Applies to every conversation chat&apos;s next schedule regeneration, manual or
+                        weekly auto.
                       </p>
-                      <p className="mt-1 text-[0.59375rem] text-[var(--muted-foreground)]/70">
-                        Will be applied the next time schedules are regenerated.
-                      </p>
-                    </div>
+                    </label>
+
+                    {/* Active schedule-generation preference indicator */}
+                    {scheduleGenerationPreferences.trim() && (
+                      <div
+                        className="rounded-lg border border-[var(--primary)]/30 bg-[var(--primary)]/10 px-3 py-2.5"
+                        title={scheduleGenerationPreferences.trim()}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-[0.6875rem] font-medium leading-snug text-[var(--foreground)]">
+                            Schedule generation preference active
+                          </span>
+                          <p className="mt-0.5 truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                            "{scheduleGenerationPreferences.trim()}"
+                          </p>
+                          <p className="mt-1 text-[0.59375rem] text-[var(--muted-foreground)]/70">
+                            Will be applied the next time schedules are regenerated.
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -6386,14 +6064,12 @@ export function ChatSettingsDrawer({
             </Section>
           )}
 
-          {(chatMode === "roleplay" || chatMode === "game") && (
-            <SpatialContextSettingsSection
-              chatId={chat.id}
-              style={{ order: CHAT_SETTINGS_ORDER.spatialMap }}
-              onOpenEditor={() => {
-                onClose();
-                useUIStore.getState().openSpatialMapDetail(chat.id);
-              }}
+          {(chatMode === "roleplay" || chatMode === "game") && mapsPackage && (
+            <CapabilityElement
+              packageId={mapsPackage.id}
+              view="settings"
+              capabilityProps={{ chatId: chat.id, style: { order: CHAT_SETTINGS_ORDER.spatialMap } }}
+              className="contents"
             />
           )}
 
@@ -6416,7 +6092,7 @@ export function ChatSettingsDrawer({
           </div>
 
           {/* Agents */}
-          {modeCapabilities.sharedSections.includes("agents") && (
+          {modeCapabilities.sharedSections.includes("agents") && !isConversation && (
             <Section
               style={{ order: CHAT_SETTINGS_ORDER.agents }}
               label="Agents"
@@ -6424,2237 +6100,2252 @@ export function ChatSettingsDrawer({
               count={isGame ? gameAgentFeatureCount : visibleActiveAgentIds.length}
               help="When enabled, AI agents run automatically during generation to enrich the chat with world state tracking, expression detection, and more."
             >
-              <div className="space-y-2">
-                {isGame && metadata.enableAgents && (
-                  <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                    Toggle scene analysis and custom agents for this game session. Roleplay-only built-ins stay hidden
-                    so the game's format doesn't break.
+              {availableAgents.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--secondary)]/35 px-4 py-5 text-center">
+                  <p className="text-xs font-medium text-[var(--foreground)]">No agents downloaded yet.</p>
+                  <p className="mx-auto mt-1 max-w-[32rem] text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    Download optional agents to add trackers, writers, maps, and other helpers to this{" "}
+                    {isGame ? "game" : "roleplay"}.
                   </p>
-                )}
-                <button
-                  onClick={() => {
-                    updateMeta.mutate({ id: chat.id, enableAgents: !metadata.enableAgents });
-                  }}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                    metadata.enableAgents
-                      ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                      : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                  )}
-                >
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium">Enable Agents</span>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      {isGame
-                        ? "Run scene analysis and any attached custom agents during generation."
-                        : "Run AI agents during generation (world state, expressions, etc.)"}
-                    </p>
-                    {isGame &&
-                      metadata.enableAgents &&
-                      (() => {
-                        const setupCfg = metadata.gameSetupConfig as Record<string, unknown> | undefined;
-                        const sceneConnId =
-                          (metadata.gameSceneConnectionId as string) || (setupCfg?.sceneConnectionId as string) || null;
-                        const sceneConn = sceneConnId
-                          ? ((connections ?? []) as Array<{ id: string; name: string; model?: string }>).find(
-                              (c) => c.id === sceneConnId,
-                            )
-                          : null;
-                        const label = sceneConn
-                          ? `${sceneConn.name}${sceneConn.model ? ` — ${sceneConn.model}` : ""}`
-                          : "Local sidecar (Gemma)";
-                        return <p className="mt-0.5 text-[0.55rem] text-[var(--primary)]/70">{label}</p>;
-                      })()}
-                  </div>
-                  <div
-                    className={cn(
-                      "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                      metadata.enableAgents ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                        metadata.enableAgents && "translate-x-3.5",
-                      )}
-                    />
-                  </div>
-                </button>
-                <AgentSettingsToggle
-                  label="Review Agent Outputs"
-                  description={
-                    agentWriteApprovalRequired
-                      ? "Lorebook, summary, character card updates, and reviewable writer-agent outputs wait for your approval."
-                      : "Lorebook and summary updates can be committed automatically. Character card edits still ask first."
-                  }
-                  enabled={agentWriteApprovalRequired}
-                  surface="secondary"
-                  onToggle={() =>
-                    updateMeta.mutate({
-                      id: chat.id,
-                      agentWriteApprovalRequired: !agentWriteApprovalRequired,
-                    })
-                  }
-                />
-                {/* Manual trackers run only in roleplay-style chats. */}
-                {metadata.enableAgents && isRoleplayMode && (
                   <button
-                    onClick={() => updateMeta.mutate({ id: chat.id, manualTrackers: !metadata.manualTrackers })}
+                    type="button"
+                    onClick={openDownloadAgents}
+                    className="mari-chrome-control mari-chrome-control--primary mx-auto mt-3 px-4 py-2 text-xs"
+                  >
+                    <Sparkles size="0.8125rem" />
+                    Download Agents
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {isGame && metadata.enableAgents && (
+                    <p className="px-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                      Toggle scene analysis and custom agents for this game session. Roleplay-only built-ins stay hidden
+                      so the game's format doesn't break.
+                    </p>
+                  )}
+                  <SettingsSwitch
+                    label="Enable Agents"
+                    description={
+                      <>
+                        <span className="block">
+                          {isGame
+                            ? "Run scene analysis and any attached custom agents during generation."
+                            : "Run AI agents during generation (world state, expressions, etc.)"}
+                        </span>
+                        {isGame && metadata.enableAgents && (() => {
+                          const setupCfg = metadata.gameSetupConfig as Record<string, unknown> | undefined;
+                          const sceneConnId =
+                            (metadata.gameSceneConnectionId as string) ||
+                            (setupCfg?.sceneConnectionId as string) ||
+                            null;
+                          const sceneConn = sceneConnId
+                            ? ((connections ?? []) as Array<{ id: string; name: string; model?: string }>).find(
+                                (connection) => connection.id === sceneConnId,
+                              )
+                            : null;
+                          const connectionLabel = sceneConn
+                            ? `${sceneConn.name}${sceneConn.model ? ` — ${sceneConn.model}` : ""}`
+                            : "Local sidecar (Gemma)";
+                          return <span className="mt-0.5 block text-[var(--primary)]/70">{connectionLabel}</span>;
+                        })()}
+                      </>
+                    }
+                    checked={metadata.enableAgents === true}
+                    onChange={(enabled) => updateMeta.mutate({ id: chat.id, enableAgents: enabled })}
+                    labelPosition="start"
                     className={cn(
-                      "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                      metadata.manualTrackers
+                      "justify-between rounded-lg px-3 py-2.5 text-left",
+                      metadata.enableAgents
                         ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
                         : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
                     )}
-                  >
-                    <div>
-                      <span className="text-[0.6875rem] font-medium">Manual Trackers</span>
-                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                        {metadata.manualTrackers
-                          ? "Trackers won't run automatically — use the button in the HUD to trigger them."
-                          : "Trackers run automatically after every generation."}
-                      </p>
-                    </div>
-                    <div
-                      className={cn(
-                        "h-5 w-9 overflow-hidden rounded-full p-0.5 transition-colors shrink-0",
-                        metadata.manualTrackers ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                          metadata.manualTrackers && "translate-x-3.5",
+                    labelClassName="text-xs font-medium"
+                  />
+                  <AgentSettingsToggle
+                    label="Review Agent Outputs"
+                    description={
+                      agentWriteApprovalRequired
+                        ? "Lorebook, summary, character card updates, and reviewable writer-agent outputs wait for your approval."
+                        : "Lorebook and summary updates can be committed automatically. Character card edits still ask first."
+                    }
+                    enabled={agentWriteApprovalRequired}
+                    surface="secondary"
+                    onToggle={() =>
+                      updateMeta.mutate({
+                        id: chat.id,
+                        agentWriteApprovalRequired: !agentWriteApprovalRequired,
+                      })
+                    }
+                  />
+                  {/* Manual trackers run only in roleplay-style chats. */}
+                  {metadata.enableAgents && isRoleplayMode && (
+                    <AgentSettingsToggle
+                      label="Manual Trackers"
+                      description={
+                        metadata.manualTrackers
+                          ? "Trackers won't run automatically; use the button in the HUD to trigger them."
+                          : "Trackers run automatically after every generation."
+                      }
+                      enabled={metadata.manualTrackers === true}
+                      surface="secondary"
+                      onToggle={() => updateMeta.mutate({ id: chat.id, manualTrackers: !metadata.manualTrackers })}
+                    />
+                  )}
+                  {metadata.enableAgents && isRoleplayMode && activeTrackerAgents.length > 0 && (
+                    <div className="space-y-1.5 rounded-lg bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]">
+                      <div className="flex items-center justify-between gap-2 px-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                          Individual tracker schedule
+                        </span>
+                        {metadata.manualTrackers === true && (
+                          <span className="text-[0.5625rem] text-[var(--primary)]">All manual</span>
                         )}
-                      />
-                    </div>
-                  </button>
-                )}
-                {metadata.enableAgents && isRoleplayMode && activeTrackerAgents.length > 0 && (
-                  <div className="space-y-1.5 rounded-lg bg-[var(--background)]/45 p-2 ring-1 ring-[var(--border)]">
-                    <div className="flex items-center justify-between gap-2 px-1">
-                      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                        Individual tracker schedule
-                      </span>
-                      {metadata.manualTrackers === true && (
-                        <span className="text-[0.5625rem] text-[var(--primary)]">All manual</span>
-                      )}
-                    </div>
-                    <div className="space-y-1">
-                      {activeTrackerAgents.map((agent) => {
-                        const manuallyTriggered = activeManualTrackerTypes.has(agent.id);
-                        const globallyManual = metadata.manualTrackers === true;
-                        return (
-                          <button
-                            key={agent.id}
-                            type="button"
-                            onClick={() => toggleManualTrackerAgent(agent.id)}
-                            disabled={globallyManual}
-                            aria-pressed={manuallyTriggered}
-                            className={cn(
-                              "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                              manuallyTriggered
-                                ? "bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/25"
-                                : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                              globallyManual && "cursor-not-allowed opacity-70",
-                            )}
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              {renderRoleplayAgentMenuIcon(agent.id, "chip")}
-                              <span className="min-w-0">
-                                <span className="block truncate text-[0.625rem] font-medium">{agent.name}</span>
-                                <span className="block truncate text-[0.5625rem] text-[var(--muted-foreground)]">
-                                  {globallyManual
-                                    ? "Controlled by Manual Trackers"
-                                    : manuallyTriggered
-                                      ? "Runs only from HUD controls"
-                                      : "Runs automatically"}
-                                </span>
-                              </span>
-                            </span>
-                            <span
+                      </div>
+                      <div className="space-y-1">
+                        {activeTrackerAgents.map((agent) => {
+                          const manuallyTriggered = activeManualTrackerTypes.has(agent.id);
+                          const globallyManual = metadata.manualTrackers === true;
+                          return (
+                            <button
+                              key={agent.id}
+                              type="button"
+                              onClick={() => toggleManualTrackerAgent(agent.id)}
+                              disabled={globallyManual}
+                              aria-pressed={manuallyTriggered}
                               className={cn(
-                                "h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
-                                manuallyTriggered ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                                "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                                manuallyTriggered
+                                  ? "bg-[var(--primary)]/10 text-[var(--foreground)] ring-1 ring-[var(--primary)]/25"
+                                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                                globallyManual && "cursor-not-allowed opacity-70",
                               )}
                             >
+                              <span className="flex min-w-0 items-center gap-2">
+                                {renderRoleplayAgentMenuIcon(agent.id, "chip")}
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[0.625rem] font-medium">{agent.name}</span>
+                                  <span className="block truncate text-[0.5625rem] text-[var(--muted-foreground)]">
+                                    {globallyManual
+                                      ? "Controlled by Manual Trackers"
+                                      : manuallyTriggered
+                                        ? "Runs only from HUD controls"
+                                        : "Runs automatically"}
+                                  </span>
+                                </span>
+                              </span>
                               <span
                                 className={cn(
-                                  "block h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
-                                  manuallyTriggered && "translate-x-3",
+                                  "h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
+                                  manuallyTriggered ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
                                 )}
-                              />
-                            </span>
-                          </button>
-                        );
-                      })}
+                              >
+                                <span
+                                  className={cn(
+                                    "block h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                                    manuallyTriggered && "translate-x-3",
+                                  )}
+                                />
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                )}
-                <button
-                  onClick={() => setShowAgentSuiteModal(true)}
-                  className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <span className="text-[0.6875rem] font-medium">Agent Suite</span>
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      View and edit everything agents have stored in this chat — manually or with AI.
-                    </p>
-                  </div>
-                  <div className="flex h-5 w-9 shrink-0 items-center justify-center text-[var(--muted-foreground)]">
-                    <Wrench size="0.75rem" />
-                  </div>
-                </button>
-                {roleplayAgentMenuLinks.length > 0 && (
-                  <div className="rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
-                    <div className="mb-1.5 flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                      <ChevronRight size="0.6875rem" className="shrink-0" />
-                      <span>Agent Menus</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {roleplayAgentMenuLinks.map((link) => (
-                        <button
-                          key={link.id}
-                          type="button"
-                          onClick={() => scrollToAgentMenu(link.targetId)}
-                          className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]/60"
-                          title={`Jump to ${link.label}`}
-                        >
-                          {renderRoleplayAgentMenuIcon(link.id, "chip")}
-                          <span className="min-w-0 truncate">{link.label}</span>
-                          {link.count != null && (
-                            <span className="shrink-0 rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)]">
-                              {link.count}
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {isGame && metadata.enableAgents && (
-                  <div className="mt-1.5 px-3">
-                    <select
-                      value={(metadata.gameSceneConnectionId as string) ?? ""}
-                      onChange={(e) =>
-                        updateMeta.mutate({ id: chat.id, gameSceneConnectionId: e.target.value || null })
-                      }
-                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
-                    >
-                      {import.meta.env.VITE_MARINARA_LITE !== "true" && <option value="">Local sidecar (Gemma)</option>}
-                      {(textConnectionsList as Array<{ id: string; name: string; model?: string }>).map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                          {c.model ? ` — ${c.model}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                {isRoleplayMode && (
-                  <AgentSettingsCard
-                    icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Scene Videos"
-                    description="Generate manual MP4 scene videos from gallery images."
+                  )}
+                  <button
+                    onClick={() => setShowAgentSuiteModal(true)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
                   >
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[0.6875rem] font-medium">Agent Suite</span>
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        View and edit everything agents have stored in this chat — manually or with AI.
+                      </p>
+                    </div>
+                    <div className="flex h-5 w-9 shrink-0 items-center justify-center text-[var(--muted-foreground)]">
+                      <Wrench size="0.75rem" />
+                    </div>
+                  </button>
+                  {roleplayAgentMenuLinks.length > 0 && (
+                    <div className="rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
+                      <div className="mb-1.5 flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                        <ChevronRight size="0.6875rem" className="shrink-0" />
+                        <span>Agent Menus</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {roleplayAgentMenuLinks.map((link) => (
+                          <button
+                            key={link.id}
+                            type="button"
+                            onClick={() => scrollToAgentMenu(link.targetId)}
+                            className="inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]/60"
+                            title={`Jump to ${link.label}`}
+                          >
+                            {renderRoleplayAgentMenuIcon(link.id, "chip")}
+                            <span className="min-w-0 truncate">{link.label}</span>
+                            {link.count != null && (
+                              <span className="shrink-0 rounded-full bg-[var(--primary)]/15 px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)]">
+                                {link.count}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {isGame && metadata.enableAgents && (
+                    <div className="mt-1.5 px-3">
                       <select
-                        value={(metadata.sceneVideoConnectionId as string) ?? ""}
+                        value={(metadata.gameSceneConnectionId as string) ?? ""}
                         onChange={(e) =>
-                          updateMeta.mutate({ id: chat.id, sceneVideoConnectionId: e.target.value || null })
+                          updateMeta.mutate({ id: chat.id, gameSceneConnectionId: e.target.value || null })
                         }
-                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-1.5 text-xs text-[var(--foreground)]"
                       >
-                        <option value="">Select video connection...</option>
-                        {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                        {import.meta.env.VITE_MARINARA_LITE !== "true" && (
+                          <option value="">Local sidecar (Gemma)</option>
+                        )}
+                        {(textConnectionsList as Array<{ id: string; name: string; model?: string }>).map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}
-                            {c.model ? ` - ${c.model}` : ""}
+                            {c.model ? ` — ${c.model}` : ""}
                           </option>
                         ))}
                       </select>
-                    </label>
-                    {videoConnectionsList.length === 0 && (
-                      <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
-                        No video generation connections found. Add one in Settings -&gt; Connections.
-                      </p>
-                    )}
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Gallery Video and image Animate use this connection with the editable Omni scene-video prompt.
-                    </p>
-                  </AgentSettingsCard>
-                )}
-
-                {isGame && (
-                  <AgentSettingsCard
-                    icon={<BookOpen size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title={lorebookKeeperAgentMeta.name}
-                    description={lorebookKeeperAgentMeta.description}
-                  >
-                    <AgentSettingsToggle
-                      label="Game Session Keeper"
-                      description="Game Mode runs this after a session ends with separate game-specific instructions."
-                      enabled={gameLorebookKeeperEnabled}
-                      onToggle={toggleGameLorebookKeeper}
-                    />
-                    {gameLorebookKeeperLorebook && (
-                      <p className="truncate rounded-lg bg-[var(--background)]/75 px-3 py-2 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                        Target:{" "}
-                        <span className="font-medium text-[var(--foreground)]">{gameLorebookKeeperLorebook.name}</span>
-                      </p>
-                    )}
-                  </AgentSettingsCard>
-                )}
-
-                {isGame && (
-                  <AgentSettingsCard
-                    icon={<Music2 size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title={musicDjAgentMeta.name}
-                    description={musicDjAgentMeta.description}
-                  >
-                    <AgentSettingsToggle
-                      label="Music DJ"
-                      description={`Active player: ${getMusicProviderLabel(musicPlayerSource)}.`}
-                      enabled={gameMusicDjEnabled}
-                      onToggle={() => void toggleGameMusicDj()}
-                    />
-
-                    <div className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border)] bg-[var(--background)]/65 p-1">
-                      {(["spotify", "youtube", "custom"] as const).map((provider) => {
-                        const active = musicPlayerSource === provider;
-                        return (
-                          <button
-                            key={provider}
-                            type="button"
-                            onClick={() => void changeMusicDjProvider(provider)}
-                            className={cn(
-                              "rounded-lg px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
-                              active
-                                ? "bg-[var(--primary)]/18 text-[var(--foreground)] shadow-sm"
-                                : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                            )}
-                          >
-                            {getMusicProviderLabel(provider)}
-                          </button>
-                        );
-                      })}
                     </div>
+                  )}
 
-                    {gameMusicDjEnabled && musicPlayerSource === "spotify" && (
-                      <div className="space-y-2">
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            Spotify source
-                          </span>
-                          <select
-                            value={gameSpotifySourceType}
-                            onChange={(event) => {
-                              const next = normalizeSpotifySourceType(event.target.value);
-                              updateMeta.mutate({
-                                id: chat.id,
-                                gameSpotifySourceType: next,
-                                gameSpotifyPlaylistId: next === "playlist" ? gameSpotifyPlaylistId || null : null,
-                                gameSpotifyPlaylistName:
-                                  next === "playlist" ? (metadata.gameSpotifyPlaylistName as string) || null : null,
-                                gameSpotifyArtist: next === "artist" ? gameSpotifyArtistDraft.trim() || null : null,
-                              });
-                            }}
-                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                          >
-                            {SPOTIFY_SOURCE_OPTIONS.map((option) => (
-                              <option key={option.id} value={option.id}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                            {SPOTIFY_SOURCE_OPTIONS.find((option) => option.id === gameSpotifySourceType)
-                              ?.description ?? ""}
-                          </span>
-                        </label>
+                  {isRoleplayMode && (
+                    <AgentSettingsCard
+                      icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title="Scene Videos"
+                      description="Generate manual MP4 scene videos from gallery images."
+                    >
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
+                        <select
+                          value={(metadata.sceneVideoConnectionId as string) ?? ""}
+                          onChange={(e) =>
+                            updateMeta.mutate({ id: chat.id, sceneVideoConnectionId: e.target.value || null })
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                        >
+                          <option value="">Select video connection...</option>
+                          {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.model ? ` - ${c.model}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {videoConnectionsList.length === 0 && (
+                        <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
+                          No video generation connections found. Add one in Settings -&gt; Connections.
+                        </p>
+                      )}
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Gallery Video and image Animate use this connection with the editable Omni scene-video prompt.
+                      </p>
+                    </AgentSettingsCard>
+                  )}
 
-                        {gameSpotifySourceType === "playlist" && (
+                  {isGame && (
+                    <AgentSettingsCard
+                      icon={<BookOpen size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title={lorebookKeeperAgentMeta.name}
+                      description={lorebookKeeperAgentMeta.description}
+                    >
+                      <AgentSettingsToggle
+                        label="Game Session Keeper"
+                        description="Game Mode runs this after a session ends with separate game-specific instructions."
+                        enabled={gameLorebookKeeperEnabled}
+                        onToggle={toggleGameLorebookKeeper}
+                      />
+                      {gameLorebookKeeperLorebook && (
+                        <p className="truncate rounded-lg bg-[var(--background)]/75 px-3 py-2 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                          Target:{" "}
+                          <span className="font-medium text-[var(--foreground)]">
+                            {gameLorebookKeeperLorebook.name}
+                          </span>
+                        </p>
+                      )}
+                    </AgentSettingsCard>
+                  )}
+
+                  {isGame && (
+                    <AgentSettingsCard
+                      icon={<Music2 size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title={musicDjAgentMeta.name}
+                      description={musicDjAgentMeta.description}
+                    >
+                      <AgentSettingsToggle
+                        label="Music DJ"
+                        description={`Active player: ${getMusicProviderLabel(musicPlayerSource)}.`}
+                        enabled={gameMusicDjEnabled}
+                        onToggle={() => void toggleGameMusicDj()}
+                      />
+
+                      <div className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border)] bg-[var(--background)]/65 p-1">
+                        {(["spotify", "youtube", "custom"] as const).map((provider) => {
+                          const active = musicPlayerSource === provider;
+                          return (
+                            <button
+                              key={provider}
+                              type="button"
+                              onClick={() => void changeMusicDjProvider(provider)}
+                              className={cn(
+                                "rounded-lg px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
+                                active
+                                  ? "bg-[var(--primary)]/18 text-[var(--foreground)] shadow-sm"
+                                  : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                              )}
+                            >
+                              {getMusicProviderLabel(provider)}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {gameMusicDjEnabled && musicPlayerSource === "spotify" && (
+                        <div className="space-y-2">
                           <label className="flex flex-col gap-1">
-                            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Playlist</span>
-                            {spotifyPlaylistsQuery.data?.playlists.length ? (
-                              <select
-                                value={gameSpotifyPlaylistId}
-                                onChange={(event) => {
-                                  const playlist = spotifyPlaylistsQuery.data?.playlists.find(
-                                    (entry) => entry.id === event.target.value,
-                                  );
+                            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                              Spotify source
+                            </span>
+                            <select
+                              value={gameSpotifySourceType}
+                              onChange={(event) => {
+                                const next = normalizeSpotifySourceType(event.target.value);
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  gameSpotifySourceType: next,
+                                  gameSpotifyPlaylistId: next === "playlist" ? gameSpotifyPlaylistId || null : null,
+                                  gameSpotifyPlaylistName:
+                                    next === "playlist" ? (metadata.gameSpotifyPlaylistName as string) || null : null,
+                                  gameSpotifyArtist: next === "artist" ? gameSpotifyArtistDraft.trim() || null : null,
+                                });
+                              }}
+                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                            >
+                              {SPOTIFY_SOURCE_OPTIONS.map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                              {SPOTIFY_SOURCE_OPTIONS.find((option) => option.id === gameSpotifySourceType)
+                                ?.description ?? ""}
+                            </span>
+                          </label>
+
+                          {gameSpotifySourceType === "playlist" && (
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                Playlist
+                              </span>
+                              {spotifyPlaylistsQuery.data?.playlists.length ? (
+                                <select
+                                  value={gameSpotifyPlaylistId}
+                                  onChange={(event) => {
+                                    const playlist = spotifyPlaylistsQuery.data?.playlists.find(
+                                      (entry) => entry.id === event.target.value,
+                                    );
+                                    updateMeta.mutate({
+                                      id: chat.id,
+                                      gameSpotifyPlaylistId: event.target.value || null,
+                                      gameSpotifyPlaylistName: playlist?.name ?? null,
+                                    });
+                                  }}
+                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                                >
+                                  <option value="">Choose playlist...</option>
+                                  {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
+                                    const suffix =
+                                      typeof playlist.trackCount === "number"
+                                        ? ` (${playlist.trackCount})`
+                                        : playlist.owned === false
+                                          ? " (followed — unavailable)"
+                                          : "";
+                                    return (
+                                      <option key={playlist.id} value={playlist.id}>
+                                        {playlist.name}
+                                        {suffix}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              ) : (
+                                <input
+                                  key={`${chat.id}-${gameSpotifyPlaylistId}`}
+                                  defaultValue={gameSpotifyPlaylistId}
+                                  onBlur={(event) =>
+                                    updateMeta.mutate({
+                                      id: chat.id,
+                                      gameSpotifyPlaylistId: event.target.value.trim() || null,
+                                      gameSpotifyPlaylistName: null,
+                                    })
+                                  }
+                                  placeholder={
+                                    spotifyPlaylistsQuery.isFetching ? "Loading playlists..." : "Paste playlist ID"
+                                  }
+                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                                />
+                              )}
+                              {spotifyPlaylistsQuery.isError && (
+                                <span className="text-[0.5625rem] text-amber-400/90">
+                                  Connect Spotify in the Music DJ agent to load playlist names.
+                                </span>
+                              )}
+                            </label>
+                          )}
+
+                          {gameSpotifySourceType === "artist" && (
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Artist</span>
+                              <input
+                                value={gameSpotifyArtistDraft}
+                                onChange={(event) => setGameSpotifyArtistDraft(event.target.value)}
+                                onBlur={() =>
                                   updateMeta.mutate({
                                     id: chat.id,
-                                    gameSpotifyPlaylistId: event.target.value || null,
-                                    gameSpotifyPlaylistName: playlist?.name ?? null,
+                                    gameSpotifyArtist: gameSpotifyArtistDraft.trim() || null,
+                                  })
+                                }
+                                placeholder="HOYO-MiX"
+                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
+
+                      {gameMusicDjEnabled && musicPlayerSource === "custom" && (
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                            Custom music folder
+                          </span>
+                          <input
+                            key={`${chat.id}-game-custom-music-${customMusicFolder}`}
+                            defaultValue={customMusicFolder}
+                            onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
+                            placeholder="music"
+                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                          />
+                          <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                            Reads local audio from Game Assets, for example <code>music</code> or{" "}
+                            <code>music/combat</code>.
+                          </span>
+                        </label>
+                      )}
+                    </AgentSettingsCard>
+                  )}
+
+                  {!isGame && (
+                    <div className="flex flex-col gap-2">
+                      {metadata.enableAgents && !isGame && lorebookKeeperActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "lorebook-keeper")}
+                          icon={renderRoleplayAgentMenuIcon("lorebook-keeper")}
+                          title={lorebookKeeperAgentMeta.name}
+                          description={lorebookKeeperAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("lorebook-keeper")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("lorebook-keeper", lorebookKeeperAgentMeta.name)}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                            <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                              Chat Lorebook Keeper runs after assistant replies. Game Mode has a separate session-end
+                              keeper with different instructions.
+                            </p>
+                            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onClose();
+                                  useUIStore.getState().openAgentDetail("lorebook-keeper");
+                                }}
+                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                              >
+                                <Settings2 size="0.75rem" />
+                                <span>Open Setup</span>
+                              </button>
+                              <button
+                                onClick={handleLorebookKeeperBackfill}
+                                disabled={agentProcessing}
+                                className={cn(
+                                  "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[0.6875rem] font-medium transition-colors",
+                                  agentProcessing
+                                    ? "cursor-not-allowed bg-[var(--muted)] text-[var(--muted-foreground)]"
+                                    : "bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/15",
+                                )}
+                              >
+                                <RefreshCw size="0.75rem" className={cn(agentProcessing && "animate-spin")} />
+                                <span>Backfill Unprocessed</span>
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                              <span className="font-medium text-[var(--foreground)]">Target Lorebook</span>
+                              <select
+                                value={lorebookKeeperTargetLorebookId}
+                                onChange={(e) =>
+                                  updateMeta.mutate({
+                                    id: chat.id,
+                                    lorebookKeeperTargetLorebookId: e.target.value || null,
+                                  })
+                                }
+                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                              >
+                                <option value="">Auto-select first writable lorebook</option>
+                                {((lorebooks ?? []) as Array<{ id: string; name: string }>).map((lorebook) => (
+                                  <option key={lorebook.id} value={lorebook.id}>
+                                    {lorebook.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] text-[var(--muted-foreground)]">
+                              <span className="font-medium text-[var(--foreground)]">Read Behind</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={lorebookKeeperReadBehindMessages}
+                                onChange={(e) => {
+                                  const nextValue = e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10);
+                                  updateMeta.mutate({
+                                    id: chat.id,
+                                    lorebookKeeperReadBehindMessages: Number.isFinite(nextValue)
+                                      ? Math.max(0, Math.min(100, nextValue))
+                                      : 0,
                                   });
                                 }}
                                 className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                              >
-                                <option value="">Choose playlist...</option>
-                                {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
-                                  const suffix =
-                                    typeof playlist.trackCount === "number"
-                                      ? ` (${playlist.trackCount})`
-                                      : playlist.owned === false
-                                        ? " (followed — unavailable)"
-                                        : "";
-                                  return (
-                                    <option key={playlist.id} value={playlist.id}>
-                                      {playlist.name}
-                                      {suffix}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            ) : (
-                              <input
-                                key={`${chat.id}-${gameSpotifyPlaylistId}`}
-                                defaultValue={gameSpotifyPlaylistId}
-                                onBlur={(event) =>
-                                  updateMeta.mutate({
-                                    id: chat.id,
-                                    gameSpotifyPlaylistId: event.target.value.trim() || null,
-                                    gameSpotifyPlaylistName: null,
-                                  })
-                                }
-                                placeholder={
-                                  spotifyPlaylistsQuery.isFetching ? "Loading playlists..." : "Paste playlist ID"
-                                }
-                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
                               />
-                            )}
-                            {spotifyPlaylistsQuery.isError && (
-                              <span className="text-[0.5625rem] text-amber-400/90">
-                                Connect Spotify in the Music DJ agent to load playlist names.
-                              </span>
-                            )}
-                          </label>
-                        )}
+                            </label>
+                          </div>
 
-                        {gameSpotifySourceType === "artist" && (
-                          <label className="flex flex-col gap-1">
-                            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Artist</span>
-                            <input
-                              value={gameSpotifyArtistDraft}
-                              onChange={(event) => setGameSpotifyArtistDraft(event.target.value)}
-                              onBlur={() =>
-                                updateMeta.mutate({
-                                  id: chat.id,
-                                  gameSpotifyArtist: gameSpotifyArtistDraft.trim() || null,
-                                })
-                              }
-                              placeholder="HOYO-MiX"
-                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                            />
-                          </label>
-                        )}
-                      </div>
-                    )}
-
-                    {gameMusicDjEnabled && musicPlayerSource === "custom" && (
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                          Custom music folder
-                        </span>
-                        <input
-                          key={`${chat.id}-game-custom-music-${customMusicFolder}`}
-                          defaultValue={customMusicFolder}
-                          onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
-                          placeholder="music"
-                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                        />
-                        <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                          Reads local audio from Game Assets, for example <code>music</code> or{" "}
-                          <code>music/combat</code>.
-                        </span>
-                      </label>
-                    )}
-                  </AgentSettingsCard>
-                )}
-
-                {!isGame && (
-                  <div className="flex flex-col gap-2">
-                    {metadata.enableAgents && !isGame && lorebookKeeperActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "lorebook-keeper")}
-                        icon={renderRoleplayAgentMenuIcon("lorebook-keeper")}
-                        title={lorebookKeeperAgentMeta.name}
-                        description={lorebookKeeperAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("lorebook-keeper")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("lorebook-keeper", lorebookKeeperAgentMeta.name)}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                          <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                            Chat Lorebook Keeper runs after assistant replies. Game Mode has a separate session-end
-                            keeper with different instructions.
+                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            Read-behind uses assistant messages: 0 means the newest eligible reply, 1 waits one reply,
+                            and backfill only processes messages Lorebook Keeper has not already saved.
                           </p>
-                          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && !isGame && cardEvolutionAuditorActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "card-evolution-auditor")}
+                          icon={renderRoleplayAgentMenuIcon("card-evolution-auditor")}
+                          title={cardEvolutionAuditorAgentMeta.name}
+                          description={cardEvolutionAuditorAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("card-evolution-auditor")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler(
+                            "card-evolution-auditor",
+                            cardEvolutionAuditorAgentMeta.name,
+                          )}
+                        >
+                          <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                            <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                              This agent never edits cards directly. It proposes exact oldText/newText replacements from
+                              durable roleplay changes, then asks you to review, edit, approve, or regenerate them.
+                            </p>
                             <button
                               type="button"
                               onClick={() => {
                                 onClose();
-                                useUIStore.getState().openAgentDetail("lorebook-keeper");
+                                useUIStore.getState().openAgentDetail("card-evolution-auditor");
                               }}
-                              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)]/10 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/15"
+                            >
+                              <Settings2 size="0.75rem" />
+                              <span>Open Auditor Setup</span>
+                            </button>
+                          </div>
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && !isGame && proseGuardianActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "prose-guardian")}
+                          icon={renderRoleplayAgentMenuIcon("prose-guardian")}
+                          title={proseGuardianAgentMeta.name}
+                          description={proseGuardianAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("prose-guardian")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("prose-guardian", proseGuardianAgentMeta.name)}
+                        >
+                          <AgentSettingsTextarea
+                            label="Banned Words"
+                            value={proseGuardianBannedDraft}
+                            placeholder={DEFAULT_PROSE_GUARDIAN_BANNED_WORDS}
+                            rows={2}
+                            onChange={setProseGuardianBannedDraft}
+                            onBlur={() => {
+                              if (proseGuardianBannedDraft !== proseGuardianBannedWords) {
+                                commitProseGuardianSettings({
+                                  proseGuardianBannedWords: proseGuardianBannedDraft.trim(),
+                                });
+                              }
+                            }}
+                          />
+                          <AgentSettingsTextarea
+                            label="Remove From Writing"
+                            value={proseGuardianAvoidDraft}
+                            placeholder={DEFAULT_PROSE_GUARDIAN_AVOID}
+                            rows={3}
+                            onChange={setProseGuardianAvoidDraft}
+                            onBlur={() => {
+                              if (proseGuardianAvoidDraft !== proseGuardianAvoidInstructions) {
+                                commitProseGuardianSettings({
+                                  proseGuardianAvoidInstructions: proseGuardianAvoidDraft.trim(),
+                                });
+                              }
+                            }}
+                          />
+                          <AgentSettingsTextarea
+                            label="Prefer In Writing"
+                            value={proseGuardianStyleDraft}
+                            placeholder="Optional style notes, phrases, or authorial preferences."
+                            rows={3}
+                            onChange={setProseGuardianStyleDraft}
+                            onBlur={() => {
+                              if (proseGuardianStyleDraft !== proseGuardianStyleInstructions) {
+                                commitProseGuardianSettings({
+                                  proseGuardianStyleInstructions: proseGuardianStyleDraft.trim(),
+                                });
+                              }
+                            }}
+                          />
+                          <AgentSettingsToggle
+                            label="Hold Message Until Rewrite"
+                            description={
+                              proseGuardianHoldForRewrite
+                                ? "Show the rewrite working indicator, then reveal the edited message."
+                                : "Stream the original message normally, then replace it when the edit is ready."
+                            }
+                            enabled={proseGuardianHoldForRewrite}
+                            onToggle={() =>
+                              commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
+                            }
+                          />
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && !isGame && directorActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "director")}
+                          icon={renderRoleplayAgentMenuIcon("director")}
+                          title={directorAgentMeta.name}
+                          description={directorAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("director")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("director", directorAgentMeta.name)}
+                        >
+                          <AgentSettingsSegmentedControl
+                            value={narrativeDirectorMode}
+                            options={[
+                              {
+                                id: "natural",
+                                label: "Natural",
+                                description: "Push the existing plot forward.",
+                              },
+                              {
+                                id: "random",
+                                label: "Random Event",
+                                description: "Add a plausible surprise.",
+                              },
+                            ]}
+                            onChange={(mode) => updateMeta.mutate({ id: chat.id, narrativeDirectorMode: mode })}
+                          />
+                          {supportsNarrativeDirectorSecretPlot && (
+                            <div className="mt-2 space-y-2">
+                              <AgentSettingsToggle
+                                label="Secret Plot"
+                                description="Maintain a hidden long-term arc for this roleplay."
+                                enabled={narrativeDirectorSecretPlotEnabled}
+                                onToggle={() =>
+                                  updateMeta.mutate({
+                                    id: chat.id,
+                                    narrativeDirectorSecretPlotEnabled: !narrativeDirectorSecretPlotEnabled,
+                                  })
+                                }
+                              />
+                              {narrativeDirectorSecretPlotEnabled && (
+                                <>
+                                  <label className="block rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
+                                    <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                      Run Interval
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={100}
+                                        value={narrativeDirectorSecretPlotRunInterval}
+                                        onChange={(event) =>
+                                          updateMeta.mutate({
+                                            id: chat.id,
+                                            narrativeDirectorSecretPlotRunInterval: normalizePositiveInteger(
+                                              event.target.value,
+                                              narrativeDirectorSecretPlotRunInterval,
+                                              100,
+                                            ),
+                                          })
+                                        }
+                                        className="w-24 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs tabular-nums text-[var(--foreground)] outline-none transition-colors focus:border-[var(--ring)] focus:ring-1 focus:ring-[var(--ring)]"
+                                      />
+                                      <span className="text-[0.625rem] text-[var(--muted-foreground)]">
+                                        assistant messages
+                                      </span>
+                                    </div>
+                                  </label>
+                                  <SecretPlotPanel
+                                    chatId={chat.id}
+                                    messages={secretPlotMessages}
+                                    isAgentProcessing={agentProcessing}
+                                  />
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && !isGame && continuityActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "continuity")}
+                          icon={renderRoleplayAgentMenuIcon("continuity")}
+                          title={continuityAgentMeta.name}
+                          description={continuityAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("continuity")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("continuity", continuityAgentMeta.name)}
+                        >
+                          <AgentSettingsToggle
+                            label="Hold Message Until Rewrite"
+                            description={
+                              proseGuardianHoldForRewrite
+                                ? "Show the rewrite working indicator, then reveal the edited message."
+                                : "Stream the original message normally, then replace it when the edit is ready."
+                            }
+                            enabled={proseGuardianHoldForRewrite}
+                            onToggle={() =>
+                              commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
+                            }
+                          />
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && !isGame && htmlActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "html")}
+                          icon={renderRoleplayAgentMenuIcon("html")}
+                          title={htmlAgentMeta.name}
+                          description={htmlAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("html")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("html", htmlAgentMeta.name)}
+                        >
+                          <AgentSettingsToggle
+                            label="Hold Message Until Rewrite"
+                            description={
+                              proseGuardianHoldForRewrite
+                                ? "Show the rewrite working indicator, then reveal the edited message."
+                                : "Stream the original message normally, then replace it when the edit is ready."
+                            }
+                            enabled={proseGuardianHoldForRewrite}
+                            onToggle={() =>
+                              commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
+                            }
+                          />
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && isRoleplayMode && knowledgeRetrievalActive && (
+                        <KnowledgeAgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "knowledge-retrieval")}
+                          agentType="knowledge-retrieval"
+                          title={knowledgeRetrievalAgentMeta.name}
+                          description={knowledgeRetrievalAgentMeta.description}
+                          lorebooks={(lorebooks ?? []) as Lorebook[]}
+                          settings={getKnowledgeAgentSourceSettings("knowledge-retrieval")}
+                          order={getRoleplayAgentSettingsOrder("knowledge-retrieval")}
+                          onChange={(patch) => updateKnowledgeAgentSourceSettings("knowledge-retrieval", patch)}
+                          onRemove={getRoleplayAgentMenuRemoveHandler(
+                            "knowledge-retrieval",
+                            knowledgeRetrievalAgentMeta.name,
+                          )}
+                        />
+                      )}
+
+                      {metadata.enableAgents && isRoleplayMode && knowledgeRouterActive && (
+                        <KnowledgeAgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "knowledge-router")}
+                          agentType="knowledge-router"
+                          title={knowledgeRouterAgentMeta.name}
+                          description={knowledgeRouterAgentMeta.description}
+                          lorebooks={(lorebooks ?? []) as Lorebook[]}
+                          settings={getKnowledgeAgentSourceSettings("knowledge-router")}
+                          order={getRoleplayAgentSettingsOrder("knowledge-router")}
+                          onChange={(patch) => updateKnowledgeAgentSourceSettings("knowledge-router", patch)}
+                          onRemove={getRoleplayAgentMenuRemoveHandler(
+                            "knowledge-router",
+                            knowledgeRouterAgentMeta.name,
+                          )}
+                        />
+                      )}
+
+                      {metadata.enableAgents && !isGame && expressionActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "expression")}
+                          icon={renderRoleplayAgentMenuIcon("expression")}
+                          title={expressionAgentMeta.name}
+                          description={expressionAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("expression")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("expression", expressionAgentMeta.name)}
+                          badge={
+                            spriteCharacterIds.length > 0 ? (
+                              <span className="shrink-0 rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
+                                {spriteCharacterIds.length} enabled
+                              </span>
+                            ) : null
+                          }
+                        >
+                          <SpriteDisplayModeToggle modes={spriteDisplayModes} onToggle={toggleSpriteDisplayMode} />
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextEnabled = !expressionAvatarsEnabled;
+                              if (onSpriteVisualSettingsChange) {
+                                onSpriteVisualSettingsChange({ expressionAvatarsEnabled: nextEnabled });
+                                return;
+                              }
+                              updateMeta.mutate({ id: chat.id, expressionAvatarsEnabled: nextEnabled });
+                            }}
+                            className={cn(
+                              "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                              expressionAvatarsEnabled
+                                ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                                : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <span className="text-[0.6875rem] font-medium">Expression Avatars</span>
+                              <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                                Replace message avatars with the selected expression sprite.
+                              </p>
+                            </div>
+                            <div
+                              className={cn(
+                                "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                                expressionAvatarsEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                              )}
+                            >
+                              <div
+                                className={cn(
+                                  "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                                  expressionAvatarsEnabled && "translate-x-3.5",
+                                )}
+                              />
+                            </div>
+                          </button>
+
+                          {chatSpriteSubjects.length === 0 ? (
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                              Add characters to this chat or choose a persona first to enable sprite selection.
+                            </p>
+                          ) : chatSpriteSubjectsLoading ? (
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">Loading sprite owners...</p>
+                          ) : chatSpriteSubjectsWithSprites.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {chatSpriteSubjectsWithSprites.map((subject) => {
+                                const isPersona = subject.kind === "persona";
+                                const name = isPersona ? subject.persona.name : charName(subject.character);
+                                const title = isPersona
+                                  ? subject.persona.comment || "Persona"
+                                  : charTitle(subject.character);
+                                const avatarPath = isPersona
+                                  ? subject.persona.avatarPath
+                                  : subject.character.avatarPath;
+                                const avatarCrop = isPersona ? null : charAvatarCrop(subject.character);
+                                const spriteActive = spriteCharacterIds.includes(subject.id);
+
+                                return (
+                                  <div
+                                    key={`${subject.kind}:${subject.id}`}
+                                    className="flex items-center gap-2.5 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]"
+                                  >
+                                    <button
+                                      onClick={() => {
+                                        onClose();
+                                        if (isPersona) {
+                                          useUIStore.getState().openPersonaDetail(subject.id);
+                                        } else {
+                                          useUIStore.getState().openCharacterDetail(subject.id);
+                                        }
+                                      }}
+                                      className="flex min-w-0 flex-1 items-center gap-2.5 text-left transition-colors hover:opacity-80"
+                                      title={isPersona ? "Open persona" : "Open character card"}
+                                    >
+                                      {avatarPath ? (
+                                        <span className="relative block h-8 w-8 shrink-0 overflow-hidden rounded-full">
+                                          <img
+                                            src={avatarPath}
+                                            alt={name}
+                                            loading="lazy"
+                                            className="h-full w-full object-cover"
+                                            style={getAvatarCropStyle(avatarCrop)}
+                                          />
+                                        </span>
+                                      ) : (
+                                        <div
+                                          className={cn(
+                                            "flex h-8 w-8 items-center justify-center rounded-full text-[0.625rem] font-bold",
+                                            isPersona
+                                              ? "mari-avatar-placeholder mari-avatar-placeholder--persona"
+                                              : "mari-avatar-placeholder mari-avatar-placeholder--character",
+                                          )}
+                                        >
+                                          {name[0]}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0 flex-1">
+                                        <span className="block truncate text-xs font-medium">{name}</span>
+                                        {title && (
+                                          <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
+                                            {title}
+                                          </span>
+                                        )}
+                                        <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
+                                          {isPersona ? "Persona sprites available" : "Uploaded sprites available"}
+                                        </span>
+                                      </div>
+                                    </button>
+
+                                    <SpriteToggleButton
+                                      active={spriteActive}
+                                      onToggle={() => toggleSprite(subject.id)}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : chatSpriteChoicesLoading ? (
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                              Checking added characters for uploaded sprites...
+                            </p>
+                          ) : (
+                            <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                              None of the added characters have uploaded sprites yet. Open a character card to add them
+                              first.
+                            </p>
+                          )}
+
+                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            Only added characters and the active persona with uploaded sprites appear here.
+                          </p>
+
+                          {spriteCharacterIds.length > 0 && (
+                            <div className="rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                              <div className="flex items-center gap-2">
+                                <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
+                                <span className="flex-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+                                  Sprite Layout
+                                </span>
+                                <button
+                                  onClick={() => onToggleSpriteArrange?.()}
+                                  className={cn(
+                                    "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
+                                    spriteArrangeMode
+                                      ? "bg-[var(--primary)] text-white"
+                                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                                  )}
+                                >
+                                  {spriteArrangeMode ? "Done" : "Arrange"}
+                                </button>
+                                <button
+                                  onClick={resetSpritePlacements}
+                                  disabled={!hasCustomSpritePlacements}
+                                  className={cn(
+                                    "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
+                                    hasCustomSpritePlacements
+                                      ? "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                                      : "cursor-not-allowed opacity-40 text-[var(--muted-foreground)]",
+                                  )}
+                                >
+                                  Reset
+                                </button>
+                              </div>
+
+                              <div className="mt-2 flex items-center gap-2">
+                                <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                  Default Side
+                                </span>
+                                <div className="flex rounded-md ring-1 ring-[var(--border)]">
+                                  <button
+                                    onClick={() => setSpriteSide("left")}
+                                    className={cn(
+                                      "rounded-l-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
+                                      spritePosition === "left"
+                                        ? "bg-[var(--primary)] text-white"
+                                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                                    )}
+                                  >
+                                    Left
+                                  </button>
+                                  <button
+                                    onClick={() => setSpriteSide("right")}
+                                    className={cn(
+                                      "rounded-r-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
+                                      spritePosition === "right"
+                                        ? "bg-[var(--primary)] text-white"
+                                        : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                                    )}
+                                  >
+                                    Right
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                <SpriteRangeSlider
+                                  label="Expression Size"
+                                  value={expressionSpriteScalePercent}
+                                  min={SPRITE_DISPLAY_SCALE_PERCENT_MIN}
+                                  max={SPRITE_DISPLAY_SCALE_PERCENT_MAX}
+                                  step={5}
+                                  suffix="%"
+                                  onChange={setExpressionSpriteScale}
+                                />
+                                <SpriteRangeSlider
+                                  label="Full-body Size"
+                                  value={fullBodySpriteScalePercent}
+                                  min={SPRITE_DISPLAY_SCALE_PERCENT_MIN}
+                                  max={SPRITE_DISPLAY_SCALE_PERCENT_MAX}
+                                  step={5}
+                                  suffix="%"
+                                  onChange={setFullBodySpriteScale}
+                                />
+                                <SpriteRangeSlider
+                                  label="Expression Opacity"
+                                  value={expressionSpriteOpacityPercent}
+                                  min={SPRITE_DISPLAY_OPACITY_PERCENT_MIN}
+                                  max={SPRITE_DISPLAY_OPACITY_PERCENT_MAX}
+                                  step={5}
+                                  suffix="%"
+                                  onChange={setExpressionSpriteOpacity}
+                                />
+                                <SpriteRangeSlider
+                                  label="Full-body Opacity"
+                                  value={fullBodySpriteOpacityPercent}
+                                  min={SPRITE_DISPLAY_OPACITY_PERCENT_MIN}
+                                  max={SPRITE_DISPLAY_OPACITY_PERCENT_MAX}
+                                  step={5}
+                                  suffix="%"
+                                  onChange={setFullBodySpriteOpacity}
+                                />
+                              </div>
+
+                              <p className="mt-2 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
+                                Arrange mode lets you drag sprites anywhere in the chat area. Reset clears saved
+                                positions. Changing the side flips the current layout.
+                              </p>
+                            </div>
+                          )}
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && isRoleplayMode && echoChamberActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "echo-chamber")}
+                          icon={renderRoleplayAgentMenuIcon("echo-chamber")}
+                          title={echoChamberAgentMeta.name}
+                          description={echoChamberAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("echo-chamber")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("echo-chamber", echoChamberAgentMeta.name)}
+                        >
+                          <AgentPromptTemplateSelect
+                            options={getPromptOptionsForAgent("echo-chamber")}
+                            selectedId={
+                              agentPromptTemplateSelections["echo-chamber"] ??
+                              getDefaultPromptTemplateIdForAgent("echo-chamber")
+                            }
+                            onChange={(promptTemplateId) =>
+                              updateAgentPromptTemplateSelection("echo-chamber", promptTemplateId)
+                            }
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                            <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                              Prompt mode controls the fictional audience style used for live roleplay reactions.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onClose();
+                                useUIStore.getState().openAgentDetail("echo-chamber");
+                              }}
+                              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                             >
                               <Settings2 size="0.75rem" />
                               <span>Open Setup</span>
                             </button>
+                          </div>
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && isRoleplayMode && illustratorActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "illustrator")}
+                          icon={renderRoleplayAgentMenuIcon("illustrator")}
+                          title={illustratorAgentMeta.name}
+                          description={illustratorAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("illustrator")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("illustrator", illustratorAgentMeta.name)}
+                        >
+                          <AgentPromptTemplateSelect
+                            options={getPromptOptionsForAgent("illustrator")}
+                            selectedId={
+                              agentPromptTemplateSelections["illustrator"] ??
+                              getDefaultPromptTemplateIdForAgent("illustrator")
+                            }
+                            onChange={(promptTemplateId) =>
+                              updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
+                            }
+                          />
+                          {renderIllustratorPromptConnectionSelect()}
+                          <AgentSettingsToggle
+                            label="Attach Card Appearance"
+                            description="Append matched character appearance lines to image prompts, using only visible/generated names."
+                            enabled={illustratorIncludeCharacterAppearance}
+                            onToggle={toggleIllustratorCharacterAppearance}
+                          />
+                          <AgentSettingsToggle
+                            label="Send Avatar References"
+                            description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
+                            enabled={illustratorUseAvatarReferences}
+                            onToggle={toggleIllustratorAvatarReferences}
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                            <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                              Prompt mode controls how Illustrator writes image prompts for this chat.
+                            </p>
                             <button
-                              onClick={handleLorebookKeeperBackfill}
-                              disabled={agentProcessing}
-                              className={cn(
-                                "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[0.6875rem] font-medium transition-colors",
-                                agentProcessing
-                                  ? "cursor-not-allowed bg-[var(--muted)] text-[var(--muted-foreground)]"
-                                  : "bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/15",
-                              )}
+                              type="button"
+                              onClick={() => {
+                                onClose();
+                                useUIStore.getState().openAgentDetail("illustrator");
+                              }}
+                              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
                             >
-                              <RefreshCw size="0.75rem" className={cn(agentProcessing && "animate-spin")} />
-                              <span>Backfill Unprocessed</span>
+                              <Settings2 size="0.75rem" />
+                              <span>Open Setup</span>
                             </button>
                           </div>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                            <span className="font-medium text-[var(--foreground)]">Target Lorebook</span>
+                        </AgentSettingsCard>
+                      )}
+
+                      {metadata.enableAgents && isRoleplayMode && spotifyActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "spotify")}
+                          icon={renderRoleplayAgentMenuIcon("spotify")}
+                          title={musicDjAgentMeta.name}
+                          description={musicDjAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("spotify")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("spotify", musicDjAgentMeta.name)}
+                        >
+                          <p className="text-[0.55rem] text-[var(--muted-foreground)]/80">
+                            Active player: {getMusicProviderLabel(musicPlayerSource)}.
+                          </p>
+
+                          <div className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border)] bg-[var(--background)]/65 p-1">
+                            {(["spotify", "youtube", "custom"] as const).map((provider) => {
+                              const active = musicPlayerSource === provider;
+                              return (
+                                <button
+                                  key={provider}
+                                  type="button"
+                                  onClick={() => void changeMusicDjProvider(provider)}
+                                  className={cn(
+                                    "rounded-lg px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
+                                    active
+                                      ? "bg-[var(--primary)]/18 text-[var(--foreground)] shadow-sm"
+                                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                                  )}
+                                >
+                                  {getMusicProviderLabel(provider)}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {musicPlayerSource === "spotify" && (
+                            <>
+                              <label className="flex flex-col gap-1">
+                                <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                  Spotify source
+                                </span>
+                                <select
+                                  value={spotifySourceType}
+                                  onChange={(event) => {
+                                    const next = normalizeSpotifySourceType(event.target.value);
+                                    updateMeta.mutate({
+                                      id: chat.id,
+                                      spotifySourceType: next,
+                                      spotifyPlaylistId: next === "playlist" ? spotifyPlaylistId || null : null,
+                                      spotifyPlaylistName:
+                                        next === "playlist" ? (metadata.spotifyPlaylistName as string) || null : null,
+                                      spotifyArtist: next === "artist" ? spotifyArtistDraft.trim() || null : null,
+                                    });
+                                  }}
+                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                                >
+                                  {SPOTIFY_SOURCE_OPTIONS.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                                  {SPOTIFY_SOURCE_OPTIONS.find((option) => option.id === spotifySourceType)
+                                    ?.description ?? ""}
+                                </span>
+                              </label>
+
+                              {spotifySourceType === "playlist" && (
+                                <label className="flex flex-col gap-1">
+                                  <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                    Playlist
+                                  </span>
+                                  {spotifyPlaylistsQuery.data?.playlists.length ? (
+                                    <select
+                                      value={spotifyPlaylistId}
+                                      onChange={(event) => {
+                                        const playlist = spotifyPlaylistsQuery.data?.playlists.find(
+                                          (entry) => entry.id === event.target.value,
+                                        );
+                                        updateMeta.mutate({
+                                          id: chat.id,
+                                          spotifyPlaylistId: event.target.value || null,
+                                          spotifyPlaylistName: playlist?.name ?? null,
+                                        });
+                                      }}
+                                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                                    >
+                                      <option value="">Choose playlist...</option>
+                                      {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
+                                        const suffix =
+                                          typeof playlist.trackCount === "number"
+                                            ? ` (${playlist.trackCount})`
+                                            : playlist.owned === false
+                                              ? " (followed, unavailable)"
+                                              : "";
+                                        return (
+                                          <option key={playlist.id} value={playlist.id}>
+                                            {playlist.name}
+                                            {suffix}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                  ) : (
+                                    <input
+                                      key={`${chat.id}-${spotifyPlaylistId}`}
+                                      defaultValue={spotifyPlaylistId}
+                                      onBlur={(event) =>
+                                        updateMeta.mutate({
+                                          id: chat.id,
+                                          spotifyPlaylistId: event.target.value.trim() || null,
+                                          spotifyPlaylistName: null,
+                                        })
+                                      }
+                                      placeholder={
+                                        spotifyPlaylistsQuery.isFetching ? "Loading playlists..." : "Paste playlist ID"
+                                      }
+                                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                                    />
+                                  )}
+                                  {spotifyPlaylistsQuery.isError && (
+                                    <span className="text-[0.5625rem] text-amber-400/90">
+                                      Connect Spotify in the Music DJ agent to load playlist names.
+                                    </span>
+                                  )}
+                                </label>
+                              )}
+
+                              {spotifySourceType === "artist" && (
+                                <label className="flex flex-col gap-1">
+                                  <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                    Artist
+                                  </span>
+                                  <input
+                                    value={spotifyArtistDraft}
+                                    onChange={(event) => setSpotifyArtistDraft(event.target.value)}
+                                    onBlur={() =>
+                                      updateMeta.mutate({
+                                        id: chat.id,
+                                        spotifyArtist: spotifyArtistDraft.trim() || null,
+                                      })
+                                    }
+                                    placeholder="HOYO-MiX"
+                                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                                  />
+                                </label>
+                              )}
+                            </>
+                          )}
+
+                          {musicPlayerSource === "custom" && (
+                            <label className="flex flex-col gap-1">
+                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                                Custom music folder
+                              </span>
+                              <input
+                                key={`${chat.id}-roleplay-custom-music-${customMusicFolder}`}
+                                defaultValue={customMusicFolder}
+                                onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
+                                placeholder="music"
+                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
+                              />
+                              <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                                Reads local audio from Game Assets, for example <code>music</code> or{" "}
+                                <code>music/combat</code>.
+                              </span>
+                            </label>
+                          )}
+
+                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            {musicPlayerSource === "spotify"
+                              ? "Roleplay DJ queues several fitting tracks when it changes music."
+                              : musicPlayerSource === "youtube"
+                                ? "YouTube mode uses the Music DJ agent's YouTube connection and embedded player."
+                                : "Custom mode picks from local Game Assets music and plays it in Marinara Engine."}
+                          </p>
+                        </AgentSettingsCard>
+                      )}
+
+                      {renderActiveCustomAgentSettingsCard()}
+
+                      {/* Haptic Feedback — not for game mode */}
+                      {metadata.enableAgents && !isGame && hapticActive && (
+                        <AgentSettingsCard
+                          id={getAgentSettingsMenuId(chat.id, "haptic")}
+                          icon={renderRoleplayAgentMenuIcon("haptic")}
+                          title={hapticAgentMeta.name}
+                          description={hapticAgentMeta.description}
+                          order={getRoleplayAgentSettingsOrder("haptic")}
+                          onRemove={getRoleplayAgentMenuRemoveHandler("haptic", hapticAgentMeta.name)}
+                        >
+                          <AgentSettingsToggle
+                            label="Haptic Feedback"
+                            description={
+                              metadata.enableHapticFeedback
+                                ? "Touch cues are enabled for this chat."
+                                : "Allow this agent to send touch cues during the chat."
+                            }
+                            enabled={metadata.enableHapticFeedback}
+                            onToggle={() =>
+                              updateMeta.mutate({ id: chat.id, enableHapticFeedback: !metadata.enableHapticFeedback })
+                            }
+                          />
+                          {metadata.enableHapticFeedback && (
+                            <>
+                              {chatMode === "roleplay" && (
+                                <div className="space-y-2 rounded-lg bg-[var(--background)]/75 p-2.5 ring-1 ring-[var(--border)]">
+                                  <div className="space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                                        Touch sensitivity
+                                      </span>
+                                      <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
+                                        Roleplay only
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-1 rounded-lg bg-[var(--background)]/35 p-1">
+                                      {HAPTIC_SENSITIVITY_OPTIONS.map((option) => (
+                                        <button
+                                          key={option.id}
+                                          type="button"
+                                          onClick={() =>
+                                            updateMeta.mutate({ id: chat.id, hapticSensitivity: option.id })
+                                          }
+                                          className={cn(
+                                            "rounded-md px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
+                                            hapticSensitivity === option.id
+                                              ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                                              : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                                          )}
+                                          title={option.description}
+                                        >
+                                          {option.label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updateMeta.mutate({
+                                        id: chat.id,
+                                        hapticIncidentalContact: metadata.hapticIncidentalContact !== true,
+                                      })
+                                    }
+                                    className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                                    aria-pressed={metadata.hapticIncidentalContact === true}
+                                  >
+                                    <span className="min-w-0">
+                                      <span className="block font-medium text-[var(--foreground)]">
+                                        Incidental contact
+                                      </span>
+                                      <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                                        Tiny taps for accidental brushes and bumps.
+                                      </span>
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                                        metadata.hapticIncidentalContact === true
+                                          ? "bg-[var(--primary)]"
+                                          : "bg-[var(--muted-foreground)]/50",
+                                      )}
+                                    >
+                                      <span
+                                        className={cn(
+                                          "block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                                          metadata.hapticIncidentalContact === true && "translate-x-3.5",
+                                        )}
+                                      />
+                                    </span>
+                                  </button>
+                                </div>
+                              )}
+                              <HapticConnectionPanel
+                                intifaceUrl={
+                                  typeof metadata.hapticIntifaceUrl === "string"
+                                    ? metadata.hapticIntifaceUrl
+                                    : undefined
+                                }
+                                onIntifaceUrlChange={(hapticIntifaceUrl) =>
+                                  updateMeta.mutate({ id: chat.id, hapticIntifaceUrl })
+                                }
+                              />
+                            </>
+                          )}
+                        </AgentSettingsCard>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Illustrator — game mode only */}
+                  {isGame && (
+                    <AgentSettingsCard
+                      icon={<Image size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title="Illustrator"
+                      description="Auto-generate scene illustrations, NPC portraits, and location backgrounds during gameplay."
+                    >
+                      <AgentSettingsToggle
+                        label="Game Illustrator"
+                        description={
+                          metadata.enableSpriteGeneration
+                            ? "Illustrator is enabled for this game."
+                            : "Allow the game to request scene images, portraits, and backgrounds from your image connection."
+                        }
+                        enabled={!!metadata.enableSpriteGeneration}
+                        onToggle={() =>
+                          updateMeta.mutate({ id: chat.id, enableSpriteGeneration: !metadata.enableSpriteGeneration })
+                        }
+                      />
+                      {metadata.enableSpriteGeneration && (
+                        <div className="space-y-2">
+                          <AgentSettingsToggle
+                            label="Automatic Visuals"
+                            description={
+                              gameStoryboardViewerDisplayMode === "background"
+                                ? "Automatically request NPC portraits and scene illustrations. Location background generation is disabled while storyboard visuals are used as the background."
+                                : "Let Game Mode automatically request backgrounds, NPC portraits, and scene illustrations. Manual buttons stay available when this is off."
+                            }
+                            enabled={gameImageAutoGenerationEnabled}
+                            onToggle={() =>
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameImageAutoGenerationEnabled: !gameImageAutoGenerationEnabled,
+                              })
+                            }
+                          />
+                          <AgentSettingsToggle
+                            label="Dynamic LLM Prompt Generation for GM Mode Assets"
+                            description="Ask the prompt model to rewrite Game NPC portrait, location background, and key-moment prompts before sending them to the image provider."
+                            enabled={gameImageDynamicPromptEnabled}
+                            onToggle={() =>
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameImageDynamicPromptEnabled: !gameImageDynamicPromptEnabled,
+                              })
+                            }
+                          />
+                          {renderIllustratorPromptConnectionSelect()}
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
+                              Image Connection
+                            </span>
                             <select
-                              value={lorebookKeeperTargetLorebookId}
+                              value={(metadata.gameImageConnectionId as string) ?? ""}
                               onChange={(e) =>
-                                updateMeta.mutate({
-                                  id: chat.id,
-                                  lorebookKeeperTargetLorebookId: e.target.value || null,
-                                })
+                                updateMeta.mutate({ id: chat.id, gameImageConnectionId: e.target.value || null })
                               }
-                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
                             >
-                              <option value="">Auto-select first writable lorebook</option>
-                              {((lorebooks ?? []) as Array<{ id: string; name: string }>).map((lorebook) => (
-                                <option key={lorebook.id} value={lorebook.id}>
-                                  {lorebook.name}
+                              <option value="">Select image connection…</option>
+                              {(imageConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                  {c.model ? ` — ${c.model}` : ""}
                                 </option>
                               ))}
                             </select>
                           </label>
-
-                          <label className="flex min-w-0 flex-col gap-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                            <span className="font-medium text-[var(--foreground)]">Read Behind</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={lorebookKeeperReadBehindMessages}
-                              onChange={(e) => {
-                                const nextValue = e.target.value === "" ? 0 : Number.parseInt(e.target.value, 10);
-                                updateMeta.mutate({
-                                  id: chat.id,
-                                  lorebookKeeperReadBehindMessages: Number.isFinite(nextValue)
-                                    ? Math.max(0, Math.min(100, nextValue))
-                                    : 0,
-                                });
-                              }}
-                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                            />
-                          </label>
-                        </div>
-
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          Read-behind uses assistant messages: 0 means the newest eligible reply, 1 waits one reply, and
-                          backfill only processes messages Lorebook Keeper has not already saved.
-                        </p>
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && !isGame && cardEvolutionAuditorActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "card-evolution-auditor")}
-                        icon={renderRoleplayAgentMenuIcon("card-evolution-auditor")}
-                        title={cardEvolutionAuditorAgentMeta.name}
-                        description={cardEvolutionAuditorAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("card-evolution-auditor")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler(
-                          "card-evolution-auditor",
-                          cardEvolutionAuditorAgentMeta.name,
-                        )}
-                      >
-                        <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                          <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                            This agent never edits cards directly. It proposes exact oldText/newText replacements from
-                            durable roleplay changes, then asks you to review, edit, approve, or regenerate them.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onClose();
-                              useUIStore.getState().openAgentDetail("card-evolution-auditor");
-                            }}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary)]/10 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/15"
-                          >
-                            <Settings2 size="0.75rem" />
-                            <span>Open Auditor Setup</span>
-                          </button>
-                        </div>
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && !isGame && proseGuardianActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "prose-guardian")}
-                        icon={renderRoleplayAgentMenuIcon("prose-guardian")}
-                        title={proseGuardianAgentMeta.name}
-                        description={proseGuardianAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("prose-guardian")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("prose-guardian", proseGuardianAgentMeta.name)}
-                      >
-                        <AgentSettingsTextarea
-                          label="Banned Words"
-                          value={proseGuardianBannedDraft}
-                          placeholder={DEFAULT_PROSE_GUARDIAN_BANNED_WORDS}
-                          rows={2}
-                          onChange={setProseGuardianBannedDraft}
-                          onBlur={() => {
-                            if (proseGuardianBannedDraft !== proseGuardianBannedWords) {
-                              commitProseGuardianSettings({
-                                proseGuardianBannedWords: proseGuardianBannedDraft.trim(),
-                              });
-                            }
-                          }}
-                        />
-                        <AgentSettingsTextarea
-                          label="Remove From Writing"
-                          value={proseGuardianAvoidDraft}
-                          placeholder={DEFAULT_PROSE_GUARDIAN_AVOID}
-                          rows={3}
-                          onChange={setProseGuardianAvoidDraft}
-                          onBlur={() => {
-                            if (proseGuardianAvoidDraft !== proseGuardianAvoidInstructions) {
-                              commitProseGuardianSettings({
-                                proseGuardianAvoidInstructions: proseGuardianAvoidDraft.trim(),
-                              });
-                            }
-                          }}
-                        />
-                        <AgentSettingsTextarea
-                          label="Prefer In Writing"
-                          value={proseGuardianStyleDraft}
-                          placeholder="Optional style notes, phrases, or authorial preferences."
-                          rows={3}
-                          onChange={setProseGuardianStyleDraft}
-                          onBlur={() => {
-                            if (proseGuardianStyleDraft !== proseGuardianStyleInstructions) {
-                              commitProseGuardianSettings({
-                                proseGuardianStyleInstructions: proseGuardianStyleDraft.trim(),
-                              });
-                            }
-                          }}
-                        />
-                        <AgentSettingsToggle
-                          label="Hold Message Until Rewrite"
-                          description={
-                            proseGuardianHoldForRewrite
-                              ? "Show the rewrite working indicator, then reveal the edited message."
-                              : "Stream the original message normally, then replace it when the edit is ready."
-                          }
-                          enabled={proseGuardianHoldForRewrite}
-                          onToggle={() =>
-                            commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
-                          }
-                        />
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && !isGame && directorActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "director")}
-                        icon={renderRoleplayAgentMenuIcon("director")}
-                        title={directorAgentMeta.name}
-                        description={directorAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("director")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("director", directorAgentMeta.name)}
-                      >
-                        <AgentSettingsSegmentedControl
-                          value={narrativeDirectorMode}
-                          options={[
-                            {
-                              id: "natural",
-                              label: "Natural",
-                              description: "Push the existing plot forward.",
-                            },
-                            {
-                              id: "random",
-                              label: "Random Event",
-                              description: "Add a plausible surprise.",
-                            },
-                          ]}
-                          onChange={(mode) => updateMeta.mutate({ id: chat.id, narrativeDirectorMode: mode })}
-                        />
-                        {supportsNarrativeDirectorSecretPlot && (
-                          <div className="mt-2 space-y-2">
-                            <AgentSettingsToggle
-                              label="Secret Plot"
-                              description="Maintain a hidden long-term arc for this roleplay."
-                              enabled={narrativeDirectorSecretPlotEnabled}
-                              onToggle={() =>
-                                updateMeta.mutate({
-                                  id: chat.id,
-                                  narrativeDirectorSecretPlotEnabled: !narrativeDirectorSecretPlotEnabled,
-                                })
-                              }
-                            />
-                            {narrativeDirectorSecretPlotEnabled && (
-                              <>
-                                <label className="block rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
-                                  <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                    Run Interval
-                                  </span>
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={100}
-                                      value={narrativeDirectorSecretPlotRunInterval}
-                                      onChange={(event) =>
-                                        updateMeta.mutate({
-                                          id: chat.id,
-                                          narrativeDirectorSecretPlotRunInterval: normalizePositiveInteger(
-                                            event.target.value,
-                                            narrativeDirectorSecretPlotRunInterval,
-                                            100,
-                                          ),
-                                        })
-                                      }
-                                      className="w-24 rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs tabular-nums text-[var(--foreground)] outline-none transition-colors focus:border-[var(--ring)] focus:ring-1 focus:ring-[var(--ring)]"
-                                    />
-                                    <span className="text-[0.625rem] text-[var(--muted-foreground)]">
-                                      assistant messages
-                                    </span>
-                                  </div>
-                                </label>
-                                <SecretPlotPanel
-                                  chatId={chat.id}
-                                  messages={secretPlotMessages}
-                                  isAgentProcessing={agentProcessing}
-                                />
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && !isGame && continuityActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "continuity")}
-                        icon={renderRoleplayAgentMenuIcon("continuity")}
-                        title={continuityAgentMeta.name}
-                        description={continuityAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("continuity")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("continuity", continuityAgentMeta.name)}
-                      >
-                        <AgentSettingsToggle
-                          label="Hold Message Until Rewrite"
-                          description={
-                            proseGuardianHoldForRewrite
-                              ? "Show the rewrite working indicator, then reveal the edited message."
-                              : "Stream the original message normally, then replace it when the edit is ready."
-                          }
-                          enabled={proseGuardianHoldForRewrite}
-                          onToggle={() =>
-                            commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
-                          }
-                        />
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && !isGame && htmlActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "html")}
-                        icon={renderRoleplayAgentMenuIcon("html")}
-                        title={htmlAgentMeta.name}
-                        description={htmlAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("html")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("html", htmlAgentMeta.name)}
-                      >
-                        <AgentSettingsToggle
-                          label="Hold Message Until Rewrite"
-                          description={
-                            proseGuardianHoldForRewrite
-                              ? "Show the rewrite working indicator, then reveal the edited message."
-                              : "Stream the original message normally, then replace it when the edit is ready."
-                          }
-                          enabled={proseGuardianHoldForRewrite}
-                          onToggle={() =>
-                            commitProseGuardianSettings({ proseGuardianHoldForRewrite: !proseGuardianHoldForRewrite })
-                          }
-                        />
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && isRoleplayMode && knowledgeRetrievalActive && (
-                      <KnowledgeAgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "knowledge-retrieval")}
-                        agentType="knowledge-retrieval"
-                        title={knowledgeRetrievalAgentMeta.name}
-                        description={knowledgeRetrievalAgentMeta.description}
-                        lorebooks={(lorebooks ?? []) as Lorebook[]}
-                        settings={getKnowledgeAgentSourceSettings("knowledge-retrieval")}
-                        order={getRoleplayAgentSettingsOrder("knowledge-retrieval")}
-                        onChange={(patch) => updateKnowledgeAgentSourceSettings("knowledge-retrieval", patch)}
-                        onRemove={getRoleplayAgentMenuRemoveHandler(
-                          "knowledge-retrieval",
-                          knowledgeRetrievalAgentMeta.name,
-                        )}
-                      />
-                    )}
-
-                    {metadata.enableAgents && isRoleplayMode && knowledgeRouterActive && (
-                      <KnowledgeAgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "knowledge-router")}
-                        agentType="knowledge-router"
-                        title={knowledgeRouterAgentMeta.name}
-                        description={knowledgeRouterAgentMeta.description}
-                        lorebooks={(lorebooks ?? []) as Lorebook[]}
-                        settings={getKnowledgeAgentSourceSettings("knowledge-router")}
-                        order={getRoleplayAgentSettingsOrder("knowledge-router")}
-                        onChange={(patch) => updateKnowledgeAgentSourceSettings("knowledge-router", patch)}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("knowledge-router", knowledgeRouterAgentMeta.name)}
-                      />
-                    )}
-
-                    {metadata.enableAgents && !isGame && expressionActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "expression")}
-                        icon={renderRoleplayAgentMenuIcon("expression")}
-                        title={expressionAgentMeta.name}
-                        description={expressionAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("expression")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("expression", expressionAgentMeta.name)}
-                        badge={
-                          spriteCharacterIds.length > 0 ? (
-                            <span className="shrink-0 rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
-                              {spriteCharacterIds.length} enabled
-                            </span>
-                          ) : null
-                        }
-                      >
-                        <SpriteDisplayModeToggle modes={spriteDisplayModes} onToggle={toggleSpriteDisplayMode} />
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const nextEnabled = !expressionAvatarsEnabled;
-                            if (onSpriteVisualSettingsChange) {
-                              onSpriteVisualSettingsChange({ expressionAvatarsEnabled: nextEnabled });
-                              return;
-                            }
-                            updateMeta.mutate({ id: chat.id, expressionAvatarsEnabled: nextEnabled });
-                          }}
-                          className={cn(
-                            "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
-                            expressionAvatarsEnabled
-                              ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                              : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
-                          )}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[0.6875rem] font-medium">Expression Avatars</span>
-                            <p className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-                              Replace message avatars with the selected expression sprite.
-                            </p>
-                          </div>
-                          <div
-                            className={cn(
-                              "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                              expressionAvatarsEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                                expressionAvatarsEnabled && "translate-x-3.5",
-                              )}
-                            />
-                          </div>
-                        </button>
-
-                        {chatSpriteSubjects.length === 0 ? (
-                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                            Add characters to this chat or choose a persona first to enable sprite selection.
-                          </p>
-                        ) : chatSpriteSubjectsLoading ? (
-                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">Loading sprite owners...</p>
-                        ) : chatSpriteSubjectsWithSprites.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {chatSpriteSubjectsWithSprites.map((subject) => {
-                              const isPersona = subject.kind === "persona";
-                              const name = isPersona ? subject.persona.name : charName(subject.character);
-                              const title = isPersona
-                                ? subject.persona.comment || "Persona"
-                                : charTitle(subject.character);
-                              const avatarPath = isPersona ? subject.persona.avatarPath : subject.character.avatarPath;
-                              const avatarCrop = isPersona ? null : charAvatarCrop(subject.character);
-                              const spriteActive = spriteCharacterIds.includes(subject.id);
-
-                              return (
-                                <div
-                                  key={`${subject.kind}:${subject.id}`}
-                                  className="flex items-center gap-2.5 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]"
-                                >
-                                  <button
-                                    onClick={() => {
-                                      onClose();
-                                      if (isPersona) {
-                                        useUIStore.getState().openPersonaDetail(subject.id);
-                                      } else {
-                                        useUIStore.getState().openCharacterDetail(subject.id);
-                                      }
-                                    }}
-                                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left transition-colors hover:opacity-80"
-                                    title={isPersona ? "Open persona" : "Open character card"}
-                                  >
-                                    {avatarPath ? (
-                                      <span className="relative block h-8 w-8 shrink-0 overflow-hidden rounded-full">
-                                        <img
-                                          src={avatarPath}
-                                          alt={name}
-                                          loading="lazy"
-                                          className="h-full w-full object-cover"
-                                          style={getAvatarCropStyle(avatarCrop)}
-                                        />
-                                      </span>
-                                    ) : (
-                                      <div
-                                        className={cn(
-                                          "flex h-8 w-8 items-center justify-center rounded-full text-[0.625rem] font-bold",
-                                          isPersona
-                                            ? "mari-avatar-placeholder mari-avatar-placeholder--persona"
-                                            : "mari-avatar-placeholder mari-avatar-placeholder--character",
-                                        )}
-                                      >
-                                        {name[0]}
-                                      </div>
-                                    )}
-                                    <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-xs font-medium">{name}</span>
-                                      {title && (
-                                        <span className="block truncate text-[0.625rem] italic text-[var(--muted-foreground)]">
-                                          {title}
-                                        </span>
-                                      )}
-                                      <span className="block text-[0.625rem] text-[var(--muted-foreground)]">
-                                        {isPersona ? "Persona sprites available" : "Uploaded sprites available"}
-                                      </span>
-                                    </div>
-                                  </button>
-
-                                  <SpriteToggleButton active={spriteActive} onToggle={() => toggleSprite(subject.id)} />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : chatSpriteChoicesLoading ? (
-                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                            Checking added characters for uploaded sprites...
-                          </p>
-                        ) : (
-                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                            None of the added characters have uploaded sprites yet. Open a character card to add them
-                            first.
-                          </p>
-                        )}
-
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          Only added characters and the active persona with uploaded sprites appear here.
-                        </p>
-
-                        {spriteCharacterIds.length > 0 && (
-                          <div className="rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                            <div className="flex items-center gap-2">
-                              <Image size="0.75rem" className="text-[var(--muted-foreground)]" />
-                              <span className="flex-1 text-[0.6875rem] text-[var(--muted-foreground)]">
-                                Sprite Layout
-                              </span>
-                              <button
-                                onClick={() => onToggleSpriteArrange?.()}
-                                className={cn(
-                                  "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
-                                  spriteArrangeMode
-                                    ? "bg-[var(--primary)] text-white"
-                                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                                )}
-                              >
-                                {spriteArrangeMode ? "Done" : "Arrange"}
-                              </button>
-                              <button
-                                onClick={resetSpritePlacements}
-                                disabled={!hasCustomSpritePlacements}
-                                className={cn(
-                                  "rounded-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors ring-1 ring-[var(--border)]",
-                                  hasCustomSpritePlacements
-                                    ? "text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-                                    : "cursor-not-allowed opacity-40 text-[var(--muted-foreground)]",
-                                )}
-                              >
-                                Reset
-                              </button>
-                            </div>
-
-                            <div className="mt-2 flex items-center gap-2">
-                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                Default Side
-                              </span>
-                              <div className="flex rounded-md ring-1 ring-[var(--border)]">
-                                <button
-                                  onClick={() => setSpriteSide("left")}
-                                  className={cn(
-                                    "rounded-l-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
-                                    spritePosition === "left"
-                                      ? "bg-[var(--primary)] text-white"
-                                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                                  )}
-                                >
-                                  Left
-                                </button>
-                                <button
-                                  onClick={() => setSpriteSide("right")}
-                                  className={cn(
-                                    "rounded-r-md px-2.5 py-1 text-[0.625rem] font-medium transition-colors",
-                                    spritePosition === "right"
-                                      ? "bg-[var(--primary)] text-white"
-                                      : "text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
-                                  )}
-                                >
-                                  Right
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                              <SpriteRangeSlider
-                                label="Expression Size"
-                                value={expressionSpriteScalePercent}
-                                min={SPRITE_DISPLAY_SCALE_PERCENT_MIN}
-                                max={SPRITE_DISPLAY_SCALE_PERCENT_MAX}
-                                step={5}
-                                suffix="%"
-                                onChange={setExpressionSpriteScale}
-                              />
-                              <SpriteRangeSlider
-                                label="Full-body Size"
-                                value={fullBodySpriteScalePercent}
-                                min={SPRITE_DISPLAY_SCALE_PERCENT_MIN}
-                                max={SPRITE_DISPLAY_SCALE_PERCENT_MAX}
-                                step={5}
-                                suffix="%"
-                                onChange={setFullBodySpriteScale}
-                              />
-                              <SpriteRangeSlider
-                                label="Expression Opacity"
-                                value={expressionSpriteOpacityPercent}
-                                min={SPRITE_DISPLAY_OPACITY_PERCENT_MIN}
-                                max={SPRITE_DISPLAY_OPACITY_PERCENT_MAX}
-                                step={5}
-                                suffix="%"
-                                onChange={setExpressionSpriteOpacity}
-                              />
-                              <SpriteRangeSlider
-                                label="Full-body Opacity"
-                                value={fullBodySpriteOpacityPercent}
-                                min={SPRITE_DISPLAY_OPACITY_PERCENT_MIN}
-                                max={SPRITE_DISPLAY_OPACITY_PERCENT_MAX}
-                                step={5}
-                                suffix="%"
-                                onChange={setFullBodySpriteOpacity}
-                              />
-                            </div>
-
-                            <p className="mt-2 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
-                              Arrange mode lets you drag sprites anywhere in the chat area. Reset clears saved
-                              positions. Changing the side flips the current layout.
-                            </p>
-                          </div>
-                        )}
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && isRoleplayMode && echoChamberActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "echo-chamber")}
-                        icon={renderRoleplayAgentMenuIcon("echo-chamber")}
-                        title={echoChamberAgentMeta.name}
-                        description={echoChamberAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("echo-chamber")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("echo-chamber", echoChamberAgentMeta.name)}
-                      >
-                        <AgentPromptTemplateSelect
-                          options={getPromptOptionsForAgent("echo-chamber")}
-                          selectedId={
-                            agentPromptTemplateSelections["echo-chamber"] ??
-                            getDefaultPromptTemplateIdForAgent("echo-chamber")
-                          }
-                          onChange={(promptTemplateId) =>
-                            updateAgentPromptTemplateSelection("echo-chamber", promptTemplateId)
-                          }
-                        />
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                          <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                            Prompt mode controls the fictional audience style used for live roleplay reactions.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onClose();
-                              useUIStore.getState().openAgentDetail("echo-chamber");
-                            }}
-                            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                          >
-                            <Settings2 size="0.75rem" />
-                            <span>Open Setup</span>
-                          </button>
-                        </div>
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && isRoleplayMode && illustratorActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "illustrator")}
-                        icon={renderRoleplayAgentMenuIcon("illustrator")}
-                        title={illustratorAgentMeta.name}
-                        description={illustratorAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("illustrator")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("illustrator", illustratorAgentMeta.name)}
-                      >
-                        <AgentPromptTemplateSelect
-                          options={getPromptOptionsForAgent("illustrator")}
-                          selectedId={
-                            agentPromptTemplateSelections["illustrator"] ??
-                            getDefaultPromptTemplateIdForAgent("illustrator")
-                          }
-                          onChange={(promptTemplateId) =>
-                            updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
-                          }
-                        />
-                        {renderIllustratorPromptConnectionSelect()}
-                        <AgentSettingsToggle
-                          label="Attach Card Appearance"
-                          description="Append matched character appearance lines to image prompts, using only visible/generated names."
-                          enabled={illustratorIncludeCharacterAppearance}
-                          onToggle={toggleIllustratorCharacterAppearance}
-                        />
-                        <AgentSettingsToggle
-                          label="Send Avatar References"
-                          description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
-                          enabled={illustratorUseAvatarReferences}
-                          onToggle={toggleIllustratorAvatarReferences}
-                        />
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                          <p className="min-w-0 flex-1 text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
-                            Prompt mode controls how Illustrator writes image prompts for this chat.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              onClose();
-                              useUIStore.getState().openAgentDetail("illustrator");
-                            }}
-                            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--background)]/80 px-3 py-1.5 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                          >
-                            <Settings2 size="0.75rem" />
-                            <span>Open Setup</span>
-                          </button>
-                        </div>
-                      </AgentSettingsCard>
-                    )}
-
-                    {metadata.enableAgents && isRoleplayMode && spotifyActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "spotify")}
-                        icon={renderRoleplayAgentMenuIcon("spotify")}
-                        title={musicDjAgentMeta.name}
-                        description={musicDjAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("spotify")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("spotify", musicDjAgentMeta.name)}
-                      >
-                        <p className="text-[0.55rem] text-[var(--muted-foreground)]/80">
-                          Active player: {getMusicProviderLabel(musicPlayerSource)}.
-                        </p>
-
-                        <div className="grid grid-cols-3 gap-1 rounded-xl border border-[var(--border)] bg-[var(--background)]/65 p-1">
-                          {(["spotify", "youtube", "custom"] as const).map((provider) => {
-                            const active = musicPlayerSource === provider;
-                            return (
-                              <button
-                                key={provider}
-                                type="button"
-                                onClick={() => void changeMusicDjProvider(provider)}
-                                className={cn(
-                                  "rounded-lg px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
-                                  active
-                                    ? "bg-[var(--primary)]/18 text-[var(--foreground)] shadow-sm"
-                                    : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                                )}
-                              >
-                                {getMusicProviderLabel(provider)}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {musicPlayerSource === "spotify" && (
-                          <>
-                            <label className="flex flex-col gap-1">
-                              <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                Spotify source
-                              </span>
-                              <select
-                                value={spotifySourceType}
-                                onChange={(event) => {
-                                  const next = normalizeSpotifySourceType(event.target.value);
-                                  updateMeta.mutate({
-                                    id: chat.id,
-                                    spotifySourceType: next,
-                                    spotifyPlaylistId: next === "playlist" ? spotifyPlaylistId || null : null,
-                                    spotifyPlaylistName:
-                                      next === "playlist" ? (metadata.spotifyPlaylistName as string) || null : null,
-                                    spotifyArtist: next === "artist" ? spotifyArtistDraft.trim() || null : null,
-                                  });
-                                }}
-                                className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                              >
-                                {SPOTIFY_SOURCE_OPTIONS.map((option) => (
-                                  <option key={option.id} value={option.id}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                              <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                                {SPOTIFY_SOURCE_OPTIONS.find((option) => option.id === spotifySourceType)
-                                  ?.description ?? ""}
-                              </span>
-                            </label>
-
-                            {spotifySourceType === "playlist" && (
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                  Playlist
-                                </span>
-                                {spotifyPlaylistsQuery.data?.playlists.length ? (
-                                  <select
-                                    value={spotifyPlaylistId}
-                                    onChange={(event) => {
-                                      const playlist = spotifyPlaylistsQuery.data?.playlists.find(
-                                        (entry) => entry.id === event.target.value,
-                                      );
-                                      updateMeta.mutate({
-                                        id: chat.id,
-                                        spotifyPlaylistId: event.target.value || null,
-                                        spotifyPlaylistName: playlist?.name ?? null,
-                                      });
-                                    }}
-                                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-                                  >
-                                    <option value="">Choose playlist...</option>
-                                    {spotifyPlaylistsQuery.data.playlists.map((playlist) => {
-                                      const suffix =
-                                        typeof playlist.trackCount === "number"
-                                          ? ` (${playlist.trackCount})`
-                                          : playlist.owned === false
-                                            ? " (followed, unavailable)"
-                                            : "";
-                                      return (
-                                        <option key={playlist.id} value={playlist.id}>
-                                          {playlist.name}
-                                          {suffix}
-                                        </option>
-                                      );
-                                    })}
-                                  </select>
-                                ) : (
-                                  <input
-                                    key={`${chat.id}-${spotifyPlaylistId}`}
-                                    defaultValue={spotifyPlaylistId}
-                                    onBlur={(event) =>
-                                      updateMeta.mutate({
-                                        id: chat.id,
-                                        spotifyPlaylistId: event.target.value.trim() || null,
-                                        spotifyPlaylistName: null,
-                                      })
-                                    }
-                                    placeholder={
-                                      spotifyPlaylistsQuery.isFetching ? "Loading playlists..." : "Paste playlist ID"
-                                    }
-                                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                                  />
-                                )}
-                                {spotifyPlaylistsQuery.isError && (
-                                  <span className="text-[0.5625rem] text-amber-400/90">
-                                    Connect Spotify in the Music DJ agent to load playlist names.
-                                  </span>
-                                )}
-                              </label>
-                            )}
-
-                            {spotifySourceType === "artist" && (
-                              <label className="flex flex-col gap-1">
-                                <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                  Artist
-                                </span>
-                                <input
-                                  value={spotifyArtistDraft}
-                                  onChange={(event) => setSpotifyArtistDraft(event.target.value)}
-                                  onBlur={() =>
-                                    updateMeta.mutate({
-                                      id: chat.id,
-                                      spotifyArtist: spotifyArtistDraft.trim() || null,
-                                    })
-                                  }
-                                  placeholder="HOYO-MiX"
-                                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                                />
-                              </label>
-                            )}
-                          </>
-                        )}
-
-                        {musicPlayerSource === "custom" && (
                           <label className="flex flex-col gap-1">
-                            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                              Custom music folder
-                            </span>
-                            <input
-                              key={`${chat.id}-roleplay-custom-music-${customMusicFolder}`}
-                              defaultValue={customMusicFolder}
-                              onBlur={(event) => void saveCustomMusicFolder(event.target.value)}
-                              placeholder="music"
-                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)]/50"
-                            />
-                            <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                              Reads local audio from Game Assets, for example <code>music</code> or{" "}
-                              <code>music/combat</code>.
-                            </span>
+                            <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
+                            <select
+                              value={(metadata.imageStyleProfileId as string) ?? ""}
+                              onChange={(e) =>
+                                updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
+                              }
+                              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                            >
+                              <option value="">Use global or connection default</option>
+                              {imageStyleProfiles.profiles.map((profile) => (
+                                <option key={profile.id} value={profile.id}>
+                                  {profile.name}
+                                </option>
+                              ))}
+                            </select>
                           </label>
-                        )}
-
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          {musicPlayerSource === "spotify"
-                            ? "Roleplay DJ queues several fitting tracks when it changes music."
-                            : musicPlayerSource === "youtube"
-                              ? "YouTube mode uses the Music DJ agent's YouTube connection and embedded player."
-                              : "Custom mode picks from local Game Assets music and plays it in Marinara Engine."}
-                        </p>
-                      </AgentSettingsCard>
-                    )}
-
-                    {renderActiveCustomAgentSettingsCard()}
-
-                    {/* Haptic Feedback — not for game mode */}
-                    {metadata.enableAgents && !isGame && hapticActive && (
-                      <AgentSettingsCard
-                        id={getAgentSettingsMenuId(chat.id, "haptic")}
-                        icon={renderRoleplayAgentMenuIcon("haptic")}
-                        title={hapticAgentMeta.name}
-                        description={hapticAgentMeta.description}
-                        order={getRoleplayAgentSettingsOrder("haptic")}
-                        onRemove={getRoleplayAgentMenuRemoveHandler("haptic", hapticAgentMeta.name)}
-                      >
-                        <AgentSettingsToggle
-                          label="Haptic Feedback"
-                          description={
-                            metadata.enableHapticFeedback
-                              ? "Touch cues are enabled for this chat."
-                              : "Allow this agent to send touch cues during the chat."
-                          }
-                          enabled={metadata.enableHapticFeedback}
-                          onToggle={() =>
-                            updateMeta.mutate({ id: chat.id, enableHapticFeedback: !metadata.enableHapticFeedback })
-                          }
-                        />
-                        {metadata.enableHapticFeedback && (
-                          <>
-                            {chatMode === "roleplay" && (
-                              <div className="space-y-2 rounded-lg bg-[var(--background)]/75 p-2.5 ring-1 ring-[var(--border)]">
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
-                                      Touch sensitivity
-                                    </span>
-                                    <span className="text-[0.5625rem] text-[var(--muted-foreground)]">
-                                      Roleplay only
-                                    </span>
-                                  </div>
-                                  <div className="grid grid-cols-3 gap-1 rounded-lg bg-[var(--background)]/35 p-1">
-                                    {HAPTIC_SENSITIVITY_OPTIONS.map((option) => (
-                                      <button
-                                        key={option.id}
-                                        type="button"
-                                        onClick={() => updateMeta.mutate({ id: chat.id, hapticSensitivity: option.id })}
-                                        className={cn(
-                                          "rounded-md px-2 py-1.5 text-[0.625rem] font-semibold transition-colors",
-                                          hapticSensitivity === option.id
-                                            ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
-                                            : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                                        )}
-                                        title={option.description}
-                                      >
-                                        {option.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateMeta.mutate({
-                                      id: chat.id,
-                                      hapticIncidentalContact: metadata.hapticIncidentalContact !== true,
-                                    })
-                                  }
-                                  className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[0.6875rem] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-                                  aria-pressed={metadata.hapticIncidentalContact === true}
-                                >
-                                  <span className="min-w-0">
-                                    <span className="block font-medium text-[var(--foreground)]">
-                                      Incidental contact
-                                    </span>
-                                    <span className="block text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                                      Tiny taps for accidental brushes and bumps.
-                                    </span>
-                                  </span>
-                                  <span
-                                    className={cn(
-                                      "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                                      metadata.hapticIncidentalContact === true
-                                        ? "bg-[var(--primary)]"
-                                        : "bg-[var(--muted-foreground)]/50",
-                                    )}
-                                  >
-                                    <span
-                                      className={cn(
-                                        "block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                                        metadata.hapticIncidentalContact === true && "translate-x-3.5",
-                                      )}
-                                    />
-                                  </span>
-                                </button>
-                              </div>
-                            )}
-                            <HapticConnectionPanel
-                              intifaceUrl={
-                                typeof metadata.hapticIntifaceUrl === "string" ? metadata.hapticIntifaceUrl : undefined
-                              }
-                              onIntifaceUrlChange={(hapticIntifaceUrl) =>
-                                updateMeta.mutate({ id: chat.id, hapticIntifaceUrl })
-                              }
-                            />
-                          </>
-                        )}
-                      </AgentSettingsCard>
-                    )}
-                  </div>
-                )}
-
-                {/* Illustrator — game mode only */}
-                {isGame && (
-                  <AgentSettingsCard
-                    icon={<Image size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Illustrator"
-                    description="Auto-generate scene illustrations, NPC portraits, and location backgrounds during gameplay."
-                  >
-                    <AgentSettingsToggle
-                      label="Game Illustrator"
-                      description={
-                        metadata.enableSpriteGeneration
-                          ? "Illustrator is enabled for this game."
-                          : "Allow the game to request scene images, portraits, and backgrounds from your image connection."
-                      }
-                      enabled={!!metadata.enableSpriteGeneration}
-                      onToggle={() =>
-                        updateMeta.mutate({ id: chat.id, enableSpriteGeneration: !metadata.enableSpriteGeneration })
-                      }
-                    />
-                    {metadata.enableSpriteGeneration && (
-                      <div className="space-y-2">
-                        <AgentSettingsToggle
-                          label="Automatic Visuals"
-                          description={
-                            gameStoryboardViewerDisplayMode === "background"
-                              ? "Automatically request NPC portraits and scene illustrations. Location background generation is disabled while storyboard visuals are used as the background."
-                              : "Let Game Mode automatically request backgrounds, NPC portraits, and scene illustrations. Manual buttons stay available when this is off."
-                          }
-                          enabled={gameImageAutoGenerationEnabled}
-                          onToggle={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              gameImageAutoGenerationEnabled: !gameImageAutoGenerationEnabled,
-                            })
-                          }
-                        />
-                        <AgentSettingsToggle
-                          label="Dynamic LLM Prompt Generation for GM Mode Assets"
-                          description="Ask the prompt model to rewrite Game NPC portrait, location background, and key-moment prompts before sending them to the image provider."
-                          enabled={gameImageDynamicPromptEnabled}
-                          onToggle={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              gameImageDynamicPromptEnabled: !gameImageDynamicPromptEnabled,
-                            })
-                          }
-                        />
-                        {renderIllustratorPromptConnectionSelect()}
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Connection</span>
-                          <select
-                            value={(metadata.gameImageConnectionId as string) ?? ""}
-                            onChange={(e) =>
-                              updateMeta.mutate({ id: chat.id, gameImageConnectionId: e.target.value || null })
-                            }
-                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                          >
-                            <option value="">Select image connection…</option>
-                            {(imageConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                                {c.model ? ` — ${c.model}` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
-                          <select
-                            value={(metadata.imageStyleProfileId as string) ?? ""}
-                            onChange={(e) =>
-                              updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
-                            }
-                            className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                          >
-                            <option value="">Use global or connection default</option>
-                            {imageStyleProfiles.profiles.map((profile) => (
-                              <option key={profile.id} value={profile.id}>
-                                {profile.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <AgentSettingsToggle
-                          label="Use Campaign Art Style"
-                          description="Add this game's setup-generated art direction as a separate layer alongside the selected Image Style profile."
-                          enabled={useCampaignArtStyle}
-                          onToggle={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              gameSetupConfig: {
-                                ...gameSetupConfig,
-                                useCampaignArtStyle: !useCampaignArtStyle,
-                              },
-                            })
-                          }
-                        />
-                        <label className="flex flex-col gap-1">
-                          <span className="flex items-center justify-between gap-2 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            <span>Campaign art style</span>
-                            {generatedCampaignArtStyle && generatedCampaignArtStyle !== campaignArtStyleDraft.trim() && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCampaignArtStyleDraft(generatedCampaignArtStyle);
-                                  updateMeta.mutate({
-                                    id: chat.id,
-                                    gameSetupConfig: {
-                                      ...gameSetupConfig,
-                                      artStylePrompt: generatedCampaignArtStyle,
-                                    },
-                                  });
-                                }}
-                                className="rounded px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
-                              >
-                                Restore setup style
-                              </button>
-                            )}
-                          </span>
-                          <textarea
-                            value={campaignArtStyleDraft}
-                            onChange={(event) => setCampaignArtStyleDraft(event.target.value)}
-                            onBlur={() => {
-                              const nextArtStyle = campaignArtStyleDraft.trim();
-                              if (nextArtStyle === campaignArtStyle) return;
+                          <AgentSettingsToggle
+                            label="Use Campaign Art Style"
+                            description="Add this game's setup-generated art direction as a separate layer alongside the selected Image Style profile."
+                            enabled={useCampaignArtStyle}
+                            onToggle={() =>
                               updateMeta.mutate({
                                 id: chat.id,
                                 gameSetupConfig: {
                                   ...gameSetupConfig,
-                                  artStylePrompt: nextArtStyle,
-                                  generatedArtStylePrompt: generatedCampaignArtStyle || campaignArtStyle,
+                                  useCampaignArtStyle: !useCampaignArtStyle,
                                 },
-                              });
-                            }}
-                            placeholder="Leave blank to use only the selected Image Style profile."
-                            rows={3}
-                            maxLength={500}
-                            disabled={!useCampaignArtStyle}
-                            className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-50"
-                          />
-                          <span className="text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                            Generated during game setup. Edit or clear it here; the Image Style profile remains independent.
-                          </span>
-                        </label>
-                        <AgentSettingsToggle
-                          label="Attach Card Appearance"
-                          description="Append matched character appearance details to generated scene image prompts."
-                          enabled={gameImageIncludeCharacterAppearance}
-                          onToggle={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              gameImageIncludeCharacterAppearance: !gameImageIncludeCharacterAppearance,
-                            })
-                          }
-                        />
-                        <AgentSettingsToggle
-                          label="Send Avatar References"
-                          description="Send matching character and persona avatars or sprites as reference images for generated scene illustrations."
-                          enabled={gameImageUseAvatarReferences}
-                          onToggle={() =>
-                            updateMeta.mutate({
-                              id: chat.id,
-                              gameImageUseAvatarReferences: !gameImageUseAvatarReferences,
-                            })
-                          }
-                        />
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                            Scene image instructions
-                          </span>
-                          <textarea
-                            value={gameImagePromptInstructionsDraft}
-                            onChange={(e) => setGameImagePromptInstructionsDraft(e.target.value)}
-                            onBlur={() => {
-                              const stored = (metadata.gameImagePromptInstructions as string) ?? "";
-                              if (gameImagePromptInstructionsDraft !== stored) {
-                                updateMeta.mutate({
-                                  id: chat.id,
-                                  gameImagePromptInstructions: gameImagePromptInstructionsDraft.trim() || null,
-                                });
-                              }
-                            }}
-                            placeholder="e.g. Dottore's mask completely covers his eyes; never render visible eyes behind it."
-                            rows={3}
-                            maxLength={1200}
-                            className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50"
-                          />
-                        </label>
-                      </div>
-                    )}
-                  </AgentSettingsCard>
-                )}
-
-                {isGame && (
-                  <AgentSettingsCard
-                    icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Scene Videos"
-                    description="Generate MP4 scene videos from game illustrations."
-                  >
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
-                      <select
-                        value={(metadata.gameVideoConnectionId as string) ?? ""}
-                        onChange={(e) =>
-                          updateMeta.mutate({ id: chat.id, gameVideoConnectionId: e.target.value || null })
-                        }
-                        className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                      >
-                        <option value="">Select video connection...</option>
-                        {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                            {c.model ? ` - ${c.model}` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {videoConnectionsList.length === 0 && (
-                      <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
-                        No video generation connections found. Add one in Settings -&gt; Connections.
-                      </p>
-                    )}
-                    <GamePromptTemplateSelect
-                      label="Game Video Prompt"
-                      description="Used for Game scene videos and storyboard keyframe clips."
-                      options={gameVideoPromptOptions}
-                      selectedId={selectedGameVideoPromptTemplateId}
-                      fallbackId={GAME_VIDEO_PROMPT_TEMPLATE_ID}
-                      onChange={updateGameVideoPromptSelection}
-                    />
-                    <GameProviderPromptLibrary
-                      title="Edit Video Prompt Presets"
-                      description="Built-in Game Video presets are read-only. Add a copy to edit the motion prompt for this chat's scene videos and storyboard clips."
-                      emptyDescription="Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above."
-                      builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
-                      customTemplates={gameVideoPromptTemplates}
-                      customFallbackName="Custom Game Video Prompt"
-                      promptPlaceholder="Write the game video prompt template..."
-                      onAddTemplate={addGameVideoPromptTemplate}
-                      onPatchTemplate={patchGameVideoPromptTemplate}
-                      onRemoveTemplate={removeGameVideoPromptTemplate}
-                    />
-                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Scene videos use the latest generated scene illustration as the first frame and the editable
-                      game video prompt. Storyboard animations first use the Storyboards prompt to plan/render keyframe
-                      images, then use this Game Video Prompt to animate each saved keyframe.
-                    </p>
-                  </AgentSettingsCard>
-                )}
-
-                {isGame && (
-                  <AgentSettingsCard
-                    icon={<PanelsTopLeft size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                    title="Storyboards"
-                    description="Create keyframe media for completed GM turns and follow the active narration section in the floating viewer."
-                  >
-                    <div className="flex items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/60 px-3 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                      <Image size="0.75rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                      <p>
-                        Recommended: use a strong state-of-the-art image model for storyboard images, or something
-                        equivalent to Google Nano Banana 2 Lite.
-                      </p>
-                    </div>
-                    <AgentSettingsToggle
-                      label="Automatic Storyboard Illustrations"
-                      description="Automatically create still keyframe illustrations after completed GM turns. Automatic runs cannot pause for prompt review; use Storyboard turn to review prompts first."
-                      enabled={gameStoryboardAutoIllustrationsEnabled}
-                      onToggle={() => {
-                        const nextEnabled = !gameStoryboardAutoIllustrationsEnabled;
-                        updateMeta.mutate({
-                          id: chat.id,
-                          gameStoryboardAutoIllustrationsEnabled: nextEnabled,
-                          ...(nextEnabled ? {} : { gameStoryboardAutoGenerationEnabled: false }),
-                        });
-                      }}
-                    />
-                    <AgentSettingsToggle
-                      label="Automatic Storyboard Animations"
-                      description="Also generate MP4 clips for each storyboard keyframe. Requires storyboard illustrations and a Video Generation connection."
-                      enabled={gameStoryboardAutoAnimationsEnabled}
-                      onToggle={() => {
-                        const nextEnabled = !gameStoryboardAutoAnimationsEnabled;
-                        updateMeta.mutate({
-                          id: chat.id,
-                          gameStoryboardAutoGenerationEnabled: nextEnabled,
-                          ...(nextEnabled ? { gameStoryboardAutoIllustrationsEnabled: true } : {}),
-                        });
-                      }}
-                    />
-                    <AgentSettingsToggle
-                      label="Use Storyboard Prompt Directly"
-                      description="Send each planner imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses Storyboard Illustration Prompt and prevents tag distillation."
-                      enabled={gameStoryboardUseDirectScenePrompt}
-                      onToggle={() =>
-                        updateMeta.mutate({
-                          id: chat.id,
-                          gameStoryboardUseDirectScenePrompt: !gameStoryboardUseDirectScenePrompt,
-                        })
-                      }
-                    />
-                    <AgentSettingsToggle
-                      label="Use NovelAI Character Prompts"
-                      description="For official NovelAI V4/V4.5 storyboards, send visible characters through native Add Character captions and positions. Turn off to keep every character in the shared legacy prompt."
-                      enabled={gameStoryboardUseNovelAiCharacterPrompts}
-                      onToggle={() =>
-                        updateMeta.mutate({
-                          id: chat.id,
-                          gameStoryboardUseNovelAiCharacterPrompts: !gameStoryboardUseNovelAiCharacterPrompts,
-                        })
-                      }
-                    />
-                    <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
-                            Keyframes per Turn
-                            <HelpTooltip text="Controls how many storyboard illustrations are planned for each completed GM turn. Animations are created from these keyframes when enabled." />
-                          </div>
-                          <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                            Used for automatic illustrations, manual storyboards, and animation source frames.
-                          </p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] tabular-nums text-[var(--foreground)] ring-1 ring-[var(--border)]">
-                          {gameStoryboardKeyframeCount}
-                        </span>
-                      </div>
-                      <input
-                        type="range"
-                        min={GAME_STORYBOARD_KEYFRAME_COUNT_MIN}
-                        max={GAME_STORYBOARD_KEYFRAME_COUNT_MAX}
-                        step={1}
-                        value={gameStoryboardKeyframeCount}
-                        onChange={(event) =>
-                          updateMeta.mutate({
-                            id: chat.id,
-                            gameStoryboardKeyframeCount: normalizeGameStoryboardKeyframeCount(event.target.value),
-                          })
-                        }
-                        className="h-7 w-full cursor-pointer accent-[var(--primary)]"
-                        aria-label="Storyboard keyframes per turn"
-                      />
-                      <div className="flex justify-between text-[0.5625rem] text-[var(--muted-foreground)]">
-                        <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MIN}</span>
-                        <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MAX}</span>
-                      </div>
-                    </div>
-                    <div
-                      className={cn(
-                        "grid gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
-                        !gameStoryboardAutoAnimationsEnabled && "opacity-60",
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
-                          Animation Clip Duration
-                          <HelpTooltip text="Controls the duration of each storyboard MP4 clip in this chat. Some video providers may clamp to a lower maximum." />
-                        </div>
-                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                          {gameStoryboardAnimationDurationConfigured
-                            ? "Used for each generated storyboard animation clip."
-                            : `Uses the ${GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT}-second storyboard default until set.`}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-                        <div className="grid grid-cols-[minmax(0,4rem)_auto] items-center gap-1.5">
-                          <DraftNumberInput
-                            value={gameStoryboardAnimationDurationSeconds}
-                            min={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN}
-                            max={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX}
-                            disabled={!gameStoryboardAutoAnimationsEnabled}
-                            onCommit={commitGameStoryboardAnimationDuration}
-                            className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-70"
-                            ariaLabel="Storyboard animation clip duration in seconds"
-                          />
-                          <span className="text-[0.625rem] text-[var(--muted-foreground)]">s</span>
-                        </div>
-                        {gameStoryboardAnimationDurationConfigured ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              updateMeta.mutate({
-                                id: chat.id,
-                                gameStoryboardAnimationDurationSeconds: null,
                               })
                             }
-                            className="rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            Use storyboard default
-                          </button>
-                        ) : (
-                          <span className="rounded-md bg-[var(--secondary)]/70 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                            Storyboard default
-                          </span>
-                        )}
+                          />
+                          <label className="flex flex-col gap-1">
+                            <span className="flex items-center justify-between gap-2 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                              <span>Campaign art style</span>
+                              {generatedCampaignArtStyle &&
+                                generatedCampaignArtStyle !== campaignArtStyleDraft.trim() && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCampaignArtStyleDraft(generatedCampaignArtStyle);
+                                      updateMeta.mutate({
+                                        id: chat.id,
+                                        gameSetupConfig: {
+                                          ...gameSetupConfig,
+                                          artStylePrompt: generatedCampaignArtStyle,
+                                        },
+                                      });
+                                    }}
+                                    className="rounded px-1.5 py-0.5 text-[0.5625rem] text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+                                  >
+                                    Restore setup style
+                                  </button>
+                                )}
+                            </span>
+                            <textarea
+                              value={campaignArtStyleDraft}
+                              onChange={(event) => setCampaignArtStyleDraft(event.target.value)}
+                              onBlur={() => {
+                                const nextArtStyle = campaignArtStyleDraft.trim();
+                                if (nextArtStyle === campaignArtStyle) return;
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  gameSetupConfig: {
+                                    ...gameSetupConfig,
+                                    artStylePrompt: nextArtStyle,
+                                    generatedArtStylePrompt: generatedCampaignArtStyle || campaignArtStyle,
+                                  },
+                                });
+                              }}
+                              placeholder="Leave blank to use only the selected Image Style profile."
+                              rows={3}
+                              maxLength={500}
+                              disabled={!useCampaignArtStyle}
+                              className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-50"
+                            />
+                            <span className="text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                              Generated during game setup. Edit or clear it here; the Image Style profile remains
+                              independent.
+                            </span>
+                          </label>
+                          <AgentSettingsToggle
+                            label="Attach Card Appearance"
+                            description="Append matched character appearance details to generated scene image prompts."
+                            enabled={gameImageIncludeCharacterAppearance}
+                            onToggle={() =>
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameImageIncludeCharacterAppearance: !gameImageIncludeCharacterAppearance,
+                              })
+                            }
+                          />
+                          <AgentSettingsToggle
+                            label="Send Avatar References"
+                            description="Send matching character and persona avatars or sprites as reference images for generated scene illustrations."
+                            enabled={gameImageUseAvatarReferences}
+                            onToggle={() =>
+                              updateMeta.mutate({
+                                id: chat.id,
+                                gameImageUseAvatarReferences: !gameImageUseAvatarReferences,
+                              })
+                            }
+                          />
+                          <label className="flex flex-col gap-1">
+                            <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                              Scene image instructions
+                            </span>
+                            <textarea
+                              value={gameImagePromptInstructionsDraft}
+                              onChange={(e) => setGameImagePromptInstructionsDraft(e.target.value)}
+                              onBlur={() => {
+                                const stored = (metadata.gameImagePromptInstructions as string) ?? "";
+                                if (gameImagePromptInstructionsDraft !== stored) {
+                                  updateMeta.mutate({
+                                    id: chat.id,
+                                    gameImagePromptInstructions: gameImagePromptInstructionsDraft.trim() || null,
+                                  });
+                                }
+                              }}
+                              placeholder="e.g. Dottore's mask completely covers his eyes; never render visible eyes behind it."
+                              rows={3}
+                              maxLength={1200}
+                              className="min-h-[4.75rem] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs leading-relaxed text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/50"
+                            />
+                          </label>
+                        </div>
+                      )}
+                    </AgentSettingsCard>
+                  )}
+
+                  {isGame && (
+                    <AgentSettingsCard
+                      icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title="Scene Videos"
+                      description="Generate MP4 scene videos from game illustrations."
+                    >
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
+                        <select
+                          value={(metadata.gameVideoConnectionId as string) ?? ""}
+                          onChange={(e) =>
+                            updateMeta.mutate({ id: chat.id, gameVideoConnectionId: e.target.value || null })
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                        >
+                          <option value="">Select video connection...</option>
+                          {(videoConnectionsList ?? []).map((c: { id: string; name: string; model?: string }) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.model ? ` - ${c.model}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {videoConnectionsList.length === 0 && (
+                        <p className="text-[0.625rem] text-amber-700 dark:text-amber-400/80">
+                          No video generation connections found. Add one in Settings -&gt; Connections.
+                        </p>
+                      )}
+                      <GamePromptTemplateSelect
+                        label="Game Video Prompt"
+                        description="Used for Game scene videos and storyboard keyframe clips."
+                        options={gameVideoPromptOptions}
+                        selectedId={selectedGameVideoPromptTemplateId}
+                        fallbackId={GAME_VIDEO_PROMPT_TEMPLATE_ID}
+                        onChange={updateGameVideoPromptSelection}
+                      />
+                      <GameProviderPromptLibrary
+                        title="Edit Video Prompt Presets"
+                        description="Built-in Game Video presets are read-only. Add a copy to edit the motion prompt for this chat's scene videos and storyboard clips."
+                        emptyDescription="Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above."
+                        builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
+                        customTemplates={gameVideoPromptTemplates}
+                        customFallbackName="Custom Game Video Prompt"
+                        promptPlaceholder="Write the game video prompt template..."
+                        onAddTemplate={addGameVideoPromptTemplate}
+                        onPatchTemplate={patchGameVideoPromptTemplate}
+                        onRemoveTemplate={removeGameVideoPromptTemplate}
+                      />
+                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                        Scene videos use the latest generated scene illustration as the first frame and the editable
+                        game video prompt. Storyboard animations first use the Storyboards prompt to plan/render
+                        keyframe images, then use this Game Video Prompt to animate each saved keyframe.
+                      </p>
+                    </AgentSettingsCard>
+                  )}
+
+                  {isGame && (
+                    <AgentSettingsCard
+                      icon={<PanelsTopLeft size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                      title="Storyboards"
+                      description="Create keyframe media for completed GM turns and follow the active narration section in the floating viewer."
+                    >
+                      <div className="flex items-start gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/60 px-3 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                        <Image size="0.75rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
+                        <p>
+                          Recommended: use a strong state-of-the-art image model for storyboard images, or something
+                          equivalent to Google Nano Banana 2 Lite.
+                        </p>
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
-                        Viewer Display
-                        <HelpTooltip text="Floating keeps the draggable storyboard panel. Background places the active storyboard frame behind the game UI and disables generated location backgrounds." />
-                      </div>
-                      <AgentSettingsSegmentedControl<GameStoryboardViewerDisplayMode>
-                        value={gameStoryboardViewerDisplayMode}
-                        options={[
-                          {
-                            id: "floating",
-                            label: "Floating",
-                            description: "Draggable panel above the game.",
-                          },
-                          {
-                            id: "background",
-                            label: "Background",
-                            description: "Visual layer behind controls.",
-                          },
-                        ]}
-                        onChange={(mode) =>
+                      <AgentSettingsToggle
+                        label="Automatic Storyboard Illustrations"
+                        description="Automatically create still keyframe illustrations after completed GM turns. Automatic runs cannot pause for prompt review; use Storyboard turn to review prompts first."
+                        enabled={gameStoryboardAutoIllustrationsEnabled}
+                        onToggle={() => {
+                          const nextEnabled = !gameStoryboardAutoIllustrationsEnabled;
                           updateMeta.mutate({
                             id: chat.id,
-                            gameStoryboardViewerDisplayMode: mode === "floating" ? null : mode,
+                            gameStoryboardAutoIllustrationsEnabled: nextEnabled,
+                            ...(nextEnabled ? {} : { gameStoryboardAutoGenerationEnabled: false }),
+                          });
+                        }}
+                      />
+                      <AgentSettingsToggle
+                        label="Automatic Storyboard Animations"
+                        description="Also generate MP4 clips for each storyboard keyframe. Requires storyboard illustrations and a Video Generation connection."
+                        enabled={gameStoryboardAutoAnimationsEnabled}
+                        onToggle={() => {
+                          const nextEnabled = !gameStoryboardAutoAnimationsEnabled;
+                          updateMeta.mutate({
+                            id: chat.id,
+                            gameStoryboardAutoGenerationEnabled: nextEnabled,
+                            ...(nextEnabled ? { gameStoryboardAutoIllustrationsEnabled: true } : {}),
+                          });
+                        }}
+                      />
+                      <AgentSettingsToggle
+                        label="Use Storyboard Prompt Directly"
+                        description="Send each planner imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses Storyboard Illustration Prompt and prevents tag distillation."
+                        enabled={gameStoryboardUseDirectScenePrompt}
+                        onToggle={() =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            gameStoryboardUseDirectScenePrompt: !gameStoryboardUseDirectScenePrompt,
                           })
                         }
                       />
-                    </div>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">Storyboard Planners</p>
-                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                          Planners split a completed GM turn into ordered keyframes and write the visual plan for each
-                          one.
-                        </p>
-                      </div>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-                          <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">Still Storyboards</p>
-                          <GamePromptTemplateSelect
-                            label="Illustration Planner"
-                            description="Plans finished still keyframes and writes their image descriptions when videos are not being generated."
-                            options={gameStoryboardIllustrationPromptOptions}
-                            selectedId={selectedGameStoryboardIllustrationPromptTemplateId}
-                            fallbackId={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID}
-                            onChange={(promptTemplateId) =>
-                              updateGameStoryboardPromptSelection(
-                                "gameStoryboardIllustrationPromptTemplateId",
-                                promptTemplateId,
-                              )
-                            }
-                          />
-                          <GameStoryboardPromptLibrary
-                            kind="illustration"
-                            builtInTemplates={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES}
-                            customTemplates={customGameStoryboardIllustrationPromptTemplates}
-                            onAddTemplate={addGameStoryboardPromptTemplate}
-                            onPatchTemplate={patchGameStoryboardPromptTemplate}
-                            onRemoveTemplate={removeGameStoryboardPromptTemplate}
-                          />
+                      <AgentSettingsToggle
+                        label="Use NovelAI Character Prompts"
+                        description="For official NovelAI V4/V4.5 storyboards, send visible characters through native Add Character captions and positions. Turn off to keep every character in the shared legacy prompt."
+                        enabled={gameStoryboardUseNovelAiCharacterPrompts}
+                        onToggle={() =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            gameStoryboardUseNovelAiCharacterPrompts: !gameStoryboardUseNovelAiCharacterPrompts,
+                          })
+                        }
+                      />
+                      <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                              Keyframes per Turn
+                              <HelpTooltip text="Controls how many storyboard illustrations are planned for each completed GM turn. Animations are created from these keyframes when enabled." />
+                            </div>
+                            <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                              Used for automatic illustrations, manual storyboards, and animation source frames.
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-[var(--secondary)] px-2 py-0.5 text-[0.625rem] tabular-nums text-[var(--foreground)] ring-1 ring-[var(--border)]">
+                            {gameStoryboardKeyframeCount}
+                          </span>
                         </div>
-                        <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
-                          <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">Animated Storyboards</p>
-                          <GamePromptTemplateSelect
-                            label="Animation Planner"
-                            description="Plans animation-ready source images and a motion direction for each generated clip."
-                            options={gameStoryboardAnimationPromptOptions}
-                            selectedId={selectedGameStoryboardAnimationPromptTemplateId}
-                            fallbackId={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID}
-                            onChange={(promptTemplateId) =>
-                              updateGameStoryboardPromptSelection(
-                                "gameStoryboardAnimationPromptTemplateId",
-                                promptTemplateId,
-                              )
-                            }
-                          />
-                          <GameStoryboardPromptLibrary
-                            kind="animation"
-                            builtInTemplates={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES}
-                            customTemplates={customGameStoryboardAnimationPromptTemplates}
-                            onAddTemplate={addGameStoryboardPromptTemplate}
-                            onPatchTemplate={patchGameStoryboardPromptTemplate}
-                            onRemoveTemplate={removeGameStoryboardPromptTemplate}
-                          />
+                        <input
+                          type="range"
+                          min={GAME_STORYBOARD_KEYFRAME_COUNT_MIN}
+                          max={GAME_STORYBOARD_KEYFRAME_COUNT_MAX}
+                          step={1}
+                          value={gameStoryboardKeyframeCount}
+                          onChange={(event) =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameStoryboardKeyframeCount: normalizeGameStoryboardKeyframeCount(event.target.value),
+                            })
+                          }
+                          className="h-7 w-full cursor-pointer accent-[var(--primary)]"
+                          aria-label="Storyboard keyframes per turn"
+                        />
+                        <div className="flex justify-between text-[0.5625rem] text-[var(--muted-foreground)]">
+                          <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MIN}</span>
+                          <span>{GAME_STORYBOARD_KEYFRAME_COUNT_MAX}</span>
                         </div>
                       </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
-                          Final Generation Prompts
-                        </p>
-                        <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
-                          These format each planner result into the final request sent to the image or video model.
-                        </p>
+                      <div
+                        className={cn(
+                          "grid gap-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center",
+                          !gameStoryboardAutoAnimationsEnabled && "opacity-60",
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                            Animation Clip Duration
+                            <HelpTooltip text="Controls the duration of each storyboard MP4 clip in this chat. Some video providers may clamp to a lower maximum." />
+                          </div>
+                          <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                            {gameStoryboardAnimationDurationConfigured
+                              ? "Used for each generated storyboard animation clip."
+                              : `Uses the ${GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT}-second storyboard default until set.`}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                          <div className="grid grid-cols-[minmax(0,4rem)_auto] items-center gap-1.5">
+                            <DraftNumberInput
+                              value={gameStoryboardAnimationDurationSeconds}
+                              min={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN}
+                              max={GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX}
+                              disabled={!gameStoryboardAutoAnimationsEnabled}
+                              onCommit={commitGameStoryboardAnimationDuration}
+                              className="min-w-0 rounded-md border border-[var(--border)] bg-[var(--secondary)] px-2 py-1 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-70"
+                              ariaLabel="Storyboard animation clip duration in seconds"
+                            />
+                            <span className="text-[0.625rem] text-[var(--muted-foreground)]">s</span>
+                          </div>
+                          {gameStoryboardAnimationDurationConfigured ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateMeta.mutate({
+                                  id: chat.id,
+                                  gameStoryboardAnimationDurationSeconds: null,
+                                })
+                              }
+                              className="rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Use storyboard default
+                            </button>
+                          ) : (
+                            <span className="rounded-md bg-[var(--secondary)]/70 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                              Storyboard default
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <GamePromptTemplateSelect
-                          label="Storyboard Illustration Prompt"
-                          description="Formats each planned keyframe into the final prompt sent to the image model."
-                          options={gameStoryboardImagePromptOptions}
-                          selectedId={selectedGameStoryboardImagePromptTemplateId}
-                          fallbackId={GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID}
-                          onChange={updateGameStoryboardImagePromptSelection}
-                        />
-                        <GamePromptTemplateSelect
-                          label="Storyboard Video Prompt"
-                          description="Combines the generated keyframe and motion plan into the final prompt sent to the video model."
-                          options={gameVideoPromptOptions}
-                          selectedId={selectedGameStoryboardVideoPromptTemplateId}
-                          fallbackId={selectedGameVideoPromptTemplateId}
-                          onChange={updateGameStoryboardVideoPromptSelection}
-                        />
-                      </div>
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <GameProviderPromptLibrary
-                          title="Edit Illustration Prompt Presets"
-                          description="Built-in storyboard illustration prompts are read-only. Add a chat-local copy to change how planned keyframes are formatted for the image model."
-                          emptyDescription="Add a copy, edit it here, then choose it from Storyboard Illustration Prompt above."
-                          builtInTemplates={GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES}
-                          customTemplates={gameStoryboardImagePromptTemplates}
-                          customFallbackName="Custom Storyboard Illustration Prompt"
-                          promptPlaceholder="Write the storyboard illustration prompt template..."
-                          onAddTemplate={addGameStoryboardImagePromptTemplate}
-                          onPatchTemplate={patchGameStoryboardImagePromptTemplate}
-                          onRemoveTemplate={removeGameStoryboardImagePromptTemplate}
-                        />
-                        <GameProviderPromptLibrary
-                          title="Edit Storyboard Video Prompt Presets"
-                          description="Built-in video prompts are read-only. Add a chat-local copy to change how storyboard motion plans are formatted for the video model."
-                          emptyDescription="Add a copy, edit it here, then choose it from Storyboard Video Prompt above."
-                          builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
-                          customTemplates={gameVideoPromptTemplates}
-                          customFallbackName="Custom Game Video Prompt"
-                          promptPlaceholder="Write the storyboard video prompt template..."
-                          onAddTemplate={addGameVideoPromptTemplate}
-                          onPatchTemplate={patchGameVideoPromptTemplate}
-                          onRemoveTemplate={removeGameVideoPromptTemplate}
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
+                          Viewer Display
+                          <HelpTooltip text="Floating keeps the draggable storyboard panel. Background places the active storyboard frame behind the game UI and disables generated location backgrounds." />
+                        </div>
+                        <AgentSettingsSegmentedControl<GameStoryboardViewerDisplayMode>
+                          value={gameStoryboardViewerDisplayMode}
+                          options={[
+                            {
+                              id: "floating",
+                              label: "Floating",
+                              description: "Draggable panel above the game.",
+                            },
+                            {
+                              id: "background",
+                              label: "Background",
+                              description: "Visual layer behind controls.",
+                            },
+                          ]}
+                          onChange={(mode) =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameStoryboardViewerDisplayMode: mode === "floating" ? null : mode,
+                            })
+                          }
                         />
                       </div>
-                    </div>
-                    <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                      Flow: the selected planner creates each keyframe plan, Storyboard Illustration Prompt formats the
-                      image request, and Storyboard Video Prompt formats the animation request when videos are enabled.
-                    </p>
-                  </AgentSettingsCard>
-                )}
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">Storyboard Planners</p>
+                          <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                            Planners split a completed GM turn into ordered keyframes and write the visual plan for each
+                            one.
+                          </p>
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                            <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">Still Storyboards</p>
+                            <GamePromptTemplateSelect
+                              label="Illustration Planner"
+                              description="Plans finished still keyframes and writes their image descriptions when videos are not being generated."
+                              options={gameStoryboardIllustrationPromptOptions}
+                              selectedId={selectedGameStoryboardIllustrationPromptTemplateId}
+                              fallbackId={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID}
+                              onChange={(promptTemplateId) =>
+                                updateGameStoryboardPromptSelection(
+                                  "gameStoryboardIllustrationPromptTemplateId",
+                                  promptTemplateId,
+                                )
+                              }
+                            />
+                            <GameStoryboardPromptLibrary
+                              kind="illustration"
+                              builtInTemplates={GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES}
+                              customTemplates={customGameStoryboardIllustrationPromptTemplates}
+                              onAddTemplate={addGameStoryboardPromptTemplate}
+                              onPatchTemplate={patchGameStoryboardPromptTemplate}
+                              onRemoveTemplate={removeGameStoryboardPromptTemplate}
+                            />
+                          </div>
+                          <div className="space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                            <p className="text-[0.625rem] font-semibold text-[var(--foreground)]">
+                              Animated Storyboards
+                            </p>
+                            <GamePromptTemplateSelect
+                              label="Animation Planner"
+                              description="Plans animation-ready source images and a motion direction for each generated clip."
+                              options={gameStoryboardAnimationPromptOptions}
+                              selectedId={selectedGameStoryboardAnimationPromptTemplateId}
+                              fallbackId={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID}
+                              onChange={(promptTemplateId) =>
+                                updateGameStoryboardPromptSelection(
+                                  "gameStoryboardAnimationPromptTemplateId",
+                                  promptTemplateId,
+                                )
+                              }
+                            />
+                            <GameStoryboardPromptLibrary
+                              kind="animation"
+                              builtInTemplates={GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES}
+                              customTemplates={customGameStoryboardAnimationPromptTemplates}
+                              onAddTemplate={addGameStoryboardPromptTemplate}
+                              onPatchTemplate={patchGameStoryboardPromptTemplate}
+                              onRemoveTemplate={removeGameStoryboardPromptTemplate}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-[0.6875rem] font-semibold text-[var(--foreground)]">
+                            Final Generation Prompts
+                          </p>
+                          <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
+                            These format each planner result into the final request sent to the image or video model.
+                          </p>
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <GamePromptTemplateSelect
+                            label="Storyboard Illustration Prompt"
+                            description="Formats each planned keyframe into the final prompt sent to the image model."
+                            options={gameStoryboardImagePromptOptions}
+                            selectedId={selectedGameStoryboardImagePromptTemplateId}
+                            fallbackId={GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID}
+                            onChange={updateGameStoryboardImagePromptSelection}
+                          />
+                          <GamePromptTemplateSelect
+                            label="Storyboard Video Prompt"
+                            description="Combines the generated keyframe and motion plan into the final prompt sent to the video model."
+                            options={gameVideoPromptOptions}
+                            selectedId={selectedGameStoryboardVideoPromptTemplateId}
+                            fallbackId={selectedGameVideoPromptTemplateId}
+                            onChange={updateGameStoryboardVideoPromptSelection}
+                          />
+                        </div>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <GameProviderPromptLibrary
+                            title="Edit Illustration Prompt Presets"
+                            description="Built-in storyboard illustration prompts are read-only. Add a chat-local copy to change how planned keyframes are formatted for the image model."
+                            emptyDescription="Add a copy, edit it here, then choose it from Storyboard Illustration Prompt above."
+                            builtInTemplates={GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES}
+                            customTemplates={gameStoryboardImagePromptTemplates}
+                            customFallbackName="Custom Storyboard Illustration Prompt"
+                            promptPlaceholder="Write the storyboard illustration prompt template..."
+                            onAddTemplate={addGameStoryboardImagePromptTemplate}
+                            onPatchTemplate={patchGameStoryboardImagePromptTemplate}
+                            onRemoveTemplate={removeGameStoryboardImagePromptTemplate}
+                          />
+                          <GameProviderPromptLibrary
+                            title="Edit Storyboard Video Prompt Presets"
+                            description="Built-in video prompts are read-only. Add a chat-local copy to change how storyboard motion plans are formatted for the video model."
+                            emptyDescription="Add a copy, edit it here, then choose it from Storyboard Video Prompt above."
+                            builtInTemplates={GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES}
+                            customTemplates={gameVideoPromptTemplates}
+                            customFallbackName="Custom Game Video Prompt"
+                            promptPlaceholder="Write the storyboard video prompt template..."
+                            onAddTemplate={addGameVideoPromptTemplate}
+                            onPatchTemplate={patchGameVideoPromptTemplate}
+                            onRemoveTemplate={removeGameVideoPromptTemplate}
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                        Flow: the selected planner creates each keyframe plan, Storyboard Illustration Prompt formats
+                        the image request, and Storyboard Video Prompt formats the animation request when videos are
+                        enabled.
+                      </p>
+                    </AgentSettingsCard>
+                  )}
 
-                {/* Categorized agent sub-sections */}
-                {metadata.enableAgents && (
-                  <>
-                    {isGame ? (
-                      <div className="space-y-1.5">
-                        {gameAgentPool.length > 0 && (
-                          <div className="space-y-1">
-                            {gameAgentPool.map((agent) => {
-                              const active = activeAgentIds.includes(agent.id);
-                              const knowledgeAgentType = isKnowledgeAgentType(agent.id) ? agent.id : null;
-                              return (
-                                <div key={agent.id} className="space-y-1.5">
-                                  <button
-                                    onClick={() => {
-                                      const latestActiveAgentIds = readLatestActiveAgentIds();
-                                      if (active) {
-                                        updateMeta.mutate({
-                                          id: chat.id,
-                                          activeAgentIds: latestActiveAgentIds.filter((id) => id !== agent.id),
-                                        });
-                                      } else {
-                                        updateMeta.mutate({
-                                          id: chat.id,
-                                          enableAgents: true,
-                                          activeAgentIds: Array.from(new Set([...latestActiveAgentIds, agent.id])),
-                                        });
-                                      }
-                                    }}
-                                    className={cn(
-                                      "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
-                                      active
-                                        ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
-                                        : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
-                                    )}
-                                  >
-                                    <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-xs font-medium">{agent.name}</span>
-                                      {agent.description ? (
-                                        <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                                          {agent.description}
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <div
+                  {/* Categorized agent sub-sections */}
+                  {metadata.enableAgents && (
+                    <>
+                      {isGame ? (
+                        <div className="space-y-1.5">
+                          {gameAgentPool.length > 0 && (
+                            <div className="space-y-1">
+                              {gameAgentPool.map((agent) => {
+                                const active = activeAgentIds.includes(agent.id);
+                                const knowledgeAgentType = isKnowledgeAgentType(agent.id) ? agent.id : null;
+                                return (
+                                  <div key={agent.id} className="space-y-1.5">
+                                    <button
+                                      onClick={() => {
+                                        const latestActiveAgentIds = readLatestActiveAgentIds();
+                                        if (active) {
+                                          updateMeta.mutate({
+                                            id: chat.id,
+                                            activeAgentIds: latestActiveAgentIds.filter((id) => id !== agent.id),
+                                          });
+                                        } else {
+                                          updateMeta.mutate({
+                                            id: chat.id,
+                                            enableAgents: true,
+                                            activeAgentIds: Array.from(new Set([...latestActiveAgentIds, agent.id])),
+                                          });
+                                        }
+                                      }}
                                       className={cn(
-                                        "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-                                        active ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                                        "flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-all",
+                                        active
+                                          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                                          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
                                       )}
                                     >
+                                      <div className="min-w-0 flex-1">
+                                        <span className="block truncate text-xs font-medium">{agent.name}</span>
+                                        {agent.description ? (
+                                          <span className="block truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                                            {agent.description}
+                                          </span>
+                                        ) : null}
+                                      </div>
                                       <div
                                         className={cn(
-                                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                                          active && "translate-x-3.5",
+                                          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                                          active ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
                                         )}
-                                      />
-                                    </div>
-                                  </button>
-                                  {active && knowledgeAgentType && (
-                                    <KnowledgeAgentSettingsCard
-                                      agentType={knowledgeAgentType}
-                                      title={agent.name}
-                                      description={agent.description}
-                                      lorebooks={(lorebooks ?? []) as Lorebook[]}
-                                      settings={getKnowledgeAgentSourceSettings(knowledgeAgentType)}
-                                      onChange={(patch) =>
-                                        updateKnowledgeAgentSourceSettings(knowledgeAgentType, patch)
-                                      }
-                                    />
-                                  )}
-                                  {active && agent.id === "illustrator" && (
-                                    <AgentSettingsCard
-                                      icon={<Paintbrush size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
-                                      title={agent.name}
-                                      description={agent.description}
-                                    >
-                                      <AgentPromptTemplateSelect
-                                        options={getPromptOptionsForAgent(agent.id)}
-                                        selectedId={
-                                          agentPromptTemplateSelections[agent.id] ??
-                                          getDefaultPromptTemplateIdForAgent(agent.id)
-                                        }
-                                        onChange={(promptTemplateId) =>
-                                          updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
-                                        }
-                                      />
-                                      {renderIllustratorPromptConnectionSelect()}
-                                      <AgentSettingsToggle
-                                        label="Attach Card Appearance"
-                                        description="Append matched character appearance lines to image prompts, using only visible/generated names."
-                                        enabled={illustratorIncludeCharacterAppearance}
-                                        onToggle={toggleIllustratorCharacterAppearance}
-                                      />
-                                      <AgentSettingsToggle
-                                        label="Send Avatar References"
-                                        description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
-                                        enabled={illustratorUseAvatarReferences}
-                                        onToggle={toggleIllustratorAvatarReferences}
-                                      />
-                                    </AgentSettingsCard>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {renderActiveCustomAgentSettingsCard()}
-                      </div>
-                    ) : (
-                      <>
-                        {/* Approximate per-turn cost of the active agent loadout. */}
-                        <div
-                          className={cn(
-                            "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-[0.6875rem] ring-1",
-                            agentLoadCost.cost.level === "high"
-                              ? "bg-amber-400/10 text-amber-400/90 ring-amber-400/30"
-                              : "bg-[var(--secondary)]/60 text-[var(--muted-foreground)] ring-[var(--border)]",
-                          )}
-                          title={`Approximate. Each call also carries chat context (recent messages, characters, persona, lorebook), so real per-turn token use is higher. Smaller models may slow down or fail past ~${AGENT_COST_HIGH_CALLS} calls or ~${AGENT_COST_HIGH_TOKENS.toLocaleString()} instruction tokens.`}
-                        >
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            {agentLoadCost.cost.level === "high" && (
-                              <AlertTriangle size="0.75rem" className="shrink-0" />
-                            )}
-                            <span className="truncate">
-                              ~{agentLoadCost.cost.instructionTokens.toLocaleString()} tokens of agent instructions
-                              {" · "}~{agentLoadCost.cost.extraCalls} extra call
-                              {agentLoadCost.cost.extraCalls === 1 ? "" : "s"}/turn
-                            </span>
-                          </span>
-                          <span className="shrink-0 cursor-help text-[0.625rem] opacity-70">ⓘ</span>
-                        </div>
-
-                        {visibleActiveAgentIds.length === 0 && (
-                          <p className="text-[0.6875rem] text-[var(--muted-foreground)] px-1">
-                            No agents are active for this chat yet. Add one below to let it run here.
-                          </p>
-                        )}
-
-                        {/* Agent category sub-sections */}
-                        {(
-                          [
-                            {
-                              key: "writer",
-                              label: "Writer Agents",
-                              icon: <Feather size="0.75rem" />,
-                              description:
-                                "Improve prose quality, maintain continuity, and shape the narrative direction of your roleplay.",
-                            },
-                            {
-                              key: "tracker",
-                              label: "Tracker Agents",
-                              icon: <Activity size="0.75rem" />,
-                              description:
-                                "Automatically track world state, character stats, quests, expressions, and other data that changes over time.",
-                            },
-                            {
-                              key: "misc",
-                              label: "Misc Agents",
-                              icon: <Puzzle size="0.75rem" />,
-                              description:
-                                "Specialized utilities — image generation, combat systems, music, summaries, and other extras.",
-                            },
-                          ] as const
-                        ).map((cat) => {
-                          const catAgents = availableAgents.filter((a) => a.category === cat.key);
-                          const activeInCat = catAgents.filter((a) => activeAgentIds.includes(a.id));
-                          const inactiveInCat = catAgents.filter((a) => !activeAgentIds.includes(a.id));
-                          if (catAgents.length === 0) return null;
-                          return (
-                            <AgentCategorySection
-                              key={cat.key}
-                              label={cat.label}
-                              icon={cat.icon}
-                              description={cat.description}
-                              count={activeInCat.length}
-                            >
-                              {/* Active agents in this category */}
-                              {activeInCat.length > 0 && (
-                                <div className="flex flex-col gap-1 mb-1.5">
-                                  {activeInCat.map((agent) => {
-                                    const tokenEst = agentLoadCost.tokensByType.get(agent.id);
-                                    return (
-                                      <div
-                                        key={agent.id}
-                                        className="rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
                                       >
-                                        <div className="flex items-start gap-2.5">
-                                          <Sparkles size="0.875rem" className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                                          <div className="min-w-0 flex-1">
-                                            <div className="flex min-w-0 items-center gap-1.5">
-                                              <span className="block min-w-0 truncate text-xs">{agent.name}</span>
-                                              {tokenEst != null ? (
-                                                <span
-                                                  className="shrink-0 tabular-nums text-[0.625rem] text-[var(--muted-foreground)]"
-                                                  title={`~${tokenEst.toLocaleString()} tokens of agent instructions (estimated)`}
-                                                >
-                                                  ~{tokenEst.toLocaleString()}
-                                                </span>
-                                              ) : null}
-                                            </div>
-                                            <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
-                                              {agent.description}
-                                            </span>
-                                          </div>
-                                          <button
-                                            onClick={() => {
-                                              void toggleAgent(agent.id);
-                                            }}
-                                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                                            title="Remove from chat"
-                                          >
-                                            <Trash2 size="0.6875rem" />
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {/* Available agents to add */}
-                              {inactiveInCat.length > 0 ? (
-                                <div className="flex flex-col gap-1">
-                                  {inactiveInCat.map((agent) => (
-                                    <button
-                                      key={agent.id}
-                                      onClick={() => openAgentAddModal(agent)}
-                                      className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)] bg-[var(--secondary)]"
-                                    >
-                                      <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                                      <div className="flex-1 min-w-0">
-                                        <span className="block truncate text-xs">{agent.name}</span>
-                                        <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
-                                          {agent.description}
-                                        </span>
+                                        <div
+                                          className={cn(
+                                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                                            active && "translate-x-3.5",
+                                          )}
+                                        />
                                       </div>
                                     </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
-                                  All agents in this category are active.
-                                </p>
+                                    {active && knowledgeAgentType && (
+                                      <KnowledgeAgentSettingsCard
+                                        agentType={knowledgeAgentType}
+                                        title={agent.name}
+                                        description={agent.description}
+                                        lorebooks={(lorebooks ?? []) as Lorebook[]}
+                                        settings={getKnowledgeAgentSourceSettings(knowledgeAgentType)}
+                                        onChange={(patch) =>
+                                          updateKnowledgeAgentSourceSettings(knowledgeAgentType, patch)
+                                        }
+                                      />
+                                    )}
+                                    {active && agent.id === "illustrator" && (
+                                      <AgentSettingsCard
+                                        icon={<Paintbrush size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                                        title={agent.name}
+                                        description={agent.description}
+                                      >
+                                        <AgentPromptTemplateSelect
+                                          options={getPromptOptionsForAgent(agent.id)}
+                                          selectedId={
+                                            agentPromptTemplateSelections[agent.id] ??
+                                            getDefaultPromptTemplateIdForAgent(agent.id)
+                                          }
+                                          onChange={(promptTemplateId) =>
+                                            updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
+                                          }
+                                        />
+                                        {renderIllustratorPromptConnectionSelect()}
+                                        <AgentSettingsToggle
+                                          label="Attach Card Appearance"
+                                          description="Append matched character appearance lines to image prompts, using only visible/generated names."
+                                          enabled={illustratorIncludeCharacterAppearance}
+                                          onToggle={toggleIllustratorCharacterAppearance}
+                                        />
+                                        <AgentSettingsToggle
+                                          label="Send Avatar References"
+                                          description="Send matching character and persona avatars or sprites as reference images when the provider supports them."
+                                          enabled={illustratorUseAvatarReferences}
+                                          onToggle={toggleIllustratorAvatarReferences}
+                                        />
+                                      </AgentSettingsCard>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {renderActiveCustomAgentSettingsCard()}
+                        </div>
+                      ) : (
+                        <>
+                          {/* Approximate per-turn cost of the active agent loadout. */}
+                          <div
+                            className={cn(
+                              "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-[0.6875rem] ring-1",
+                              agentLoadCost.cost.level === "high"
+                                ? "bg-amber-400/10 text-amber-400/90 ring-amber-400/30"
+                                : "bg-[var(--secondary)]/60 text-[var(--muted-foreground)] ring-[var(--border)]",
+                            )}
+                            title={`Approximate. Each call also carries chat context (recent messages, characters, persona, lorebook), so real per-turn token use is higher. Smaller models may slow down or fail past ~${AGENT_COST_HIGH_CALLS} calls or ~${AGENT_COST_HIGH_TOKENS.toLocaleString()} instruction tokens.`}
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {agentLoadCost.cost.level === "high" && (
+                                <AlertTriangle size="0.75rem" className="shrink-0" />
                               )}
-                            </AgentCategorySection>
-                          );
-                        })}
+                              <span className="truncate">
+                                ~{agentLoadCost.cost.instructionTokens.toLocaleString()} tokens of agent instructions
+                                {" · "}~{agentLoadCost.cost.extraCalls} extra call
+                                {agentLoadCost.cost.extraCalls === 1 ? "" : "s"}/turn
+                              </span>
+                            </span>
+                            <span className="shrink-0 cursor-help text-[0.625rem] opacity-70">ⓘ</span>
+                          </div>
 
-                        {/* Custom agents */}
-                        {renderCustomAgentPicker()}
-                      </>
-                    )}
-                  </>
-                )}
-                {isGame && renderCustomAgentPicker({ showWhenEmpty: true })}
-              </div>
+                          {visibleActiveAgentIds.length === 0 && (
+                            <p className="text-[0.6875rem] text-[var(--muted-foreground)] px-1">
+                              No agents are active for this chat yet. Add one below to let it run here.
+                            </p>
+                          )}
+
+                          {/* Agent category sub-sections */}
+                          {(
+                            [
+                              {
+                                key: "writer",
+                                label: "Writer Agents",
+                                icon: <Feather size="0.75rem" />,
+                                description:
+                                  "Improve prose quality, maintain continuity, and shape the narrative direction of your roleplay.",
+                              },
+                              {
+                                key: "tracker",
+                                label: "Tracker Agents",
+                                icon: <Activity size="0.75rem" />,
+                                description:
+                                  "Automatically track world state, character stats, quests, expressions, and other data that changes over time.",
+                              },
+                              {
+                                key: "misc",
+                                label: "Misc Agents",
+                                icon: <Puzzle size="0.75rem" />,
+                                description:
+                                  "Specialized utilities — image generation, combat systems, music, summaries, and other extras.",
+                              },
+                            ] as const
+                          ).map((cat) => {
+                            const catAgents = availableAgents.filter((a) => a.category === cat.key);
+                            const activeInCat = catAgents.filter((a) => activeAgentIds.includes(a.id));
+                            const inactiveInCat = catAgents.filter((a) => !activeAgentIds.includes(a.id));
+                            if (catAgents.length === 0) return null;
+                            return (
+                              <AgentCategorySection
+                                key={cat.key}
+                                label={cat.label}
+                                icon={cat.icon}
+                                description={cat.description}
+                                count={activeInCat.length}
+                              >
+                                {/* Active agents in this category */}
+                                {activeInCat.length > 0 && (
+                                  <div className="flex flex-col gap-1 mb-1.5">
+                                    {activeInCat.map((agent) => {
+                                      const tokenEst = agentLoadCost.tokensByType.get(agent.id);
+                                      return (
+                                        <div
+                                          key={agent.id}
+                                          className="rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30"
+                                        >
+                                          <div className="flex items-start gap-2.5">
+                                            <Sparkles
+                                              size="0.875rem"
+                                              className="mt-0.5 shrink-0 text-[var(--primary)]"
+                                            />
+                                            <div className="min-w-0 flex-1">
+                                              <div className="flex min-w-0 items-center gap-1.5">
+                                                <span className="block min-w-0 truncate text-xs">{agent.name}</span>
+                                                {tokenEst != null ? (
+                                                  <span
+                                                    className="shrink-0 tabular-nums text-[0.625rem] text-[var(--muted-foreground)]"
+                                                    title={`~${tokenEst.toLocaleString()} tokens of agent instructions (estimated)`}
+                                                  >
+                                                    ~{tokenEst.toLocaleString()}
+                                                  </span>
+                                                ) : null}
+                                              </div>
+                                              <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                                                {agent.description}
+                                              </span>
+                                            </div>
+                                            <button
+                                              onClick={() => {
+                                                void toggleAgent(agent.id);
+                                              }}
+                                              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                                              title="Remove from chat"
+                                            >
+                                              <Trash2 size="0.6875rem" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {/* Available agents to add */}
+                                {inactiveInCat.length > 0 ? (
+                                  <div className="flex flex-col gap-1">
+                                    {inactiveInCat.map((agent) => (
+                                      <button
+                                        key={agent.id}
+                                        onClick={() => openAgentAddModal(agent)}
+                                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-[var(--accent)] bg-[var(--secondary)]"
+                                      >
+                                        <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                                        <div className="flex-1 min-w-0">
+                                          <span className="block truncate text-xs">{agent.name}</span>
+                                          <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
+                                            {agent.description}
+                                          </span>
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-[0.625rem] text-[var(--muted-foreground)] px-1">
+                                    All agents in this category are active.
+                                  </p>
+                                )}
+                              </AgentCategorySection>
+                            );
+                          })}
+
+                          {/* Custom agents */}
+                          {renderCustomAgentPicker()}
+                        </>
+                      )}
+                    </>
+                  )}
+                  {isGame && renderCustomAgentPicker({ showWhenEmpty: true })}
+                </div>
+              )}
             </Section>
           )}
 
@@ -8940,10 +8631,14 @@ export function ChatSettingsDrawer({
               </div>
             </div>
 
-            {agentAddIsRuntimeDisabled ? (
+            {agentAddIsFeature ? (
               <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                This adds its instructions to the next Roleplay prompt. It does not make a separate model call or use an
-                agent connection.
+                This activates the downloaded feature for this chat. Its package owns the UI and runtime, so it does not
+                make a separate agent model call or use an agent connection.
+              </div>
+            ) : agentAddIsRuntimeDisabled ? (
+              <div className="rounded-xl bg-[var(--secondary)]/70 px-3 py-2.5 text-[0.6875rem] leading-5 text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
+                This adds its instructions to the next Roleplay prompt without making a separate model call.
               </div>
             ) : (
               <div className="space-y-1.5">
@@ -9619,37 +9314,22 @@ function AgentSettingsToggle({
   surface?: "card" | "secondary";
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-pressed={enabled}
+    <SettingsSwitch
+      label={label}
+      description={description}
+      checked={enabled}
+      onChange={() => onToggle()}
+      labelPosition="start"
       className={cn(
-        "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+        "justify-between rounded-lg px-3 py-2.5 text-left",
         enabled
           ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
           : surface === "secondary"
             ? "bg-[var(--secondary)] hover:bg-[var(--accent)]"
             : "bg-[var(--background)]/75 ring-1 ring-[var(--border)] hover:bg-[var(--accent)]",
       )}
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block text-[0.6875rem] font-medium">{label}</span>
-        <span className="mt-0.5 block text-[0.625rem] text-[var(--muted-foreground)]">{description}</span>
-      </span>
-      <span
-        className={cn(
-          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
-          enabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
-        )}
-      >
-        <span
-          className={cn(
-            "block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-            enabled && "translate-x-3.5",
-          )}
-        />
-      </span>
-    </button>
+      labelClassName="text-[0.6875rem] font-medium"
+    />
   );
 }
 
@@ -10164,9 +9844,7 @@ function GameProviderPromptLibrary({
       </button>
       {open && (
         <div className="space-y-2 border-t border-[var(--border)] px-2.5 py-2.5">
-          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-            {description}
-          </p>
+          <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">{description}</p>
           <div className="flex flex-wrap gap-1.5">
             {builtInTemplates.map((template) => (
               <button

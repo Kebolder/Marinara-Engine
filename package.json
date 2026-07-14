@@ -1,6 +1,6 @@
 {
   "name": "marinara-engine",
-  "version": "2.2.2",
+  "version": "2.3.0",
   "private": true,
   "description": "AI Chat & Roleplay Frontend — Conversation, Roleplay, Visual Novel",
   "author": "Marianna",
@@ -37,7 +37,7 @@
     "regression:providers": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/provider-compat.regression.ts",
     "regression:jsonish": "pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/jsonish-output.regression.ts",
     "regression:tts": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/tts-source-persistence.regression.ts",
-    "regression:issues": "pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/open-issues.regression.ts && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/file-backed-shutdown.regression.ts",
+    "regression:issues": "pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/open-issues.regression.ts && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/file-backed-shutdown.regression.ts && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/capability-package-lifecycle.regression.ts",
     "regression:roleplay": "pnpm build:shared && pnpm --filter @marinara-engine/server exec tsx ../../scripts/regressions/roleplay-streaming.regression.ts",
     "smoke:ui": "playwright test -c playwright.config.ts",
     "test": "node ./scripts/check-windows-installer-layout.mjs && pnpm -r run test",

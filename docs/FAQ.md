@@ -102,7 +102,7 @@ For the full feature, see [Lorebooks](lorebooks/overview.md).
 
 ## What is an agent?
 
-An **agent** is an AI helper that runs automatically during a chat to do a background job. Examples include tracking the current scene, watching writing quality, or writing a summary. Agents are set per chat, not per character, and you turn them on in **Chat Settings**. See [Agents](agents/agents-overview.md).
+An **agent** is an optional AI helper that runs during a chat to do a focused job. Examples include tracking the current scene, watching writing quality, adding maps or calls, or running a Conversation table game. Fresh installations have no optional agents. Open the **Agents** panel, click **Download Agents**, read an item's details, and install it. Then enable compatible agents per chat in **Chat Settings**. The catalog also handles updates and complete package removal. Restart Marinara when it asks you to. See [Agents](agents/agents-overview.md) and the public [Marinara-Agents repository](https://github.com/Pasta-Devs/Marinara-Agents).
 
 ## How do I set up Noodle?
 
@@ -155,7 +155,7 @@ To make them automatically, open **Chat Settings**, go to **Agents**, find the *
 
 Yes, in **Conversation** mode. Audio and video calls are a Conversation-only feature. To hear a character speak, first set up **Text to Speech** under the **Connections** panel.
 
-If you want to talk back with your microphone and the browser's own speech recognition is unreliable, download a local speech model. Open the **Connections** panel, expand the **Local Model** card, find **Local Speech Model**, pick **Whisper Tiny (Multilingual)** or **Whisper Base (Multilingual)**, and click **Download Whisper**. For the full call setup, see [Conversation Calls](conversation/calls.md).
+If you want to talk back with your microphone and the browser's own speech recognition is unreliable, first install **Conversation Calls** from **Agents > Download Agents**. Then open the **Connections** panel, expand the **Local Model** card, find **Local Speech Model**, pick **Whisper Tiny (Multilingual)** or **Whisper Base (Multilingual)**, and click **Download Whisper**. Uninstalling Conversation Calls also removes its Whisper downloads to reclaim disk space. For the full call setup, see [Conversation Calls](conversation/calls.md).
 
 ## Can Marinara generate images?
 

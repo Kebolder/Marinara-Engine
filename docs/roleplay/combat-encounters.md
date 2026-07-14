@@ -88,5 +88,5 @@ For the Game Mode battle system, see [Game Mode Combat](../game/combat.md).
 
 - [Roleplay Mode: Getting Started](getting-started.md)
 - [Agents: AI Helpers for Your Chats](../agents/agents-overview.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Game Mode Combat](../game/combat.md)

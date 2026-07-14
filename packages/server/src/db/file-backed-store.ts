@@ -718,9 +718,16 @@ function cloneRow(row: Row) {
 }
 
 function getMeta(table: Table | string) {
-  const meta = typeof table === "string" ? tableMetasByName.get(table) : tableMetasByObject.get(table);
+  const tableName = typeof table === "string" ? table : tableNameOf(table);
+  // Downloaded capability bundles carry their own Drizzle table instances.
+  // Keep object identity as the fast path, then resolve only registered Engine
+  // table names so package-owned storage code can use the same file-native DB.
+  const meta =
+    typeof table === "string"
+      ? tableMetasByName.get(table)
+      : (tableMetasByObject.get(table) ?? tableMetasByName.get(tableName));
   if (!meta) {
-    throw new Error(`[file-storage] Unsupported table: ${typeof table === "string" ? table : tableNameOf(table)}`);
+    throw new Error(`[file-storage] Unsupported table: ${tableName}`);
   }
   return meta;
 }
@@ -731,7 +738,14 @@ function getColumnMeta(column: unknown): ColumnMeta | null {
   if (direct) return direct;
   const candidate = column as Partial<Column>;
   if (!candidate.table || !candidate.name) return null;
-  const tableMeta = tableMetasByObject.get(candidate.table);
+  let tableMeta = tableMetasByObject.get(candidate.table);
+  if (!tableMeta) {
+    try {
+      tableMeta = tableMetasByName.get(tableNameOf(candidate.table));
+    } catch {
+      return null;
+    }
+  }
   return tableMeta?.byDbName.get(candidate.name) ?? null;
 }
 

@@ -100,7 +100,6 @@ export function ChatGallery({
   const [lightbox, setLightbox] = useState<ChatImage | null>(null);
   const [videoLightbox, setVideoLightbox] = useState<GeneratedSceneVideo | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [assetBrowserOpen, setAssetBrowserOpen] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
   const [copiedPromptImageId, setCopiedPromptImageId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<GalleryTab>("images");
@@ -120,15 +119,13 @@ export function ChatGallery({
   const setChatGeneratingBackground = useGalleryStore((s) => s.setChatGeneratingBackground);
   const setChatGeneratingStoryboard = useGalleryStore((s) => s.setChatGeneratingStoryboard);
   const canBrowseAssets = mode === "roleplay";
-  const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(
-    chatId,
-    canBrowseAssets && assetBrowserOpen,
-  );
+  const assetSearchActive = canBrowseAssets && assetSearch.trim().length > 0;
+  const { data: assetItems, isLoading: assetsLoading } = useChatAssetBrowser(chatId, assetSearchActive);
   const portalRoot = typeof document !== "undefined" ? document.body : null;
   const filteredAssets = useMemo(() => {
     const query = assetSearch.trim().toLowerCase();
     const items = assetItems ?? [];
-    if (!query) return items;
+    if (!query) return [];
     return items.filter((asset) =>
       [asset.name, asset.ownerName, asset.prompt, formatAssetKind(asset)].some((value) =>
         value.toLowerCase().includes(query),
@@ -303,7 +300,7 @@ export function ChatGallery({
       const label = asset.prompt.trim() || asset.name;
       dispatchCardAssetInsert(buildCardAssetMarkdown(label, asset.cardUrl), chatId);
       toast.success("Image link inserted.");
-      setAssetBrowserOpen(false);
+      setAssetSearch("");
     },
     [chatId],
   );
@@ -438,14 +435,30 @@ export function ChatGallery({
         )}
 
         {canBrowseAssets && (
-          <button
-            type="button"
-            onClick={() => setAssetBrowserOpen(true)}
-            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--secondary)] px-4 py-3 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)]"
-          >
-            <Images size="1rem" />
-            Browse Images
-          </button>
+          <div className="relative">
+            <Search
+              size="0.875rem"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
+            />
+            <input
+              type="search"
+              value={assetSearch}
+              onChange={(event) => setAssetSearch(event.target.value)}
+              placeholder="Search chat, character, persona, and sprite images"
+              aria-label="Search gallery images"
+              className="h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] pl-9 pr-10 text-xs text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)] focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/20"
+            />
+            {assetSearch && (
+              <button
+                type="button"
+                onClick={() => setAssetSearch("")}
+                aria-label="Clear gallery search"
+                className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+              >
+                <X size="0.875rem" />
+              </button>
+            )}
+          </div>
         )}
 
         {onViewStoryboard && (
@@ -475,8 +488,73 @@ export function ChatGallery({
           </div>
         )}
 
+        {assetSearchActive && (
+          <section className="space-y-2" aria-label="Gallery image search results">
+            <div className="flex items-center justify-between gap-3 text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+              <span className="flex min-w-0 items-center gap-2">
+                <Images size="0.75rem" className="shrink-0" />
+                <span className="truncate">Image search results</span>
+              </span>
+              {!assetsLoading && <span className="shrink-0">{filteredAssets.length}</span>}
+            </div>
+
+            {assetsLoading && (
+              <div
+                className="flex items-center justify-center gap-2 rounded-xl border border-[var(--border)] py-10 text-xs text-[var(--muted-foreground)]"
+                role="status"
+              >
+                <Loader2 size="1rem" className="animate-spin" />
+                Searching images...
+              </div>
+            )}
+
+            {!assetsLoading && filteredAssets.length === 0 && (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--border)] py-10 text-[var(--muted-foreground)]">
+                <Search size="1.5rem" className="opacity-45" />
+                <p className="text-xs">No matching images</p>
+                <p className="max-w-[34rem] px-4 text-center text-[0.625rem] opacity-70">
+                  Try a character name, prompt detail, or image source.
+                </p>
+              </div>
+            )}
+
+            {!assetsLoading && filteredAssets.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {filteredAssets.map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => handleInsertAsset(asset)}
+                    className="group overflow-hidden rounded-lg bg-[var(--secondary)] text-left ring-1 ring-[var(--border)] transition-[box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:ring-[var(--primary)]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+                    aria-label={`Insert ${asset.name}`}
+                  >
+                    <img
+                      src={asset.url}
+                      alt={asset.prompt || asset.name}
+                      loading="lazy"
+                      decoding="async"
+                      className="aspect-square w-full object-cover"
+                    />
+                    <span className="block space-y-1 p-2">
+                      <span className="block truncate text-xs font-medium text-[var(--foreground)]">
+                        {asset.prompt || asset.name}
+                      </span>
+                      <span className="block truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+                        {getAssetMeta(asset)}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         <div
-          className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/60 p-1"
+          className={cn(
+            "grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/60 p-1",
+            assetSearchActive && "hidden",
+          )}
           role="tablist"
           aria-label="Gallery media type"
         >
@@ -521,7 +599,7 @@ export function ChatGallery({
           </button>
         </div>
 
-        {activeTab === "images" && (
+        {!assetSearchActive && activeTab === "images" && (
           <>
             <ImageUploadDropzone
               label="Upload Images"
@@ -541,7 +619,9 @@ export function ChatGallery({
                 <Sparkles size="1.5rem" className="opacity-40" />
                 <p className="text-xs">No images yet</p>
                 <p className="text-[0.625rem] opacity-60">
-                  Upload images or generate illustrations to build your gallery
+                  {onIllustrate
+                    ? "Upload images or generate illustrations to build your gallery"
+                    : "Upload images to build your gallery"}
                 </p>
               </div>
             )}
@@ -638,7 +718,7 @@ export function ChatGallery({
           </>
         )}
 
-        {activeTab === "videos" && (
+        {!assetSearchActive && activeTab === "videos" && (
           <>
             {sceneVideosQuery.isLoading && sceneVideosEnabled && (
               <p className="text-center text-xs text-[var(--muted-foreground)]">Loading scene videos...</p>
@@ -648,7 +728,11 @@ export function ChatGallery({
               <div className="flex flex-col items-center gap-2 py-8 text-[var(--muted-foreground)]">
                 <Film size="1.5rem" className="opacity-40" />
                 <p className="text-xs">No videos yet</p>
-                <p className="text-[0.625rem] opacity-60">Generate or animate scene videos to fill this tab</p>
+                <p className="text-[0.625rem] opacity-60">
+                  {onGenerateVideo || onAnimateImage
+                    ? "Generate or animate scene videos to fill this tab"
+                    : "Generated scene videos will appear here"}
+                </p>
               </div>
             )}
 
@@ -716,96 +800,6 @@ export function ChatGallery({
           </>
         )}
       </div>
-
-      {/* Asset browser */}
-      {portalRoot &&
-        assetBrowserOpen &&
-        createPortal(
-          <div
-            data-chat-floating-panel
-            className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm max-md:pt-[env(safe-area-inset-top)]"
-          >
-            <div className="flex max-h-[88vh] w-[min(58rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl bg-[var(--background)] shadow-2xl ring-1 ring-[var(--border)]">
-              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-                <h3 className="flex items-center gap-2 text-sm font-semibold">
-                  <Images size="1rem" className="text-[var(--muted-foreground)]" />
-                  Browse Images
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setAssetBrowserOpen(false)}
-                  aria-label="Close image browser"
-                  className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)]"
-                >
-                  <X size="1rem" />
-                </button>
-              </div>
-
-              <div className="border-b border-[var(--border)] p-3">
-                <label className="relative block">
-                  <Search
-                    size="0.875rem"
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-                  />
-                  <input
-                    type="search"
-                    value={assetSearch}
-                    onChange={(event) => setAssetSearch(event.target.value)}
-                    placeholder="Search images"
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--secondary)] py-2 pl-9 pr-3 text-sm outline-none transition-colors focus:border-[var(--primary)]"
-                  />
-                </label>
-              </div>
-
-              <div className="min-h-0 flex-1 overflow-y-auto p-3">
-                {assetsLoading && (
-                  <div className="flex items-center justify-center gap-2 py-10 text-sm text-[var(--muted-foreground)]">
-                    <Loader2 size="1rem" className="animate-spin" />
-                    Loading images…
-                  </div>
-                )}
-
-                {!assetsLoading && filteredAssets.length === 0 && (
-                  <div className="flex flex-col items-center gap-2 py-10 text-[var(--muted-foreground)]">
-                    <Images size="1.5rem" className="opacity-45" />
-                    <p className="text-xs">No images found</p>
-                  </div>
-                )}
-
-                {!assetsLoading && filteredAssets.length > 0 && (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    {filteredAssets.map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        onClick={() => handleInsertAsset(asset)}
-                        className="group overflow-hidden rounded-lg bg-[var(--secondary)] text-left ring-1 ring-[var(--border)] transition-all hover:ring-[var(--primary)]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-                        aria-label={`Insert ${asset.name}`}
-                      >
-                        <img
-                          src={asset.url}
-                          alt={asset.prompt || asset.name}
-                          loading="lazy"
-                          decoding="async"
-                          className="aspect-square w-full object-cover transition-transform group-hover:scale-105"
-                        />
-                        <span className="block space-y-1 p-2">
-                          <span className="block truncate text-xs font-medium text-[var(--foreground)]">
-                            {asset.prompt || asset.name}
-                          </span>
-                          <span className="block truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-                            {getAssetMeta(asset)}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>,
-          portalRoot,
-        )}
 
       {/* Delete confirmation */}
       {portalRoot &&

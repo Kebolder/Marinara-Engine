@@ -34,7 +34,7 @@ If Marinara cannot find an image connection to use, the generate step fails with
 Choose an image generation connection for the Background/Illustrator agent, or mark an image generation connection as the default for agents.
 ```
 
-To fix this, open the **Connections** panel and mark one **Image Generation** connection as **Default for Illustrator**, or set a connection for the **Background** agent.
+To fix this, open the **Connections** panel, expand **Defaults**, and choose an image connection under **Images**, or set a connection for the **Background** agent.
 
 ## The Gallery panel
 

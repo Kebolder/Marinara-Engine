@@ -101,7 +101,7 @@
 
 ## Latest Release
 
-Current stable release: **[v2.2.2](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.2.2)**.
+Current stable release: **[v2.3.0](https://github.com/Pasta-Devs/Marinara-Engine/releases/tag/v2.3.0)**.
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes. Tagged releases use the `vX.Y.Z` format and are published on the [Releases](https://github.com/Pasta-Devs/Marinara-Engine/releases) page with a Windows installer, Android bootstrap APK, and named versioned source ZIP. Android APKs are Termux bootstrap + WebView shells: they can download Termux from F-Droid, launch Android's installer, start the Termux setup flow after required permission prompts, then open the local Marinara server on the same device.
 
@@ -151,7 +151,13 @@ Character expression sprites with automatic emotion switching, custom scene back
 
 ### AI Agent System
 
-20+ built-in agents that run alongside your chat — world state tracking, quest management, combat, expression detection, background selection, Narrative Director, prose analysis, Music DJ for Spotify/YouTube, CYOA choices, and more. Add only the agents you want to each chat, or create/import custom agents.
+An optional one-click catalog of 29 first-party agents and feature packages. Fresh installs stay lightweight with no bundled agents. Open **Agents → Download Agents** to install only what you want; update or uninstall packages from the same responsive catalog. Existing installations retain their agents during upgrade. Package sources, artifacts, and the complete catalog are published in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents). You can also create or import custom agents.
+
+- **Writer Agents:** Prose Guardian, Continuity Checker, Narrative Director, Knowledge Retrieval, Knowledge Router, and Card Evolution Auditor.
+- **Tracker Agents:** World State, Expression Engine, Quest Tracker, Background, Character Tracker, Persona Stats, Custom Tracker, and Hierarchical Maps.
+- **Misc Agents:** Echo Chamber, Illustrator, Lorebook Keeper, Combat, Immersive HTML, Music DJ, Haptic Feedback, CYOA Choices, Conversation Calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
+
+See the [Downloadable Agents Reference](docs/agents/built-in-agents.md) for modes, behavior, and setup guidance for every package, or browse the [official Agent repository](https://github.com/Pasta-Devs/Marinara-Agents) directly.
 
 ### Prompt Engineering
 
@@ -178,6 +184,7 @@ The full guide library is browsable inside the app: open **Documentation** from 
 | [docs/conversation/getting-started.md](docs/conversation/getting-started.md)         | Conversation Mode setup, DMs, groups, profiles (display name, about me, behavior), calls, selfies, and table games |
 | [docs/roleplay/getting-started.md](docs/roleplay/getting-started.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats  |
 | [docs/game/getting-started.md](docs/game/getting-started.md)               | Game Mode setup, world-gen, party play, storyboards, and troubleshooting |
+| [docs/agents/built-in-agents.md](docs/agents/built-in-agents.md)           | Complete reference for all 29 downloadable first-party agents and feature packages |
 | [docs/noodle/overview.md](docs/noodle/overview.md)   | Noodle social timeline: setup, posting, interactions, images, and chat carryover |
 | [docs/prompts/generation-parameters.md](docs/prompts/generation-parameters.md) | Sampler and output-parameter reference across providers         |
 | [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)       | Remote access, Basic Auth, IP allowlists, and admin access      |

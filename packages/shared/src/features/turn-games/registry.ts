@@ -1,19 +1,28 @@
 // ──────────────────────────────────────────────
-// Turn-Game Registry
+// Turn-Game Runtime Registry
 // ──────────────────────────────────────────────
-// Game-type → engine lookup. The engine list is codegen'd from each
-// turn-games/<gameType>/engine.manifest.ts (see registry.generated.ts), so
-// adding a game is one folder + `pnpm build:shared`.
-
 import type { AnyTurnGameEngine } from "./engine.types.js";
-import { TURN_GAME_ENGINES } from "./registry.generated.js";
+/** The base Engine intentionally ships no games. Installed packages populate the runtime registry. */
+export const BUNDLED_TURN_GAME_ENGINES: readonly AnyTurnGameEngine[] = [];
+const activeEngines = new Map<string, AnyTurnGameEngine>();
 
-export const GAME_ENGINE_REGISTRY: Readonly<Record<string, AnyTurnGameEngine>> = Object.freeze(
-  Object.fromEntries(TURN_GAME_ENGINES.map((engine) => [engine.gameType, engine])),
-);
+export function registerTurnGameEngine(engine: AnyTurnGameEngine): () => void {
+  if (activeEngines.has(engine.gameType)) throw new Error(`Turn-game engine ${engine.gameType} is already registered`);
+  activeEngines.set(engine.gameType, engine);
+  return () => {
+    if (activeEngines.get(engine.gameType) === engine) activeEngines.delete(engine.gameType);
+  };
+}
+
+export function resetTurnGameRegistry(includeBundled = false): void {
+  activeEngines.clear();
+  if (includeBundled) {
+    for (const engine of BUNDLED_TURN_GAME_ENGINES) activeEngines.set(engine.gameType, engine);
+  }
+}
 
 export function getTurnGameEngine(gameType: string): AnyTurnGameEngine | null {
-  return GAME_ENGINE_REGISTRY[gameType] ?? null;
+  return activeEngines.get(gameType) ?? null;
 }
 
 export interface TurnGameSummary {
@@ -23,9 +32,8 @@ export interface TurnGameSummary {
   maxPlayers: number;
 }
 
-/** Lightweight catalog for the client's game picker. */
 export function listTurnGames(): TurnGameSummary[] {
-  return TURN_GAME_ENGINES.map((engine) => ({
+  return [...activeEngines.values()].map((engine) => ({
     gameType: engine.gameType,
     label: engine.label,
     minPlayers: engine.minPlayers,
@@ -33,4 +41,6 @@ export function listTurnGames(): TurnGameSummary[] {
   }));
 }
 
-export const TURN_GAME_TYPES: readonly string[] = TURN_GAME_ENGINES.map((engine) => engine.gameType);
+export function listTurnGameTypes(): string[] {
+  return [...activeEngines.keys()];
+}

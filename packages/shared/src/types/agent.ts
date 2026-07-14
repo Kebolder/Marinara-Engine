@@ -2,7 +2,11 @@
 // Agent System Types
 // ──────────────────────────────────────────────
 
-import { BUILT_IN_AGENT_MANIFESTS } from "../features/agents/agent-registry.js";
+import {
+  BUILT_IN_AGENT_MANIFESTS,
+  replaceBuiltInAgentManifestRegistry,
+} from "../features/agents/agent-registry.js";
+import type { BuiltInAgentManifest } from "../features/agents/agent-manifest.types.js";
 import type { AgentToolConfig, ToolDefinition } from "../features/function-calls/tool-definitions.js";
 import type { ChatMode } from "./chat.js";
 import type { WrapFormat } from "./prompt.js";
@@ -428,6 +432,7 @@ export const BUILT_IN_AGENT_IDS = {
 } as const;
 
 export const RETIRED_BUILT_IN_AGENT_IDS = [
+  "about-me-keeper",
   "prompt-reviewer",
   "response-orchestrator",
   "schedule-planner",
@@ -461,9 +466,11 @@ export interface BuiltInAgentMeta {
   runtimeDisabled?: boolean;
   modeAllowlist?: readonly ChatMode[];
   promptTemplates?: AgentPromptTemplateOption[];
+  execution?: "pipeline" | "feature";
 }
 
-export const BUILT_IN_AGENTS: BuiltInAgentMeta[] = BUILT_IN_AGENT_MANIFESTS.map((agent) => ({
+function toBuiltInAgentMeta(agent: BuiltInAgentManifest): BuiltInAgentMeta {
+  return {
   id: agent.id,
   name: agent.name,
   description: agent.description,
@@ -476,11 +483,13 @@ export const BUILT_IN_AGENTS: BuiltInAgentMeta[] = BUILT_IN_AGENT_MANIFESTS.map(
   ...(agent.runtimeDisabled !== undefined ? { runtimeDisabled: agent.runtimeDisabled } : {}),
   ...(agent.modeAllowlist !== undefined ? { modeAllowlist: [...agent.modeAllowlist] } : {}),
   ...(agent.promptTemplates !== undefined ? { promptTemplates: [...agent.promptTemplates] } : {}),
-}));
+  ...(agent.execution !== undefined ? { execution: agent.execution } : {}),
+  };
+}
 
-export const BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS: Readonly<Record<string, number>> = Object.fromEntries(
-  BUILT_IN_AGENT_MANIFESTS.flatMap((agent) => (agent.runInterval === undefined ? [] : [[agent.id, agent.runInterval]])),
-);
+export const BUILT_IN_AGENTS: BuiltInAgentMeta[] = [];
+
+export const BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS: Record<string, number> = {};
 
 export const DEFAULT_AGENT_CONTEXT_SIZE = 5;
 export const DEFAULT_AGENT_MAX_TOKENS = 4096;
@@ -627,9 +636,18 @@ export function mergeBuiltInAgentSettings(agentType: string, settings: unknown):
 }
 
 /** Recommended default tools for each built-in agent type. */
-export const DEFAULT_AGENT_TOOLS: Record<string, string[]> = Object.fromEntries(
-  BUILT_IN_AGENT_MANIFESTS.map((agent) => [agent.id, [...(agent.defaultTools ?? [])]]),
-);
+export const DEFAULT_AGENT_TOOLS: Record<string, string[]> = {};
+
+export function replaceBuiltInAgentDefinitions(manifests: readonly BuiltInAgentManifest[]): void {
+  replaceBuiltInAgentManifestRegistry(manifests);
+  BUILT_IN_AGENTS.splice(0, BUILT_IN_AGENTS.length, ...manifests.map(toBuiltInAgentMeta));
+  for (const key of Object.keys(BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS)) delete BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[key];
+  for (const key of Object.keys(DEFAULT_AGENT_TOOLS)) delete DEFAULT_AGENT_TOOLS[key];
+  for (const agent of manifests) {
+    if (agent.runInterval !== undefined) BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS[agent.id] = agent.runInterval;
+    DEFAULT_AGENT_TOOLS[agent.id] = [...(agent.defaultTools ?? [])];
+  }
+}
 
 /** Data shape for a lorebook_update agent result. */
 export interface LorebookUpdateResult {

@@ -30,6 +30,7 @@ import {
   useUploadAgentImage,
   type AgentConfigRow,
 } from "../../hooks/use-agents";
+import { useCapabilityAgentRegistry } from "../../hooks/use-capability-packages";
 import { useCreateCustomTool, useCustomTools, type CustomToolRow } from "../../hooks/use-custom-tools";
 import {
   BUILT_IN_AGENTS,
@@ -76,7 +77,6 @@ import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/u
 import { SmoothFolderContent } from "../ui/SmoothFolderContent";
 
 type JsonRecord = Record<string, unknown>;
-const BUILT_IN_AGENT_TYPE_SET = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 const AGENT_GRADIENT_SURFACE =
   "mari-panel-gradient-surface mari-panel-gradient--agents text-[var(--mari-panel-gradient-text)]";
 const AGENT_GRADIENT_BUTTON = "mari-panel-gradient-button mari-panel-gradient--agents";
@@ -249,6 +249,7 @@ function getReferencedCustomTools(agents: AgentConfigRow[], customTools: CustomT
 
 export function AgentsPanel() {
   const { data: agentConfigs, isLoading } = useAgentConfigs();
+  const { data: capabilityAgents } = useCapabilityAgentRegistry();
   const { data: customTools } = useCustomTools();
   const createAgent = useCreateAgent();
   const createCustomTool = useCreateCustomTool();
@@ -260,6 +261,7 @@ export function AgentsPanel() {
   const deleteAgentFolder = useDeleteLibraryFolder("agents");
   const moveAgentItem = useMoveLibraryItem("agents");
   const openAgentDetail = useUIStore((s) => s.openAgentDetail);
+  const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const sort = useUIStore((s) => s.agentPanelSort);
   const setSort = useUIStore((s) => s.setAgentPanelSort);
   const [agentSearch, setAgentSearch] = useState("");
@@ -282,6 +284,15 @@ export function AgentsPanel() {
   const nativeAgentDragEnabled = !touchSafeAgentDragMode;
 
   const agentConfigRows = useMemo(() => (agentConfigs ?? []) as AgentConfigRow[], [agentConfigs]);
+  const availableBuiltInAgents = useMemo(() => {
+    if (!capabilityAgents) return [...BUILT_IN_AGENTS];
+    const availableIds = new Set(capabilityAgents.map((agent) => agent.id));
+    return BUILT_IN_AGENTS.filter((agent) => availableIds.has(agent.id));
+  }, [capabilityAgents]);
+  const builtInAgentIds = useMemo(
+    () => new Set(availableBuiltInAgents.map((agent) => agent.id)),
+    [availableBuiltInAgents],
+  );
   const customToolRows = useMemo(() => (customTools ?? []) as CustomToolRow[], [customTools]);
   const visibleAgentConfigs = useMemo(
     () => agentConfigRows.filter((config) => !isAgentConfigDeleted(config.settings)),
@@ -291,23 +302,23 @@ export function AgentsPanel() {
     () =>
       new Set(
         agentConfigRows
-          .filter((config) => BUILT_IN_AGENT_TYPE_SET.has(config.type))
+          .filter((config) => builtInAgentIds.has(config.type))
           .filter((config) => isAgentConfigDeleted(config.settings))
           .map((config) => config.type),
       ),
-    [agentConfigRows],
+    [agentConfigRows, builtInAgentIds],
   );
   const visibleBuiltInAgents = useMemo(
-    () => BUILT_IN_AGENTS.filter((agent) => !agent.libraryHidden && !deletedBuiltInTypes.has(agent.id)),
-    [deletedBuiltInTypes],
+    () => availableBuiltInAgents.filter((agent) => !agent.libraryHidden && !deletedBuiltInTypes.has(agent.id)),
+    [availableBuiltInAgents, deletedBuiltInTypes],
   );
   // Custom agents = DB entries whose type doesn't match any built-in
   const customAgents = useMemo(
     () =>
       visibleAgentConfigs.filter(
-        (config) => !BUILT_IN_AGENT_TYPE_SET.has(config.type) && !isRetiredBuiltInAgentId(config.type),
+        (config) => !builtInAgentIds.has(config.type) && !isRetiredBuiltInAgentId(config.type),
       ),
-    [visibleAgentConfigs],
+    [builtInAgentIds, visibleAgentConfigs],
   );
   const configByType = useMemo(
     () => new Map(visibleAgentConfigs.map((config) => [config.type, config])),
@@ -332,6 +343,7 @@ export function AgentsPanel() {
     [configByType, visibleBuiltInAgents],
   );
   const selectableAgents = useMemo(() => [...builtInExportRows, ...customAgents], [builtInExportRows, customAgents]);
+  const hasInstalledAgents = selectableAgents.length > 0;
   const selectableAgentById = useMemo(
     () => new Map(selectableAgents.map((agent) => [agent.id, agent])),
     [selectableAgents],
@@ -354,12 +366,12 @@ export function AgentsPanel() {
   const getAgentSearchData = (agent: AgentConfigRow) => ({
     name: agent.name,
     description: agent.description,
-    category: BUILT_IN_AGENT_TYPE_SET.has(agent.type)
-      ? (BUILT_IN_AGENTS.find((entry) => entry.id === agent.type)?.category ?? "misc")
+    category: builtInAgentIds.has(agent.type)
+      ? (availableBuiltInAgents.find((entry) => entry.id === agent.type)?.category ?? "misc")
       : "custom",
   });
   const agentCategorySections: Array<{ category: AgentCategory; title: string; icon: ReactNode }> = [
-    { category: "writer", title: "Writer Agents", icon: <PenLine size="0.8125rem" /> },
+    { category: "writer", title: "Writing Agents", icon: <PenLine size="0.8125rem" /> },
     { category: "tracker", title: "Tracker Agents", icon: <Radar size="0.8125rem" /> },
     { category: "misc", title: "Misc Agents", icon: <Puzzle size="0.8125rem" /> },
   ];
@@ -647,7 +659,7 @@ export function AgentsPanel() {
 
   const renderFolderAgentCard = useCallback(
     (agent: AgentConfigRow) => {
-      const builtInMeta = BUILT_IN_AGENTS.find((entry) => entry.id === agent.type);
+      const builtInMeta = availableBuiltInAgents.find((entry) => entry.id === agent.type);
       const custom = !builtInMeta;
       const category = custom ? "custom" : builtInMeta.category;
       return renderAgentCard({
@@ -694,6 +706,7 @@ export function AgentsPanel() {
       });
     },
     [
+      availableBuiltInAgents,
       deleteAgent,
       draggedAgentId,
       getDraggedAgentIds,
@@ -772,6 +785,15 @@ export function AgentsPanel() {
         webkitdirectory=""
       />
 
+      <button
+        type="button"
+        onClick={openAgentCatalog}
+        className="mari-chrome-control mari-chrome-control--primary w-full text-xs"
+      >
+        <Sparkles size="0.875rem" />
+        Download Agents
+      </button>
+
       <div className="flex gap-2">
         <button onClick={handleCreateAgent} className={cn("flex-1 text-xs", AGENT_GRADIENT_BUTTON)} title="New">
           <Plus size="0.8125rem" />
@@ -813,7 +835,18 @@ export function AgentsPanel() {
         <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-500">{agentImportSuccess}</div>
       )}
 
-      <div className="flex gap-1.5">
+      {!isLoading && !hasInstalledAgents && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-10 text-center">
+          <span className="mari-panel-gradient-surface mari-panel-gradient--agents flex h-12 w-12 items-center justify-center rounded-2xl">
+            <Sparkles size="1.25rem" />
+          </span>
+          <p className="max-w-[16rem] text-sm font-medium text-[var(--muted-foreground)]">
+            No Agents installed yet, click Download Agents to add them!
+          </p>
+        </div>
+      )}
+
+      {hasInstalledAgents && <div className="flex gap-1.5">
         <div className="relative flex-1">
           <Search
             size="0.8125rem"
@@ -844,15 +877,15 @@ export function AgentsPanel() {
             className="mari-chrome-field-icon mari-chrome-sort-icon mari-accent-animated pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
           />
         </div>
-      </div>
+      </div>}
 
       {isLoading && <div className="mari-chrome-text-muted py-4 text-center text-xs">Loading...</div>}
 
-      {!hasVisibleAgents && (
+      {hasInstalledAgents && !hasVisibleAgents && (
         <p className="mari-chrome-text-muted px-1 py-2 text-[0.625rem]">No agents match your search.</p>
       )}
 
-      <div className="flex flex-col gap-0.5">
+      {hasInstalledAgents && <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-1">
           <button
             onClick={handleCreateFolder}
@@ -1009,9 +1042,9 @@ export function AgentsPanel() {
             </div>
           );
         })}
-      </div>
+      </div>}
 
-      {agentCategorySections.map((section) => {
+      {hasInstalledAgents && agentCategorySections.map((section) => {
         const visibleAgents = sortBasicPanelItems(
           visibleBuiltInDisplayAgents.filter(
             (agent) =>
@@ -1026,7 +1059,7 @@ export function AgentsPanel() {
           <PanelSection key={section.category} title={section.title} icon={section.icon}>
             {visibleAgents.length === 0 ? (
               <p className="mari-chrome-text-muted px-1 py-2 text-[0.625rem]">
-                No {section.title.toLowerCase()} yet.
+                No {section.title.toLowerCase()} yet
               </p>
             ) : (
               visibleAgents.map((agent) => {
@@ -1078,7 +1111,7 @@ export function AgentsPanel() {
         );
       })}
 
-      {(visibleCustomAgents.length > 0 || !agentSearchQuery) && (
+      {hasInstalledAgents && (visibleCustomAgents.length > 0 || !agentSearchQuery) && (
         <PanelSection title="Custom Agents" icon={<Sparkles size="0.8125rem" />}>
           {visibleCustomAgents.length === 0 ? (
             <p className="mari-chrome-text-muted px-1 py-2 text-[0.625rem]">No custom agents yet</p>

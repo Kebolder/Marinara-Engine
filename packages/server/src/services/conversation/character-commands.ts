@@ -43,6 +43,10 @@
 import { normalizeTextForMatch, stripLeadingMessageTimestamps } from "@marinara-engine/shared";
 
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
+import {
+  parseCapabilityConversationCommands,
+  stripCapabilityConversationCommands,
+} from "../capability-packages/capability-command-registry.service.js";
 
 export interface ScheduleUpdateCommand {
   type: "schedule_update";
@@ -117,6 +121,11 @@ export interface TicTacToeCommand {
 export interface RockPaperScissorsCommand {
   /** Start a one-on-one rock-paper-scissors match against the user. Param-less; the system sets up + runs the match. */
   type: "rock_paper_scissors";
+}
+
+export interface CapabilityConversationCommand {
+  type: "capability";
+  commandType: string;
 }
 
 export interface InfluenceCommand {
@@ -393,6 +402,7 @@ export type CharacterCommand =
   | EightballCommand
   | TicTacToeCommand
   | RockPaperScissorsCommand
+  | CapabilityConversationCommand
   | InfluenceCommand
   | NoteCommand
   | DirectMessageCommand
@@ -417,18 +427,6 @@ const SELFIE_RE = /\[selfie(?::\s*(?:context="([^"]*)"|"([^"]*)"|([^\]\r\n"]+)))
 const MEMORY_RE = /\[memory:\s*target="([^"]+)"\s*,\s*summary="([^"]+)"\]/gi;
 const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const CALL_RE = new RegExp(`\\[call(?::\\s*(${QUOTED_PARAM_BLOCK}))?\\]`, "gi");
-// Param-less UNO trigger. Tolerates a stray `[uno: ...]` so a chatty model can't dodge the match.
-const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
-// Param-less chess trigger. Same tolerant shape as UNO_RE.
-const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
-// Param-less poker trigger. Same tolerant shape as UNO_RE.
-const POKER_RE = /\[poker(?::[^\]\r\n]*)?\]/gi;
-// Param-less 8-ball trigger. Same tolerant shape as UNO_RE.
-const EIGHTBALL_RE = /\[eightball(?::[^\]\r\n]*)?\]/gi;
-// Param-less tic-tac-toe trigger. Same tolerant shape as UNO_RE.
-const TIC_TAC_TOE_RE = /\[tic_tac_toe(?::[^\]\r\n]*)?\]/gi;
-// Param-less rock-paper-scissors trigger. Same tolerant shape as UNO_RE.
-const ROCK_PAPER_SCISSORS_RE = /\[rock_paper_scissors(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -1172,41 +1170,7 @@ export function parseCharacterCommands(content: string): {
     break;
   }
 
-  // Parse uno command — start a game of UNO. Param-less; only one per message.
-  for (const _unoMatch of content.matchAll(UNO_RE)) {
-    commands.push({ type: "uno" });
-    break;
-  }
-
-  // Parse chess command — start a one-on-one chess game. Param-less; only one per message.
-  for (const _chessMatch of content.matchAll(CHESS_RE)) {
-    commands.push({ type: "chess" });
-    break;
-  }
-
-  // Parse poker command — start a game of Texas Hold'em. Param-less; only one per message.
-  for (const _pokerMatch of content.matchAll(POKER_RE)) {
-    commands.push({ type: "poker" });
-    break;
-  }
-
-  // Parse eightball command — start a one-on-one 8-ball pool game. Param-less; only one per message.
-  for (const _eightballMatch of content.matchAll(EIGHTBALL_RE)) {
-    commands.push({ type: "eightball" });
-    break;
-  }
-
-  // Parse tic-tac-toe command — start a one-on-one tic-tac-toe game. Param-less; only one per message.
-  for (const _ticTacToeMatch of content.matchAll(TIC_TAC_TOE_RE)) {
-    commands.push({ type: "tic_tac_toe" });
-    break;
-  }
-
-  // Parse rock-paper-scissors command — start a one-on-one match. Param-less; only one per message.
-  for (const _rpsMatch of content.matchAll(ROCK_PAPER_SCISSORS_RE)) {
-    commands.push({ type: "rock_paper_scissors" });
-    break;
-  }
+  commands.push(...parseCapabilityConversationCommands(content));
 
   // Parse influence commands (<influence>text</influence>)
   for (const match of content.matchAll(INFLUENCE_RE)) {
@@ -1423,19 +1387,13 @@ export function parseCharacterCommands(content: string): {
   }
 
   // Strip all commands from the visible content
-  let cleanContent = content
+  let cleanContent = stripCapabilityConversationCommands(content)
     .replace(SCHEDULE_UPDATE_RE, "")
     .replace(CROSS_POST_RE, "")
     .replace(SELFIE_RE, "")
     .replace(MEMORY_RE, "")
     .replace(SCENE_RE, "")
     .replace(CALL_RE, "")
-    .replace(UNO_RE, "")
-    .replace(CHESS_RE, "")
-    .replace(POKER_RE, "")
-    .replace(EIGHTBALL_RE, "")
-    .replace(TIC_TAC_TOE_RE, "")
-    .replace(ROCK_PAPER_SCISSORS_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")

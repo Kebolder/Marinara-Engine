@@ -17,12 +17,11 @@ import {
 
 const BUILTIN_AGENT_ID_PREFIX = "builtin:";
 const REMOVED_BUILT_IN_AGENT_TYPES = new Set(["editor"]);
-const BUILT_IN_AGENT_TYPES = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
 type AgentRunRow = typeof agentRuns.$inferSelect;
 type AgentConfigRow = typeof agentConfigs.$inferSelect;
 
 function isBuiltInAgentType(type: string): boolean {
-  return BUILT_IN_AGENT_TYPES.has(type);
+  return BUILT_IN_AGENTS.some((agent) => agent.id === type);
 }
 
 function suffixFromId(id: string): string {
@@ -376,7 +375,7 @@ export function createAgentsStorage(db: DB) {
           and(
             eq(agentRuns.chatId, chatId),
             eq(agentRuns.success, "true"),
-            notInArray(agentConfigs.type, Array.from(BUILT_IN_AGENT_TYPES)),
+            notInArray(agentConfigs.type, BUILT_IN_AGENTS.map((agent) => agent.id)),
           ),
         )
         .orderBy(desc(agentRuns.createdAt))

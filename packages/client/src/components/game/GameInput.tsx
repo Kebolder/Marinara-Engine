@@ -11,7 +11,8 @@ import { useChatStore } from "../../stores/chat.store";
 import { translateDraftText } from "../../lib/draft-translation";
 import { formatTextQuotes, type DiceRollResult, type PendingSpatialTransition } from "@marinara-engine/shared";
 import { getChatInputShellClass } from "../chat/chat-input-styles";
-import { SpatialContextRuntimeBar } from "../../features/spatial-context/components/SpatialContextRuntimeBar";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
+import type { PendingSpatialTransitionDraft } from "../../stores/chat.store";
 
 interface Attachment {
   type: string;
@@ -44,6 +45,7 @@ interface GameInputProps {
   focusToken?: number;
   /** Trigger the same scene illustration action exposed in the Game Gallery. */
   onIllustrate?: () => void | Promise<void>;
+  spatialCapabilityEnabled?: boolean;
   /**
    * When set, the input renders in interrupt-commit mode. `risky` paints the bar red,
    * highlights the dice button with a glow, and shows a "using dice recommended" hint.
@@ -115,6 +117,7 @@ export function GameInput({
   draftKey,
   focusToken,
   onIllustrate,
+  spatialCapabilityEnabled = false,
   interruptMode,
 }: GameInputProps) {
   const enterToSend = useUIStore((s) => s.enterToSendGame);
@@ -386,11 +389,24 @@ export function GameInput({
       className={cn(inline ? "" : "px-3 pt-2 pb-3")}
       style={inline ? undefined : { minHeight: 61 }}
     >
-      <SpatialContextRuntimeBar
-        chatId={draftKey ?? null}
-        disabled={disabled}
-        onPendingSelected={onClearPendingMove}
-      />
+      {spatialCapabilityEnabled && draftKey ? (
+        <CapabilityElement
+          packageId="hierarchical-maps"
+          view="runtime"
+          capabilityProps={{
+            chatId: draftKey,
+            disabled,
+            onPendingTransitionChange: (pending: unknown) => {
+              if (pending && typeof pending === "object") {
+                useChatStore.getState().setPendingSpatialTransition(draftKey, pending as PendingSpatialTransitionDraft);
+                onClearPendingMove?.();
+              } else {
+                useChatStore.getState().clearPendingSpatialTransition(draftKey);
+              }
+            },
+          }}
+        />
+      ) : null}
 
       {/* Dice picker */}
       {showDice && (

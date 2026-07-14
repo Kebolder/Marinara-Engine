@@ -173,7 +173,7 @@ If Spotify is not connected or lacks playback permission, a Spotify song command
 
 ## Related guides
 
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Agents: AI Helpers for Your Chats](../agents/agents-overview.md)
 - [Connecting to an AI Provider](../connections/connecting-to-a-provider.md)
 - [Game Assets](../game/game-assets.md)

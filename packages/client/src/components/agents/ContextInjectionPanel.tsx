@@ -17,8 +17,6 @@ const CACHED_INJECTIONS_HELP =
   "Troubleshooting view for text that certain writer agents added before the current reply, usually Prose Guardian, Narrative Director, or custom injected text. Edits and re-runs are only used if you regenerate this same assistant message. Re-runs use the original transcript slice and tracker snapshot, not newer chat.";
 const NON_REROLLABLE_INJECTION_AGENTS = new Set(["knowledge-retrieval", "knowledge-router"]);
 
-const INJECTION_LABEL: Record<string, string> = Object.fromEntries(BUILT_IN_AGENTS.map((a) => [a.id, a.name]));
-
 function parseExtra(raw: Message["extra"]): Record<string, unknown> {
   if (typeof raw === "string") {
     try {
@@ -40,7 +38,7 @@ function findLastAssistant(messages: Message[] | undefined): Message | null {
 }
 
 function agentLabel(agentType: string, agentName?: string): string {
-  return agentName?.trim() || INJECTION_LABEL[agentType] || agentType;
+  return agentName?.trim() || BUILT_IN_AGENTS.find((agent) => agent.id === agentType)?.name || agentType;
 }
 
 type CachedInjection = { agentType: string; agentName?: string; text: string };

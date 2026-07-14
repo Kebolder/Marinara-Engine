@@ -3,7 +3,14 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import type { ConnectionFolder } from "@marinara-engine/shared";
+import type {
+  ConnectionFolder,
+  CreateConnectionFolderInput,
+  MoveConnectionToFolderInput,
+  ReorderConnectionsInFolderInput,
+  ReorderFoldersInput,
+  UpdateFolderInput,
+} from "@marinara-engine/shared";
 import { connectionKeys } from "./use-connections";
 
 export const connectionFolderKeys = {
@@ -22,7 +29,7 @@ export function useConnectionFolders() {
 export function useCreateConnectionFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; color?: string }) => api.post<ConnectionFolder>("/connection-folders", data),
+    mutationFn: (data: CreateConnectionFolderInput) => api.post<ConnectionFolder>("/connection-folders", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionFolderKeys.list() }),
   });
 }
@@ -33,13 +40,7 @@ export function useUpdateConnectionFolder() {
     mutationFn: ({
       id,
       ...data
-    }: {
-      id: string;
-      name?: string;
-      color?: string;
-      sortOrder?: number;
-      collapsed?: boolean;
-    }) => api.patch<ConnectionFolder>(`/connection-folders/${id}`, data),
+    }: UpdateFolderInput & { id: string }) => api.patch<ConnectionFolder>(`/connection-folders/${id}`, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionFolderKeys.list() }),
   });
 }
@@ -58,7 +59,8 @@ export function useDeleteConnectionFolder() {
 export function useReorderConnectionFolders() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (orderedIds: string[]) => api.post("/connection-folders/reorder", { orderedIds }),
+    mutationFn: (orderedIds: ReorderFoldersInput["orderedIds"]) =>
+      api.post("/connection-folders/reorder", { orderedIds } satisfies ReorderFoldersInput),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionFolderKeys.list() }),
   });
 }
@@ -66,8 +68,7 @@ export function useReorderConnectionFolders() {
 export function useMoveConnection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { connectionId: string; folderId: string | null }) =>
-      api.post("/connection-folders/move-connection", data),
+    mutationFn: (data: MoveConnectionToFolderInput) => api.post("/connection-folders/move-connection", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionKeys.list() }),
   });
 }
@@ -75,8 +76,7 @@ export function useMoveConnection() {
 export function useReorderConnections() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { orderedConnectionIds: string[]; folderId: string | null }) =>
-      api.post("/connection-folders/reorder-connections", data),
+    mutationFn: (data: ReorderConnectionsInFolderInput) => api.post("/connection-folders/reorder-connections", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: connectionKeys.list() }),
   });
 }

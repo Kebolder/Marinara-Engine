@@ -7860,7 +7860,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   : null;
                 if (imageConnectionOverride && !imgConnFull) {
                   logger.warn(
-                    "[illustrator] Image connection %s could not be resolved; falling back to default Illustrator connection",
+                    "[illustrator] Image connection %s could not be resolved; falling back to the default Images connection",
                     imageConnectionOverride,
                   );
                 }
@@ -8094,7 +8094,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         agentType: "illustrator",
                         agentName: illustratorAgent?.name ?? "Illustrator",
                         error:
-                          "No image generation connection set on the Illustrator agent, and no default Illustrator image connection is configured. Go to Settings → Connections and mark an image generation connection as the default for Illustrator, or assign one directly in Settings → Agents → Illustrator.",
+                          "No image generation connection is set on the Illustrator agent or under Settings → Connections → Defaults → Images. Choose one there, or assign one directly in Settings → Agents → Illustrator.",
                       },
                     })}\n\n`,
                   );
@@ -8422,7 +8422,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 });
 
                 await handleTurnGameCommand({
-                  commandType: command.type,
+                  commandType: command.type === "capability" ? command.commandType : command.type,
                   characterId,
                   chatId: input.chatId,
                   chatMeta,

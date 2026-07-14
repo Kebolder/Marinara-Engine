@@ -111,5 +111,5 @@ See [Macros](../prompts/macros.md) for the full macro list.
 - [Conversation Mode: Getting Started](getting-started.md)
 - [Creating and Editing Characters](../characters/creating-and-editing-characters.md)
 - [User Personas: Creating and Editing](../characters/personas.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Macros](../prompts/macros.md)

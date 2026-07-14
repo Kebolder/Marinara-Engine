@@ -65,7 +65,7 @@ export function createConnectionsStorage(db: DB) {
       return { ...row, apiKey: decryptApiKey(row.apiKeyEncrypted) };
     },
 
-    /** Get the image-generation connection marked as default for Illustrator (with decrypted key). */
+    /** Get the image-generation connection selected under Defaults → Images (with decrypted key). */
     async getDefaultForImageGeneration() {
       const rows = await db
         .select()

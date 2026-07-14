@@ -3,7 +3,14 @@
 // ──────────────────────────────────────────────
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api-client";
-import type { ChatFolder } from "@marinara-engine/shared";
+import type {
+  ChatFolder,
+  CreateChatFolderInput,
+  MoveChatToFolderInput,
+  ReorderChatsInFolderInput,
+  ReorderFoldersInput,
+  UpdateFolderInput,
+} from "@marinara-engine/shared";
 import { chatKeys } from "./use-chats";
 
 export const folderKeys = {
@@ -23,7 +30,7 @@ export function useChatFolders() {
 export function useCreateFolder() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; mode: string; color?: string }) => api.post<ChatFolder>("/chat-folders", data),
+    mutationFn: (data: CreateChatFolderInput) => api.post<ChatFolder>("/chat-folders", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: folderKeys.list() }),
   });
 }
@@ -34,13 +41,7 @@ export function useUpdateFolder() {
     mutationFn: ({
       id,
       ...data
-    }: {
-      id: string;
-      name?: string;
-      color?: string;
-      sortOrder?: number;
-      collapsed?: boolean;
-    }) => api.patch<ChatFolder>(`/chat-folders/${id}`, data),
+    }: UpdateFolderInput & { id: string }) => api.patch<ChatFolder>(`/chat-folders/${id}`, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: folderKeys.list() }),
   });
 }
@@ -59,7 +60,8 @@ export function useDeleteFolder() {
 export function useReorderFolders() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (orderedIds: string[]) => api.post("/chat-folders/reorder", { orderedIds }),
+    mutationFn: (orderedIds: ReorderFoldersInput["orderedIds"]) =>
+      api.post("/chat-folders/reorder", { orderedIds } satisfies ReorderFoldersInput),
     onSuccess: () => qc.invalidateQueries({ queryKey: folderKeys.list() }),
   });
 }
@@ -67,7 +69,7 @@ export function useReorderFolders() {
 export function useMoveChat() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { chatId: string; folderId: string | null }) => api.post("/chat-folders/move-chat", data),
+    mutationFn: (data: MoveChatToFolderInput) => api.post("/chat-folders/move-chat", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatKeys.list() }),
   });
 }
@@ -75,8 +77,7 @@ export function useMoveChat() {
 export function useReorderChats() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { orderedChatIds: string[]; folderId: string | null }) =>
-      api.post("/chat-folders/reorder-chats", data),
+    mutationFn: (data: ReorderChatsInFolderInput) => api.post("/chat-folders/reorder-chats", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: chatKeys.list() }),
   });
 }

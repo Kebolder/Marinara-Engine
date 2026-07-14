@@ -53,6 +53,20 @@ export type ConversationCommandKey = (typeof CONVERSATION_COMMAND_KEYS)[number];
 
 export type ConversationCommandToggles = Partial<Record<ConversationCommandKey, boolean>>;
 
+/** Downloadable agent package that owns each optional Conversation command. */
+export const CONVERSATION_COMMAND_AGENT_IDS: Partial<Record<ConversationCommandKey, string>> = {
+  selfie: "illustrator",
+  call: "conversation-calls",
+  uno: "uno",
+  chess: "chess",
+  poker: "poker",
+  eightball: "eightball",
+  tic_tac_toe: "tic-tac-toe",
+  rock_paper_scissors: "rock-paper-scissors",
+  music: "spotify",
+  haptic: "haptic",
+};
+
 export type ConversationPresenceStatus = "online" | "idle" | "dnd" | "offline";
 
 export type ConversationManualPresenceStatus = ConversationPresenceStatus;

@@ -20,6 +20,7 @@ import {
   unloadModel,
 } from "../services/sidecar/sidecar-inference.service.js";
 import { sidecarProcessService } from "../services/sidecar/sidecar-process.service.js";
+import { capabilityPackageManager } from "../services/capability-packages/package-manager.service.js";
 import {
   buildSceneAnalyzerSystemPrompt,
   buildSceneAnalyzerUserPrompt,
@@ -71,6 +72,19 @@ function createResponseAbortSignal(reply: FastifyReply, label: string): AbortSig
   return controller.signal;
 }
 
+async function requireConversationCallsForSpeech(reply: FastifyReply): Promise<boolean> {
+  const installed = await capabilityPackageManager.installed();
+  const callsAvailable = installed.some(
+    (item) => item.status !== "error" && item.manifest.kind.includes("conversation-calls"),
+  );
+  if (callsAvailable) return true;
+  reply.status(409).send({
+    error: "Conversation Calls is not installed",
+    message: "Install Conversation Calls from Agents before managing the Local Speech Model.",
+  });
+  return false;
+}
+
 export const sidecarRoutes: FastifyPluginAsync = async (app) => {
   app.get("/status", async () => {
     void sidecarProcessService
@@ -88,7 +102,10 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
-  app.get("/speech/status", async () => sidecarSpeechService.getStatus());
+  app.get("/speech/status", async (_req, reply) => {
+    if (!(await requireConversationCallsForSpeech(reply))) return;
+    return sidecarSpeechService.getStatus();
+  });
 
   const configSchema = z.object({
     useForTrackers: z.boolean().optional(),
@@ -337,6 +354,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     Body: { modelId?: SidecarSpeechModelId };
   }>("/speech/download", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Local Whisper download" })) return;
+    if (!(await requireConversationCallsForSpeech(reply))) return;
     const body = z.object({ modelId: speechModelIdSchema.optional() }).parse(req.body ?? {});
     await handleSpeechDownloadSse(reply, async (onProgress) => {
       await sidecarSpeechService.download(body.modelId, onProgress);
@@ -347,6 +365,7 @@ export const sidecarRoutes: FastifyPluginAsync = async (app) => {
     Body: { modelId?: SidecarSpeechModelId };
   }>("/speech/model", async (req, reply) => {
     if (!requirePrivilegedAccess(req, reply, { feature: "Local Whisper model deletion" })) return;
+    if (!(await requireConversationCallsForSpeech(reply))) return;
     const body = z.object({ modelId: speechModelIdSchema.optional() }).parse(req.body ?? {});
     await sidecarSpeechService.deleteModel(body.modelId);
     return { ok: true };

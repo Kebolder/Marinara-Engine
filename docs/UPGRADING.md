@@ -8,6 +8,8 @@ Upgrading Marinara Engine does not delete your data. Your chats, characters, per
 
 Marinara keeps your data in a local data folder on the machine that runs the server. Docker and Podman keep it in the `marinara-data` volume. Updating only replaces the app code, not this data folder or volume.
 
+When upgrading from a version that bundled first-party agents, maps, calls, or Conversation games, the first start downloads their matching optional packages from the official catalog. Existing chat selections, agent settings, stored runtime data, and history are preserved. Keep the server online for that first start. If the catalog cannot be reached, Marinara retries the migration the next time it starts instead of deleting or disabling your stored configuration.
+
 To learn where your data lives and how to save a copy, see [Backing Up and Restoring Marinara](data/backup-and-restore.md).
 
 ## Back up first
