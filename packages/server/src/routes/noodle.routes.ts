@@ -523,12 +523,23 @@ function filterStalePersonaAccounts(bootstrap: NoodleBootstrap, livePersonaIds: 
   };
 }
 
+function filterExcludedNoodleAccounts(bootstrap: NoodleBootstrap, settings: NoodleSettings): NoodleBootstrap {
+  if (settings.allowProfessorMari) return bootstrap;
+  return {
+    ...bootstrap,
+    accounts: bootstrap.accounts.filter(
+      (account) => account.kind !== "character" || account.entityId !== PROFESSOR_MARI_ID,
+    ),
+  };
+}
+
 async function bootstrapVisibleNoodle(
   noodle: ReturnType<typeof createNoodleStorage>,
   characters: ReturnType<typeof createCharactersStorage>,
 ) {
+  const settings = await noodle.getSettings();
   const livePersonaIds = await ensurePersonaAccounts(noodle, characters);
-  await ensureProfessorMariAccount(noodle, characters);
+  if (settings.allowProfessorMari) await ensureProfessorMariAccount(noodle, characters);
   const existingCharacterAccounts = (await noodle.listAccounts()).filter(
     (account) => account.kind === "character" && account.entityId !== PROFESSOR_MARI_ID,
   );
@@ -545,7 +556,7 @@ async function bootstrapVisibleNoodle(
       syncIdentity: true,
     });
   }
-  return filterStalePersonaAccounts(await noodle.bootstrap(), livePersonaIds);
+  return filterExcludedNoodleAccounts(filterStalePersonaAccounts(await noodle.bootstrap(), livePersonaIds), settings);
 }
 
 async function resolvePersonaAccount(
@@ -1739,7 +1750,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         category: "main",
       });
       await ensurePersonaAccounts(noodle, characters);
-      await ensureProfessorMariAccount(noodle, characters);
+      if (settings.allowProfessorMari) await ensureProfessorMariAccount(noodle, characters);
       const personaAccount = await resolvePersonaAccount(noodle, characters, parsed.data.personaId);
       const selectedGroupCharacterIds = await ensureSelectedGroupCharacterAccounts(
         noodle,
@@ -1750,7 +1761,9 @@ export async function noodleRoutes(app: FastifyInstance) {
       const eligibleAccounts = await noodle.listAccounts();
       const eligibleCharacterAccounts = eligibleAccounts.filter(
         (account) =>
-          account.kind === "character" && (account.invited || selectedGroupCharacterIds.has(account.entityId)),
+          account.kind === "character" &&
+          (settings.allowProfessorMari || account.entityId !== PROFESSOR_MARI_ID) &&
+          (account.invited || selectedGroupCharacterIds.has(account.entityId)),
       );
       await generateMissingNoodleProfiles({
         noodle,

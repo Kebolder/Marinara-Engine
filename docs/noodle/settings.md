@@ -16,6 +16,7 @@ All Noodle settings are global. They apply to every persona and every chat, not 
 
 The **Invites** section chooses which characters can take part in a Noodle refresh. A refresh is when the AI writes a batch of posts, replies, reposts, and likes for the invited accounts.
 
+- **Professor Mari participates**: a toggle, default **on**. Turn it off to hide Professor Mari from Noodle account discovery and exclude her from future generated posts, replies, reactions, mentions, profile generation, and chat carryover. Existing timeline history is preserved, and turning the toggle back on restores her account.
 - **Characters to Invite**: a search box. Type here to filter both the folder list and the character list below it.
 - **Add from Folder**: click to expand a list of your character folders. Check one or more folders, then click the invite button at the bottom. The button label changes with your selection:
   - **Select folders to invite** when nothing is checked.
@@ -47,7 +48,7 @@ The **Active Accounts** section sets how many eligible accounts take part in one
 - With **Exact count**, one field appears: **Active count** (1 to 100). It sets a fixed number of accounts.
 - With **All invited**, every eligible account takes part, with no cap.
 
-Your active persona and Professor Mari are always eligible on top of these accounts.
+Your active persona is always eligible on top of these accounts. Professor Mari is eligible while **Professor Mari participates** is on.
 
 ## Activity
 
@@ -148,6 +149,7 @@ This table lists every Noodle setting with its default and range.
 | Setting | Default | Range or options |
 |---|---|---|
 | **Generation connection** | none | any text connection (required for refresh) |
+| **Professor Mari participates** | on | on or off |
 | **Refreshes/day** | 2 | 0 to 24 (0 turns automatic refreshes off) |
 | **Active selection** | Random range | Random range, Exact count, All invited |
 | **Min active** | 2 | 1 to 100 (Random range only) |

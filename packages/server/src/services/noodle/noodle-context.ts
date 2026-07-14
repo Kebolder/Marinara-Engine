@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Noodle Prompt Context
 // ──────────────────────────────────────────────
-import type { ChatMode, NoodleCarryoverTarget } from "@marinara-engine/shared";
+import { PROFESSOR_MARI_ID, type ChatMode, type NoodleCarryoverTarget } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { wrapContent } from "../prompt/format-engine.js";
 import { createNoodleStorage } from "../storage/noodle.storage.js";
@@ -31,6 +31,7 @@ export async function buildRecentSocialMediaActivityBlock(input: {
   const accountIds = new Set<string>();
   const characterAccounts = await noodle.getAccountsByEntities("character", input.characterIds);
   for (const account of characterAccounts) {
+    if (account.entityId === PROFESSOR_MARI_ID && !settings.allowProfessorMari) continue;
     if (account.invited) accountIds.add(account.id);
   }
   if (input.personaId) {

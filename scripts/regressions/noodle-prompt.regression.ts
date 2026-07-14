@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DEFAULT_NOODLE_SETTINGS, noodleRefreshSchema } from "../../packages/shared/src/schemas/noodle.schema.js";
 import { canManageNoodleReply } from "../../packages/shared/src/utils/noodle-interactions.js";
 import type { NoodleAccount, NoodleInteraction, NoodlePost } from "../../packages/shared/src/types/noodle.js";
-import { LIMITS } from "../../packages/shared/src/constants/defaults.js";
+import { LIMITS, PROFESSOR_MARI_ID } from "../../packages/shared/src/constants/defaults.js";
 import {
   canGenerateNoodleActivityForAccountKind,
   formatNoodleTimelineForPrompt,
@@ -59,6 +59,7 @@ const participantSettings = {
   participantMax: 2,
 };
 const participantAccounts = [makeAccount("alpha"), makeAccount("beta"), makeAccount("gamma")];
+const professorMariAccount = { ...makeAccount("professor-mari"), entityId: PROFESSOR_MARI_ID };
 const selectionPersona: NoodleAccount = {
   ...makeAccount("persona-account"),
   kind: "persona",
@@ -137,6 +138,22 @@ assert.deepEqual(
     random: () => 0,
   }).map((account) => account.id),
   ["alpha", "gamma"],
+);
+assert.equal(
+  chooseNoodleParticipantAccounts({
+    accounts: [professorMariAccount],
+    settings: { ...participantSettings, allowProfessorMari: false },
+    selectedGroupCharacterIds: new Set(),
+  }).length,
+  0,
+);
+assert.equal(
+  chooseNoodleParticipantAccounts({
+    accounts: [professorMariAccount],
+    settings: participantSettings,
+    selectedGroupCharacterIds: new Set(),
+  })[0]?.entityId,
+  PROFESSOR_MARI_ID,
 );
 
 const randomParticipant = { ...makeAccount("ambient"), kind: "random_user" as const };

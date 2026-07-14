@@ -1,4 +1,4 @@
-import type { NoodleAccount, NoodleSettings } from "@marinara-engine/shared";
+import { PROFESSOR_MARI_ID, type NoodleAccount, type NoodleSettings } from "@marinara-engine/shared";
 
 type RandomSource = () => number;
 
@@ -28,6 +28,7 @@ export function chooseNoodleParticipantAccounts(input: {
   const priorityAccountIds = input.priorityAccountIds ?? new Set<string>();
   const candidates = input.accounts.filter((account) => {
     if (account.kind === "character") {
+      if (account.entityId === PROFESSOR_MARI_ID && !input.settings.allowProfessorMari) return false;
       return account.invited || input.selectedGroupCharacterIds.has(account.entityId);
     }
     return account.kind === "random_user" && input.settings.allowRandomUsers;

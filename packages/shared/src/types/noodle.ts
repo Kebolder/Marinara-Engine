@@ -42,6 +42,7 @@ export interface NoodleSettings {
   imageCaptioningConnectionId: string | null;
   enableLorebookContext: boolean;
   enableEnhancedTimelineWriting: boolean;
+  allowProfessorMari: boolean;
   allowRandomUsers: boolean;
   invitedCharacterGroupIds: string[];
   carryoverMode: NoodleCarryoverMode;

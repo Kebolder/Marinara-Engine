@@ -50,6 +50,7 @@ import {
   canManageNoodleReply,
   findNoodleTextMentions,
   noodleTextMentionsHandle as textMentionsHandle,
+  PROFESSOR_MARI_ID,
   readNoodlePollFromMetadata,
   type NoodleTextMention,
   type APIConnection,
@@ -1014,7 +1015,17 @@ export function NoodleView() {
   const [pollOptions, setPollOptions] = useState(["", ""]);
   const [draftPoll, setDraftPoll] = useState<NoodlePollInput | null>(null);
 
-  const accounts = useMemo(() => data?.accounts ?? [], [data?.accounts]);
+  const settings = data?.settings;
+  const accounts = useMemo(
+    () =>
+      (data?.accounts ?? []).filter(
+        (account) =>
+          (settings?.allowProfessorMari ?? true) ||
+          account.kind !== "character" ||
+          account.entityId !== PROFESSOR_MARI_ID,
+      ),
+    [data?.accounts, settings?.allowProfessorMari],
+  );
   const livePersonaIds = useMemo(() => {
     const ids = new Set<string>();
     for (const persona of personas ?? []) {
@@ -1055,7 +1066,6 @@ export function NoodleView() {
   const hasMorePersonaAccounts = visiblePersonaAccounts.length < sortedPersonaAccounts.length;
   const posts = useMemo(() => data?.posts ?? [], [data?.posts]);
   const interactions = useMemo(() => data?.interactions ?? [], [data?.interactions]);
-  const settings = data?.settings;
   const scheduler = data?.scheduler;
   const accountById = useMemo(() => new Map(accounts.map((account) => [account.id, account])), [accounts]);
   const accountByHandle = useMemo(
@@ -2461,9 +2471,10 @@ export function NoodleView() {
     () =>
       characters
         .filter((character) => readString(character.id))
+        .filter((character) => (settings?.allowProfessorMari ?? true) || readString(character.id) !== PROFESSOR_MARI_ID)
         .filter((character) => characterName(character).toLowerCase().includes(normalizedInviteSearch))
         .sort((left, right) => characterName(left).localeCompare(characterName(right))),
-    [characters, normalizedInviteSearch],
+    [characters, normalizedInviteSearch, settings?.allowProfessorMari],
   );
   const visibleInviteCharacters = filteredCharacters.slice(0, inviteCharacterLimit);
   const hasMoreInviteCharacters = filteredCharacters.length > visibleInviteCharacters.length;
@@ -2549,6 +2560,14 @@ export function NoodleView() {
         help="Choose who can participate in Noodle refreshes. Direct character invites, selected character folders, and optional random users form the pool the generator can draw from."
       >
         <div className="space-y-4">
+          <ToggleSetting
+            label="Professor Mari participates"
+            help="When off, Professor Mari is hidden from Noodle account discovery and excluded from future generated posts, replies, reactions, mentions, profiles, and chat carryover. Existing timeline history is preserved."
+            checked={settings?.allowProfessorMari ?? true}
+            disabled={!settings || updateSettings.isPending}
+            onChange={(checked) => saveSettings({ allowProfessorMari: checked })}
+          />
+
           <label className="block space-y-1.5">
             <FieldLabel help="Filters both character folders and individual characters in this invite section.">
               Characters to Invite
