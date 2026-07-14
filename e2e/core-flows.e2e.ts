@@ -2249,8 +2249,7 @@ test("mobile topbar remains reachable while sidebars switch", async ({ page }, t
   expect(errors).toEqual([]);
 });
 
-test("Roleplay displays a selected background when its file route is GET-only", async ({ page }, testInfo) => {
-  test.skip(!testInfo.project.name.includes("desktop"), "Roleplay background selection is covered on desktop.");
+test("Roleplay displays a selected background when its file route is GET-only", async ({ page }) => {
   const chatResponse = await page.request.post("/api/chats", {
     data: { name: "Roleplay Background Smoke", mode: "roleplay", characterIds: [] },
   });
