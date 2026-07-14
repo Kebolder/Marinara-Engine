@@ -74,6 +74,7 @@ import {
 } from "../../hooks/use-library-folders";
 import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/use-folder-rename-gesture";
 import { SmoothFolderContent } from "../ui/SmoothFolderContent";
+import { AgentCatalogView } from "../agents/AgentCatalogView";
 
 type JsonRecord = Record<string, unknown>;
 const BUILT_IN_AGENT_TYPE_SET = new Set(BUILT_IN_AGENTS.map((agent) => agent.id));
@@ -263,6 +264,7 @@ export function AgentsPanel() {
   const sort = useUIStore((s) => s.agentPanelSort);
   const setSort = useUIStore((s) => s.setAgentPanelSort);
   const [agentSearch, setAgentSearch] = useState("");
+  const [agentCatalogOpen, setAgentCatalogOpen] = useState(false);
   const agentImageInputRef = useRef<HTMLInputElement>(null);
   const agentImportInputRef = useRef<HTMLInputElement>(null);
   const agentFolderImportInputRef = useRef<HTMLInputElement>(null);
@@ -748,6 +750,7 @@ export function AgentsPanel() {
 
   return (
     <div className="flex min-h-full flex-col gap-2 p-3">
+      <AgentCatalogView open={agentCatalogOpen} onClose={() => setAgentCatalogOpen(false)} />
       <input
         ref={agentImageInputRef}
         type="file"
@@ -771,6 +774,15 @@ export function AgentsPanel() {
         // @ts-expect-error — webkitdirectory is a non-standard but widely-supported attribute
         webkitdirectory=""
       />
+
+      <button
+        type="button"
+        onClick={() => setAgentCatalogOpen(true)}
+        className="mari-chrome-control mari-chrome-control--primary w-full text-xs"
+      >
+        <Download size="0.875rem" />
+        Download Agents
+      </button>
 
       <div className="flex gap-2">
         <button onClick={handleCreateAgent} className={cn("flex-1 text-xs", AGENT_GRADIENT_BUTTON)} title="New">
