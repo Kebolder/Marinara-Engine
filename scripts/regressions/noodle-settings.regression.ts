@@ -5,6 +5,53 @@ import { join } from "node:path";
 import type { DB } from "../../packages/server/src/db/connection.js";
 import { createFileNativeDB } from "../../packages/server/src/db/file-backed-store.js";
 import { createNoodleStorage } from "../../packages/server/src/services/storage/noodle.storage.js";
+import { resolveNoodleAvatarCropAfterProfileUpdate } from "../../packages/server/src/services/noodle/noodle-profile-avatar.js";
+
+const sourceCrop = { x: 12, y: 18, width: 62, height: 62, unit: "%" as const };
+assert.equal(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: undefined,
+    currentCrop: sourceCrop,
+  }),
+  undefined,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/avatar.png",
+    currentCrop: sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: undefined,
+    currentCrop: null,
+    sourceAvatarUrl: "/avatar.png",
+    sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/avatar.png",
+    currentCrop: null,
+    sourceAvatarUrl: "/avatar.png",
+    sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.equal(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/replacement.png",
+    currentCrop: sourceCrop,
+  }),
+  null,
+);
 
 const storageDir = mkdtempSync(join(tmpdir(), "marinara-noodle-settings-"));
 process.env.FILE_STORAGE_DIR = storageDir;

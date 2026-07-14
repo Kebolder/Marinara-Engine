@@ -2178,11 +2178,7 @@ export function ChatArea() {
         message: "This will copy the chat through this message and open the new branch.",
         confirmLabel: "Create branch",
       });
-      if (
-        !confirmed ||
-        useChatStore.getState().activeChatId !== chatId ||
-        branchChat.isPending
-      ) {
+      if (!confirmed || useChatStore.getState().activeChatId !== chatId) {
         branchPendingRef.current = false;
         return;
       }

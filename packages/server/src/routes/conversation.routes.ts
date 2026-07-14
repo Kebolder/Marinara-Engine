@@ -38,6 +38,7 @@ import {
   initializeActivityFromMessages,
 } from "../services/conversation/autonomous.service.js";
 import { getActiveTurnGame } from "../services/turn-games/turn-game-runner.service.js";
+import { normalizePromptTimeZone, toZonedWallClockDate } from "../services/conversation/timezone.js";
 import {
   getIntentHint,
   isIntentOnCooldown,
@@ -137,12 +138,13 @@ function resolveAutonomousIntentPayload(
   characterId: string,
   schedule: WeekSchedule | undefined,
   meta: Record<string, unknown>,
+  now = new Date(),
 ): AutonomousIntentPayload {
   if (!schedule) return { onCooldown: false };
   const state = getActivityState(chatId);
   const msSinceUserLastSpoke = state?.lastUserMessageAt ? Date.now() - state.lastUserMessageAt : 0;
   const hadUnansweredUserMessage = state ? state.lastUserMessageAt > state.lastAssistantMessageAt : false;
-  const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage);
+  const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage, now);
   return {
     autonomousIntent: getIntentHint(intent),
     autonomousIntentPrompt: `What prompted this message: ${getIntentHint(intent)}`,
@@ -156,12 +158,13 @@ function evaluateAutonomousCandidate(
   characterId: string,
   schedule: WeekSchedule | undefined,
   meta: Record<string, unknown>,
+  now = new Date(),
 ): AutonomousCandidateEvaluation {
   if (isAutonomousDailyBudgetExhausted(characterId, schedule, meta)) {
     return { ok: false, reason: "daily_budget_exhausted" };
   }
 
-  const intent = resolveAutonomousIntentPayload(chatId, characterId, schedule, meta);
+  const intent = resolveAutonomousIntentPayload(chatId, characterId, schedule, meta, now);
   if (intent.onCooldown) return { ok: false, reason: "intent_cooldown" };
 
   return { ok: true, intent };
@@ -176,6 +179,7 @@ function resolveLongAbsenceCandidate(
   schedules: CharacterSchedules,
   statusOverrides: Record<string, ConversationStatusOverride>,
   meta: Record<string, unknown>,
+  now = new Date(),
 ):
   | { characterId: string; intent: AutonomousIntentPayload }
   | { blockedReason: "daily_budget_exhausted" | "intent_cooldown" }
@@ -185,14 +189,14 @@ function resolveLongAbsenceCandidate(
 
   const candidates = Object.entries(schedules)
     .filter(([characterId, schedule]) => {
-      const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[characterId]);
+      const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[characterId], now);
       return status !== "offline";
     })
     .sort(([, a], [, b]) => b.talkativeness - a.talkativeness);
 
   let blockedReason: "daily_budget_exhausted" | "intent_cooldown" | null = null;
   for (const [characterId, schedule] of candidates) {
-    const intent = resolveAutonomousIntentPayload(chatId, characterId, schedule, meta);
+    const intent = resolveAutonomousIntentPayload(chatId, characterId, schedule, meta, now);
     if (intent.autonomousIntentKey !== "long_absence_check_in") continue;
 
     if (isAutonomousDailyBudgetExhausted(characterId, schedule, meta)) {
@@ -874,6 +878,8 @@ export async function conversationRoutes(app: FastifyInstance) {
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
 
     const meta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
+    const promptTimeZone = normalizePromptTimeZone(meta.promptTimeZone);
+    const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
 
     // Check if autonomous messages are enabled
     if (!meta.autonomousMessages) {
@@ -905,7 +911,7 @@ export async function conversationRoutes(app: FastifyInstance) {
     for (const cid of characterIds) {
       const schedule = schedules[cid];
       if (!schedule) continue;
-      const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[cid]);
+      const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[cid], promptNow);
       const charRow = await chars.getById(cid);
       if (!charRow) continue;
       const charData = JSON.parse(charRow.data as string);
@@ -945,13 +951,20 @@ export async function conversationRoutes(app: FastifyInstance) {
     const result = checkAutonomousMessaging(chatId, filteredSchedules, isGroup, {
       maxFollowups: req.body.maxFollowups,
       statusOverrides,
+      scheduleNow: promptNow,
     });
     if (result.reason === "generation_in_progress") return reply.send(result);
 
     if (result.shouldTrigger) {
       let blockedReason: "daily_budget_exhausted" | "intent_cooldown" | null = null;
       for (const characterId of result.characterIds) {
-        const evaluation = evaluateAutonomousCandidate(chatId, characterId, autonomySchedules[characterId], meta);
+        const evaluation = evaluateAutonomousCandidate(
+          chatId,
+          characterId,
+          autonomySchedules[characterId],
+          meta,
+          promptNow,
+        );
         if (!evaluation.ok) {
           blockedReason = blockedReason ?? evaluation.reason;
           continue;
@@ -962,7 +975,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (blockedReason) return reply.send(blockedAutonomousResponse(blockedReason));
     }
 
-    const longAbsence = resolveLongAbsenceCandidate(chatId, filteredSchedules, statusOverrides, meta);
+    const longAbsence = resolveLongAbsenceCandidate(chatId, filteredSchedules, statusOverrides, meta, promptNow);
     if (longAbsence) {
       if ("blockedReason" in longAbsence) return reply.send(blockedAutonomousResponse(longAbsence.blockedReason));
       const state = getActivityState(chatId);
@@ -984,7 +997,7 @@ export async function conversationRoutes(app: FastifyInstance) {
       const onlineCharIds = characterIds.filter((cid) => {
         if (sceneBusyCharIds.includes(cid)) return false;
         const schedule = autonomySchedules[cid];
-        const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[cid]);
+        const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[cid], promptNow);
         return status !== "offline";
       });
 
@@ -999,6 +1012,7 @@ export async function conversationRoutes(app: FastifyInstance) {
               catchUpCharacterId,
               autonomySchedules[catchUpCharacterId],
               meta,
+              promptNow,
             );
             if (!evaluation.ok) {
               blockedReason = blockedReason ?? evaluation.reason;

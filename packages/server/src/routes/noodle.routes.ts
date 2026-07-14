@@ -98,6 +98,7 @@ import {
 } from "../services/noodle/noodle-generated-refresh.js";
 import { normalizeNoodleImagePrompt } from "../services/noodle/noodle-image-prompt.js";
 import { normalizeNoodleHandle } from "../services/noodle/noodle-handle.js";
+import { resolveNoodleAvatarCropAfterProfileUpdate } from "../services/noodle/noodle-profile-avatar.js";
 
 const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
@@ -1337,6 +1338,14 @@ export async function noodleRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     const existing = await noodle.getAccountById(id);
     if (!existing) return reply.code(404).send({ error: "Noodle account not found" });
+    const sourceCharacter = existing.kind === "character" ? await characters.getById(existing.entityId) : null;
+    const avatarCrop = resolveNoodleAvatarCropAfterProfileUpdate({
+      currentAvatarUrl: existing.avatarUrl,
+      nextAvatarUrl: parsed.data.avatarUrl,
+      currentCrop: existing.avatarCrop,
+      sourceAvatarUrl: sourceCharacter?.avatarPath,
+      sourceCrop: sourceCharacter ? characterAvatarCrop(sourceCharacter) : null,
+    });
     const profileFieldsChanged =
       existing.kind === "character" &&
       (parsed.data.handle !== undefined ||
@@ -1353,7 +1362,7 @@ export async function noodleRoutes(app: FastifyInstance) {
             settings: {
               ...existing.settings,
               ...parsed.data.settings,
-              ...(parsed.data.avatarUrl !== undefined ? { avatarCrop: null } : {}),
+              ...(avatarCrop !== undefined ? { avatarCrop } : {}),
               profileManuallyEdited: true,
             },
           }

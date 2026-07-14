@@ -14,7 +14,7 @@ import { api } from "../lib/api-client";
 import { toAutonomousPresenceStatus } from "../lib/user-status";
 import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
-import { showConversationLocalNotification, showConversationNativeNotification } from "../lib/local-notifications";
+import { showLocalMessageNotification, showNativeMessageNotification } from "../lib/local-notifications";
 import { playConfiguredNotificationPing } from "../lib/notification-sound";
 import { chatKeys } from "./use-chats";
 import { characterKeys } from "./use-characters";
@@ -240,15 +240,15 @@ export function useBackgroundAutonomousPolling() {
                 // Add floating avatar notification bubble
                 useChatStore.getState().addNotification(chat.id, charName, charAvatar, charAvatarCrop);
 
-                void showConversationLocalNotification({
+                void showLocalMessageNotification({
                   enabled: useUIStore.getState().conversationBrowserNotifications,
                   characterName: charName,
-                  tag: `marinara-conversation-${chat.id}`,
+                  tag: `marinara-chat-${chat.id}`,
                 });
-                showConversationNativeNotification({
+                showNativeMessageNotification({
                   enabled: useUIStore.getState().conversationMobileNotifications,
                   characterName: charName,
-                  tag: `marinara-conversation-${chat.id}`,
+                  tag: `marinara-chat-${chat.id}`,
                 });
 
                 // Show a global toast so the user knows even from a different chat

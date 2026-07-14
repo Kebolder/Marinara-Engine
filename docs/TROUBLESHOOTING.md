@@ -251,6 +251,10 @@ pnpm store prune
 
 Do not delete `data`, `storage`, or `marinara-engine.db`; those locations may contain your chats and settings. If the command still stops, capture the lines beginning at `Installing dependencies` and include the phone's free-space and memory figures in the report.
 
+### Noodle shows `Etc/Unknown` or schedules use the wrong timezone
+
+Remove any blank `TZ=` line from `.env` and restart Marinara so the server inherits the device timezone. To choose a timezone explicitly, set a valid IANA name such as `TZ=Europe/Warsaw` or `TZ=America/New_York`. Current releases treat a blank value as unset, but a restart is still required for Node's timezone state and scheduled jobs to be rebuilt consistently.
+
 ### Container permission denied on a volume mount
 
 If a Docker or Podman container fails with permission errors on the data volume:

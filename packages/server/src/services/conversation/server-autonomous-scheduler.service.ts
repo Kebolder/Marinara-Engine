@@ -13,6 +13,7 @@ import {
 } from "./intent.service.js";
 import { getBusyDelay, getEffectiveCurrentStatus, type WeekSchedule } from "./schedule.service.js";
 import { parseConversationStatusOverrides } from "../generation/conversation-context-utils.js";
+import { normalizePromptTimeZone, toZonedWallClockDate } from "./timezone.js";
 
 const SERVER_AUTONOMOUS_INITIAL_DELAY_MS = 20_000;
 const SERVER_AUTONOMOUS_POLL_MS = 60_000;
@@ -49,13 +50,14 @@ function resolveAvailableIntent(
   characterId: string,
   schedule: WeekSchedule | null,
   chatMeta: Record<string, unknown>,
+  now: Date,
 ): { intent: MessageIntent | null; onCooldown: boolean; disabled: boolean } {
   if (!schedule) return { intent: null, onCooldown: false, disabled: false };
 
   const state = getActivityState(chatId);
   const msSinceUserLastSpoke = state ? Date.now() - state.lastUserMessageAt : 0;
   const hadUnansweredUserMessage = state ? state.lastUserMessageAt > state.lastAssistantMessageAt : false;
-  const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage);
+  const intent = resolveIntent(schedule, msSinceUserLastSpoke, hadUnansweredUserMessage, now);
 
   return {
     intent,
@@ -172,7 +174,15 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
     chatMeta: Record<string, unknown>,
     claimedAt?: number,
   ): Promise<boolean> => {
-    const { intent, onCooldown, disabled } = resolveAvailableIntent(chatId, characterId, schedule, chatMeta);
+    const promptTimeZone = normalizePromptTimeZone(chatMeta.promptTimeZone);
+    const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
+    const { intent, onCooldown, disabled } = resolveAvailableIntent(
+      chatId,
+      characterId,
+      schedule,
+      chatMeta,
+      promptNow,
+    );
     if (onCooldown || disabled) {
       clearGenerationInProgress(chatId, claimedAt);
       return false;
@@ -190,6 +200,7 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
         autonomous: true,
         skipPresenceDelay: true,
         autonomousIntentKey: intent ?? "",
+        userTimeZone: promptTimeZone,
       },
     });
 
@@ -307,12 +318,14 @@ export function startServerAutonomousScheduler(app: FastifyInstance) {
       const freshChat = await chats.getById(chat.id);
       if (!freshChat) return;
       const freshMeta = parseMetadata(freshChat.metadata);
+      const promptTimeZone = normalizePromptTimeZone(freshMeta.promptTimeZone);
+      const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
       const freshSchedules = (freshMeta.characterSchedules ?? {}) as Record<string, WeekSchedule>;
       const statusOverrides = parseConversationStatusOverrides(freshMeta.conversationStatusOverrides);
       const schedule = freshSchedules[characterId] ?? null;
 
       if (schedule) {
-        const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[characterId]);
+        const { status } = getEffectiveCurrentStatus(schedule, statusOverrides[characterId], promptNow);
         if (status === "offline") {
           clearGenerationInProgress(chat.id, generationStartedAt);
           return;

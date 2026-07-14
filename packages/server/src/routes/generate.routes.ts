@@ -912,8 +912,21 @@ export async function generateRoutes(app: FastifyInstance) {
     const mainFallbackConnection = await connections.getFallbackForMain().catch(releaseActiveGenerationAndRethrow);
     const mainFallbackBaseUrl = mainFallbackConnection ? resolveBaseUrl(mainFallbackConnection) : "";
     let chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
-    const promptTimeZone =
-      normalizePromptTimeZone(chatMeta.promptTimeZone) ?? normalizePromptTimeZone(input.userTimeZone);
+    const requestTimeZone = normalizePromptTimeZone(input.userTimeZone);
+    const storedPromptTimeZone = normalizePromptTimeZone(chatMeta.promptTimeZone);
+    const promptTimeZone = requestTimeZone ?? storedPromptTimeZone;
+    if (!input.autonomous && requestTimeZone && requestTimeZone !== storedPromptTimeZone) {
+      try {
+        const updatedChat = await chats.patchMetadata(
+          input.chatId,
+          (current) => ({ ...current, promptTimeZone: requestTimeZone }),
+          { touchUpdatedAt: false },
+        );
+        if (updatedChat) chatMeta = parseExtra(updatedChat.metadata) as Record<string, unknown>;
+      } catch (err) {
+        logger.warn(err, "[generate] Failed to remember timezone for chat %s", input.chatId);
+      }
+    }
     const promptNow = toZonedWallClockDate(new Date(), promptTimeZone);
     const excludePastReasoning = chatMeta.excludePastReasoning !== false;
     const imageCaptioningRuntime: ImageCaptioningRuntime = await resolveImageCaptioningRuntime({
@@ -2812,6 +2825,7 @@ export async function generateRoutes(app: FastifyInstance) {
             chars,
             characterIds,
             awarenessBlock: convoAwarenessBlock,
+            timeZone: promptTimeZone,
           });
         }
 

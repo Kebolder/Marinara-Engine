@@ -96,6 +96,8 @@ export function loadRuntimeEnv() {
     dotenv.config();
   }
 
+  normalizeRuntimeTimezoneEnv();
+
   envLoaded = true;
 }
 
@@ -158,8 +160,20 @@ export function reloadRuntimeEnv(): EnvReloadResult {
     }
   }
 
+  normalizeRuntimeTimezoneEnv();
   envFileKeys = newKeys;
   return { added, updated, removed, unchanged };
+}
+
+/**
+ * Node interprets an explicitly empty TZ as Etc/Unknown (UTC), which is not
+ * equivalent to leaving TZ unset. Treat whitespace-only values as absent so
+ * schedules continue to inherit the host timezone.
+ */
+export function normalizeRuntimeTimezoneEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!("TZ" in env) || env.TZ?.trim()) return false;
+  delete env.TZ;
+  return true;
 }
 
 function normalizeEnvValue(value: string | undefined | null) {

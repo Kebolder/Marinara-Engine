@@ -31,7 +31,7 @@ Here is where to read more about each tab:
 The **General** tab holds six sections. This page owns two of them in full: **App Behavior** and **Text Rules**. The others are summarized here and covered in detail in their own guides.
 
 - **App Behavior**: language, delete safety, and show/hide toggles. Covered below.
-- **Notifications**: notification sounds plus separate browser and Android app notifications for background replies.
+- **Notifications**: notification sounds plus separate browser and Android app controls. **Background Notifications** cover autonomous Conversation messages, while **Generation Completion Notifications** cover replies you start manually in Conversation, Roleplay, Visual Novel, and Game modes. Both work while Marinara remains open but unfocused, and message contents stay hidden.
 - **Responses**: how replies stream, save, and paginate. See [Sending and Streaming Messages](../chats/sending-and-streaming.md).
 - **Input & Editing**: message input and fast edit controls. See [Message Actions](../chats/messages.md).
 - **Text Rules**: formatting applied to chat text. Covered below.

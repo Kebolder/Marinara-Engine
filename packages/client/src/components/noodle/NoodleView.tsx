@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import {
   AtSign,
+  AlertTriangle,
   Bell,
   Check,
   ChevronLeft,
@@ -1170,6 +1171,7 @@ export function NoodleView() {
   const saveProfile = () => {
     if (!viewedProfileAccount || !canEditViewedProfile) return;
     const normalizedHandle = profileHandle.trim().replace(/^@+/, "");
+    const nextAvatarUrl = profileAvatarUrl.trim() || null;
     const nextSettings = {
       ...viewedProfileAccount.settings,
       bannerUrl: profileBannerUrl.trim(),
@@ -1181,7 +1183,7 @@ export function NoodleView() {
         handle: normalizedHandle,
         displayName: profileName.trim(),
         bio: profileBio,
-        avatarUrl: profileAvatarUrl.trim() || null,
+        ...(nextAvatarUrl !== viewedProfileAccount.avatarUrl ? { avatarUrl: nextAvatarUrl } : {}),
         settings: nextSettings,
       },
       {
@@ -2777,6 +2779,19 @@ export function NoodleView() {
                     )}
                   </div>
                   <p className="mt-1.5 leading-5 text-[var(--muted-foreground)]">{noodleSchedulerSummary(scheduler)}</p>
+                  {(scheduler.timezone === "Etc/Unknown" || scheduler.timezone === "local") && (
+                    <div
+                      className="mt-2 flex gap-2 rounded-md bg-[var(--destructive)]/10 px-2.5 py-2 leading-5 text-[var(--foreground)]"
+                      role="alert"
+                    >
+                      <AlertTriangle className="mt-0.5 shrink-0 text-[var(--destructive)]" size={14} />
+                      <p>
+                        The server timezone could not be detected. Remove a blank <code>TZ=</code> from your{" "}
+                        <code>.env</code>, or set an IANA timezone such as <code>TZ=Europe/Warsaw</code>, then restart
+                        Marinara.
+                      </p>
+                    </div>
+                  )}
                   {scheduler.scheduledTimes.length > 0 && (
                     <div className="mt-2">
                       <p className="text-[0.68rem] font-semibold text-[var(--muted-foreground)]">

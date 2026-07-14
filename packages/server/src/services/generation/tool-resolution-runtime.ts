@@ -25,6 +25,11 @@ import {
   type SpotifyRuntimeAgent,
 } from "./spotify-agent-runtime.js";
 import { resolveSpotifyToolAvailabilityRequest } from "./spotify-tool-availability.js";
+import {
+  formatZonedConversationTime,
+  getZonedDateParts,
+  normalizePromptTimeZone,
+} from "../conversation/timezone.js";
 
 type CustomToolsStore = {
   listEnabled(): Promise<
@@ -204,6 +209,9 @@ function buildCustomToolHiddenContext(args: {
   const lastInput =
     [...args.agentContext.recentMessages].reverse().find((message) => message.role === "user")?.content ?? "";
   const now = new Date();
+  const timeZone = normalizePromptTimeZone(args.chatMetadata.promptTimeZone);
+  const zonedNow = getZonedDateParts(now, timeZone);
+  const zonedDate = `${zonedNow.year}-${String(zonedNow.month).padStart(2, "0")}-${String(zonedNow.day).padStart(2, "0")}`;
 
   return {
     chatId: args.chatId,
@@ -237,11 +245,11 @@ function buildCustomToolHiddenContext(args: {
       charSysInfo: primaryCharacter?.systemPrompt ?? "",
       charPostHistory: primaryCharacter?.postHistoryInstructions ?? "",
       input: lastInput,
-      date: now.toISOString().slice(0, 10),
-      time: now.toTimeString().slice(0, 5),
+      date: zonedDate,
+      time: formatZonedConversationTime(now, timeZone),
       datetime: now.toISOString(),
       isotime: now.toISOString(),
-      weekday: now.toLocaleDateString("en-US", { weekday: "long" }),
+      weekday: zonedNow.weekday,
     },
     recentMessages: args.agentContext.recentMessages.map((message) => ({
       id: message.id ?? null,

@@ -7,9 +7,10 @@ type MarinaraAndroidNotificationBridge = {
   showNotification?: (title: string, body: string, tag: string) => void;
 };
 
-export type ConversationLocalNotificationOptions = {
+export type LocalMessageNotificationOptions = {
   enabled: boolean;
   characterName?: string | null;
+  title?: string;
   tag?: string;
 };
 
@@ -84,17 +85,24 @@ function isAppFocusedForNotifications(): boolean {
   return document.visibilityState === "visible" && document.hasFocus();
 }
 
-export async function showConversationLocalNotification({
+function resolveMessageNotificationTitle(title?: string, characterName?: string | null): string {
+  const explicitTitle = typeof title === "string" ? title.trim() : "";
+  if (explicitTitle) return explicitTitle.slice(0, 100);
+  const name = typeof characterName === "string" && characterName.trim() ? characterName.trim() : "Character";
+  return `New message from ${name.slice(0, 80)}`;
+}
+
+export async function showLocalMessageNotification({
   enabled,
   characterName,
+  title,
   tag,
-}: ConversationLocalNotificationOptions): Promise<boolean> {
+}: LocalMessageNotificationOptions): Promise<boolean> {
   if (!enabled || isAppFocusedForNotifications()) return false;
   if (getBrowserNotificationPermission() !== "granted") return false;
   if (typeof window === "undefined" || !("Notification" in window)) return false;
 
-  const name = typeof characterName === "string" && characterName.trim() ? characterName.trim() : "Character";
-  const notification = new window.Notification(`New message from ${name.slice(0, 80)}`, {
+  const notification = new window.Notification(resolveMessageNotificationTitle(title, characterName), {
     body: "Open Marinara to read it.",
     icon: "/icon-192.png",
     tag,
@@ -108,17 +116,21 @@ export async function showConversationLocalNotification({
   return true;
 }
 
-export function showConversationNativeNotification({
+export function showNativeMessageNotification({
   enabled,
   characterName,
+  title,
   tag,
-}: ConversationLocalNotificationOptions): boolean {
+}: LocalMessageNotificationOptions): boolean {
   if (!enabled || isAppFocusedForNotifications()) return false;
   const bridge = getAndroidNotificationBridge();
   if (typeof bridge?.showNotification !== "function" || getNativeNotificationPermission() !== "granted") {
     return false;
   }
-  const name = typeof characterName === "string" && characterName.trim() ? characterName.trim() : "Character";
-  bridge.showNotification(`New message from ${name.slice(0, 80)}`, "Open Marinara to read it.", tag ?? "message");
+  bridge.showNotification(
+    resolveMessageNotificationTitle(title, characterName),
+    "Open Marinara to read it.",
+    tag ?? "message",
+  );
   return true;
 }

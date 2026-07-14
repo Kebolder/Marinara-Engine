@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { Bell, Volume2 } from "lucide-react";
+import { Bell, BellRing, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore } from "../../../stores/ui.store";
 import {
@@ -100,6 +100,10 @@ export function ConversationSoundSetting() {
   const setConversationBrowserNotifications = useUIStore((s) => s.setConversationBrowserNotifications);
   const conversationMobileNotifications = useUIStore((s) => s.conversationMobileNotifications);
   const setConversationMobileNotifications = useUIStore((s) => s.setConversationMobileNotifications);
+  const generationBrowserNotifications = useUIStore((s) => s.generationBrowserNotifications);
+  const setGenerationBrowserNotifications = useUIStore((s) => s.setGenerationBrowserNotifications);
+  const generationMobileNotifications = useUIStore((s) => s.generationMobileNotifications);
+  const setGenerationMobileNotifications = useUIStore((s) => s.setGenerationMobileNotifications);
   const [browserPermission, setBrowserPermission] = useState<LocalNotificationPermission>("default");
   const nativeNotificationsAvailable = hasNativeNotificationBridge();
   const [nativePermission, setNativePermission] = useState<NativeNotificationPermission>(() =>
@@ -127,20 +131,24 @@ export function ConversationSoundSetting() {
     };
   }, [nativeNotificationsAvailable]);
 
-  const handleBrowserNotificationToggle = (enabled: boolean) => {
+  const handleBrowserNotificationToggle = (
+    enabled: boolean,
+    setPreference: (value: boolean) => void,
+    successMessage: string,
+  ) => {
     if (!enabled) {
-      setConversationBrowserNotifications(false);
+      setPreference(false);
       return;
     }
 
     void requestLocalNotificationPermission().then((permission) => {
       setBrowserPermission(permission);
       if (permission === "granted") {
-        setConversationBrowserNotifications(true);
-        toast.success("Browser notifications enabled for background replies.");
+        setPreference(true);
+        toast.success(successMessage);
         return;
       }
-      setConversationBrowserNotifications(false);
+      setPreference(false);
       toast.error(
         permission === "unsupported"
           ? "Browser notifications are not available in this environment."
@@ -149,20 +157,24 @@ export function ConversationSoundSetting() {
     });
   };
 
-  const handleMobileNotificationToggle = (enabled: boolean) => {
+  const handleMobileNotificationToggle = (
+    enabled: boolean,
+    setPreference: (value: boolean) => void,
+    successMessage: string,
+  ) => {
     if (!enabled) {
-      setConversationMobileNotifications(false);
+      setPreference(false);
       return;
     }
     void requestNativeNotificationPermission()
       .then((permission) => {
         setNativePermission(permission);
         if (permission === "granted") {
-          setConversationMobileNotifications(true);
-          toast.success("Mobile notifications enabled for background replies.");
+          setPreference(true);
+          toast.success(successMessage);
           return;
         }
-        setConversationMobileNotifications(false);
+        setPreference(false);
         toast.error(
           permission === "unsupported"
             ? "Mobile notifications require the Marinara Android app."
@@ -170,7 +182,7 @@ export function ConversationSoundSetting() {
         );
       })
       .catch(() => {
-        setConversationMobileNotifications(false);
+        setPreference(false);
         toast.error("Android notification permission could not be requested.");
       });
   };
@@ -218,20 +230,68 @@ export function ConversationSoundSetting() {
       <div className="mt-1 flex items-center gap-1.5">
         <Bell size="0.75rem" className="text-[var(--muted-foreground)]" />
         <span className="text-xs font-medium">Background Notifications</span>
-        <HelpTooltip text="Show a private operating-system notification when a background Conversation reply arrives while Marinara is not focused. Message content is hidden." />
+        <HelpTooltip text="Show a private operating-system notification when an autonomous Conversation message arrives while Marinara is not focused. Message content is hidden." />
       </div>
       <ToggleSetting
         anchorId="settings-control-browser-background-notifications"
         label="Browser"
         checked={conversationBrowserNotifications && browserPermission === "granted"}
-        onChange={handleBrowserNotificationToggle}
+        onChange={(enabled) =>
+          handleBrowserNotificationToggle(
+            enabled,
+            setConversationBrowserNotifications,
+            "Browser notifications enabled for autonomous messages.",
+          )
+        }
         help="Uses your browser's notification permission."
       />
       <ToggleSetting
         anchorId="settings-control-mobile-background-notifications"
         label="Mobile app"
         checked={conversationMobileNotifications && nativePermission === "granted"}
-        onChange={handleMobileNotificationToggle}
+        onChange={(enabled) =>
+          handleMobileNotificationToggle(
+            enabled,
+            setConversationMobileNotifications,
+            "Mobile notifications enabled for autonomous messages.",
+          )
+        }
+        disabled={!nativeNotificationsAvailable}
+        help={
+          nativeNotificationsAvailable
+            ? "Uses native Android notifications from the installed Marinara app."
+            : "Available in the updated Marinara Android APK. Browser and PWA installations use the Browser toggle above."
+        }
+      />
+      <div className="mt-1 flex items-center gap-1.5">
+        <BellRing size="0.75rem" className="text-[var(--muted-foreground)]" />
+        <span className="text-xs font-medium">Generation Completion Notifications</span>
+        <HelpTooltip text="Show a private operating-system notification when a reply you started manually finishes in Conversation, Roleplay, Visual Novel, or Game mode while Marinara is not focused. Message content is hidden." />
+      </div>
+      <ToggleSetting
+        anchorId="settings-control-browser-generation-notifications"
+        label="Browser"
+        checked={generationBrowserNotifications && browserPermission === "granted"}
+        onChange={(enabled) =>
+          handleBrowserNotificationToggle(
+            enabled,
+            setGenerationBrowserNotifications,
+            "Browser notifications enabled for generation completions.",
+          )
+        }
+        help="Uses your browser's notification permission."
+      />
+      <ToggleSetting
+        anchorId="settings-control-mobile-generation-notifications"
+        label="Mobile app"
+        checked={generationMobileNotifications && nativePermission === "granted"}
+        onChange={(enabled) =>
+          handleMobileNotificationToggle(
+            enabled,
+            setGenerationMobileNotifications,
+            "Mobile notifications enabled for generation completions.",
+          )
+        }
         disabled={!nativeNotificationsAvailable}
         help={
           nativeNotificationsAvailable

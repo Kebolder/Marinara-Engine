@@ -312,7 +312,7 @@ export function checkAutonomousMessaging(
   chatId: string,
   characterSchedules: Record<string, WeekSchedule>,
   isGroupChat: boolean,
-  opts: { maxFollowups?: number; statusOverrides?: Record<string, ConversationStatusOverride> } = {},
+  opts: { maxFollowups?: number; statusOverrides?: Record<string, ConversationStatusOverride>; scheduleNow?: Date } = {},
 ): AutonomousCheckResult {
   const noTrigger: AutonomousCheckResult = {
     shouldTrigger: false,
@@ -352,7 +352,7 @@ export function checkAutonomousMessaging(
   const maxFollowups = Math.max(1, Math.min(3, Math.floor(opts.maxFollowups ?? 3)));
 
   for (const [charId, schedule] of Object.entries(characterSchedules)) {
-    const { status } = getEffectiveCurrentStatus(schedule, opts.statusOverrides?.[charId]);
+    const { status } = getEffectiveCurrentStatus(schedule, opts.statusOverrides?.[charId], opts.scheduleNow);
 
     // Can't send if offline or sleeping
     if (status === "offline") continue;

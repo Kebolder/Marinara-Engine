@@ -216,7 +216,7 @@ This section lists the remaining settings, grouped by purpose. The tables above 
 | `HOST` | `127.0.0.1` (`0.0.0.0` in the shell launchers) | The network interface to bind. Use `0.0.0.0` for LAN access. |
 | `AUTO_OPEN_BROWSER` | `true` | Whether the shell launchers open the app URL for you. Set `false` to stop this. |
 | `MARINARA_ENV_FILE` | project-root `.env` | Optional path override for the `.env` file. Set it before startup. |
-| `TZ` | system default | IANA timezone used by time-based features like character schedules. |
+| `TZ` | system default | Optional IANA timezone used by server-side schedules. Leave it unset to inherit the host timezone; an empty `TZ=` is also treated as unset. |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Browser origins allowed to make cross-origin requests. |
 | `AUTO_CREATE_DEFAULT_CONNECTION` | `true` | Legacy flag. Current builds bundle no starter key, so this creates nothing. Add your own connection in the app. |
 

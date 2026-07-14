@@ -10,54 +10,41 @@ import { eq } from "drizzle-orm";
 import type { DB } from "../../db/connection.js";
 import { chats, messages } from "../../db/schema/index.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
-import { formatZonedConversationDate, formatZonedConversationTime, isSameZonedLogicalDay } from "./timezone.js";
+import {
+  formatZonedConversationDate,
+  formatZonedConversationTime,
+  getZonedDayBounds,
+  isSameZonedLogicalDay,
+} from "./timezone.js";
 import { escapeXmlText } from "../prompt/prompt-escaping.js";
 
 // ── Temporal keyword patterns ──
 // Maps regex patterns in the user's message to time windows to pull from.
-const TEMPORAL_PATTERNS: Array<{ pattern: RegExp; getWindow: () => { start: Date; end: Date } }> = [
+const TEMPORAL_PATTERNS: Array<{
+  pattern: RegExp;
+  getWindow: (now: Date, timeZone?: string) => { start: Date; end: Date };
+}> = [
   {
     pattern: /\byesterday\b|\blast\s+night\b/i,
-    getWindow: () => {
-      const d = new Date();
-      d.setDate(d.getDate() - 1);
-      d.setHours(0, 0, 0, 0);
-      const end = new Date(d);
-      end.setHours(23, 59, 59, 999);
-      return { start: d, end };
-    },
+    getWindow: (now, timeZone) => getZonedDayBounds(now, timeZone, -1),
   },
   {
     pattern: /\bearlier\s+today\b|\bthis\s+morning\b|\bthis\s+afternoon\b|\btoday\b/i,
-    getWindow: () => {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      return { start: d, end: new Date() };
-    },
+    getWindow: (now, timeZone) => ({ start: getZonedDayBounds(now, timeZone).start, end: now }),
   },
   {
     pattern: /\blast\s+week\b|\bthis\s+week\b/i,
-    getWindow: () => {
-      const d = new Date();
-      d.setDate(d.getDate() - 7);
-      d.setHours(0, 0, 0, 0);
-      return { start: d, end: new Date() };
-    },
+    getWindow: (now, timeZone) => ({ start: getZonedDayBounds(now, timeZone, -7).start, end: now }),
   },
   {
     pattern: /\bthe\s+other\s+day\b|\brecently\b|\bfew\s+days\s+ago\b/i,
-    getWindow: () => {
-      const d = new Date();
-      d.setDate(d.getDate() - 3);
-      d.setHours(0, 0, 0, 0);
-      return { start: d, end: new Date() };
-    },
+    getWindow: (now, timeZone) => ({ start: getZonedDayBounds(now, timeZone, -3).start, end: now }),
   },
 ];
 
 /** Default window: last 1 hour */
-function defaultWindow(): { start: Date; end: Date } {
-  const end = new Date();
+function defaultWindow(now = new Date()): { start: Date; end: Date } {
+  const end = now;
   const start = new Date(end.getTime() - 1 * 60 * 60 * 1000);
   return { start, end };
 }
@@ -66,11 +53,11 @@ function defaultWindow(): { start: Date; end: Date } {
  * Detect temporal keywords in a user message and return
  * all matching time windows (plus the default 1h window).
  */
-function detectTimeWindows(userMessage: string): Array<{ start: Date; end: Date }> {
-  const windows: Array<{ start: Date; end: Date }> = [defaultWindow()];
+function detectTimeWindows(userMessage: string, now = new Date(), timeZone?: string): Array<{ start: Date; end: Date }> {
+  const windows: Array<{ start: Date; end: Date }> = [defaultWindow(now)];
   for (const { pattern, getWindow } of TEMPORAL_PATTERNS) {
     if (pattern.test(userMessage)) {
-      windows.push(getWindow());
+      windows.push(getWindow(now, timeZone));
     }
   }
   return windows;
@@ -218,7 +205,7 @@ export async function buildAwarenessBlock(
   if (siblingChats.length === 0) return null;
 
   // 2. Detect time windows from user message
-  const rawWindows = detectTimeWindows(userMessage);
+  const rawWindows = detectTimeWindows(userMessage, new Date(), timeZone);
   const windows = mergeWindows(rawWindows);
 
   const isWithinRequestedWindow = (createdAt: string) => {
