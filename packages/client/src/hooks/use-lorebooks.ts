@@ -534,6 +534,8 @@ export interface ActiveLorebookEntry {
   content: string;
   keys: string[];
   lorebookId: string;
+  lorebookName: string;
+  activationSources: Array<"current_location" | "keyword" | "semantic" | "constant" | "sticky" | "recursive">;
   order: number;
   constant: boolean;
   selective: boolean;
@@ -548,6 +550,7 @@ export interface BudgetSkippedLorebookEntry {
   lorebookId: string;
   lorebookName: string;
   matchedKeys: string[];
+  activationSources: Array<"current_location" | "keyword" | "semantic" | "constant" | "sticky" | "recursive">;
   matchType?: "keyword" | "semantic" | "constant" | "sticky";
   semanticScore?: number;
   estimatedTokens: number;
@@ -555,7 +558,7 @@ export interface BudgetSkippedLorebookEntry {
   lorebookUsedTokens: number;
   chatBudget: number;
   chatUsedTokens: number;
-  blockedBy: "lorebook" | "chat" | "both";
+  blockedBy: "lorebook" | "chat" | "both" | "location";
 }
 
 export interface ActiveLorebookScan {

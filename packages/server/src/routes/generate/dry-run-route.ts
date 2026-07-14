@@ -18,6 +18,11 @@ import { createPromptsStorage } from "../../services/storage/prompts.storage.js"
 import { createCharactersStorage } from "../../services/storage/characters.storage.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { createRegexScriptsStorage } from "../../services/storage/regex-scripts.storage.js";
+import {
+  injectOwnerSpatialPrompt,
+  projectGameSnapshotLocation,
+  resolveOwnerSpatialProjection,
+} from "../../services/spatial-context/projection.js";
 import { buildImpersonateInstruction } from "../../services/conversation/impersonate-prompt.js";
 import { processLorebooks } from "../../services/lorebook/index.js";
 import { resolveLorebookScopeExclusions } from "../../services/lorebook/game-lorebook-scope.js";
@@ -603,6 +608,18 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       typeof body.regenerateMessageId === "string" && body.regenerateMessageId.trim()
         ? body.regenerateMessageId.trim()
         : null;
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(
+      app.db,
+      chatId,
+      regenerateMessageId ? { beforeMessageId: regenerateMessageId } : {},
+    );
+    const promptSpatialProjection =
+      (ownerSpatialProjection?.ownerMode === "game" && chatMode === "game") ||
+      (ownerSpatialProjection?.ownerMode === "roleplay" &&
+        (chatMode === "roleplay" || chatMode === "visual_novel"))
+        ? ownerSpatialProjection
+        : null;
+    const ownerSpatialLorebookEntryIds = promptSpatialProjection?.lorebookEntryIds ?? [];
     const visibleGameStateAnchor = regenerateMessageId
       ? resolveRegenerationGameStateAnchor(scopedMessages, regenerateMessageId)
       : resolveVisibleGameStateAnchor(allChatMessages);
@@ -1020,6 +1037,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
               characterIds: promptCharacterIds,
               personaId,
               activeLorebookIds,
+              forcedEntryIds: ownerSpatialLorebookEntryIds,
               excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
               excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
               tokenBudget: lorebookTokenBudget,
@@ -1225,6 +1243,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
             ? (chatMeta.activeLorebookIds as string[])
             : []
           : [],
+        forcedLorebookEntryIds: ownerSpatialLorebookEntryIds,
         excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
         excludedLorebookSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
         chatEmbedding: null,
@@ -1374,6 +1393,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         chatId,
         characterIds: promptCharacterIds,
         personaId,
+        forcedEntryIds: ownerSpatialLorebookEntryIds,
         activeLorebookIds,
         excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
         excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
@@ -1433,7 +1453,10 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     // Optional injection: tracker context (read-only snapshot)
     const resolvedInjectTrackersForRun = usePromptParts ? false : resolvedInjectTrackers;
     if (resolvedInjectTrackersForRun) {
-      const snap = await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId);
+      const snap = projectGameSnapshotLocation(
+        await loadLatestGameSnapshot(app, chatId, visibleGameStateAnchor, regenerateMessageId),
+        ownerSpatialProjection,
+      );
       const contextBlock = snap
         ? formatTrackersContextBlock({
             wrapFormat,
@@ -1481,6 +1504,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       // rejects a final assistant message ending in whitespace.
       finalMessages.push({ role: "assistant", content: assistantPrefill.trimEnd() });
     }
+    finalMessages = injectOwnerSpatialPrompt(finalMessages, promptSpatialProjection);
     dedupeLastMessageWrappers(finalMessages);
 
     // ── Parameter normalization (mirror /api/generate) ──

@@ -8,6 +8,7 @@ import {
   messages,
   messageSwipes,
   gameStateSnapshots,
+  spatialContextSnapshots,
   gameCheckpoints,
   gameEngineState,
   chatImages,
@@ -340,6 +341,7 @@ export function createChatsStorage(db: DB) {
       }
       await db.delete(gameCheckpoints).where(inArray(gameCheckpoints.messageId, chunk));
       await db.delete(gameStateSnapshots).where(inArray(gameStateSnapshots.messageId, chunk));
+      await db.delete(spatialContextSnapshots).where(inArray(spatialContextSnapshots.messageId, chunk));
       await db.delete(gameEngineState).where(inArray(gameEngineState.messageId, chunk));
     }
   }
@@ -724,6 +726,7 @@ export function createChatsStorage(db: DB) {
       await db.delete(agentMemory).where(eq(agentMemory.chatId, id));
       await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
       await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
+      await db.delete(spatialContextSnapshots).where(eq(spatialContextSnapshots.chatId, id));
       await db.delete(gameEngineState).where(eq(gameEngineState.chatId, id));
       await db.delete(conversationCallMessages).where(eq(conversationCallMessages.chatId, id));
       await db.delete(conversationCallSessions).where(eq(conversationCallSessions.chatId, id));
@@ -756,6 +759,7 @@ export function createChatsStorage(db: DB) {
         await db.delete(agentMemory).where(eq(agentMemory.chatId, chat.id));
         await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
         await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
+        await db.delete(spatialContextSnapshots).where(eq(spatialContextSnapshots.chatId, chat.id));
         await db.delete(gameEngineState).where(eq(gameEngineState.chatId, chat.id));
         await db.delete(conversationCallMessages).where(eq(conversationCallMessages.chatId, chat.id));
         await db.delete(conversationCallSessions).where(eq(conversationCallSessions.chatId, chat.id));
@@ -1345,6 +1349,9 @@ export function createChatsStorage(db: DB) {
         await db
           .delete(gameStateSnapshots)
           .where(and(eq(gameStateSnapshots.messageId, messageId), eq(gameStateSnapshots.swipeIndex, index)));
+        await db
+          .delete(spatialContextSnapshots)
+          .where(and(eq(spatialContextSnapshots.messageId, messageId), eq(spatialContextSnapshots.swipeIndex, index)));
 
         const swipesToShift = await db
           .select()
@@ -1366,6 +1373,17 @@ export function createChatsStorage(db: DB) {
             .update(gameStateSnapshots)
             .set({ swipeIndex: snapshot.swipeIndex - 1 })
             .where(eq(gameStateSnapshots.id, snapshot.id));
+        }
+
+        const spatialSnapshotsToShift = await db
+          .select()
+          .from(spatialContextSnapshots)
+          .where(and(eq(spatialContextSnapshots.messageId, messageId), gt(spatialContextSnapshots.swipeIndex, index)));
+        for (const snapshot of spatialSnapshotsToShift) {
+          await db
+            .update(spatialContextSnapshots)
+            .set({ swipeIndex: snapshot.swipeIndex - 1 })
+            .where(eq(spatialContextSnapshots.id, snapshot.id));
         }
 
         // Mirror the prune for turn-game (UNO) snapshots so anchors stay aligned

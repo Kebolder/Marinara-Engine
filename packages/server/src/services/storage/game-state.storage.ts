@@ -365,7 +365,8 @@ export function createGameStateStorage(db: DB) {
      *
      * options.baseSnapshot is intentionally presence-sensitive: omitted falls back
      * to getLatest(chatId), while an explicit null means no base and creates an
-     * empty snapshot for the target.
+     * empty snapshot for the target. options.compatibilityLocation lets an
+     * authoritative location system seed only newly cloned legacy snapshots.
      */
     async updateByMessage(
       messageId: string,
@@ -373,7 +374,10 @@ export function createGameStateStorage(db: DB) {
       chatId: string,
       fields: GameStateUpdateFields,
       manual?: boolean,
-      options?: { baseSnapshot?: typeof gameStateSnapshots.$inferSelect | null },
+      options?: {
+        baseSnapshot?: typeof gameStateSnapshots.$inferSelect | null;
+        compatibilityLocation?: string | null;
+      },
     ) {
       const snap = await this.getByMessage(messageId, swipeIndex);
       if (snap) return this._applyUpdate(snap, fields, manual);
@@ -393,7 +397,10 @@ export function createGameStateStorage(db: DB) {
         swipeIndex,
         date: coerceGameStateTextValue(latest?.date),
         time: coerceGameStateTextValue(latest?.time),
-        location: coerceGameStateTextValue(latest?.location),
+        location:
+          options && Object.prototype.hasOwnProperty.call(options, "compatibilityLocation")
+            ? coerceGameStateTextValue(options.compatibilityLocation)
+            : coerceGameStateTextValue(latest?.location),
         weather: coerceGameStateTextValue(latest?.weather),
         temperature: coerceGameStateTextValue(latest?.temperature),
         worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(latest?.worldCustomFields, [])),

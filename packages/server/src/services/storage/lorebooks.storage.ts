@@ -606,6 +606,73 @@ export function createLorebooksStorage(db: DB) {
     },
 
     /**
+     * Resolve explicitly attached entries without requiring normal character/persona/global scope.
+     * Disabled books, entries, folders, chat exclusions, and excluded agent sources still win.
+     */
+    async listEligibleEntriesByIds(
+      entryIds: string[],
+      filters?: { excludedLorebookIds?: string[]; excludedSourceAgentIds?: string[] },
+    ) {
+      const requestedIds = uniqueStrings(entryIds).slice(0, LIMITS.MAX_LOREBOOK_ENTRIES);
+      if (requestedIds.length === 0) return [];
+
+      const entryRows = await db
+        .select()
+        .from(lorebookEntries)
+        .where(and(inArray(lorebookEntries.id, requestedIds), eq(lorebookEntries.enabled, "true")));
+      if (entryRows.length === 0) return [];
+
+      const candidateBookIds = uniqueStrings(entryRows.map((row) => row.lorebookId));
+      const enabledBookRows = await db
+        .select()
+        .from(lorebooks)
+        .where(and(inArray(lorebooks.id, candidateBookIds), eq(lorebooks.enabled, "true")));
+      const enabledBooks = (await hydrateLorebookRows(db, enabledBookRows)) as unknown as Array<{
+        id: string;
+        sourceAgentId?: string | null;
+      }>;
+      const excludedLorebookIds = new Set(filters?.excludedLorebookIds ?? []);
+      const excludedSourceAgentIds = new Set(filters?.excludedSourceAgentIds ?? []);
+      const allowedBookIds = new Set(
+        enabledBooks
+          .filter(
+            (book) =>
+              !excludedLorebookIds.has(book.id) &&
+              !(book.sourceAgentId && excludedSourceAgentIds.has(book.sourceAgentId)),
+          )
+          .map((book) => book.id),
+      );
+      if (allowedBookIds.size === 0) return [];
+
+      const folderRows = await db
+        .select({
+          id: lorebookFolders.id,
+          parentFolderId: lorebookFolders.parentFolderId,
+          enabled: lorebookFolders.enabled,
+        })
+        .from(lorebookFolders)
+        .where(inArray(lorebookFolders.lorebookId, Array.from(allowedBookIds)));
+      const disabledFolderIds = collectEffectivelyDisabledFolderIds(
+        folderRows.map((row) => ({
+          id: row.id,
+          parentFolderId: row.parentFolderId,
+          enabled: row.enabled === "true",
+        })),
+      );
+      const requestedOrder = new Map(requestedIds.map((id, index) => [id, index]));
+      const parsedEntries = entryRows.map((row) => parseEntryRow(row as Record<string, unknown>)) as Array<
+        ReturnType<typeof parseEntryRow> & { id: string; lorebookId: string; folderId: string | null }
+      >;
+      return parsedEntries
+        .filter(
+          (entry) =>
+            allowedBookIds.has(entry.lorebookId) &&
+            (!entry.folderId || !disabledFolderIds.has(entry.folderId as string)),
+        )
+        .sort((left, right) => (requestedOrder.get(left.id) ?? 0) - (requestedOrder.get(right.id) ?? 0));
+    },
+
+    /**
      * Get all enabled entries from lorebooks that are relevant for a given context.
      * A lorebook is relevant if it's enabled AND one of:
      *  - `isGlobal` is true

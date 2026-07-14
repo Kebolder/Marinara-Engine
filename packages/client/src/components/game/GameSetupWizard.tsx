@@ -23,6 +23,7 @@ import {
   Volume2,
   VolumeX,
   Feather,
+  Map as MapIcon,
   RotateCcw,
   FolderOpen,
 } from "lucide-react";
@@ -40,6 +41,8 @@ import {
   type GameInitialSetupLabels,
   type GameSetupConfig,
   type GameGmMode,
+  type SpatialMapGroundingMode,
+  type SpatialMapDraftSize,
   type GameCombatStyle,
 } from "@marinara-engine/shared";
 import { getCharacterTitle } from "../../lib/character-display";
@@ -78,9 +81,15 @@ interface GameSetupWizardProps {
     preferences: string,
     connections: { gmConnectionId?: string; shareLabels?: GameInitialSetupLabels },
     gameName?: string,
+    mapDraft?: {
+      size: SpatialMapDraftSize;
+      groundingMode: SpatialMapGroundingMode;
+      sourceLorebookIds: string[];
+    },
   ) => void;
   onCancel: () => void;
   isLoading: boolean;
+  isDraftingMap: boolean;
   characters: Array<{
     id: string;
     name: string;
@@ -164,6 +173,16 @@ const PREFERENCE_SUGGESTIONS = [
   "Focus on exploration",
   "Make NPCs memorable",
   "Keep it short",
+];
+
+const SPATIAL_MAP_DRAFT_SIZE_OPTIONS: Array<{
+  value: SpatialMapDraftSize;
+  label: string;
+  detail: string;
+}> = [
+  { value: "small", label: "Small", detail: "About 8 places" },
+  { value: "medium", label: "Medium", detail: "About 16 places" },
+  { value: "large", label: "Large", detail: "About 28 places" },
 ];
 
 const GAME_SETUP_FIELD_LABEL = "mb-1.5 block text-xs font-medium text-[var(--foreground)]";
@@ -380,7 +399,13 @@ function normalizeGameLanguage(language: string): string {
   return GAME_LANGUAGE_LOOKUP.get(trimmed.toLowerCase()) ?? trimmed;
 }
 
-export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }: GameSetupWizardProps) {
+export function GameSetupWizard({
+  onComplete,
+  onCancel,
+  isLoading,
+  isDraftingMap,
+  characters,
+}: GameSetupWizardProps) {
   const prefersReducedMotion = useReducedMotion();
   const [step, setStep] = useState(0);
   const [generationElapsedSeconds, setGenerationElapsedSeconds] = useState(0);
@@ -443,6 +468,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [gamePresentation, setGamePresentation] = useState<"standard" | "anime">("standard");
   const [language, setLanguage] = useState("English");
   const [startMuted, setStartMuted] = useState(false);
+  const [draftSpatialMap, setDraftSpatialMap] = useState(false);
+  const [spatialMapDraftSize, setSpatialMapDraftSize] = useState<SpatialMapDraftSize>("medium");
+  const [spatialMapGroundingMode, setSpatialMapGroundingMode] = useState<SpatialMapGroundingMode>("setup");
   const [expandedLearnedOptions, setExpandedLearnedOptions] = useState<Record<LearnedOptionGroup, boolean>>({
     genres: false,
     tones: false,
@@ -587,6 +615,11 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const toggleLorebook = useCallback((lbId: string) => {
     setActiveLorebookIds((prev) => (prev.includes(lbId) ? prev.filter((id) => id !== lbId) : [...prev, lbId]));
   }, []);
+
+  useEffect(() => {
+    if (activeLorebookIds.length > 0 || spatialMapGroundingMode === "setup") return;
+    setSpatialMapGroundingMode("setup");
+  }, [activeLorebookIds.length, spatialMapGroundingMode]);
 
   const filteredPersonas = useMemo(
     () =>
@@ -884,12 +917,22 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         },
       },
       gameName.trim() || undefined,
+      draftSpatialMap
+        ? {
+            size: spatialMapDraftSize,
+            groundingMode: spatialMapGroundingMode,
+            sourceLorebookIds: spatialMapGroundingMode === "setup" ? [] : activeLorebookIds,
+          }
+        : undefined,
     );
   };
 
   return (
     <>
-      <div className="fixed inset-0 z-[10000] bg-black/45 backdrop-blur-[2px]" onClick={onCancel} />
+      <div
+        className="fixed inset-0 z-[10000] bg-black/45 backdrop-blur-[2px]"
+        onClick={isLoading ? undefined : onCancel}
+      />
       <div className="fixed inset-0 z-[10001] flex items-center justify-center p-3 pointer-events-none max-md:pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
         <AnimatePresence mode="wait">
           <motion.div
@@ -910,7 +953,8 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
               <button
                 type="button"
                 onClick={onCancel}
-                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                disabled={isLoading}
+                className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-wait disabled:opacity-40"
                 aria-label="Close setup"
               >
                 <X size="0.875rem" />
@@ -2234,6 +2278,116 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 </div>
               </div>
             </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-[var(--foreground)]">
+                <MapIcon size={12} className="mr-1 inline" />
+                Hierarchical world map
+              </label>
+              <button
+                type="button"
+                aria-pressed={draftSpatialMap}
+                onClick={() => setDraftSpatialMap((enabled) => !enabled)}
+                className={cn(
+                  "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all",
+                  draftSpatialMap
+                    ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+                    : "bg-[var(--secondary)] ring-1 ring-transparent hover:ring-[var(--border)]",
+                )}
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                  <MapIcon
+                    size={14}
+                    className={draftSpatialMap ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]"}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-[var(--foreground)]">Draft with AI</span>
+                    <span className="block text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
+                      After setup, AI builds nested regions and places for you to review.
+                    </span>
+                  </span>
+                </span>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                    draftSpatialMap ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "block h-4 w-4 rounded-full bg-white transition-transform",
+                      draftSpatialMap && "translate-x-3.5",
+                    )}
+                  />
+                </span>
+              </button>
+
+              {draftSpatialMap && (
+                <div className="mt-2 space-y-3 rounded-lg bg-[var(--background)]/55 p-3 ring-1 ring-[var(--border)]">
+                  <fieldset>
+                    <legend className="text-[0.625rem] font-medium text-[var(--foreground)]">Map size</legend>
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      {SPATIAL_MAP_DRAFT_SIZE_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={spatialMapDraftSize === option.value}
+                          onClick={() => setSpatialMapDraftSize(option.value)}
+                          className={cn(
+                            "min-h-12 rounded-lg px-2 py-2 text-left transition-colors",
+                            spatialMapDraftSize === option.value
+                              ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-1 ring-[var(--primary)]/35"
+                              : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] hover:text-[var(--foreground)]",
+                          )}
+                        >
+                          <span className="block text-[0.6875rem] font-semibold">{option.label}</span>
+                          <span className="mt-0.5 block text-[0.55rem] leading-tight">{option.detail}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  <fieldset>
+                    <legend className="text-[0.625rem] font-medium text-[var(--foreground)]">Build from</legend>
+                    <div className="mt-2 grid grid-cols-3 gap-2">
+                      {([
+                        { value: "setup", label: "Game setup" },
+                        { value: "lore_strict", label: "Strict lore" },
+                        { value: "lore_expand", label: "Lore + AI" },
+                      ] as const).map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={spatialMapGroundingMode === option.value}
+                          disabled={option.value !== "setup" && activeLorebookIds.length === 0}
+                          onClick={() => setSpatialMapGroundingMode(option.value)}
+                          className={cn(
+                            "min-h-11 rounded-lg px-2 py-2 text-left text-[0.625rem] font-semibold ring-1 transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                            spatialMapGroundingMode === option.value
+                              ? "bg-[var(--primary)]/12 text-[var(--foreground)] ring-[var(--primary)]/35"
+                              : "bg-[var(--secondary)] text-[var(--muted-foreground)] ring-[var(--border)]",
+                          )}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {spatialMapGroundingMode === "setup"
+                        ? "Uses the generated game world and party."
+                        : spatialMapGroundingMode === "lore_strict"
+                          ? `Only creates places supported by the ${activeLorebookIds.length} selected lorebook${activeLorebookIds.length === 1 ? "" : "s"}.`
+                          : `Uses the ${activeLorebookIds.length} selected lorebook${activeLorebookIds.length === 1 ? "" : "s"} as canon and may add fitting places.`}
+                    </p>
+                  </fieldset>
+
+                  <p className="text-[0.5625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    The draft stays disabled until you review, apply, enable, and save it in the map editor.
+                  </p>
+                </div>
+              )}
+            </div>
           </>
         )}
 
@@ -2449,7 +2603,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 <div className="mb-3">
                   <div className="flex items-center justify-between gap-3 text-[0.6875rem]">
                     <span className="font-medium text-[var(--foreground)]" role="status" aria-live="polite">
-                      Hold on tight, the game is being generated right now!
+                      {isDraftingMap
+                        ? "The world is ready. Now drafting its map for your review."
+                        : "Hold on tight, the game is being generated right now!"}
                     </span>
                     <span aria-hidden="true" className="shrink-0 tabular-nums text-[var(--muted-foreground)]">
                       {generationElapsedSeconds}s
@@ -2458,7 +2614,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                   <div
                     className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--muted)]/60"
                     role="progressbar"
-                    aria-label="Generating game world"
+                    aria-label={isDraftingMap ? "Drafting hierarchical world map" : "Generating game world"}
                   >
                     <motion.div
                       className="h-full w-2/5 rounded-full bg-[var(--primary)]"
@@ -2479,7 +2635,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                     type="button"
                     aria-label={`Go to ${item.title}`}
                     aria-current={i === step ? "step" : undefined}
-                    disabled={i >= step}
+                    disabled={isLoading || i >= step}
                     onClick={() => {
                       if (i < step) setStep(i);
                     }}
@@ -2505,14 +2661,20 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                 <button
                   type="button"
                   onClick={step === 0 ? onCancel : () => setStep(step - 1)}
-                  className={GAME_SETUP_GHOST_BUTTON_CLASS}
+                  disabled={isLoading}
+                  className={cn(GAME_SETUP_GHOST_BUTTON_CLASS, "disabled:cursor-wait disabled:opacity-40")}
                 >
                   <ArrowLeft size={14} />
                   {step === 0 ? "Cancel" : "Back"}
                 </button>
 
                 {step < steps.length - 1 ? (
-                  <button type="button" onClick={() => setStep(step + 1)} className={GAME_SETUP_PRIMARY_BUTTON_CLASS}>
+                  <button
+                    type="button"
+                    onClick={() => setStep(step + 1)}
+                    disabled={isLoading}
+                    className={GAME_SETUP_PRIMARY_BUTTON_CLASS}
+                  >
                     Next
                     <ArrowRight size={14} />
                   </button>
@@ -2527,7 +2689,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
                     {isLoading ? (
                       <>
                         <Loader2 size={14} className="animate-spin" />
-                        Generating World…
+                        {isDraftingMap ? "Drafting Map…" : "Generating World…"}
                       </>
                     ) : (
                       <>

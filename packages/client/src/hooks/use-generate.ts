@@ -18,6 +18,7 @@ import { startSceneWithPromptPreferences } from "../lib/scene-generation";
 import { agentKeys } from "./use-agents";
 import { discardPendingGameStatePatch } from "./use-game-state-patcher";
 import { turnGameKeys } from "./turn-game-keys";
+import { spatialContextKeys } from "./use-spatial-context";
 import type { PendingAgentWriteApproval, PendingCardUpdate } from "../stores/agent.store";
 import type { DelayedCharacterInfo } from "../stores/chat.store";
 import {
@@ -33,6 +34,8 @@ import {
   type EditableCharacterCardField,
   type MariGuidedPlanStep,
   type MariSuggestionChip,
+  type PendingSpatialTransition,
+  type SpatialContextResponse,
   type ThinkingTagPair,
 } from "@marinara-engine/shared";
 
@@ -1093,6 +1096,8 @@ export function useGenerate() {
       impersonatePromptTemplate?: string;
       /** When true, this generation drives the active turn-game's bot seats instead of a chat reply. */
       turnGameBots?: boolean;
+      /** Structured Roleplay/Game movement committed atomically with this owner turn. */
+      pendingSpatialTransition?: PendingSpatialTransition;
     }) => {
       // Prevent concurrent generations for the same chat. Different chats may
       // keep generating in the background while the user navigates elsewhere.
@@ -1150,7 +1155,7 @@ export function useGenerate() {
       const pendingAttachments = params.attachments ?? [];
 
       // Optimistically show the user message in the chat immediately
-      if ((params.userMessage || pendingAttachments.length > 0) && !params.impersonate) {
+      if ((params.userMessage || pendingAttachments.length > 0 || params.pendingSpatialTransition) && !params.impersonate) {
         // Build persona snapshot for per-message persona tracking
         const cachedPersonas = qc.getQueryData<
           Array<{
@@ -1252,6 +1257,7 @@ export function useGenerate() {
       let gameTurnLoadedSoundPlayed = false;
       let sawDoneEvent = false;
       let passiveStreamRecovered = false;
+      let spatialTransitionCommitted = false;
       let passiveStreamSettled = false;
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
@@ -1498,6 +1504,21 @@ export function useGenerate() {
           abortController.signal,
         )) {
           switch (event.type) {
+            case "spatial_transition_committed": {
+              const transitionData = event.data as
+                | { chatId?: string; commandId?: string; currentLocationId?: string; definitionRevision?: number }
+                | undefined;
+              if (transitionData?.chatId === params.chatId && transitionData.commandId) {
+                spatialTransitionCommitted = true;
+                useChatStore
+                  .getState()
+                  .clearPendingSpatialTransition(params.chatId, transitionData.commandId);
+                void qc.invalidateQueries({ queryKey: spatialContextKeys.detail(params.chatId) });
+                void qc.invalidateQueries({ queryKey: chatKeys.detail(params.chatId) });
+              }
+              break;
+            }
+
             case "token": {
               const isFirstToken = !receivedContent;
               receivedContent = true;
@@ -2553,7 +2574,7 @@ export function useGenerate() {
         flushLeadingSpeakerPrefix();
         flushTypewriterBuffer();
         // Abort is intentional — don't log or toast
-        if (isAbortError(error)) return receivedContent;
+        if (isAbortError(error)) return receivedContent || spatialTransitionCommitted;
         if (isPassiveStreamDisconnect(error, pageWasHiddenDuringStream, abortController.signal)) {
           passiveStreamRecovered = true;
           if (isActiveChat()) useChatStore.getState().setGenerationPhase("Finishing in background...");
@@ -2567,11 +2588,38 @@ export function useGenerate() {
               );
             }
           }
-          return abortController.signal.aborted ? receivedContent : true;
+          return abortController.signal.aborted ? receivedContent || spatialTransitionCommitted : true;
+        }
+        if (params.pendingSpatialTransition) {
+          const payload = error instanceof ApiError && error.payload && typeof error.payload === "object"
+            ? (error.payload as Record<string, unknown>)
+            : null;
+          const spatialErrorCode = typeof payload?.code === "string" ? payload.code : null;
+          if (spatialErrorCode === "spatial_transition_already_applied") {
+            spatialTransitionCommitted = true;
+          } else if (!spatialErrorCode?.startsWith("spatial_")) {
+            try {
+              const current = await api.get<SpatialContextResponse>(`/chats/${params.chatId}/spatial-context`);
+              qc.setQueryData(spatialContextKeys.detail(params.chatId), current);
+              spatialTransitionCommitted =
+                current.currentLocationId === params.pendingSpatialTransition.destinationId;
+            } catch {
+              /* Preserve the pending command when current state cannot be confirmed. */
+            }
+          }
+          if (spatialTransitionCommitted) {
+            useChatStore
+              .getState()
+              .clearPendingSpatialTransition(params.chatId, params.pendingSpatialTransition.commandId);
+            void qc.invalidateQueries({ queryKey: chatKeys.detail(params.chatId) });
+            return true;
+          }
+          useChatStore.getState().setPendingSpatialTransitionStatus(params.chatId, "needs_review");
         }
         const msg = error instanceof Error ? error.message : "Generation failed";
         showError(msg);
         window.dispatchEvent(new CustomEvent("marinara:generation-error", { detail: { chatId: params.chatId } }));
+        return false;
       } finally {
         // Stream has terminated (done, error, abort, or unexpected throw) —
         // guarantee the Mari indicator clears even if the end SSE never arrived.
@@ -2871,7 +2919,7 @@ export function useGenerate() {
           }
         }
       }
-      return receivedContent || passiveStreamRecovered;
+      return receivedContent || passiveStreamRecovered || spatialTransitionCommitted;
     },
     [
       qc,

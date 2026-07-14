@@ -9,8 +9,9 @@ import { SpeechToTextButton } from "../ui/SpeechToTextButton";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { translateDraftText } from "../../lib/draft-translation";
-import { formatTextQuotes, type DiceRollResult } from "@marinara-engine/shared";
+import { formatTextQuotes, type DiceRollResult, type PendingSpatialTransition } from "@marinara-engine/shared";
 import { getChatInputShellClass } from "../chat/chat-input-styles";
+import { SpatialContextRuntimeBar } from "../../features/spatial-context/components/SpatialContextRuntimeBar";
 
 interface Attachment {
   type: string;
@@ -24,8 +25,8 @@ interface GameInputProps {
   onSend: (
     message: string,
     attachments?: Array<{ type: string; data: string }>,
-    options?: { commitPendingMove?: boolean },
-  ) => void;
+    options?: { commitPendingMove?: boolean; pendingSpatialTransition?: PendingSpatialTransition },
+  ) => Promise<boolean | void> | boolean | void;
   onRollDice: (notation: string) => Promise<DiceRollResult | null>;
   /** When true, allow "Talk to Party" in the address selector. */
   hasPartyMembers?: boolean;
@@ -137,6 +138,10 @@ export function GameInput({
   const addressButtonRef = useRef<HTMLButtonElement>(null);
   const addressMenuRef = useRef<HTMLDivElement>(null);
   const activeChat = useChatStore((s) => s.activeChat);
+  const pendingSpatialTransition = useChatStore((s) =>
+    draftKey ? (s.pendingSpatialTransitions.get(draftKey) ?? null) : null,
+  );
+  const canSubmitSpatialMove = pendingSpatialTransition?.status === "ready" && addressMode === "scene";
   const chatMetadata = useMemo(() => {
     if (!activeChat?.metadata) return {};
     if (typeof activeChat.metadata !== "string") return activeChat.metadata as Record<string, unknown>;
@@ -211,7 +216,8 @@ export function GameInput({
   const handleSend = async () => {
     const trimmed = formatTextQuotes(text.trim(), quoteFormat);
     const commitPendingMove = !!pendingMoveLabel && addressMode === "scene";
-    const hasTurnContent = trimmed.length > 0 || attachments.length > 0 || commitPendingMove || !!queuedDice;
+    const hasTurnContent =
+      trimmed.length > 0 || attachments.length > 0 || commitPendingMove || canSubmitSpatialMove || !!queuedDice;
     if (!hasTurnContent || disabled || rollingQueuedDice) return;
 
     if (isIllustrateSlashCommand(trimmed) && onIllustrate) {
@@ -252,13 +258,29 @@ export function GameInput({
       body = body ? `[To the GM] ${body}` : "[To the GM]";
     }
 
-    onSend(body, pendingAttachments, { commitPendingMove });
-
+    const submittedText = text;
+    const submittedAttachments = attachments;
     setText("");
     clearDraft();
     setAttachments([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
     inputRef.current?.focus();
+    const succeeded = await onSend(body, pendingAttachments, {
+      commitPendingMove,
+      ...(canSubmitSpatialMove && pendingSpatialTransition
+        ? { pendingSpatialTransition: pendingSpatialTransition.transition }
+        : {}),
+    });
+    if (succeeded === false) {
+      setText(submittedText);
+      writeGameInputDraft(storageKey, submittedText);
+      setAttachments(submittedAttachments);
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.style.height = "auto";
+        inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
+      });
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -364,6 +386,12 @@ export function GameInput({
       className={cn(inline ? "" : "px-3 pt-2 pb-3")}
       style={inline ? undefined : { minHeight: 61 }}
     >
+      <SpatialContextRuntimeBar
+        chatId={draftKey ?? null}
+        disabled={disabled}
+        onPendingSelected={onClearPendingMove}
+      />
+
       {/* Dice picker */}
       {showDice && (
         <div
@@ -439,7 +467,7 @@ export function GameInput({
         <div className={cn("flex items-center", inline ? "px-0 pb-1" : "border-b border-foreground/10 px-4 py-2")}>
           <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-foreground/10 bg-foreground/10 px-2.5 py-1 text-[0.6875rem] text-foreground/80">
             <span className="shrink-0">📍</span>
-            <span className="min-w-0 truncate">Destination: {pendingMoveLabel}</span>
+            <span className="min-w-0 truncate">Map position: {pendingMoveLabel}</span>
             {onClearPendingMove && (
               <button
                 onClick={onClearPendingMove}
@@ -462,7 +490,8 @@ export function GameInput({
               "ring-1 ring-red-500/40 bg-red-500/5 shadow-[0_0_18px_-6px_rgba(248,113,113,0.55)]",
             forceInterrupt && "ring-1",
           ),
-          hasContent: text.trim().length > 0 || attachments.length > 0 || !!queuedDice || !!pendingMoveLabel,
+          hasContent:
+            text.trim().length > 0 || attachments.length > 0 || !!queuedDice || !!pendingMoveLabel || canSubmitSpatialMove,
           inline,
           layout: "game",
         })}
@@ -685,11 +714,19 @@ export function GameInput({
           disabled={
             disabled ||
             rollingQueuedDice ||
-            (!text.trim() && attachments.length === 0 && !(pendingMoveLabel && addressMode === "scene") && !queuedDice)
+            (!text.trim() &&
+              attachments.length === 0 &&
+              !(pendingMoveLabel && addressMode === "scene") &&
+              !canSubmitSpatialMove &&
+              !queuedDice)
           }
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-90",
-            (text.trim() || attachments.length > 0 || (pendingMoveLabel && addressMode === "scene") || queuedDice) &&
+            (text.trim() ||
+              attachments.length > 0 ||
+              (pendingMoveLabel && addressMode === "scene") ||
+              canSubmitSpatialMove ||
+              queuedDice) &&
               !disabled &&
               !rollingQueuedDice
               ? "text-foreground/70 hover:bg-foreground/10 hover:text-foreground/90"

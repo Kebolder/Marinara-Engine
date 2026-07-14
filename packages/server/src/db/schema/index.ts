@@ -13,6 +13,7 @@ export * from "./assets.js";
 export * from "./agents.js";
 export * from "./custom-tools.js";
 export * from "./game-state.js";
+export * from "./spatial-context.js";
 export * from "./game-engine-state.js";
 export * from "./checkpoints.js";
 export * from "./game-scene-videos.js";

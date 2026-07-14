@@ -49,6 +49,13 @@ import { createCharactersStorage } from "../services/storage/characters.storage.
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../services/storage/game-state.storage.js";
+import {
+  formatOwnerSpatialBreadcrumb,
+  injectOwnerSpatialPrompt,
+  projectGameSnapshotLocation,
+  resolveOwnerSpatialProjection,
+} from "../services/spatial-context/projection.js";
+import { createSpatialContextStorage } from "../services/storage/spatial-context.storage.js";
 import { createRegexScriptsStorage } from "../services/storage/regex-scripts.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
@@ -1735,8 +1742,16 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     const gameStateStore = createGameStateStorage(app.db);
-    const row = await gameStateStore.getByChatAndMessage(req.params.chatId, req.params.messageId, swipeIndex);
-    if (!row) return reply.send(null);
+    const rawRow = await gameStateStore.getByChatAndMessage(req.params.chatId, req.params.messageId, swipeIndex);
+    if (!rawRow) return reply.send(null);
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, req.params.chatId, {
+      exactAnchor: { messageId: req.params.messageId, swipeIndex },
+    });
+    const row = projectGameSnapshotLocation(rawRow, ownerSpatialProjection)!;
+    const manualOverrides = parseSnapshotJson<Record<string, string> | null>(row.manualOverrides, null);
+    if (manualOverrides && ownerSpatialProjection?.ownerMode === "game") {
+      delete manualOverrides.location;
+    }
 
     return {
       id: row.id,
@@ -1753,7 +1768,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       recentEvents: parseSnapshotJson(row.recentEvents, []),
       playerStats: parseSnapshotJson(row.playerStats, null),
       personaStats: parseSnapshotJson(row.personaStats, null),
-      manualOverrides: parseSnapshotJson(row.manualOverrides, null),
+      manualOverrides,
       fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
       hiddenTrackerFields: parseTrackerHiddenFields(row.hiddenTrackerFields),
       committed: (row.committed as any) === 1,
@@ -1767,17 +1782,26 @@ export async function chatsRoutes(app: FastifyInstance) {
     const gameStateStore = createGameStateStorage(app.db);
     const msgs = await storage.listMessages(req.params.id);
     const visibleAnchor = resolveVisibleGameStateAnchor(msgs);
-    const row = await gameStateStore.getForGeneration(req.params.id, {
+    const rawRow = await gameStateStore.getForGeneration(req.params.id, {
       preferLatestVisible: true,
       visibleAnchor,
     });
-    if (!row) return reply.send(null);
+    if (!rawRow) return reply.send(null);
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(
+      app.db,
+      req.params.id,
+      rawRow.messageId ? { exactAnchor: { messageId: rawRow.messageId, swipeIndex: rawRow.swipeIndex } } : {},
+    );
+    const row = projectGameSnapshotLocation(rawRow, ownerSpatialProjection)!;
     const presentCharacters = JSON.parse((row.presentCharacters as string) ?? "[]") as Array<Record<string, unknown>>;
     const playerStats = row.playerStats ? JSON.parse(row.playerStats as string) : null;
     const personaStats = row.personaStats ? JSON.parse(row.personaStats as string) : null;
     const storedManualOverrides = row.manualOverrides
       ? (JSON.parse(row.manualOverrides as string) as Record<string, string>)
       : null;
+    if (storedManualOverrides && ownerSpatialProjection?.ownerMode === "game") {
+      delete storedManualOverrides.location;
+    }
     const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
     const hiddenTrackerFields = parseTrackerHiddenFields(row.hiddenTrackerFields);
     const worldCustomFields = normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, []));
@@ -1864,6 +1888,19 @@ export async function chatsRoutes(app: FastifyInstance) {
     const gameStateStore = createGameStateStorage(app.db);
     const body = req.body as Record<string, unknown>;
     const manual = body.manual === true;
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, req.params.id);
+    if (manual && body.location !== undefined && ownerSpatialProjection?.ownerMode === "game") {
+      return reply.status(409).send({
+        error: "Story location is controlled by the hierarchical map.",
+        code: "spatial_location_authoritative",
+        field: "location",
+        location: formatOwnerSpatialBreadcrumb(ownerSpatialProjection),
+      });
+    }
+    const gameStateUpdateOptions =
+      ownerSpatialProjection?.ownerMode === "game"
+        ? { compatibilityLocation: formatOwnerSpatialBreadcrumb(ownerSpatialProjection) }
+        : undefined;
     // Explicit flag to wipe all manual overrides (e.g. from the Clear button)
     const clearOverrides = body.clearOverrides === true;
     const targetMessageId = typeof body.messageId === "string" && body.messageId ? body.messageId : null;
@@ -1887,7 +1924,13 @@ export async function chatsRoutes(app: FastifyInstance) {
     }> = {};
     if (body.date !== undefined) fields.date = coerceGameStateTextValue(body.date);
     if (body.time !== undefined) fields.time = coerceGameStateTextValue(body.time);
-    if (body.location !== undefined) fields.location = coerceGameStateTextValue(body.location);
+    if (body.location !== undefined) {
+      if (ownerSpatialProjection?.ownerMode === "game") {
+        logger.debug("[game-state] Ignored location patch because Spatial Context is authoritative");
+      } else {
+        fields.location = coerceGameStateTextValue(body.location);
+      }
+    }
     if (body.weather !== undefined) fields.weather = coerceGameStateTextValue(body.weather);
     if (body.temperature !== undefined) fields.temperature = coerceGameStateTextValue(body.temperature);
     if (body.worldCustomFields !== undefined)
@@ -1912,6 +1955,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           req.params.id,
           fields,
           manual,
+          gameStateUpdateOptions,
         );
       }
     }
@@ -1920,7 +1964,14 @@ export async function chatsRoutes(app: FastifyInstance) {
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i]!.role === "assistant") {
           const msg = msgs[i]!;
-          updated = await gameStateStore.updateByMessage(msg.id, msg.activeSwipeIndex, req.params.id, fields, manual);
+          updated = await gameStateStore.updateByMessage(
+            msg.id,
+            msg.activeSwipeIndex,
+            req.params.id,
+            fields,
+            manual,
+            gameStateUpdateOptions,
+          );
           break;
         }
       }
@@ -1953,7 +2004,10 @@ export async function chatsRoutes(app: FastifyInstance) {
           swipeIndex: 0,
           date: (fields.date as string) ?? null,
           time: (fields.time as string) ?? null,
-          location: (fields.location as string) ?? null,
+          location:
+            ownerSpatialProjection?.ownerMode === "game"
+              ? formatOwnerSpatialBreadcrumb(ownerSpatialProjection)
+              : ((fields.location as string) ?? null),
           weather: (fields.weather as string) ?? null,
           temperature: (fields.temperature as string) ?? null,
           worldCustomFields: normalizeWorldCustomFields(fields.worldCustomFields),
@@ -1969,7 +2023,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       updated = await gameStateStore.getLatest(req.params.id);
     }
     if (!updated) return reply.status(404).send({ error: "No game state found" });
-    return updated;
+    return projectGameSnapshotLocation(updated, ownerSpatialProjection);
   });
 
   // Delete all game state for a chat
@@ -2085,6 +2139,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (requestedMessage) {
       return reply.status(404).send({ error: "No exact saved prompt is available for this game turn" });
     }
+
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, req.params.id);
 
     // ── Fallback: live assembly preview (no generation has happened yet) ──
     // This is a best-effort approximation; it won't include runtime-only
@@ -2264,7 +2320,7 @@ export async function chatsRoutes(app: FastifyInstance) {
               ...mappedMessages,
             ];
             return {
-              messages: toPeekPromptMessages(messages),
+              messages: toPeekPromptMessages(injectOwnerSpatialPrompt(messages, ownerSpatialProjection)),
               parameters: null,
               source: "live_preview",
               exact: false,
@@ -2555,7 +2611,10 @@ export async function chatsRoutes(app: FastifyInstance) {
             impersonateBlockAgents: false,
           });
           if (chatEnableAgents && activeAgentIds.length > 0) {
-            const snap = await loadLatestChatGameSnapshot(app, req.params.id, visibleGameStateAnchor);
+            const snap = projectGameSnapshotLocation(
+              await loadLatestChatGameSnapshot(app, req.params.id, visibleGameStateAnchor),
+              ownerSpatialProjection,
+            );
             const contextBlock = snap
               ? formatPeekTrackerContextBlock({ wrapFormat, snap, chatMeta, chatEnableAgents, activeAgentIds })
               : null;
@@ -2570,7 +2629,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           }
 
           return {
-            messages: toPeekPromptMessages(assembled.messages),
+            messages: toPeekPromptMessages(injectOwnerSpatialPrompt(assembled.messages, ownerSpatialProjection)),
             parameters: assembled.parameters,
             source: "live_preview",
             exact: false,
@@ -2596,7 +2655,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     return {
-      messages: mappedMessages,
+      messages: injectOwnerSpatialPrompt(mappedMessages, ownerSpatialProjection),
       parameters: null,
       source: "raw_messages",
       exact: false,
@@ -2877,6 +2936,24 @@ export async function chatsRoutes(app: FastifyInstance) {
     const msgs = await storage.listMessages(chat.id);
     const charIds = parseExportCharacterIds(chat.characterIds);
     const metadata = parseExportMetadata(chat.metadata);
+    const messageIndexById = new Map(msgs.map((message, index) => [message.id, index]));
+    const spatialContextHistory = (await createSpatialContextStorage(app.db).listForChat(chat.id))
+      .map((snapshot) => ({
+        messageIndex: snapshot.messageId === "" ? -1 : messageIndexById.get(snapshot.messageId),
+        swipeIndex: snapshot.swipeIndex,
+        currentLocationId: snapshot.currentLocationId,
+        definitionRevision: snapshot.definitionRevision,
+      }))
+      .filter(
+        (snapshot): snapshot is {
+          messageIndex: number;
+          swipeIndex: number;
+          currentLocationId: string | null;
+          definitionRevision: number;
+        } => snapshot.messageIndex !== undefined,
+      )
+      .sort((left, right) => left.messageIndex - right.messageIndex || left.swipeIndex - right.swipeIndex);
+
     const branchName = typeof metadata.branchName === "string" ? metadata.branchName : "";
 
     // Build a characterId → name map for all characters in this chat
@@ -2968,6 +3045,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           marinara_metadata: {
             ...jsonlMetadata,
             mode: chat.mode,
+            spatialContextHistory,
           },
         },
       }),
@@ -3283,6 +3361,19 @@ export async function chatsRoutes(app: FastifyInstance) {
     // them to the new branch's message IDs. Copying all snapshots (not just the latest)
     // ensures that branching a branch at an earlier point finds the correct tracker state
     // for that specific message, not just the latest snapshot in the source chat.
+    const spatialStore = createSpatialContextStorage(app.db);
+    const spatialBootstrap = await spatialStore.getBootstrap(req.params.id);
+    if (spatialBootstrap) {
+      await spatialStore.replaceBootstrap({
+        chatId: newChat.id,
+        currentLocationId: spatialBootstrap.currentLocationId,
+        definitionRevision: spatialBootstrap.definitionRevision,
+        source: "branch_copy",
+        transitionCommandId: null,
+        transitionPayloadHash: null,
+      });
+    }
+
     if (sourceToBranchedMessageId.size > 0) {
       const { createGameStateStorage } = await import("../services/storage/game-state.storage.js");
       const gameStateStore = createGameStateStorage(app.db);
@@ -3299,6 +3390,12 @@ export async function chatsRoutes(app: FastifyInstance) {
       ) => {
         try {
           const overrides = parseSnapshotJson<Record<string, string> | null>(snapshot.manualOverrides, null);
+          const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, newChat.id, {
+            exactAnchor: { messageId: targetMessageId, swipeIndex: targetSwipeIndex },
+          });
+          if (overrides && ownerSpatialProjection?.ownerMode === "game") {
+            delete overrides.location;
+          }
           await gameStateStore.create(
             {
               chatId: newChat.id,
@@ -3306,7 +3403,10 @@ export async function chatsRoutes(app: FastifyInstance) {
               swipeIndex: targetSwipeIndex,
               date: (snapshot.date as string) ?? null,
               time: (snapshot.time as string) ?? null,
-              location: (snapshot.location as string) ?? null,
+              location:
+                ownerSpatialProjection?.ownerMode === "game"
+                  ? formatOwnerSpatialBreadcrumb(ownerSpatialProjection)
+                  : ((snapshot.location as string) ?? null),
               weather: (snapshot.weather as string) ?? null,
               temperature: (snapshot.temperature as string) ?? null,
               worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(snapshot.worldCustomFields, [])),
@@ -3351,6 +3451,19 @@ export async function chatsRoutes(app: FastifyInstance) {
         if (!branchedMsgId) continue;
         const swipeIndexes = sourceToCopiedSwipeIndexes.get(srcMsg.id) ?? [srcMsg.activeSwipeIndex ?? 0];
         for (const swipeIndex of swipeIndexes) {
+          const spatialSnapshot = await spatialStore.getByAnchor(req.params.id, srcMsg.id, swipeIndex);
+          if (spatialSnapshot) {
+            await spatialStore.create({
+              chatId: newChat.id,
+              messageId: branchedMsgId,
+              swipeIndex,
+              currentLocationId: spatialSnapshot.currentLocationId,
+              definitionRevision: spatialSnapshot.definitionRevision,
+              source: "branch_copy",
+              transitionCommandId: null,
+              transitionPayloadHash: null,
+            });
+          }
           const snapshot = await gameStateStore.getByMessage(srcMsg.id, swipeIndex);
           if (snapshot) {
             await copySnapshot(snapshot, branchedMsgId, swipeIndex);

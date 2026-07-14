@@ -181,6 +181,7 @@ export const FILE_BACKED_TABLES = [
   "agent_memory",
   "custom_tools",
   "game_state_snapshots",
+  "spatial_context_snapshots",
   "game_engine_state",
   "game_checkpoints",
   "game_scene_videos",
@@ -226,6 +227,7 @@ export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; 
   { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_state_snapshots", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "spatial_context_snapshots", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_engine_state", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
@@ -242,6 +244,7 @@ export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; 
   // checkpoints (by snapshotId and messageId), snapshots, and engine state
   // whenever messages are removed.
   { parent: "messages", child: "game_state_snapshots", parentKey: "id", childKey: "messageId" },
+  { parent: "messages", child: "spatial_context_snapshots", parentKey: "id", childKey: "messageId" },
   { parent: "messages", child: "game_checkpoints", parentKey: "id", childKey: "messageId" },
   { parent: "messages", child: "game_engine_state", parentKey: "id", childKey: "messageId" },
   { parent: "game_state_snapshots", child: "game_checkpoints", parentKey: "id", childKey: "snapshotId" },
@@ -273,6 +276,12 @@ const SET_NULL_RELATIONS: Array<{
     child: "game_turn_storyboard_keyframes",
     parentKey: "id",
     childKey: "sceneVideoId",
+  },
+  {
+    parent: "spatial_context_snapshots",
+    child: "game_checkpoints",
+    parentKey: "id",
+    childKey: "spatialSnapshotId",
   },
 ];
 

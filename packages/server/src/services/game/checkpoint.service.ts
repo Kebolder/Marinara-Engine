@@ -22,6 +22,7 @@ export type CheckpointTrigger =
 export interface CreateCheckpointInput {
   chatId: string;
   snapshotId: string;
+  spatialSnapshotId?: string | null;
   messageId: string;
   label: string;
   triggerType: CheckpointTrigger;
@@ -36,6 +37,7 @@ export interface CheckpointRow {
   id: string;
   chatId: string;
   snapshotId: string;
+  spatialSnapshotId: string | null;
   messageId: string;
   label: string;
   triggerType: string;
@@ -55,6 +57,7 @@ export function createCheckpointService(db: DB) {
         id,
         chatId: input.chatId,
         snapshotId: input.snapshotId,
+        spatialSnapshotId: input.spatialSnapshotId ?? null,
         messageId: input.messageId,
         label: input.label,
         triggerType: input.triggerType,

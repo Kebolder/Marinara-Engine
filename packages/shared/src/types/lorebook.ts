@@ -19,6 +19,15 @@ export type SelectiveLogic = "and" | "and_all" | "or" | "not" | "not_all";
 /** Role for injected lorebook content. */
 export type LorebookRole = "system" | "user" | "assistant";
 
+/** Why an entry was activated for the current generation. */
+export type LorebookActivationSource =
+  | "current_location"
+  | "keyword"
+  | "semantic"
+  | "constant"
+  | "sticky"
+  | "recursive";
+
 /** Include/exclude behavior for contextual lorebook filters. */
 export type LorebookFilterMode = "any" | "include" | "exclude";
 

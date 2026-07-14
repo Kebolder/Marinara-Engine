@@ -28,6 +28,7 @@ import {
   FileText,
   Image,
   Loader2,
+  MapPin,
   PenLine,
   ScrollText,
   Settings2,
@@ -518,6 +519,9 @@ function ActiveContextLinksButton({
   const promptPresetId = typeof chat.promptPresetId === "string" ? chat.promptPresetId : null;
   const triggeredEntries = activeLorebookScan?.entries ?? [];
   const skippedLorebookEntries = activeLorebookScan?.budgetSkippedEntries ?? [];
+  const currentLocationEntryCount = triggeredEntries.filter((entry) =>
+    entry.activationSources.includes("current_location"),
+  ).length;
   const visibleLorebookIds = Array.from(
     new Set([
       ...activeLorebookIds,
@@ -591,6 +595,12 @@ function ActiveContextLinksButton({
             <span className="shrink-0 text-[0.625rem] text-foreground/45">Card</span>
           </button>
         ))}
+        {currentLocationEntryCount > 0 && (
+          <div className="flex items-center gap-1.5 rounded-md bg-sky-400/10 px-2 py-1.5 text-[0.625rem] font-semibold text-sky-200 ring-1 ring-sky-400/20">
+            <MapPin size="0.6875rem" /> Current location · {currentLocationEntryCount}{" "}
+            {currentLocationEntryCount === 1 ? "entry" : "entries"}
+          </div>
+        )}
         {visibleLorebookIds.map((id, index) => {
           const entries = triggeredEntriesByLorebook.get(id) ?? [];
           const skippedEntries = skippedEntriesByLorebook.get(id) ?? [];
@@ -620,6 +630,11 @@ function ActiveContextLinksButton({
                         >
                           {statusStyle.label}
                         </span>
+                        {entry.activationSources.includes("current_location") && (
+                          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-sky-400/15 px-1 py-0.5 text-[0.5rem] font-semibold text-sky-200">
+                            <MapPin size="0.5rem" /> Location
+                          </span>
+                        )}
                         <span className="shrink-0 text-foreground/40">#{entry.order}</span>
                       </div>
                     );
@@ -629,7 +644,9 @@ function ActiveContextLinksButton({
               {skippedEntries.length > 0 && (
                 <div className="ml-6 rounded-md bg-amber-500/10 px-2 py-1 text-[0.625rem] leading-relaxed text-amber-100/80 ring-1 ring-amber-500/20">
                   {skippedEntries.length} matching {skippedEntries.length === 1 ? "entry was" : "entries were"} skipped
-                  by token budget.
+                  {skippedEntries.some((entry) => entry.blockedBy === "location")
+                    ? " by the current-location context cap."
+                    : " by token budget."}
                 </div>
               )}
             </div>

@@ -27,6 +27,7 @@ import {
   Hash,
   Key,
   Lock,
+  MapPin,
   MoreHorizontal,
   Regex,
   Settings2,
@@ -37,6 +38,7 @@ import {
 import { cn } from "../../lib/utils";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUpdateLorebookEntry, useDeleteLorebookEntry, useDuplicateLorebookEntry } from "../../hooks/use-lorebooks";
+import { useUIStore } from "../../stores/ui.store";
 import { MacroTextarea } from "../ui/MacroTextarea";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
 import type {
@@ -90,6 +92,7 @@ interface Props {
    * preview active. Adds a side accent + chip; does not change behavior.
    */
   previewMatch?: "matched" | "constant";
+  mapBacklinks?: Array<{ chatId: string; locationId: string; locationName: string }>;
 }
 
 /** Maps the (constant, selective) boolean pair into a single status enum for the inline select. */
@@ -210,6 +213,7 @@ export function LorebookEntryRow({
   isSelected = false,
   onToggleSelected,
   previewMatch,
+  mapBacklinks = [],
 }: Props) {
   const updateEntry = useUpdateLorebookEntry();
   const deleteEntry = useDeleteLorebookEntry();
@@ -685,6 +689,21 @@ export function LorebookEntryRow({
           placeholder="Untitled entry"
           className="min-w-0 flex-1 truncate rounded bg-transparent px-1 text-sm font-medium outline-none transition-colors hover:bg-[var(--accent)]/40 focus:bg-[var(--accent)]/40 focus:ring-1 focus:ring-[var(--ring)] sm:min-w-[7rem]"
         />
+
+        {mapBacklinks.length > 0 && (
+          <button
+            type="button"
+            className="inline-flex min-h-7 shrink-0 items-center gap-1 rounded-md bg-sky-400/10 px-1.5 text-[0.625rem] font-medium text-sky-300 ring-1 ring-sky-400/20 hover:bg-sky-400/15"
+            title={`Used by: ${mapBacklinks.map((backlink) => backlink.locationName).join(", ")}`}
+            aria-label={`Open hierarchical map. Used by ${mapBacklinks.map((backlink) => backlink.locationName).join(", ")}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              useUIStore.getState().openSpatialMapDetail(mapBacklinks[0]!.chatId);
+            }}
+          >
+            <MapPin size="0.6875rem" /> Used by {mapBacklinks.length}
+          </button>
+        )}
 
         <button
           type="button"

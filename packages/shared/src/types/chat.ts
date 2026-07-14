@@ -788,6 +788,8 @@ export interface GenerateRequest {
   continueMessageId?: string | null;
   /** Override connection for this generation */
   connectionId: string | null;
+  /** Validated owner-mode movement committed with the user turn. */
+  pendingSpatialTransition?: import("./spatial-context.js").PendingSpatialTransition | null;
   /** One-shot attachments sent with the user message. */
   attachments?: MessageAttachment[];
   /** One-shot Narrative Director mode for this generation, if the user armed Push Story. */

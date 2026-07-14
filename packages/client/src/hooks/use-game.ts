@@ -137,6 +137,15 @@ interface MapMoveResponse {
   activeGameMapId?: string | null;
 }
 
+export type UpdateGameMapBindingInput =
+  | { target: "map"; chatId: string; mapId: string; spatialLocationId: string | null }
+  | { target: "cell"; chatId: string; mapId: string; x: number; y: number; spatialLocationId: string | null }
+  | { target: "node"; chatId: string; mapId: string; nodeId: string; spatialLocationId: string | null };
+
+interface UpdateGameMapBindingResponse extends MapMoveResponse {
+  sessionChat: Chat;
+}
+
 interface UpdateGameWidgetsResponse {
   ok: boolean;
 }
@@ -205,14 +214,23 @@ export function useGameSetup() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { chatId: string; connectionId?: string; promptPresetId?: string | null; preferences: string }) =>
+    mutationFn: (data: {
+      chatId: string;
+      connectionId?: string;
+      promptPresetId?: string | null;
+      preferences: string;
+      keepSetupActive?: boolean;
+    }) =>
       api.post<SetupResponse>("/game/setup", {
-        ...data,
+        chatId: data.chatId,
+        connectionId: data.connectionId,
+        promptPresetId: data.promptPresetId,
+        preferences: data.preferences,
         streaming: useUIStore.getState().enableStreaming,
         debugMode: useUIStore.getState().debugMode,
       }),
-    onSuccess: (res) => {
-      store.getState().setSetupActive(false);
+    onSuccess: (res, variables) => {
+      if (!variables.keepSetupActive) store.getState().setSetupActive(false);
       if (Array.isArray(res.gameNpcs)) {
         store.getState().setNpcs(res.gameNpcs);
       }
@@ -600,6 +618,22 @@ export function useMoveOnMap() {
       }
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
       qc.invalidateQueries({ queryKey: [...gameKeys.all, "journal", variables.chatId] });
+    },
+  });
+}
+
+export function useUpdateGameMapBinding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateGameMapBindingInput) =>
+      api.put<UpdateGameMapBindingResponse>("/game/map/binding", data),
+    onSuccess: (response, variables) => {
+      useGameModeStore.getState().setMaps(response.maps ?? [response.map], response.activeGameMapId);
+      qc.setQueryData(chatKeys.detail(variables.chatId), response.sessionChat);
+      if (useChatStore.getState().activeChatId === variables.chatId) {
+        useChatStore.getState().setActiveChat(response.sessionChat);
+      }
+      void qc.invalidateQueries({ queryKey: chatKeys.list() });
     },
   });
 }

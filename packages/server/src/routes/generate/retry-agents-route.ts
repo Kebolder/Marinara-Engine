@@ -80,6 +80,12 @@ import {
 import { createGameStateStorage } from "../../services/storage/game-state.storage.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 import { syncGameMapMetaPartyPosition } from "../../services/game/map-position.service.js";
+import {
+  formatOwnerSpatialBreadcrumb,
+  omitAuthoritativeGameLocation,
+  projectGameSnapshotLocation,
+  resolveOwnerSpatialProjection,
+} from "../../services/spatial-context/projection.js";
 import { gameStateSnapshots as gameStateSnapshotsTable } from "../../db/schema/index.js";
 import {
   buildLockedPlayerStatsArrayPatch,
@@ -668,6 +674,10 @@ async function buildRetryAgentContext(args: {
   const retryVisibleHistorySnapshot = retryVisibleAnchor
     ? await gameStateStore.getByChatAndMessage(chatId, retryVisibleAnchor.messageId, retryVisibleAnchor.swipeIndex)
     : null;
+  const retryOwnerSpatialProjection = retryVisibleAnchor
+    ? ((await resolveOwnerSpatialProjection(db, chatId, { exactAnchor: retryVisibleAnchor })) ??
+      (await resolveOwnerSpatialProjection(db, chatId, { throughMessageId: retryVisibleAnchor.messageId })))
+    : await resolveOwnerSpatialProjection(db, chatId);
   const resolvedLastAssistantContent = lastAssistant
     ? (resolveHistoryMessageMacros([
         {
@@ -779,7 +789,9 @@ async function buildRetryAgentContext(args: {
       historicalGameStateAnchor.swipeIndex,
     );
     if (snap) {
-      agentContext.gameState = parseGameStateRow(snap as Record<string, unknown>);
+      const parsedGameState = parseGameStateRow(snap as Record<string, unknown>);
+      agentContext.gameState =
+        projectGameSnapshotLocation(parsedGameState, retryOwnerSpatialProjection) ?? parsedGameState;
     } else {
       agentContext.gameState = null;
     }
@@ -790,7 +802,9 @@ async function buildRetryAgentContext(args: {
       visibleAnchor,
     });
     if (latestGS) {
-      agentContext.gameState = parseGameStateRow(latestGS as Record<string, unknown>);
+      const parsedGameState = parseGameStateRow(latestGS as Record<string, unknown>);
+      agentContext.gameState =
+        projectGameSnapshotLocation(parsedGameState, retryOwnerSpatialProjection) ?? parsedGameState;
     }
   }
 
@@ -2475,6 +2489,19 @@ async function applyRetryResultEffects(args: {
   const agentsStore = createAgentsStorage(app.db);
   const chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
   let currentResponseForRewrite = agentContext.mainResponse;
+  const retryOwnerSpatialProjection =
+    (retryMessageId
+      ? await resolveOwnerSpatialProjection(app.db, chatId, {
+          exactAnchor: { messageId: retryMessageId, swipeIndex: retrySwipeIndex },
+        })
+      : null) ??
+    (retryMessageId
+      ? await resolveOwnerSpatialProjection(app.db, chatId, { throughMessageId: retryMessageId })
+      : await resolveOwnerSpatialProjection(app.db, chatId));
+  const retryCompatibilityLocation =
+    retryOwnerSpatialProjection?.ownerMode === "game"
+      ? formatOwnerSpatialBreadcrumb(retryOwnerSpatialProjection)
+      : null;
   const originalResponseBeforeRewrite = agentContext.mainResponse;
   // Stale-edit baseline tracked in the raw (unresolved) domain to match the
   // stored message content. `currentResponseForRewrite` is macro-resolved, so
@@ -2483,19 +2510,22 @@ async function applyRetryResultEffects(args: {
   let expectedStoredMessageContent = mainResponseRaw;
   let retryBaseGameStateSnapshotPromise: ReturnType<typeof gameStateStore.getForGeneration> | null = null;
   const loadRetryBaseGameStateSnapshot = () => {
-    retryBaseGameStateSnapshotPromise ??= gameStateStore.getForGeneration(chatId, {
-      preferLatestVisible: true,
-      visibleAnchor: retryMessageId ? { messageId: retryMessageId, swipeIndex: retrySwipeIndex } : null,
-      excludeMessageId: retryMessageId || null,
-    });
+    retryBaseGameStateSnapshotPromise ??= gameStateStore
+      .getForGeneration(chatId, {
+        preferLatestVisible: true,
+        visibleAnchor: retryMessageId ? { messageId: retryMessageId, swipeIndex: retrySwipeIndex } : null,
+        excludeMessageId: retryMessageId || null,
+      })
+      .then((snapshot) => projectGameSnapshotLocation(snapshot, retryOwnerSpatialProjection));
     return retryBaseGameStateSnapshotPromise;
   };
   const loadRetryTargetGameStateSnapshot = async () => {
     if (!retryMessageId) return null;
     const existing = await gameStateStore.getByMessage(retryMessageId, retrySwipeIndex);
-    if (existing) return existing;
+    if (existing) return projectGameSnapshotLocation(existing, retryOwnerSpatialProjection);
     return gameStateStore.updateByMessage(retryMessageId, retrySwipeIndex, chatId, {}, undefined, {
       baseSnapshot: await loadRetryBaseGameStateSnapshot(),
+      ...(retryCompatibilityLocation !== null ? { compatibilityLocation: retryCompatibilityLocation } : {}),
     });
   };
 
@@ -2573,38 +2603,50 @@ async function applyRetryResultEffects(args: {
     ) {
       try {
         const gs = result.data as Record<string, unknown>;
-        const worldStatePatch: Record<string, unknown> = {};
-        if (gs.date != null) worldStatePatch.date = gs.date as string;
-        if (gs.time != null) worldStatePatch.time = gs.time as string;
-        if (gs.location != null) worldStatePatch.location = gs.location as string;
-        if (gs.weather != null) worldStatePatch.weather = gs.weather as string;
-        if (gs.temperature != null) worldStatePatch.temperature = gs.temperature as string;
+        const proposedWorldStatePatch: Record<string, unknown> = {};
+        if (gs.date != null) proposedWorldStatePatch.date = gs.date as string;
+        if (gs.time != null) proposedWorldStatePatch.time = gs.time as string;
+        if (gs.location != null) proposedWorldStatePatch.location = gs.location as string;
+        if (gs.weather != null) proposedWorldStatePatch.weather = gs.weather as string;
+        if (gs.temperature != null) proposedWorldStatePatch.temperature = gs.temperature as string;
         if (gs.worldCustomFields !== undefined)
-          worldStatePatch.worldCustomFields = normalizeWorldCustomFields(gs.worldCustomFields);
+          proposedWorldStatePatch.worldCustomFields = normalizeWorldCustomFields(gs.worldCustomFields);
+        if (retryCompatibilityLocation !== null && gs.location != null) {
+          logger.debug("[retry-agents] Ignoring generated Game location for spatially authoritative chat %s", chatId);
+        }
+        const worldStatePatch = omitAuthoritativeGameLocation(proposedWorldStatePatch, retryOwnerSpatialProjection);
         const lockSnapshot = (await loadRetryTargetGameStateSnapshot()) ?? (await loadRetryBaseGameStateSnapshot());
         const lockedWorldStatePatch = applyTrackerFieldLocksToGameStatePatch(
           worldStatePatch,
           lockSnapshot ? parseGameStateRow(lockSnapshot as Record<string, unknown>) : null,
         );
-        if (Object.keys(worldStatePatch).length > 0) {
+        if (retryCompatibilityLocation !== null) {
+          lockedWorldStatePatch.location = retryCompatibilityLocation;
+        }
+        if (Object.keys(worldStatePatch).length > 0 || retryCompatibilityLocation !== null) {
           await gameStateStore.updateByMessage(
             retryMessageId,
             retrySwipeIndex,
             chatId,
             lockedWorldStatePatch as any,
             undefined,
-            { baseSnapshot: await loadRetryBaseGameStateSnapshot() },
+            {
+              baseSnapshot: await loadRetryBaseGameStateSnapshot(),
+              ...(retryCompatibilityLocation !== null ? { compatibilityLocation: retryCompatibilityLocation } : {}),
+            },
           );
         }
 
         const nextLocation = typeof lockedWorldStatePatch.location === "string" ? lockedWorldStatePatch.location : null;
-        const existingGameMap = (chatMeta.gameMap as GameMap | null) ?? null;
-        const syncedMeta = syncGameMapMetaPartyPosition(chatMeta, nextLocation);
-        const syncedGameMap = (syncedMeta.gameMap as GameMap | null) ?? null;
-        if (syncedGameMap && syncedGameMap !== existingGameMap) {
-          Object.assign(chatMeta, syncedMeta);
-          await chats.updateMetadata(chatId, chatMeta);
-          sendSseEvent(reply, { type: "game_map_update", data: syncedGameMap });
+        if (retryCompatibilityLocation === null) {
+          const existingGameMap = (chatMeta.gameMap as GameMap | null) ?? null;
+          const syncedMeta = syncGameMapMetaPartyPosition(chatMeta, nextLocation);
+          const syncedGameMap = (syncedMeta.gameMap as GameMap | null) ?? null;
+          if (syncedGameMap && syncedGameMap !== existingGameMap) {
+            Object.assign(chatMeta, syncedMeta);
+            await chats.updateMetadata(chatId, chatMeta);
+            sendSseEvent(reply, { type: "game_map_update", data: syncedGameMap });
+          }
         }
 
         sendSseEvent(reply, { type: "game_state_patch", data: lockedWorldStatePatch });

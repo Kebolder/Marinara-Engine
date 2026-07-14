@@ -61,6 +61,11 @@ const PersonaEditor = lazy(() =>
 const RegexScriptEditor = lazy(() =>
   import("../agents/RegexScriptEditor").then((module) => ({ default: module.RegexScriptEditor })),
 );
+const SpatialMapWorkspace = lazy(() =>
+  import("../../features/spatial-context/SpatialMapWorkspace").then((module) => ({
+    default: module.SpatialMapWorkspace,
+  })),
+);
 const BotBrowserView = lazy(() =>
   import("../bot-browser/BotBrowserView").then((module) => ({ default: module.BotBrowserView })),
 );
@@ -404,6 +409,7 @@ export function AppShell() {
   const toolDetailId = useUIStore((s) => s.toolDetailId);
   const personaDetailId = useUIStore((s) => s.personaDetailId);
   const regexDetailId = useUIStore((s) => s.regexDetailId);
+  const spatialMapDetailChatId = useUIStore((s) => s.spatialMapDetailChatId);
   const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const gameAssetsBrowserOpen = useUIStore((s) => s.gameAssetsBrowserOpen);
   const noodleOpen = useUIStore((s) => s.noodleOpen);
@@ -555,7 +561,9 @@ export function AppShell() {
     [setRightPanelWidth, setSidebarWidth, sharedSidebarWidth],
   );
 
-  const detailView = regexDetailId ? (
+  const detailView = spatialMapDetailChatId ? (
+    <SpatialMapWorkspace chatId={spatialMapDetailChatId} />
+  ) : regexDetailId ? (
     <RegexScriptEditor />
   ) : personaDetailId ? (
     <PersonaEditor />
@@ -1114,9 +1122,15 @@ export function AppShell() {
         </Suspense>
       )}
       <ProfessorMariFloatingAssistantHost active={professorMariFloatingActive} />
-      <SpotifyMobileWidget />
-      <YouTubeMobileWidget />
-      <LocalMusicMobileWidget />
+      <div
+        data-component="MobileMusicWidgetLayer"
+        className={spatialMapDetailChatId ? "hidden" : "contents"}
+        aria-hidden={spatialMapDetailChatId ? true : undefined}
+      >
+        <SpotifyMobileWidget />
+        <YouTubeMobileWidget />
+        <LocalMusicMobileWidget />
+      </div>
     </div>
   );
 }

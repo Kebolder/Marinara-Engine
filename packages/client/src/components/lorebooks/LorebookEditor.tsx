@@ -41,6 +41,7 @@ import {
 import { useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
+import { useSpatialContext } from "../../hooks/use-spatial-context";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
@@ -347,6 +348,9 @@ export function LorebookEditor() {
   const lorebookId = useUIStore((s) => s.lorebookDetailId);
   const closeDetail = useUIStore((s) => s.closeLorebookDetail);
   const activeChat = useChatStore((s) => s.activeChat);
+  const activeOwnerChatId =
+    activeChat?.mode === "roleplay" || activeChat?.mode === "game" ? activeChat.id : null;
+  const spatialBacklinksQuery = useSpatialContext(activeOwnerChatId);
   const { data: rawLorebook, isLoading, isError } = useLorebook(lorebookId);
   const { data: rawLorebooks } = useLorebooks();
   const { data: rawEntries } = useLorebookEntries(lorebookId);
@@ -368,6 +372,23 @@ export function LorebookEditor() {
   const lorebook = rawLorebook as Lorebook | undefined;
   const lorebooks = useMemo(() => (rawLorebooks ?? []) as Lorebook[], [rawLorebooks]);
   const entries = useMemo(() => (rawEntries ?? []) as LorebookEntry[], [rawEntries]);
+  const mapBacklinksByEntryId = useMemo(() => {
+    const byEntryId = new Map<string, Array<{ chatId: string; locationId: string; locationName: string }>>();
+    const definition = spatialBacklinksQuery.data?.definition;
+    if (!activeOwnerChatId || !definition) return byEntryId;
+    for (const location of definition.locations) {
+      for (const entryId of location.lorebookEntryIds) {
+        const backlinks = byEntryId.get(entryId) ?? [];
+        backlinks.push({
+          chatId: activeOwnerChatId,
+          locationId: location.id,
+          locationName: location.name || "Untitled location",
+        });
+        byEntryId.set(entryId, backlinks);
+      }
+    }
+    return byEntryId;
+  }, [activeOwnerChatId, spatialBacklinksQuery.data?.definition]);
   const folders = useMemo(() => (rawFolders ?? []) as LorebookFolder[], [rawFolders]);
   const characters = useMemo(() => {
     if (!rawCharacters) return [] as Array<{ id: string; name: string; tags: string[] }>;
@@ -1614,6 +1635,7 @@ export function LorebookEditor() {
                     isSelected={selectedEntryIds.has(entry.id)}
                     onToggleSelected={() => toggleEntrySelection(entry.id)}
                     previewMatch={previewMatches.get(entry.id)}
+                    mapBacklinks={mapBacklinksByEntryId.get(entry.id)}
                   />
                   {showDropAfter && (
                     <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />
@@ -2580,6 +2602,7 @@ export function LorebookEditor() {
                               isSelected={selectedEntryIds.has(entry.id)}
                               onToggleSelected={() => toggleEntrySelection(entry.id)}
                               previewMatch={previewMatches.get(entry.id)}
+                              mapBacklinks={mapBacklinksByEntryId.get(entry.id)}
                             />
                             {showDropAfter && (
                               <div className="mari-chrome-accent-progress mari-accent-animated mx-2 mt-1 h-0.5 rounded-full" />
@@ -2617,6 +2640,7 @@ export function LorebookEditor() {
                         isSelected={selectedEntryIds.has(entry.id)}
                         onToggleSelected={() => toggleEntrySelection(entry.id)}
                         previewMatch={previewMatches.get(entry.id)}
+                        mapBacklinks={mapBacklinksByEntryId.get(entry.id)}
                       />
                     ))}
                   </div>

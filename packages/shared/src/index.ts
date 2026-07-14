@@ -31,6 +31,7 @@ export * from "./types/professor-mari-workspace.js";
 export * from "./types/achievement.js";
 export * from "./types/conversation-call.js";
 export * from "./types/noodle.js";
+export * from "./types/spatial-context.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -49,6 +50,7 @@ export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
 export * from "./schemas/conversation-call.schema.js";
 export * from "./schemas/noodle.schema.js";
+export * from "./schemas/spatial-context.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -132,3 +134,4 @@ export * from "./utils/conversation-presence.js";
 export * from "./utils/noodle-mentions.js";
 export * from "./utils/noodle-polls.js";
 export * from "./utils/noodle-interactions.js";
+export * from "./utils/spatial-context.js";

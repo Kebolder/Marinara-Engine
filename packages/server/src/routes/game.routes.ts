@@ -16,6 +16,14 @@ import { createGalleryStorage } from "../services/storage/gallery.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createGameStoryboardsStorage } from "../services/storage/game-storyboards.storage.js";
 import { createGameStateStorage } from "../services/storage/game-state.storage.js";
+import { createSpatialContextStorage } from "../services/storage/spatial-context.storage.js";
+import { formatOwnerSpatialBreadcrumb, resolveOwnerSpatialProjection } from "../services/spatial-context/projection.js";
+import { parseStoredSpatialDefinition, resolveEffectiveSpatialState } from "../services/spatial-context/state-resolution.js";
+import {
+  GameMapBindingError,
+  updateGameMapBinding,
+  type UpdateGameMapBindingInput,
+} from "../services/spatial-context/game-map-binding.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
@@ -1684,6 +1692,30 @@ const mapMoveSchema = z.object({
   position: z.union([z.object({ x: z.number().int(), y: z.number().int() }), z.string().min(1).max(200)]),
   mapId: z.string().min(1).max(200).optional().nullable(),
 });
+
+const mapBindingSchema = z.discriminatedUnion("target", [
+  z.object({
+    target: z.literal("map"),
+    chatId: z.string().min(1),
+    mapId: z.string().min(1).max(200),
+    spatialLocationId: z.string().min(1).nullable(),
+  }),
+  z.object({
+    target: z.literal("cell"),
+    chatId: z.string().min(1),
+    mapId: z.string().min(1).max(200),
+    x: z.number().int(),
+    y: z.number().int(),
+    spatialLocationId: z.string().min(1).nullable(),
+  }),
+  z.object({
+    target: z.literal("node"),
+    chatId: z.string().min(1),
+    mapId: z.string().min(1).max(200),
+    nodeId: z.string().min(1).max(200),
+    spatialLocationId: z.string().min(1).nullable(),
+  }),
+]);
 
 // ──────────────────────────────────────────────
 // Helpers
@@ -6790,13 +6822,28 @@ export async function gameRoutes(app: FastifyInstance) {
       let carriedStateSnapshotId = "";
       if (previousState) {
         try {
+          const previousSpatialState = await resolveEffectiveSpatialState(app.db, latestSession.id);
+          if (previousSpatialState.definition?.enabled && previousSpatialState.currentLocationId) {
+            await createSpatialContextStorage(app.db).replaceBootstrap({
+              chatId: newChat.id,
+              currentLocationId: previousSpatialState.currentLocationId,
+              definitionRevision: previousSpatialState.definition.revision,
+              source: "branch_copy",
+              transitionCommandId: null,
+              transitionPayloadHash: null,
+            });
+          }
+          const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, newChat.id);
           carriedStateSnapshotId = await stateStore.create({
             chatId: newChat.id,
             messageId: recapMessageId,
             swipeIndex: 0,
             date: previousState.date,
             time: previousState.time,
-            location: previousState.location,
+            location:
+              ownerSpatialProjection?.ownerMode === "game"
+                ? formatOwnerSpatialBreadcrumb(ownerSpatialProjection)
+                : previousState.location,
             weather: previousState.weather,
             temperature: previousState.temperature,
             worldCustomFields: previousWorldCustomFields,
@@ -8565,6 +8612,65 @@ export async function gameRoutes(app: FastifyInstance) {
       maps: getGameMapsFromMeta(finalMeta),
       activeGameMapId: (finalMeta.activeGameMapId as string | null) ?? getGameMapId(finalMeta.gameMap as GameMap),
     };
+  });
+
+  // ── PUT /game/map/binding ──
+  app.put("/map/binding", async (req, reply) => {
+    const input = mapBindingSchema.parse(req.body);
+    const chats = createChatsStorage(app.db);
+    const chat = await chats.getById(input.chatId);
+    if (!chat) return reply.status(404).send({ error: "Chat not found.", code: "game_chat_missing" });
+    if (chat.mode !== "game") {
+      return reply.status(400).send({ error: "Map bindings require a Game chat.", code: "game_mode_required" });
+    }
+    try {
+      const bindingInput = input as UpdateGameMapBindingInput & { chatId: string };
+      const updated = await chats.patchMetadata(input.chatId, (metadata) => {
+        const definition = parseStoredSpatialDefinition(metadata);
+        if (!definition?.enabled) {
+          throw Object.assign(new Error("Enable and save the hierarchical map before binding Game maps."), {
+            code: "spatial_definition_missing",
+            statusCode: 409,
+          });
+        }
+        if (
+          input.spatialLocationId &&
+          !definition.locations.some(
+            (location) => location.id === input.spatialLocationId && location.status === "active",
+          )
+        ) {
+          throw Object.assign(new Error("The selected hierarchical location no longer exists."), {
+            code: "spatial_location_missing",
+            statusCode: 400,
+          });
+        }
+        return updateGameMapBinding(metadata, bindingInput);
+      });
+      if (!updated) return reply.status(404).send({ error: "Chat not found.", code: "game_chat_missing" });
+      const updatedMetadata = parseMeta(updated.metadata);
+      return {
+        sessionChat: updated,
+        map: updatedMetadata.gameMap as GameMap,
+        maps: getGameMapsFromMeta(updatedMetadata),
+        activeGameMapId:
+          (updatedMetadata.activeGameMapId as string | null) ??
+          getGameMapId(updatedMetadata.gameMap as GameMap | null),
+      };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "statusCode" in error &&
+        typeof error.statusCode === "number" &&
+        "code" in error &&
+        typeof error.code === "string"
+      ) {
+        return reply.status(error.statusCode).send({ error: error.message, code: error.code });
+      }
+      if (error instanceof GameMapBindingError) {
+        return reply.status(400).send({ error: error.message, code: error.code });
+      }
+      throw error;
+    }
   });
 
   // ── GET /game/:gameId/sessions ──
@@ -11820,13 +11926,28 @@ export async function gameRoutes(app: FastifyInstance) {
     const input = checkpointCreateSchema.parse(req.body);
     const checkpoints = createCheckpointService(app.db);
     const stateStore = createGameStateStorage(app.db);
+    const spatialStore = createSpatialContextStorage(app.db);
 
     const snapshot = await stateStore.getLatest(input.chatId);
     if (!snapshot) throw new Error("No game state snapshot to checkpoint");
+    const spatialState = await resolveEffectiveSpatialState(app.db, input.chatId);
+    const spatialSnapshot =
+      spatialState.snapshot ??
+      (spatialState.definition?.enabled && spatialState.currentLocationId
+        ? await spatialStore.replaceBootstrap({
+            chatId: input.chatId,
+            currentLocationId: spatialState.currentLocationId,
+            definitionRevision: spatialState.definitionRevision,
+            source: "bootstrap",
+            transitionCommandId: null,
+            transitionPayloadHash: null,
+          })
+        : null);
 
     const id = await checkpoints.create({
       chatId: input.chatId,
       snapshotId: snapshot.id,
+      spatialSnapshotId: spatialSnapshot?.id ?? null,
       messageId: snapshot.messageId,
       label: input.label,
       triggerType: input.triggerType as CheckpointTrigger,
@@ -11870,6 +11991,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const input = checkpointLoadSchema.parse(req.body);
     const checkpointSvc = createCheckpointService(app.db);
     const stateStore = createGameStateStorage(app.db);
+    const spatialStore = createSpatialContextStorage(app.db);
     const chats = createChatsStorage(app.db);
 
     const cp = await checkpointSvc.getById(input.checkpointId);
@@ -11882,6 +12004,13 @@ export async function gameRoutes(app: FastifyInstance) {
     const snapshot = await stateStore.getById(cp.snapshotId);
     if (!snapshot) throw new Error("Checkpoint snapshot was deleted and can no longer be restored");
     if (snapshot.chatId !== input.chatId) throw new Error("Checkpoint snapshot does not belong to this chat");
+    const spatialSnapshot = cp.spatialSnapshotId ? await spatialStore.getById(cp.spatialSnapshotId) : null;
+    if (cp.spatialSnapshotId && !spatialSnapshot) {
+      throw new Error("Checkpoint spatial snapshot was deleted and can no longer be restored");
+    }
+    if (spatialSnapshot && spatialSnapshot.chatId !== input.chatId) {
+      throw new Error("Checkpoint spatial snapshot does not belong to this chat");
+    }
 
     // Create a system message to mark the restore point
     const restoreMsg = await chats.createMessage({
@@ -11896,7 +12025,25 @@ export async function gameRoutes(app: FastifyInstance) {
     // locks and manual overrides so they keep protecting fields after a restore.
     // Tolerant parse: malformed JSON must not throw after the restore message is
     // already created, and an object value (not a string) must not be dropped.
+    if (spatialSnapshot) {
+      await spatialStore.replaceAtAnchor({
+        chatId: input.chatId,
+        messageId: restoreMsg.id,
+        swipeIndex: 0,
+        currentLocationId: spatialSnapshot.currentLocationId,
+        definitionRevision: spatialSnapshot.definitionRevision,
+        source: "definition_repair",
+        transitionCommandId: null,
+        transitionPayloadHash: null,
+      });
+    }
+    const ownerSpatialProjection = await resolveOwnerSpatialProjection(app.db, input.chatId, {
+      exactAnchor: { messageId: restoreMsg.id, swipeIndex: 0 },
+    });
     const manualOverrides = parseJsonField<Record<string, string> | null>(snapshot.manualOverrides, null);
+    if (manualOverrides && ownerSpatialProjection?.ownerMode === "game") {
+      delete manualOverrides.location;
+    }
     await stateStore.create(
       {
         chatId: input.chatId,
@@ -11904,7 +12051,10 @@ export async function gameRoutes(app: FastifyInstance) {
         swipeIndex: 0,
         date: snapshot.date,
         time: snapshot.time,
-        location: snapshot.location,
+        location:
+          ownerSpatialProjection?.ownerMode === "game"
+            ? formatOwnerSpatialBreadcrumb(ownerSpatialProjection)
+            : snapshot.location,
         weather: snapshot.weather,
         temperature: snapshot.temperature,
         worldCustomFields: normalizeWorldCustomFields(parseJsonField(snapshot.worldCustomFields, [])),

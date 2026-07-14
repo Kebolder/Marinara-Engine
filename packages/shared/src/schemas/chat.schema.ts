@@ -2,6 +2,7 @@
 // Chat Zod Schemas
 // ──────────────────────────────────────────────
 import { z } from "zod";
+import { pendingSpatialTransitionSchema } from "./spatial-context.schema.js";
 
 export const chatModeSchema = z.enum(["conversation", "roleplay", "visual_novel", "game"]);
 
@@ -31,6 +32,7 @@ export const generateRequestSchema = z.object({
   regenerateMessageId: z.string().nullable().default(null),
   continueMessageId: z.string().nullable().default(null),
   connectionId: z.string().nullable().default(null),
+  pendingSpatialTransition: pendingSpatialTransitionSchema.nullable().optional().default(null),
 
   impersonate: z.boolean().optional().default(false),
   /** When true, this generation drives the active turn-game's bot seats instead of a normal chat reply. */

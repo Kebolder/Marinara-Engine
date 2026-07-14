@@ -350,14 +350,17 @@ export const api = {
 
     if (!res.ok || !res.body) {
       let detail = `HTTP ${res.status}`;
+      let payload: unknown;
       try {
         const text = await res.text();
-        const json = JSON.parse(text);
-        detail = json.error || json.message || text.slice(0, 200);
+        const json = JSON.parse(text) as unknown;
+        payload = json;
+        if (isRecord(json)) detail = findNestedApiErrorMessage(json.error ?? json.message) || text.slice(0, 200);
+        else detail = text.slice(0, 200);
       } catch {
         /* couldn't parse body */
       }
-      throw new ApiError(res.status, detail);
+      throw new ApiError(res.status, detail, payload);
     }
 
     const reader = res.body.getReader();
