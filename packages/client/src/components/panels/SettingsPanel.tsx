@@ -1953,7 +1953,7 @@ function TrackerPanelAppearanceDrawer({
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--secondary)]/70 text-[var(--primary)] ring-1 ring-[var(--border)]">
-            <TrackerPanelIcon size="0.9rem" strokeWidth={1.95} />
+            <TrackerPanelIcon size="0.9rem" />
           </span>
           <span className="min-w-0">
             <span className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--foreground)]">

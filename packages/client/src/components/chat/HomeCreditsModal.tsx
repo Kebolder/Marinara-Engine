@@ -136,6 +136,33 @@ export function HomeCreditsModal({ open, onClose }: { open: boolean; onClose: ()
           </h3>
           <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">{SPECIAL_THANKS.join(", ")}.</p>
         </section>
+
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Third-Party Assets
+          </h3>
+          <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+            The tracker panel d20 icon uses the path geometry from{" "}
+            <a
+              href="https://github.com/FortAwesome/Font-Awesome/blob/5.15.4/svgs/solid/dice-d20.svg"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-[var(--primary)] underline-offset-2 hover:underline"
+            >
+              Font Awesome Free 5.15.4 dice-d20
+            </a>{" "}
+            by Fonticons, Inc., licensed under{" "}
+            <a
+              href="https://creativecommons.org/licenses/by/4.0/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-[var(--primary)] underline-offset-2 hover:underline"
+            >
+              CC BY 4.0
+            </a>
+            {". The path formatting was adapted for React; the geometry is unchanged."}
+          </p>
+        </section>
       </div>
     </Modal>
   );

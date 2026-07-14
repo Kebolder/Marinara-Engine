@@ -71,7 +71,7 @@ function renderContributors(contributors) {
 }
 
 function replaceContributors(source, contributorsBlock) {
-  const pattern = /const CONTRIBUTORS = \[\n[\s\S]*?\n\];/;
+  const pattern = /const CONTRIBUTORS = \[\r?\n[\s\S]*?\r?\n\];/;
   if (!pattern.test(source)) {
     throw new Error("Could not find CONTRIBUTORS block in HomeCreditsModal.tsx.");
   }
