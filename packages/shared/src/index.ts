@@ -51,6 +51,7 @@ export * from "./schemas/app-settings.schema.js";
 export * from "./schemas/conversation-call.schema.js";
 export * from "./schemas/noodle.schema.js";
 export * from "./schemas/spatial-context.schema.js";
+export * from "./schemas/folder.schema.js";
 
 // Constants
 export * from "./constants/providers.js";

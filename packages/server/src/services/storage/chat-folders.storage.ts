@@ -2,6 +2,7 @@
 // Storage: Chat Folders
 // ──────────────────────────────────────────────
 import { eq } from "drizzle-orm";
+import type { CreateChatFolderInput, UpdateFolderInput } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { chatFolders, chats } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
@@ -17,7 +18,7 @@ export function createChatFoldersStorage(db: DB) {
       return rows[0] ?? null;
     },
 
-    async create(input: { name: string; mode: string; color?: string }) {
+    async create(input: CreateChatFolderInput) {
       const id = newId();
       const timestamp = now();
       // Shift existing folders down and place new folder at the top.
@@ -25,16 +26,16 @@ export function createChatFoldersStorage(db: DB) {
       // half-shifted state with no new folder.
       await db.transaction(async (tx) => {
         const existing = await tx.select().from(chatFolders);
-        for (const f of existing) {
+        for (const folder of existing) {
           await tx
             .update(chatFolders)
-            .set({ sortOrder: f.sortOrder + 1 })
-            .where(eq(chatFolders.id, f.id));
+            .set({ sortOrder: folder.sortOrder + 1 })
+            .where(eq(chatFolders.id, folder.id));
         }
         await tx.insert(chatFolders).values({
           id,
           name: input.name,
-          mode: input.mode as "conversation" | "roleplay" | "visual_novel" | "game",
+          mode: input.mode,
           color: input.color ?? "",
           sortOrder: 0,
           collapsed: "false",
@@ -45,7 +46,7 @@ export function createChatFoldersStorage(db: DB) {
       return this.getById(id);
     },
 
-    async update(id: string, data: Partial<{ name: string; color: string; sortOrder: number; collapsed: boolean }>) {
+    async update(id: string, data: UpdateFolderInput) {
       await db
         .update(chatFolders)
         .set({
@@ -72,11 +73,11 @@ export function createChatFoldersStorage(db: DB) {
       // use-after-free noted in chats.storage.ts:984-986.
       const timestamp = now();
       await db.transaction(async (tx) => {
-        for (let i = 0; i < orderedIds.length; i++) {
+        for (let index = 0; index < orderedIds.length; index++) {
           await tx
             .update(chatFolders)
-            .set({ sortOrder: i, updatedAt: timestamp })
-            .where(eq(chatFolders.id, orderedIds[i]!));
+            .set({ sortOrder: index, updatedAt: timestamp })
+            .where(eq(chatFolders.id, orderedIds[index]!));
         }
       });
     },
