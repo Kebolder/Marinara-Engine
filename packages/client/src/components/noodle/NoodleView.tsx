@@ -1170,6 +1170,7 @@ export function NoodleView() {
   const saveProfile = () => {
     if (!viewedProfileAccount || !canEditViewedProfile) return;
     const normalizedHandle = profileHandle.trim().replace(/^@+/, "");
+    const nextAvatarUrl = profileAvatarUrl.trim() || null;
     const nextSettings = {
       ...viewedProfileAccount.settings,
       bannerUrl: profileBannerUrl.trim(),
@@ -1181,7 +1182,7 @@ export function NoodleView() {
         handle: normalizedHandle,
         displayName: profileName.trim(),
         bio: profileBio,
-        avatarUrl: profileAvatarUrl.trim() || null,
+        ...(nextAvatarUrl !== viewedProfileAccount.avatarUrl ? { avatarUrl: nextAvatarUrl } : {}),
         settings: nextSettings,
       },
       {
