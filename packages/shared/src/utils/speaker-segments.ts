@@ -64,7 +64,7 @@ export interface SpeakerSegment {
   end: number;
 }
 
-/** Consecutive same-speaker segments merged into one display group. */
+/** One canonical display/reaction segment, optionally composed from tagged parts. */
 export interface GroupedSegment {
   speaker: string | null;
   lines: string[];
@@ -131,49 +131,35 @@ export function parseNamePrefixFormat(
   }
   const segments: SpeakerSegment[] = [];
   let currentSpeaker: string | null = null;
-  let currentLines: string[] = [];
-  let currentStartLine = 0;
-  // Last line of the current segment with visible text — the segment's `end`
-  // stops there, so injections land under the text, not after trailing blanks.
-  let currentLastContentLine = -1;
-  const flush = () => {
-    if (currentLines.length === 0) return;
-    const endLine = currentLastContentLine >= 0 ? currentLastContentLine : currentStartLine + currentLines.length - 1;
-    segments.push({
-      speaker: currentSpeaker,
-      text: currentLines.join("\n"),
-      start: lineStarts[currentStartLine]!,
-      end: lineStarts[endLine]! + lines[endLine]!.length,
-    });
-  };
   let found = false;
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li]!;
+    let text = line;
     const colonIdx = line.indexOf(": ");
     if (colonIdx > 0) {
       const potentialName = line.slice(0, colonIdx).trim();
       if (knownNames.has(normalizeTextForMatch(potentialName))) {
-        flush();
         currentSpeaker = potentialName;
-        currentLines = [line.slice(colonIdx + 2)];
-        currentStartLine = li;
-        currentLastContentLine = line.slice(colonIdx + 2).trim() ? li : -1;
+        text = line.slice(colonIdx + 2);
         found = true;
-        continue;
       }
     }
-    if (currentLines.length === 0) currentStartLine = li;
-    currentLines.push(line);
-    if (line.trim()) currentLastContentLine = li;
+    if (!text.trim()) continue;
+    segments.push({
+      speaker: currentSpeaker,
+      text,
+      start: lineStarts[li]!,
+      end: lineStarts[li]! + line.length,
+    });
   }
-  flush();
   if (!found) return null;
-  const visibleSegments = segments.filter((s) => s.text.trim());
   const normalizedLeadingSpeaker = leadingSpeaker ? normalizeTextForMatch(leadingSpeaker) : "";
-  if (visibleSegments[0]?.speaker === null && normalizedLeadingSpeaker && knownNames.has(normalizedLeadingSpeaker)) {
-    visibleSegments[0] = { ...visibleSegments[0], speaker: leadingSpeaker!.trim() };
+  if (normalizedLeadingSpeaker && knownNames.has(normalizedLeadingSpeaker)) {
+    for (let index = 0; index < segments.length && segments[index]?.speaker === null; index++) {
+      segments[index] = { ...segments[index]!, speaker: leadingSpeaker!.trim() };
+    }
   }
-  return visibleSegments;
+  return segments;
 }
 
 /** Merge consecutive segments by the same speaker into one grouped segment. */
@@ -212,6 +198,13 @@ export function parseGroupedSpeakerSegments(
   const speakerSegs = parseSpeakerTags(content, knownNames);
   if (speakerSegs) return groupConsecutiveSegments(speakerSegs);
   const nameSegs = parseNamePrefixFormat(content, knownNames, leadingSpeaker);
-  if (nameSegs) return groupConsecutiveSegments(nameSegs);
+  if (nameSegs) {
+    return nameSegs.map((segment) => ({
+      speaker: segment.speaker,
+      lines: [segment.text.replace(/^\n+|\n+$/g, "")],
+      start: segment.start,
+      end: segment.end,
+    }));
+  }
   return null;
 }

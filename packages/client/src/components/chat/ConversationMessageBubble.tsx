@@ -198,6 +198,41 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
               messageTextStyle={messageTextStyle}
               quoteFormat={quoteFormat}
             />
+          ) : groupedSegments && !isUser ? (
+            <div className="flex flex-col items-start gap-1.5">
+              {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
+                const segChar =
+                  grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
+                const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
+                const combinedText = grp.lines.join("\n");
+                return (
+                  <div
+                    key={`${grp.start}-${i}`}
+                    className={cn(
+                      "mari-message-content mari-message-bubble texting-bubble texting-bubble-other relative rounded-2xl rounded-tl-md px-3.5 py-2 text-[0.9375rem] leading-relaxed break-words whitespace-pre-wrap shadow-sm animate-[fadeSlideIn_0.25s_ease-out]",
+                      !grp.speaker && "italic text-[var(--muted-foreground)]",
+                    )}
+                    style={messageTextStyle}
+                  >
+                    {grp.speaker && (
+                      <div
+                        className="mb-0.5 text-[0.75rem] font-semibold leading-tight opacity-90"
+                        style={nameColorStyle(segChar?.nameColor)}
+                      >
+                        {segName}
+                      </div>
+                    )}
+                    <MessageContent
+                      content={combinedText}
+                      mentionNames={mentionNames}
+                      emojiMap={emojiMap}
+                      stickerMap={stickerMap}
+                      onImageOpen={(url) => onImageOpen(url)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <div
               className={cn(
@@ -222,47 +257,6 @@ export function ConversationMessageBubble({ ctx }: { ctx: MessageRenderContext }
                     />
                   )}
                   <PendingTypingDots label="Still typing" dotClassName="bg-[var(--muted-foreground)]/60" />
-                </div>
-              ) : groupedSegments && !isUser ? (
-                /* Multi-speaker content inside a bubble */
-                <div className="space-y-2">
-                  {groupedSegments.slice(0, visibleSegments).map((grp, i) => {
-                    const segChar =
-                      grp.speaker && charByName ? charByName.get(normalizeTextForMatch(grp.speaker)) : null;
-                    const segName = segChar?.convoDisplayName?.trim() || segChar?.name || grp.speaker || "";
-                    const segColor = segChar?.nameColor;
-                    const combinedText = grp.lines.join("\n");
-                    if (!grp.speaker) {
-                      return (
-                        <div key={i} className="italic text-[var(--muted-foreground)]">
-                          <MessageContent
-                            content={combinedText}
-                            mentionNames={mentionNames}
-                            emojiMap={emojiMap}
-                            stickerMap={stickerMap}
-                            onImageOpen={(url) => onImageOpen(url)}
-                          />
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={i} className="space-y-0.5">
-                        <div
-                          className="text-[0.75rem] font-semibold leading-tight opacity-90"
-                          style={nameColorStyle(segColor)}
-                        >
-                          {segName}
-                        </div>
-                        <MessageContent
-                          content={combinedText}
-                          mentionNames={mentionNames}
-                          emojiMap={emojiMap}
-                          stickerMap={stickerMap}
-                          onImageOpen={(url) => onImageOpen(url)}
-                        />
-                      </div>
-                    );
-                  })}
                 </div>
               ) : extra.diceRollResult ? (
                 <DiceMessageContent diceRollResult={extra.diceRollResult} createdAt={message.createdAt} />

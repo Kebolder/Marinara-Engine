@@ -23,6 +23,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Group Conversation replies ignoring the documented inherited-speaker format in Bubble display. Each generated line now receives its own bubble while unprefixed consecutive lines retain the preceding character's identity (#3609).
 - Fixed recurring Roleplay characters losing tracker stats, custom fields, or their character-card avatar after being absent for several scenes. Character Tracker now receives card RPG configuration and bounded historical continuity, restores omitted prior values, and enforces card identity and artwork in normal and retry runs (#3606).
 - Fixed graceful shutdown completing before a file-native storage flush could drain newer writes queued during its active disk write, and made persistent close-time I/O failures reject shutdown instead of silently reporting success (#3602).
 - Fixed the Agent Editor custom-music folder picker omitting saved remote-admin and CSRF credentials by routing its privileged request through the shared API client (#3603).
