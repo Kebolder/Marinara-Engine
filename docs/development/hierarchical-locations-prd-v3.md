@@ -39,6 +39,8 @@ Manual movement ships first. Later, a constrained model tool such as `change_loc
 
 Add a shared Hierarchical Map feature for Roleplay and Game. It provides an author-defined location hierarchy, one authoritative focal location, bounded current-location prompt context, and server-validated movement.
 
+Lorebooks remain the canonical source for reusable world facts. The hierarchy may reference existing lorebook entries by stable ID so the active location can select relevant lore without copying or rewriting it. AI map drafting may use explicitly selected lorebooks as grounded source material, and it must distinguish source-backed locations from inferred or invented additions.
+
 Connected Conversation can later read a safe projection of the linked story location, but it never owns or changes spatial state.
 
 ```text
@@ -67,7 +69,10 @@ These decisions resolve the open questions from V2:
 7. Conversation uses scene-level wording unless authoritative presence data proves the connected character is present.
 8. Direct links and visual child placement are included in the MVP.
 9. Existing Game grid and node maps may bind explicitly to hierarchy locations; names are never matched automatically.
-10. Spatial lorebook attachment and model-requested movement remain later phases.
+10. Lorebooks own canonical reusable world facts; the map owns spatial identity, containment, navigation, and current-location state. Map locations reference lorebook entries by stable ID and never copy their content.
+11. A location attachment is an explicit chat-scoped activation source. While that exact location is current, its enabled entries may activate without a keyword match, but disabled or explicitly excluded books and entries remain disabled.
+12. Lorebook-grounded map drafting follows the owner runtime UI and precedes Connected Conversation. When source lorebooks are selected, the draft must expose which locations are source-backed, inferred, or invented instead of presenting unsupported geography as canon.
+13. Model-requested movement remains a later phase.
 
 ## Scope
 
@@ -98,6 +103,20 @@ The editor is a lazy-loaded map workspace, not a narrow settings form:
 - Selection previews a location. A distinct Enter action navigates to it, so click never ambiguously means inspect, edit, and move.
 - Each parent presents children as a positioned map, ordered layers, or an accessible list.
 - Duplicate subtree supports creator reuse without requiring cross-chat templates in the MVP.
+- Each location has a progressive `Linked lore` section that searches existing lorebook entries, shows disabled or missing references, and supports Open entry and Detach without copying or deleting lore content.
+
+### Lorebook-grounded drafting
+
+The AI map builder offers lorebook grounding when the owner chat has selected or active lorebooks. Grounding is explicit and inspectable, not a normal keyword scan.
+
+- Game setup uses the lorebooks selected in the Lorebooks step as default map sources.
+- Roleplay uses the open chat's active lorebooks as defaults and lets the creator change the source selection in the map builder.
+- `Strict canon` creates every named node from at least one selected lore entry. It preserves multiple sourced roots rather than inventing unsupported connecting places.
+- `Canon with expansion` preserves sourced names and relationships while allowing clearly labelled inferred or invented locations to fill practical gaps.
+- `Setup only` preserves the existing behavior and uses setup, world overview, story arc, scenario, and character context without lorebook grounding.
+- When selected lorebooks exist, `Canon with expansion` is the approachable default. The builder keeps `Strict canon` one control away for lorebook-heavy creators.
+
+Every generated node in the draft preview shows `Lore-backed`, `Inferred`, or `Added by AI`. Lore-backed nodes list their source entries and provide Open entry. The label proves a valid source reference, not that the model interpreted the prose perfectly, so creator review remains the semantic authority. Apply changes only the local working copy, and Save remains the persistence boundary.
 
 ### Runtime movement
 
@@ -130,6 +149,7 @@ export interface ChatLocation {
   placement?: { x: number; y: number };
   layerOrder?: number;
   awarenessSummary?: string;
+  lorebookEntryIds: string[];
   links: ChatLocationLink[];
   status: "active" | "archived";
   sortOrder: number;
@@ -171,7 +191,7 @@ export interface PendingSpatialTransition {
 
 Do not store `ownerChatId` inside `SpatialContextDefinition`; the containing chat is the owner. Stable opaque IDs survive renames and reparenting.
 
-Lorebook entry IDs are intentionally omitted from the first owner MVP and added in the lorebook phase.
+The first owner MVP treats a missing `lorebookEntryIds` field as an empty array, so the lorebook package can extend schema version 1 without eagerly rewriting existing definitions. Entry references are stable IDs only. Lorebook names, entry names, keys, and content are resolved at read or prompt time and are never copied into the spatial definition.
 
 ## Graph rules
 
@@ -192,6 +212,8 @@ Reject:
 - More than 500 locations
 - Depth above 20
 - More than 50 links per location
+- More than 50 lorebook entry references per location
+- Duplicate lorebook entry references on one location
 - Placement coordinates outside 0 to 100
 - Invalid or duplicate layer ordering within a layer parent
 - Movement to archived, hidden, blocked, or unreachable locations
@@ -214,7 +236,9 @@ Direct-link cycles are valid. Parent cycles are not.
 - A location with active children cannot be archived.
 - Hard delete is allowed only for an archived leaf with no inbound links.
 - Descendants are never silently reparented.
-- Missing later-phase lorebook references appear as warnings, not graph corruption.
+- Missing lorebook references appear as warnings, not graph corruption.
+- Archiving or deleting a location never deletes its referenced lorebook entries.
+- Deleting a lorebook or entry never silently rewrites the map. The location retains a repairable broken reference until the creator detaches or replaces it.
 
 ## Persistence and history
 
@@ -253,9 +277,26 @@ Include:
 
 Exclude all unrelated location descriptions and memories, hidden or blocked destinations, canvas coordinates, and editor metadata.
 
+### Current-location lore activation
+
+The owner spatial resolver returns the exact current location's `lorebookEntryIds` beside the normal spatial projection. The formatter does not paste those IDs or entry contents into the spatial block. Instead, prompt assembly passes the IDs into the existing lorebook processor as forced candidates with activation source `current_location`.
+
+Rules:
+
+- Only the exact current location activates attached lore in the first release. Parents and descendants do not inherit entries implicitly.
+- An explicit location attachment can activate an enabled entry even when its lorebook is not otherwise global, character-linked, persona-linked, or pinned to the chat.
+- A globally disabled lorebook, disabled entry, or explicit chat exclusion always wins over the attachment.
+- Existing lorebook macros, insertion positions, recursion, ordering, and per-book token and entry limits are reused.
+- Location-attached lore also has a total reserved cap of 2,048 tokens per owner prompt. Truncation is deterministic and appears in Active Context.
+- An entry activated by both location and ordinary keyword, semantic, recursive, or constant rules is injected once and reports every activation source.
+- A committed move resolves the destination's entries before the owner reply prompt is assembled. Pending or rejected movement does not change lore activation.
+- Game wording treats the location as the party's authoritative position. Roleplay wording treats it as the focal scene and does not infer that every character is present.
+
+The Active Context UI groups these entries under `Current location`, shows the owning lorebook, activation sources, token use or truncation, and Open entry. Broken, disabled, and excluded references remain visible in the map editor but never enter the prompt.
+
 ### Connected Conversation projection
 
-Added in Phase 5. Include only:
+Added in Phase 3. Include only:
 
 - Linked story name and mode
 - Breadcrumb
@@ -263,7 +304,7 @@ Added in Phase 5. Include only:
 - Read-only instruction
 - Character presence only when authoritative state proves it
 
-Never include private model memory, internal IDs, hidden destinations, the complete hierarchy, or location-attached lorebook content.
+Never include private model memory, internal IDs, hidden destinations, the complete hierarchy, location-attached lorebook IDs, or location-attached lorebook content.
 
 Game may prove presence through its committed `presentCharacters` state. Roleplay uses neutral wording such as “The linked story's current scene is…” until it gains an explicit presence source. Never infer presence by character name.
 
@@ -350,33 +391,50 @@ Exit condition: schema, movement semantics, and snapshot behavior are proven wit
 
 Exit condition: Roleplay and Game can author, move, persist, restore, and prompt from the same spatial model. Bound Game-map movement and unbound tactical movement remain distinct.
 
-### Phase 2: location lorebooks
+### Phase 2A: location lorebook bindings and runtime
 
-- Add `lorebookEntryIds` to locations.
-- Force-activate current-location entries in owner prompts under a reserved budget.
-- Respect disabled books and entries.
-- Report broken references and activation source.
-- Prove no automatic leakage into Conversation.
+- Add `lorebookEntryIds` to locations with an empty-array compatibility default.
+- Add inline attach, open, detach, disabled, excluded, and broken-reference states to the Location Editor.
+- Resolve exact-current-location references as forced candidates through the existing lorebook processor.
+- Reuse normal macros, insertion, recursion, ordering, and per-book limits; add deterministic deduplication and a 2,048-token total location-lore cap.
+- Report `current_location` alongside any keyword, semantic, recursive, or constant activation sources in Active Context.
+- Prove identical behavior in Roleplay and Game, including movement, reload, regeneration, swipes, and branches.
+- Prove that Connected Conversation receives neither location lore IDs nor contents.
 
-### Phase 3: model-requested movement
+Exit condition: creators can explicitly bind existing lore to locations, and only the accepted current location activates those entries in owner prompts.
+
+### Phase 2B: lorebook-grounded map drafting
+
+- Extend create, replace, and history-safe expansion requests with grounding mode and explicit lorebook or entry source selection.
+- Read selected enabled lore entries directly for this authoring operation instead of relying on keyword activation or the generated world overview.
+- Build a connection-aware bounded source catalog with visible omission counts and deterministic ordering.
+- Give the model temporary source keys, validate every returned key server-side, and persist only stable entry IDs.
+- Support `setup_only`, `lore_strict`, and `lore_expand` behavior with preview provenance.
+- Auto-bind valid source entries to generated locations while preserving Apply and Save as separate review boundaries.
+- Preserve every existing location ID and lore binding during add-only expansion.
+
+Exit condition: a lorebook-literate creator can generate a map grounded directly in selected canon, identify every unsupported addition, and decline or edit it before persistence.
+
+### Phase 3: connected Conversation
+
+- Resolve the latest owner state through `connectedChatId` at generation time.
+- Add a bounded read-only projection.
+- Use conservative presence wording.
+- Exclude location-attached lore IDs and content even when the owner prompt activates them.
+- Cover unlink, relink, deleted owner, malformed links, concluded stories, and location-lore negative controls.
+
+### Phase 4: model-requested movement
 
 - Add a typed `change_location` request for owner modes.
 - Apply the same revision, reachability, and idempotency validation.
 - Record accepted and rejected requests in debug diagnostics.
 - Conversation remains unable to request transitions.
 
-### Phase 4: creator templates
+### Phase 5: creator templates
 
 - Save and import reusable location subtrees or full maps.
 - Allow creators to ship starter maps with characters after ownership and merge behavior are specified.
 - Preserve internal references while generating new IDs when copying into another chat.
-
-### Phase 5: connected Conversation
-
-- Resolve the latest owner state through `connectedChatId` at generation time.
-- Add a bounded read-only projection.
-- Use conservative presence wording.
-- Cover unlink, relink, deleted owner, malformed links, and concluded stories.
 
 ## Repository implementation blueprint
 
@@ -394,6 +452,7 @@ Planning baseline: `hierarchical-locations` after merging `staging` at `4fd752ea
 | Client data | Server data uses React Query. Per-chat input drafts survive navigation and reload. Heavy editors are lazy-loaded through `AppShell`. | Add a dedicated query/mutation hook, persist pending transitions beside per-chat drafts, and route a lazy Location Editor through the existing detail-view model. |
 | Game travel | Game maps already have grid and node positions plus a pending map move that becomes visible `*moves to ...*` text. | Add optional stable-ID bindings. Bound destinations use structured spatial requests without visible prose; unbound movement keeps the existing tactical flow. |
 | Storage backends | File-native storage is the default; legacy libSQL remains supported. Small transactions are used, while large transaction loops are avoided for Windows stability. | Keep the owner-turn transaction constant-size and prove it against both storage backends before expanding the feature. |
+| Lorebook processing | Lorebook activation already supports explicit chat IDs, keyword and semantic matching, macros, recursion, ordering, and prompt markers. Initial Game setup scans with no chat messages, so ordinary keyword entries do not directly ground the later map draft. | Add forced current-location candidates to the shared lorebook processor and give map drafting a separate explicit, bounded source-catalog path. Do not infer map canon from the world overview alone. |
 
 ### Target module map
 
@@ -431,6 +490,7 @@ Existing integration files expected to change:
 - Persistence: `packages/server/src/db/migrate.ts`, `packages/server/src/db/schema/index.ts`, `packages/server/src/db/file-backed-store.ts`, `packages/server/src/services/storage/chats.storage.ts`, and `packages/server/src/routes/backup.routes.ts` where required by table registration.
 - Chat lifecycle: `packages/server/src/routes/chats.routes.ts`, `packages/server/src/routes/generate.routes.ts`, and `packages/shared/src/schemas/chat.schema.ts`.
 - Prompt paths: `packages/server/src/routes/generate/dry-run-route.ts`, `packages/server/src/services/generation/game-gm-prompt-runtime.ts`, and the live-preview portion of `packages/server/src/routes/chats.routes.ts`.
+- Lorebook grounding and activation: `packages/server/src/services/lorebook/`, `packages/server/src/routes/spatial-context.routes.ts`, `packages/client/src/features/spatial-context/components/LocationInspector.tsx`, the lorebook editor, and the Active Context UI.
 - Client routing and send paths: `packages/client/src/stores/ui.store.ts`, `packages/client/src/stores/chat.store.ts`, `packages/client/src/components/layout/AppShell.tsx`, `packages/client/src/components/chat/ChatSettingsDrawer.tsx`, `packages/client/src/components/chat/ChatArea.tsx`, `packages/client/src/components/chat/ChatRoleplaySurface.tsx`, `packages/client/src/components/chat/ChatInput.tsx`, `packages/client/src/components/game/GameSurface.tsx`, and `packages/client/src/components/game/GameInput.tsx`.
 - Portability and proof: native chat import/export code in `packages/server/src/routes/chats.routes.ts` and `packages/server/src/services/import/`, `scripts/regressions/`, `e2e/core-flows.e2e.ts`, and root `package.json` scripts.
 
@@ -525,6 +585,7 @@ interface ResolvedOwnerSpatialProjection {
   breadcrumb: Array<{ id: string; name: string }>;
   description: string;
   modelMemory: string | null;
+  lorebookEntryIds: string[];
   destinations: Array<{ id: string; name: string; label?: string }>;
   omittedDestinationCount: number;
 }
@@ -536,9 +597,10 @@ Prompt limits are separate from storage limits:
 - At most 4,000 characters of owner description.
 - At most 8,000 characters of private model memory.
 - At most 50 destinations in deterministic `sortOrder`, name, then ID order, followed only by an omitted count.
+- At most 50 current-location lorebook references before the lorebook processor applies entry and token budgets.
 - At most 1,000 characters for a connected `awarenessSummary` or fallback public-description excerpt.
 
-One formatter produces the shared structured owner block. Roleplay and Game use thin adapters around that block. A second formatter, introduced only in Phase 5, produces the privacy-reduced Conversation block.
+One formatter produces the shared structured owner block. Roleplay and Game use thin adapters around that block. The formatter never serializes `lorebookEntryIds`; the owner prompt pipeline consumes them through the lorebook processor. A second formatter, introduced only in Phase 3, produces the privacy-reduced Conversation block and receives no location-lore field.
 
 Every live path calls the same resolver and formatter immediately before final model-request preparation:
 
@@ -549,6 +611,47 @@ Every live path calls the same resolver and formatter immediately before final m
 - Retry and continuation paths that rebuild a prompt.
 
 Exact cached Peek Prompt needs no new assembly. It displays the already-saved provider request, which must contain the spatial block used for that swipe. Regression coverage must compare normalized spatial blocks across live generation, dry run, and live Peek Prompt for the same fixture.
+
+### Lorebook-grounded draft contract
+
+Map grounding is an explicit authoring input:
+
+```ts
+interface SpatialMapGroundingRequest {
+  mode: "setup_only" | "lore_strict" | "lore_expand";
+  lorebookIds: string[];
+  entryIds?: string[];
+}
+```
+
+Game setup defaults `lorebookIds` from `GameSetupConfig.activeLorebookIds`. Roleplay defaults them from the chat's active global, linked, and pinned books. The creator can change the selection before generation. Disabled or explicitly excluded books and entries are never sent.
+
+This is not a lorebook activation scan. The server reads the selected sources directly, resolves supported macros against the owner setup context without persisting the resolved text, and builds a catalog containing:
+
+- Temporary source key
+- Entry and lorebook names
+- Activation keys and tags
+- Entry description when present
+- Otherwise, a bounded content excerpt
+
+The catalog is limited by the smallest of 100 entries, 16,000 characters, and the connection context remaining after reserving setup, system, and requested output space. Priority is deterministic:
+
+1. Explicitly selected `entryIds`.
+2. Entries with location-like tags, names, or keys.
+3. Entries with authored descriptions.
+4. Remaining entries in stable lorebook and entry order.
+
+If entries are omitted, the preview reports the count and offers Refine sources. It never implies that the whole lorebook was considered.
+
+The simplified model plan adds temporary source keys to each proposed location. The server rejects unknown keys, maps valid keys to stable entry IDs, removes duplicates, and computes preview provenance:
+
+- `Lore-backed`: at least one validated source entry.
+- `Inferred`: a relationship or container derived from source material but not represented as its own source entry.
+- `Added by AI`: no source entry supports the node.
+
+`lore_strict` rejects every node without a validated source key. `lore_expand` accepts inferred and added nodes but labels them visibly. A valid source key proves provenance, not semantic fidelity; the preview must show source excerpts so the creator can catch a misread relationship or name before Apply.
+
+The generate endpoint returns the normalized draft definition plus a transient provenance map keyed by generated location ID. Only `lorebookEntryIds` persist after Save. Replace and expand retain the existing history protections; expansion may add bindings to new nodes but cannot rewrite existing locations or bindings.
 
 ### Game compatibility boundary
 
@@ -579,7 +682,11 @@ The Location Editor follows the existing full-page editor route:
 - Rows expose add child, add sibling, reparent, duplicate subtree, archive, and link actions through labelled controls.
 - The local view renders children as positioned map nodes, ordered layers, or an accessible list.
 - Selecting previews a location; a distinct Enter action navigates to it.
-- The inspector contains name, kind, public description, private model memory, icon, presentation, placement or layer order, status, parent, and direct links.
+- The inspector contains name, kind, public description, private model memory, icon, presentation, placement or layer order, status, parent, direct links, and linked lore.
+- Linked lore uses an inline searchable disclosure rather than a blocking modal. Results group entries by lorebook and expose disabled or excluded state before attachment.
+- Attached rows provide Open entry and Detach. Detach never deletes lore, and duplicate subtree copies bindings.
+- The lorebook editor shows current-chat map backlinks so a creator can find every location using an entry.
+- AI draft controls show source books, grounding mode, considered and omitted entry counts, and provenance without requiring technical prompt knowledge.
 - Validation is inline and also summarized near Save. Selecting a summary item focuses the affected node and field.
 - The editor uses a local working copy and one revisioned Save action. `editorDirty` protects navigation. Server conflicts preserve the working copy and offer Reload server version or Review differences; there is no blind overwrite.
 - Empty state teaches the first action: `Create a starting location`. Enabling is unavailable until a valid active starting location exists.
@@ -606,6 +713,8 @@ Native Marinara chat export must carry:
 - The bootstrap snapshot when present.
 
 Import creates new chat, message, and snapshot IDs while preserving location IDs inside the definition. Malformed imported graphs disable Spatial Context, preserve the raw definition for repair, and return warnings. They are never silently name-matched or partially activated.
+
+Chat JSONL export preserves location-to-entry IDs because they are part of the definition, but it does not silently bundle lorebook content. Import resolves references against the destination profile and reports missing entries as repairable warnings without name matching. Profile backup and restore preserve working references because they carry both spatial definitions and lorebook tables. A future explicit campaign package may bundle referenced lorebooks for cross-profile portability.
 
 Profile backup and restore include the new table through `FILE_BACKED_TABLES`. Chat deletion, bulk deletion, expunge, branch deletion, swipe deletion, and message deletion follow the existing cascade and application-cleanup paths. Existing chats need no eager migration because absent metadata means disabled Spatial Context.
 
@@ -697,16 +806,38 @@ Gate: a creator can request a richer initial map during setup without generating
 
 Gate: Roleplay and Game can move, recover from stale state, reload, switch chats, and use the feature with keyboard and touch.
 
+#### Package F.1: location lorebook bindings and runtime activation
+
+- Extend the shared schema and editor working copy with bounded `lorebookEntryIds`.
+- Add inline map attachment controls, lorebook backlinks, and broken-reference warnings.
+- Extend shared lorebook processing with forced candidate IDs, activation-source deduplication, exclusions, and the reserved location-lore cap.
+- Integrate the same resolver into Roleplay, Game GM, dry run, and live Peek Prompt paths.
+- Add Active Context source and truncation reporting.
+- Preserve reference IDs through branch and JSONL export/import flows, and warn when destination lore is missing.
+
+Gate: moving between locations activates only the destination's enabled attached lore in every owner prompt path, with no duplicate injection or Conversation leakage.
+
+#### Package F.2: lorebook-grounded map drafting
+
+- Add grounding mode and explicit source selection to create, replace, and expand requests.
+- Build the bounded source catalog from selected lorebooks, not ordinary chat scanning.
+- Validate temporary source keys and auto-bind valid entries to generated nodes.
+- Show Lore-backed, Inferred, and Added by AI provenance with source inspection in the draft preview.
+- Enforce source-backed nodes in Strict canon and visible unsupported additions in Canon with expansion.
+- Preserve history-safe add-only expansion and the existing Apply then Save review boundary.
+
+Gate: selected lorebook facts ground the generated hierarchy directly, every unsupported location is visible before Save, and strict mode cannot persist an unreferenced generated node.
+
 #### Package G: connected Conversation
 
-- Implement only after Packages A through F are stable.
+- Implement only after Packages A through F.2 are stable.
 - Resolve the linked owner at generation time and use the reduced projection formatter.
 - Add conservative presence wording and read-only UI.
 - Prove unlink, relink, deleted owner, malformed reciprocal links, cycles, and concluded story behavior.
 
-Gate: Conversation never receives private model memory, internal IDs, hidden destinations, or mutation capability.
+Gate: Conversation never receives private model memory, internal IDs, hidden destinations, location-attached lore IDs or content, or mutation capability.
 
-Location lorebooks, model-requested movement, creator templates, and per-character positions remain separate later packages after the owner MVP ships.
+Model-requested movement, creator templates, portable campaign packages, and per-character positions remain separate later packages after the owner and lorebook-grounding work ships.
 
 ### Issue and pull-request boundaries
 
@@ -723,28 +854,37 @@ Suggested issue split:
 2. Owner-turn snapshots, swipes, branches, checkpoints, and portability.
 3. Owner prompt projection and Game compatibility.
 4. Owner editor and runtime movement UI.
-5. Connected Conversation read-only projection.
-6. Location lorebooks.
-7. Model-requested movement.
+5. Location lorebook bindings and owner runtime activation.
+6. Lorebook-grounded map drafting.
+7. Connected Conversation read-only projection.
+8. Model-requested movement.
 
 ### Proof matrix
 
 | Claim | Automated proof | Manual proof |
 | --- | --- | --- |
+| Location lore activation is exact and bounded | Fixtures cover accepted movement, pending and rejected movement, disabled and excluded entries, duplicate activation sources, token truncation, reload, swipes, and branches | Move between two differently linked locations in Roleplay and Game, then inspect Active Context and Peek Prompt |
+| Lorebook grounding is inspectable | Strict-mode fixtures reject unreferenced nodes; expansion fixtures preserve validated source keys and label unsupported nodes; catalog caps and omission counts are deterministic | Draft from a large existing lorebook, open source excerpts, compare Strict canon and Canon with expansion, and reject an invented location |
 | Graph validation is deterministic | Dedicated spatial regression script with positive and negative fixtures | Inspect inline editor errors for representative invalid nodes |
 | Move and user message are atomic | Injected storage failure before and after each transaction write on both backends | Force a stale revision while a draft and destination are pending |
 | History restores the right location | Snapshot regression covering reload, swipes, regeneration, branch cutoff, and checkpoint | Exercise each flow in Roleplay and Game |
 | Prompt paths agree | Compare normalized blocks from generation helper, dry run, and live Peek Prompt | Inspect Peek Prompt and debug output for one chat per owner mode |
 | Context stays bounded | Wide and long-text fixtures assert character and destination caps | Inspect a deep and wide hierarchy in the editor and destination picker |
-| Privacy holds | Negative assertions for private memory, hidden links, inactive nodes, and unrelated descriptions | Link a Conversation chat and inspect its prompt in Phase 5 |
+| Privacy holds | Negative assertions for private memory, hidden links, inactive nodes, unrelated descriptions, and location-attached lore IDs and content | Link a Conversation chat and inspect its prompt in Phase 3 |
 | Game has one location authority | Reject legacy patches; validate bound transitions; preserve unbound movement | Try tracker edit, bound and unbound map moves, checkpoint load, enable, and disable |
 | UI is resilient | Playwright flow for create, edit, pending move, conflict, and mobile navigation | Verify dark, light, SillyTavern, keyboard, touch, long names, and empty states |
-| Portability preserves IDs and state | Native export/import and profile backup/restore round trips | Export a branched chat, import it, and inspect current breadcrumb and history |
+| Portability preserves IDs and state | Native export/import and profile backup/restore round trips cover spatial bindings; missing destination lore produces warnings | Export a branched chat, import it with and without its lorebooks, and inspect the breadcrumb, history, bindings, and warnings |
 
 Add `scripts/regressions/spatial-context.regression.ts` and a `regression:spatial` package script, then include it in `pnpm regression`. Do not add permanent `.test.ts` files. Each implementation PR still runs the narrow spatial regression plus the repository checks appropriate to its scope.
 
 ## Acceptance criteria
 
+- A map location stores lorebook entry references, never copied lore content.
+- Only the accepted exact current location force-activates attached lore, subject to disabled, exclusion, deduplication, ordering, entry-limit, and token-budget rules.
+- Active Context identifies current-location activation, combined activation sources, and deterministic truncation.
+- Grounded drafting reads explicitly selected lore entries directly rather than depending on keyword scans or generated world-overview summaries.
+- Strict canon produces only source-backed locations; Canon with expansion labels every inferred or unsupported addition before Save.
+- Connected Conversation receives no location-attached lore IDs or content.
 - Rename and reparent operations preserve location identity.
 - Invalid graphs and stale writes never mutate state.
 - Movement commits with a user turn or not at all.
@@ -760,7 +900,7 @@ Add `scripts/regressions/spatial-context.regression.ts` and a `regression:spatia
 
 ## Validation
 
-Deterministic coverage must include graph limits, cycles, navigation directions, hidden and blocked links, stale revisions, idempotency, branch points, swipes, checkpoints, privacy boundaries, and inactive-location negative controls.
+Deterministic coverage must include graph limits, cycles, navigation directions, hidden and blocked links, stale revisions, idempotency, branch points, swipes, checkpoints, lorebook reference limits, forced activation, exclusions, deduplication, token truncation, grounding catalog caps, source-key validation, strict-mode rejection, provenance, privacy boundaries, and inactive-location negative controls.
 
 Repository checks:
 
@@ -770,7 +910,7 @@ pnpm regression:prompt
 pnpm smoke:ui
 ```
 
-Manual verification covers desktop and mobile authoring, deep breadcrumbs, layers, positioned maps, long names, conflict recovery, archive protections, Roleplay, Game, bound and unbound map movement, reload, branching, checkpoint restore, and Peek Prompt. PR validation checkboxes remain unchecked for human verification.
+Manual verification covers desktop and mobile authoring, deep breadcrumbs, layers, positioned maps, long names, conflict recovery, archive protections, Roleplay, Game, bound and unbound map movement, reload, branching, checkpoint restore, linked-lore attachment and backlinks, disabled and broken references, large-source omission warnings, Strict canon and Canon with expansion previews, Active Context, and Peek Prompt. PR validation checkboxes remain unchecked for human verification.
 
 ## Deferred
 
