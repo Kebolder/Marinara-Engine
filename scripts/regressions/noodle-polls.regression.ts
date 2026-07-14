@@ -57,20 +57,20 @@ const generated = noodleGeneratedRefreshSchema.parse({
   posts: [
     {
       tempId: "poll-1",
-      authorEntityId: "character-1",
+      authorHandle: "character_one",
       content: "Settle this for me.",
       poll: { question: "Choose", options: ["One", "Two"] },
     },
   ],
   interactions: [
     {
-      actorEntityId: "character-2",
+      actorHandle: "character_two",
       targetTempId: "poll-1",
       type: "vote",
       pollOptionIndex: 1,
     },
     {
-      actorEntityId: "character-1",
+      actorHandle: "character_one",
       targetPostId: "existing-post-1",
       parentInteractionId: "persona-comment-1",
       type: "reply",
@@ -85,7 +85,7 @@ assert.equal(generated.interactions[1]?.parentInteractionId, "persona-comment-1"
 const generatedWithNullPlaceholders = noodleGeneratedRefreshSchema.parse({
   interactions: [
     {
-      actorEntityId: "character-2",
+      actorHandle: "character_two",
       targetTempId: "poll-1",
       targetPostId: null,
       type: "like",
@@ -98,7 +98,7 @@ assert.equal(generatedWithNullPlaceholders.interactions[0]?.targetPostId, undefi
 assert.equal(generatedWithNullPlaceholders.interactions[0]?.pollOptionIndex, undefined);
 assert.equal(
   noodleGeneratedRefreshSchema.safeParse({
-    interactions: [{ actorEntityId: "character-2", targetPostId: "post-1", type: "vote" }],
+    interactions: [{ actorHandle: "character_two", targetPostId: "post-1", type: "vote" }],
   }).success,
   false,
 );
@@ -106,7 +106,7 @@ assert.equal(
   noodleGeneratedRefreshSchema.safeParse({
     interactions: [
       {
-        actorEntityId: "character-2",
+        actorHandle: "character_two",
         targetPostId: "post-1",
         parentInteractionId: "comment-1",
         type: "like",
@@ -117,7 +117,7 @@ assert.equal(
 );
 assert.equal(
   noodleGeneratedRefreshSchema.safeParse({
-    interactions: [{ actorEntityId: "character-2", targetPostId: "post-1", type: "vote", pollOptionIndex: null }],
+    interactions: [{ actorHandle: "character_two", targetPostId: "post-1", type: "vote", pollOptionIndex: null }],
   }).success,
   false,
 );

@@ -242,7 +242,7 @@ export const noodleRescheduleRefreshSchema = z.object({
 
 export const noodleGeneratedPostSchema = z.object({
   tempId: z.string().min(1).optional(),
-  authorEntityId: z.string().min(1),
+  authorHandle: z.string().min(1),
   content: z.string().min(1).max(4000),
   imagePrompt: z.string().max(2000).nullable().optional(),
   attachGalleryImage: z.boolean().optional().default(false),
@@ -251,7 +251,7 @@ export const noodleGeneratedPostSchema = z.object({
 
 export const noodleGeneratedInteractionSchema = z
   .object({
-    actorEntityId: z.string().min(1),
+    actorHandle: z.string().min(1),
     targetTempId: z
       .string()
       .min(1)
@@ -295,8 +295,8 @@ export const noodleGeneratedInteractionSchema = z
   });
 
 export const noodleGeneratedFollowSchema = z.object({
-  actorEntityId: z.string().min(1),
-  targetEntityId: z.string().min(1),
+  actorHandle: z.string().min(1),
+  targetHandle: z.string().min(1),
 });
 
 export const noodleGeneratedDigestSchema = z.object({

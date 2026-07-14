@@ -62,6 +62,7 @@ export interface NoodleTimelineVoiceCtx extends Record<string, string | number |
   /** Mirrors the Noodle setting `enableEnhancedTimelineWriting` ("true"/"false"). Only affects the
    *  unedited default text — once a user customizes this override, their text always wins. */
   enhanced: string;
+  allowRandomUsers?: string;
 }
 
 export const NOODLE_TIMELINE_VOICE: PromptOverrideKeyDef<NoodleTimelineVoiceCtx> = {
@@ -70,6 +71,6 @@ export const NOODLE_TIMELINE_VOICE: PromptOverrideKeyDef<NoodleTimelineVoiceCtx>
   description:
     "Tone and creative-freedom instructions for Noodle timeline refreshes: how much personality/attitude each account's voice should carry, and how much accounts may banter, joke, or clash with each other. This does not control which structured actions (posts, replies, likes, polls) are allowed or their JSON shape — those rules always stay enforced regardless of this text, so editing it cannot break refresh generation.",
   variables: [],
-  defaultBuilder: (ctx) => noodleTimelineVoiceDefaultText(ctx.enhanced === "true"),
-  exampleContext: { enhanced: "false" },
+  defaultBuilder: (ctx) => noodleTimelineVoiceDefaultText(ctx.enhanced === "true", ctx.allowRandomUsers !== "false"),
+  exampleContext: { enhanced: "false", allowRandomUsers: "true" },
 };

@@ -510,8 +510,12 @@ export async function connectionsRoutes(app: FastifyInstance) {
       // image_generation has no standard modelsEndpoint — use provider-specific checks
       let testUrl: string;
       if (conn.provider === "image_generation" && imageSource === "novelai") {
-        // NovelAI: validate the API key via the user subscription endpoint
-        testUrl = "https://api.novelai.net/user/subscription";
+        return {
+          success: true,
+          message: "NovelAI connection configured. Use 'Test Image' to verify generation works.",
+          latencyMs: Date.now() - start,
+          modelName: conn.model,
+        };
       } else if (conn.provider === "image_generation" && imageSource === "horde") {
         // Horde: heartbeat is the lightweight health endpoint for the public API.
         testUrl = buildHordeUrl(baseUrl, "status/heartbeat");

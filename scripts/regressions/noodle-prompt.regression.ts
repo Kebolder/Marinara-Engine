@@ -351,7 +351,7 @@ assert.deepEqual(
   ["old-post-with-new-comment"],
 );
 
-const activeAccountsInstruction = "- Use only the active accounts listed by entityId. Do not invent accounts.";
+const activeAccountsInstruction = "- Use only the active accounts listed by @handle. Do not invent accounts.";
 const randomUserSupportingInstruction =
   "- Character accounts are the primary cast. Random-user activity should be occasional supporting texture and must never dominate the generated posts or interactions.";
 const randomUserParodyInstruction =
@@ -392,10 +392,10 @@ assert.deepEqual(
 );
 
 const resilientRefresh = parseNoodleGeneratedRefresh({
-  posts: [{ authorEntityId: "entity-alpha", content: "A valid post." }],
+  posts: [{ authorHandle: "alpha", content: "A valid post." }],
   interactions: [
     {
-      actorEntityId: "entity-beta",
+      actorHandle: "beta",
       targetPostId: "post-1",
       type: "like",
       parentInteractionId: "comment-that-must-not-be-here",
@@ -410,34 +410,34 @@ assert.deepEqual(resilientRefresh.rejected, [{ collection: "interactions", index
 assert.equal(
   validateNoodleGeneratedRefresh(
     { posts: [], interactions: [], follows: [], digests: [] },
-    new Set(["entity-alpha"]),
-    new Set(["entity-alpha", "persona"]),
+    new Set(["alpha"]),
+    new Set(["alpha", "persona"]),
   ),
   "the response contained no timeline activity",
 );
 assert.equal(
   validateNoodleGeneratedRefresh(
     {
-      posts: [{ authorEntityId: "persona", content: "The model must not post as the user.", attachGalleryImage: false }],
+      posts: [{ authorHandle: "persona", content: "The model must not post as the user.", attachGalleryImage: false }],
       interactions: [],
       follows: [],
       digests: [],
     },
-    new Set(["entity-alpha"]),
-    new Set(["entity-alpha", "persona"]),
+    new Set(["alpha"]),
+    new Set(["alpha", "persona"]),
   ),
-  "the response used no selected participant entityId",
+  "the response used no selected participant handle",
 );
 assert.equal(
   validateNoodleGeneratedRefresh(
     {
-      posts: [{ authorEntityId: "entity-alpha", content: "A valid cast post.", attachGalleryImage: false }],
+      posts: [{ authorHandle: "alpha", content: "A valid cast post.", attachGalleryImage: false }],
       interactions: [],
       follows: [],
       digests: [],
     },
-    new Set(["entity-alpha"]),
-    new Set(["entity-alpha", "persona"]),
+    new Set(["alpha"]),
+    new Set(["alpha", "persona"]),
   ),
   null,
 );
@@ -591,9 +591,17 @@ const expectedEnhancedVoiceText = [
 ].join("\n");
 assert.equal(noodleTimelineVoiceDefaultText(false), expectedLegacyVoiceText);
 assert.equal(noodleTimelineVoiceDefaultText(true), expectedEnhancedVoiceText);
+assert.equal(
+  noodleTimelineVoiceDefaultText(false, false),
+  [NOODLE_LEGACY_TONE_INSTRUCTION, ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS].join("\n"),
+);
 assert.equal(NOODLE_TIMELINE_VOICE.key, "noodle.timelineVoice");
 assert.equal(NOODLE_TIMELINE_VOICE.defaultBuilder({ enhanced: "false" }), expectedLegacyVoiceText);
 assert.equal(NOODLE_TIMELINE_VOICE.defaultBuilder({ enhanced: "true" }), expectedEnhancedVoiceText);
+assert.doesNotMatch(
+  NOODLE_TIMELINE_VOICE.defaultBuilder({ enhanced: "false", allowRandomUsers: "false" }),
+  /Random user accounts/u,
+);
 assert.equal(NOODLE_TIMELINE_VOICE.defaultBuilder({ enhanced: "garbage" }), expectedLegacyVoiceText);
 assert.match(NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION, /optional long-term memories/u);
 assert.match(NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION, /do not force a reference/u);

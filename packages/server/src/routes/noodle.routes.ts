@@ -97,6 +97,7 @@ import {
   validateNoodleGeneratedRefresh,
 } from "../services/noodle/noodle-generated-refresh.js";
 import { normalizeNoodleImagePrompt } from "../services/noodle/noodle-image-prompt.js";
+import { normalizeNoodleHandle } from "../services/noodle/noodle-handle.js";
 
 const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
@@ -196,7 +197,7 @@ function characterContextFromRow(row: { id: string; data: unknown; avatarPath?: 
   const data = parseRecord(row.data);
   const extensions = parseRecord(data.extensions);
   const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "Character";
-  const lines = [`<character id="${row.id}" name="${name}">`];
+  const lines = [`<character name="${escapePromptAttribute(name)}">`];
   for (const [label, value] of [
     ["Description", data.description],
     ["Personality", data.personality],
@@ -220,7 +221,7 @@ function personaContextFromRow(row: {
   backstory?: string | null;
   appearance?: string | null;
 }) {
-  const lines = [`<persona id="${row.id}" name="${row.name || "User"}">`];
+  const lines = [`<persona name="${escapePromptAttribute(row.name || "User")}">`];
   for (const [label, value] of [
     ["Description", row.description],
     ["Personality", row.personality],
@@ -633,8 +634,8 @@ async function buildOptedInChatContext(
     if (messages.length === 0) continue;
     const speakerNameByCharacterId = new Map(characterNames.map((character) => [character.id, character.name]));
     const participantLines = [
-      `- User persona: ${personaName}${chat.personaId ? ` (id=${chat.personaId})` : " (no persona id)"}`,
-      ...characterNames.map((character) => `- Character: ${character.name} (id=${character.id})`),
+      `- User persona: ${personaName}`,
+      ...characterNames.map((character) => `- Character: ${character.name}`),
     ];
     // Attach each character's current status/activity from this chat's own schedule, if this chat
     // has one. Read-only metadata lookup already updated by that chat's own generation — no new
@@ -660,8 +661,7 @@ async function buildOptedInChatContext(
           .replace(/\s+/g, " ")
           .trim()
           .slice(0, 900);
-        const characterId = message.characterId ? `, characterId=${message.characterId}` : "";
-        return `- ${speaker} (${role}${characterId}): ${content}`;
+        return `- ${speaker} (${role}): ${content}`;
       }),
     );
     blocks.push(
@@ -757,7 +757,7 @@ async function buildRefreshPrompt(input: {
   const randomUserContext = activeRandomUsers
     .map(
       (account) =>
-        `<random_user entityId="${account.entityId}" name="${account.displayName}" handle="${account.handle}">\nBio: ${
+        `<random_user name="${escapePromptAttribute(account.displayName)}" handle="${escapePromptAttribute(account.handle)}">\nBio: ${
           account.bio || "A casual Noodle user."
         }\n</random_user>`,
     )
@@ -766,7 +766,7 @@ async function buildRefreshPrompt(input: {
   const activeAccountList = [...input.activeAccounts, ...(input.personaAccount ? [input.personaAccount] : [])]
     .map(
       (account) =>
-        `- ${account.displayName} (@${account.handle}) kind=${account.kind} entityId=${account.entityId} accountId=${account.id} generationRole=${
+        `- ${account.displayName} (@${account.handle}) kind=${account.kind} generationRole=${
           account.kind === "persona" ? "reference-target-only" : "allowed-author-and-actor"
         }`,
     )
@@ -811,6 +811,7 @@ async function buildRefreshPrompt(input: {
   // can never break the noodleGeneratedRefreshSchema output contract.
   const timelineVoiceText = await loadPrompt(input.promptOverrides, NOODLE_TIMELINE_VOICE, {
     enhanced: String(enhancedTimelineWriting),
+    allowRandomUsers: String(input.settings.allowRandomUsers),
   });
 
   const system = [
@@ -931,7 +932,7 @@ async function buildRefreshPrompt(input: {
         posts: [
           {
             tempId: "local id used only inside this response",
-            authorEntityId: "exact non-persona entityId allowed to author generated activity",
+            authorHandle: "exact @handle of a non-persona account allowed to author generated activity",
             content: "post text",
             poll: { question: "optional poll question", options: ["first answer", "second answer"] },
             imagePrompt: "optional image prompt or null",
@@ -940,7 +941,7 @@ async function buildRefreshPrompt(input: {
         ],
         interactions: [
           {
-            actorEntityId: "exact non-persona entityId allowed to perform generated activity",
+            actorHandle: "exact @handle of a non-persona account allowed to perform generated activity",
             targetTempId: "tempId from posts, if targeting a newly created post",
             targetPostId: "existing post id, if targeting an existing post",
             parentInteractionId: "existing replyId when directly answering a comment, otherwise null",
@@ -951,8 +952,8 @@ async function buildRefreshPrompt(input: {
         ],
         follows: [
           {
-            actorEntityId: "exact non-persona entityId allowed to perform generated activity",
-            targetEntityId: "exact entityId from Active Noodle Accounts",
+            actorHandle: "exact @handle of a non-persona account allowed to perform generated activity",
+            targetHandle: "exact @handle from Active Noodle Accounts",
           },
         ],
       },
@@ -1877,33 +1878,33 @@ export async function noodleRoutes(app: FastifyInstance) {
       let content = result.content ?? "";
       let parsedGenerated: ReturnType<typeof parseNoodleGeneratedRefresh> | null = null;
       let retryReason: string | null = null;
-      const allowedActorEntityIds = new Set(selectedParticipants.map((account) => account.entityId));
-      const knownEntityIds = new Set(activeAccounts.map((account) => account.entityId));
+      const allowedActorHandles = new Set(selectedParticipants.map((account) => normalizeNoodleHandle(account.handle)));
+      const knownHandles = new Set(activeAccounts.map((account) => normalizeNoodleHandle(account.handle)));
       try {
         parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
-        retryReason = validateNoodleGeneratedRefresh(parsedGenerated.refresh, allowedActorEntityIds, knownEntityIds);
+        retryReason = validateNoodleGeneratedRefresh(parsedGenerated.refresh, allowedActorHandles, knownHandles);
       } catch (error) {
         retryReason = `the response was not valid timeline JSON (${getErrorMessage(error).slice(0, 180)})`;
       }
 
       if (retryReason) {
-        const allowedActorIds = selectedParticipants.map((account) => account.entityId);
-        const knownTargetIds = activeAccounts.map((account) => account.entityId);
+        const allowedHandles = selectedParticipants.map((account) => `@${account.handle}`);
+        const knownTargetHandles = activeAccounts.map((account) => `@${account.handle}`);
         logger.warn("[noodle] Retrying timeline generation because %s", retryReason);
         const correction = [
           "Your previous timeline response could not be used.",
           `Reason: ${retryReason}.`,
-          `Regenerate the complete JSON object now. Authors and actors must use only these selected participant entityId values: ${allowedActorIds.join(", ")}.`,
-          `Follow targets may additionally use these known entityId values: ${knownTargetIds.join(", ")}.`,
-          "Do not invent, rename, or omit an authorEntityId, actorEntityId, or targetEntityId. Return JSON only.",
+          `Regenerate the complete JSON object now. Authors and actors must use only these selected participant handles: ${allowedHandles.join(", ")}.`,
+          `Follow targets may additionally use these known handles: ${knownTargetHandles.join(", ")}.`,
+          "Do not invent, rename, or omit an authorHandle, actorHandle, or targetHandle. Return JSON only.",
         ].join("\n");
         result = await provider.chatComplete([...requestMessages, { role: "user", content: correction }], completionOptions);
         content = result.content ?? "";
         parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
         const correctedRetryReason = validateNoodleGeneratedRefresh(
           parsedGenerated.refresh,
-          allowedActorEntityIds,
-          knownEntityIds,
+          allowedActorHandles,
+          knownHandles,
         );
         if (correctedRetryReason) {
           throw new Error(`Noodle timeline correction could not be used because ${correctedRetryReason}.`);
@@ -1921,7 +1922,12 @@ export async function noodleRoutes(app: FastifyInstance) {
           rejected.issueCount === 1 ? "" : "s",
         );
       }
-      const entityToAccount = new Map(activeAccounts.map((account) => [account.entityId, account]));
+      const handleToAccount = new Map(
+        [...(personaAccount ? [personaAccount] : []), ...selectedParticipants].map((account) => [
+          normalizeNoodleHandle(account.handle),
+          account,
+        ]),
+      );
       const mutableAccountSettings = new Map(
         activeAccounts.map((account) => [account.id, { ...account.settings }] as const),
       );
@@ -1949,7 +1955,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       const activeCharacterReferenceAccounts = activeAccounts.filter((account) => account.kind === "character");
 
       for (const generatedPost of generated.posts.slice(0, settings.maxGeneratedPostsPerRefresh)) {
-        const account = entityToAccount.get(generatedPost.authorEntityId);
+        const account = handleToAccount.get(normalizeNoodleHandle(generatedPost.authorHandle));
         if (!account) continue;
         if (!canGenerateNoodleActivityForAccountKind(account.kind)) {
           logger.warn("[noodle] Ignoring generated post attributed to persona %s", account.entityId);
@@ -2048,7 +2054,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       };
       for (const generatedInteraction of generated.interactions) {
         if (quotas[generatedInteraction.type] <= 0) continue;
-        const actor = entityToAccount.get(generatedInteraction.actorEntityId);
+        const actor = handleToAccount.get(normalizeNoodleHandle(generatedInteraction.actorHandle));
         if (!actor) continue;
         if (!canGenerateNoodleActivityForAccountKind(actor.kind)) {
           logger.warn(
@@ -2120,8 +2126,8 @@ export async function noodleRoutes(app: FastifyInstance) {
       const maxGeneratedFollows = Math.max(12, activeAccounts.length * 2);
       const seenGeneratedFollows = new Set<string>();
       for (const generatedFollow of generated.follows.slice(0, maxGeneratedFollows)) {
-        const actor = entityToAccount.get(generatedFollow.actorEntityId);
-        const target = entityToAccount.get(generatedFollow.targetEntityId);
+        const actor = handleToAccount.get(normalizeNoodleHandle(generatedFollow.actorHandle));
+        const target = handleToAccount.get(normalizeNoodleHandle(generatedFollow.targetHandle));
         if (!actor || !target || actor.id === target.id) continue;
         if (!canGenerateNoodleActivityForAccountKind(actor.kind)) {
           logger.warn("[noodle] Ignoring generated follow attributed to persona %s", actor.entityId);
