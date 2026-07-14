@@ -261,6 +261,60 @@ function latestAssistantMessage(messages: Iterable<Message>): Message | null {
   return latest;
 }
 
+function getCachedMessages(qc: QueryClient, chatId: string): Message[] {
+  return qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId))?.pages.flat() ?? [];
+}
+
+function assistantMessageFingerprint(message: Message): string {
+  return JSON.stringify([
+    message.content,
+    message.activeSwipeIndex,
+    message.swipeCount ?? null,
+    message.extra?.displayText ?? null,
+    message.extra?.proseGuardianRewrittenAt ?? null,
+  ]);
+}
+
+type AssistantMessageSnapshot = {
+  cacheWasLoaded: boolean;
+  fingerprints: ReadonlyMap<string, string>;
+};
+
+function snapshotAssistantMessages(qc: QueryClient, chatId: string): AssistantMessageSnapshot {
+  const cached = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(chatId));
+  return {
+    cacheWasLoaded: cached !== undefined,
+    fingerprints: new Map(
+      (cached?.pages.flat() ?? [])
+        .filter((message) => message.role === "assistant")
+        .map((message) => [message.id, assistantMessageFingerprint(message)]),
+    ),
+  };
+}
+
+function latestChangedAssistantMessage(
+  qc: QueryClient,
+  chatId: string,
+  snapshot: AssistantMessageSnapshot,
+): Message | null {
+  if (!snapshot.cacheWasLoaded) return null;
+  return latestAssistantMessage(
+    getCachedMessages(qc, chatId).filter(
+      (message) =>
+        message.role === "assistant" && snapshot.fingerprints.get(message.id) !== assistantMessageFingerprint(message),
+    ),
+  );
+}
+
+function replyNotificationTitle(mode: Chat["mode"] | undefined, characterName: string | null): string | undefined {
+  if (mode === "game") return "Game turn is ready";
+  if (characterName) return undefined;
+  if (mode === "roleplay") return "Roleplay reply is ready";
+  if (mode === "visual_novel") return "Visual Novel reply is ready";
+  if (mode === "conversation") return "New message is ready";
+  return "Reply is ready";
+}
+
 /**
  * Build one or more PendingCardUpdate batches from a character_card_update
  * agent result. Each batch is scoped to a single characterId so the approval
@@ -440,6 +494,7 @@ import { lorebookKeys } from "./use-lorebooks";
 import { presetKeys } from "./use-presets";
 import { conversationCallKeys } from "./use-conversation-calls";
 import { playConfiguredNotificationPing } from "../lib/notification-sound";
+import { showLocalMessageNotification, showNativeMessageNotification } from "../lib/local-notifications";
 import { playConversationCallRingingSoundOnce } from "../lib/conversation-call-sounds";
 import { messageHasPendingPostProcessing } from "../lib/chat-message-extra";
 import { stripGmTagsKeepReadables } from "../lib/game-tag-parser";
@@ -1079,6 +1134,7 @@ export function useGenerate() {
       // message after it is upserted into the cache. Cancel early so the
       // post-save refresh owns the query lifecycle for this generation.
       await qc.cancelQueries({ queryKey: chatKeys.messages(params.chatId), exact: true });
+      const assistantMessagesBeforeGeneration = snapshotAssistantMessages(qc, params.chatId);
       if (params.regenerateMessageId) {
         forgetRecentMessageContentEdit(params.chatId, params.regenerateMessageId);
       }
@@ -1188,6 +1244,7 @@ export function useGenerate() {
       let gameTurnLoadedSoundPlayed = false;
       let sawDoneEvent = false;
       let passiveStreamRecovered = false;
+      let passiveStreamSettled = false;
       let typingActive = false;
       let typewriterDone: (() => void) | null = null;
       let rafId = 0;
@@ -2493,6 +2550,7 @@ export function useGenerate() {
           passiveStreamRecovered = true;
           if (isActiveChat()) useChatStore.getState().setGenerationPhase("Finishing in background...");
           const settled = await waitForServerGenerationToSettle(params.chatId, abortController.signal);
+          passiveStreamSettled = settled;
           if (!abortController.signal.aborted) {
             await refreshMessagesAuthoritatively(qc, params.chatId, persistedMessages.values());
             if (!settled) {
@@ -2698,6 +2756,41 @@ export function useGenerate() {
           } else {
             primeMessagesFromSaved();
             refreshMessagesInBackground();
+          }
+        }
+
+        const completedReply =
+          !abortController.signal.aborted &&
+          !params.impersonate &&
+          !params.turnGameBots &&
+          ((sawDoneEvent && receivedContent) || passiveStreamSettled);
+        if (completedReply) {
+          const notifiedMessage =
+            latestAssistantMessage(persistedForRefresh) ??
+            latestChangedAssistantMessage(qc, params.chatId, assistantMessagesBeforeGeneration);
+          if (notifiedMessage) {
+            const chat = getCachedChatForGeneration(qc, params.chatId);
+            const fallbackCharacterId = parseChatCharacterIds(chat?.characterIds)[0] ?? null;
+            const notifiedCharacterId = notifiedMessage.characterId ?? params.forCharacterId ?? fallbackCharacterId;
+            const characterName = notifiedCharacterId ? getCachedCharacterName(qc, notifiedCharacterId) : null;
+            const uiState = useUIStore.getState();
+            const notification = {
+              characterName,
+              title: replyNotificationTitle(chat?.mode ?? chatModeForGeneration, characterName),
+              tag: `marinara-chat-${params.chatId}`,
+            };
+            void showLocalMessageNotification({
+              ...notification,
+              enabled: params.autonomous
+                ? uiState.conversationBrowserNotifications
+                : uiState.generationBrowserNotifications,
+            });
+            showNativeMessageNotification({
+              ...notification,
+              enabled: params.autonomous
+                ? uiState.conversationMobileNotifications
+                : uiState.generationMobileNotifications,
+            });
           }
         }
 

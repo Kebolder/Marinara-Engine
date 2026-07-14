@@ -673,6 +673,8 @@ interface UIState {
   notificationSoundsOnlyWhenUnfocused: boolean;
   conversationBrowserNotifications: boolean;
   conversationMobileNotifications: boolean;
+  generationBrowserNotifications: boolean;
+  generationMobileNotifications: boolean;
 
   // ── Custom Conversation Prompt ──
   /** User's custom default system prompt for new conversations (null = built-in default). */
@@ -923,6 +925,8 @@ interface UIState {
   setNotificationSoundsOnlyWhenUnfocused: (v: boolean) => void;
   setConversationBrowserNotifications: (v: boolean) => void;
   setConversationMobileNotifications: (v: boolean) => void;
+  setGenerationBrowserNotifications: (v: boolean) => void;
+  setGenerationMobileNotifications: (v: boolean) => void;
   setCustomConversationPrompt: (v: string | null) => void;
   setScheduleGenerationPreferences: (v: string) => void;
   rememberGameSetupOptions: (
@@ -1136,6 +1140,8 @@ export function pickSyncedSettings(state: UIState) {
     notificationSoundsOnlyWhenUnfocused: state.notificationSoundsOnlyWhenUnfocused,
     conversationBrowserNotifications: state.conversationBrowserNotifications,
     conversationMobileNotifications: state.conversationMobileNotifications,
+    generationBrowserNotifications: state.generationBrowserNotifications,
+    generationMobileNotifications: state.generationMobileNotifications,
     customConversationPrompt: state.customConversationPrompt,
     scheduleGenerationPreferences: state.scheduleGenerationPreferences,
     impersonatePromptTemplate: state.impersonatePromptTemplate,
@@ -1308,6 +1314,8 @@ export const useUIStore = create<UIState>()(
       notificationSoundsOnlyWhenUnfocused: false,
       conversationBrowserNotifications: false,
       conversationMobileNotifications: false,
+      generationBrowserNotifications: false,
+      generationMobileNotifications: false,
       customConversationPrompt: null,
       scheduleGenerationPreferences: "",
       learnedGameSetupOptions: DEFAULT_GAME_SETUP_LEARNED_OPTIONS,
@@ -1975,6 +1983,8 @@ export const useUIStore = create<UIState>()(
       setNotificationSoundsOnlyWhenUnfocused: (v) => set({ notificationSoundsOnlyWhenUnfocused: v }),
       setConversationBrowserNotifications: (v) => set({ conversationBrowserNotifications: v }),
       setConversationMobileNotifications: (v) => set({ conversationMobileNotifications: v }),
+      setGenerationBrowserNotifications: (v) => set({ generationBrowserNotifications: v }),
+      setGenerationMobileNotifications: (v) => set({ generationMobileNotifications: v }),
       setCustomConversationPrompt: (v) => set({ customConversationPrompt: v }),
       setScheduleGenerationPreferences: (v) => set({ scheduleGenerationPreferences: v }),
       rememberGameSetupOptions: (options, text) =>
@@ -2062,7 +2072,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 72,
+      version: 73,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2399,6 +2409,15 @@ export const useUIStore = create<UIState>()(
         }
         if (version <= 71 && persisted.conversationMobileNotifications === undefined) {
           persisted.conversationMobileNotifications = false;
+        }
+        // v72 -> v73: separate manual-generation completion notifications from autonomous messages.
+        if (version <= 72) {
+          if (persisted.generationBrowserNotifications === undefined) {
+            persisted.generationBrowserNotifications = false;
+          }
+          if (persisted.generationMobileNotifications === undefined) {
+            persisted.generationMobileNotifications = false;
+          }
         }
         // v39 -> v40: selectable Conversation message layout.
         persisted.conversationMessageStyle = normalizeConversationMessageStyle(persisted.conversationMessageStyle);
@@ -2744,6 +2763,8 @@ export const useUIStore = create<UIState>()(
         notificationSoundsOnlyWhenUnfocused: state.notificationSoundsOnlyWhenUnfocused,
         conversationBrowserNotifications: state.conversationBrowserNotifications,
         conversationMobileNotifications: state.conversationMobileNotifications,
+        generationBrowserNotifications: state.generationBrowserNotifications,
+        generationMobileNotifications: state.generationMobileNotifications,
         customConversationPrompt: state.customConversationPrompt,
         scheduleGenerationPreferences: state.scheduleGenerationPreferences,
         impersonatePromptTemplate: state.impersonatePromptTemplate,
