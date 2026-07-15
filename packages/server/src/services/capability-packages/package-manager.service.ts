@@ -112,6 +112,7 @@ export const capabilityPackageManager = {
       policy: { allowedProtocols: ["https:"] },
       maxResponseBytes: 2 * 1024 * 1024,
       allowedContentTypes: ["application/json", "text/plain"],
+      decodeCompressedResponse: true,
     });
     if (!response.ok) throw new Error(`Catalog request failed with HTTP ${response.status}`);
     const catalog = capabilityCatalogSchema.parse(await response.json());

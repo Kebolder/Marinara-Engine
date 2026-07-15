@@ -39,6 +39,7 @@ export async function fetchBotBrowserJson(url: string | URL, options: BotBrowser
       signal: controller.signal,
       policy: { allowedProtocols: ["https:"], maxRedirects: 0 },
       allowedContentTypes: JSON_CONTENT_TYPES,
+      decodeCompressedResponse: true,
       maxResponseBytes,
     });
     if (!response.ok) {

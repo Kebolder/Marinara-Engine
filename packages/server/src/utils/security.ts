@@ -609,7 +609,7 @@ export async function safeFetch(url: string | URL, options: SafeFetchOptions = {
 
     if (allowedContentTypes?.length) {
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-      if (!contentType || !allowedContentTypes.some((allowed) => contentType.includes(allowed.toLowerCase()))) {
+      if (contentType && !allowedContentTypes.some((allowed) => contentType.includes(allowed.toLowerCase()))) {
         await internalDispatcher?.close().catch(() => undefined);
         await response.body?.cancel().catch(() => undefined);
         throw new Error(`Outbound response content type is not allowed: ${contentType}`);
