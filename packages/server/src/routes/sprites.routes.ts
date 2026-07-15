@@ -23,38 +23,8 @@ import {
   spriteBackgroundContract,
   type SpriteChromaMatte,
 } from "../services/image/sprite-background.service.js";
+import { clampByte, clampUnit, getSharp, type RgbColor } from "../services/image/sharp-runtime.js";
 import { logger } from "../lib/logger.js";
-
-// sharp is an optional dependency — native prebuilds don't exist for all platforms
-// (e.g. Android/Termux). Lazy-load so the server boots even when sharp is missing;
-// sprite-generation routes will return a clear error instead of crashing the process.
-// We intentionally avoid `import type` from "sharp" so tsc succeeds on platforms
-// where the package isn't installed at all.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SharpFn = any;
-let _sharp: SharpFn | null = null;
-let _sharpLoadError: Error | null = null;
-async function getSharp(): Promise<SharpFn> {
-  if (_sharp) return _sharp;
-  if (_sharpLoadError) throw _sharpLoadError;
-  try {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore - optional native dep, may not be installed on some platforms
-    const mod = await import("sharp");
-    _sharp = (mod.default ?? mod) as SharpFn;
-    return _sharp;
-  } catch (error) {
-    logger.warn(
-      error instanceof Error ? error : new Error(String(error)),
-      "[sprites] Image processing unavailable because sharp could not be loaded",
-    );
-    _sharpLoadError = new Error(
-      "Image processing is unavailable on this platform (native 'sharp' module could not be loaded). " +
-        "Sprite generation and background removal are disabled.",
-    );
-    throw _sharpLoadError;
-  }
-}
 
 async function getSpriteCapabilities() {
   try {
@@ -648,16 +618,6 @@ function buildFullBodyExpressionSheetPrompt({
     .filter((part): part is string => Boolean(part))
     .join(" ");
 }
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
-}
-
-function clampUnit(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
-
-type RgbColor = { red: number; green: number; blue: number };
 
 function rgbLuma(color: RgbColor): number {
   return color.red * 0.2126 + color.green * 0.7152 + color.blue * 0.0722;

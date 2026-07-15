@@ -23,25 +23,15 @@ const prompt = applySpriteBackgroundInstruction("portrait on a solid white backg
 assert.match(prompt, /transparent PNG/iu);
 assert.match(prompt, /chroma magenta #FF00FF/iu);
 assert.doesNotMatch(prompt, /pure white #ffffff/iu);
+assert.equal(prompt.match(/transparent PNG format/giu)?.length, 1);
 
 function solidImage(width: number, height: number, color: [number, number, number, number]) {
-  const pixels = Buffer.alloc(width * height * 4);
-  for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex++) {
-    const offset = pixelIndex * 4;
-    pixels[offset] = color[0];
-    pixels[offset + 1] = color[1];
-    pixels[offset + 2] = color[2];
-    pixels[offset + 3] = color[3];
-  }
-  return pixels;
+  return Buffer.alloc(width * height * 4).fill(Buffer.from(color));
 }
 
 function setPixel(pixels: Buffer, width: number, xPos: number, yPos: number, color: [number, number, number, number]) {
   const offset = (yPos * width + xPos) * 4;
-  pixels[offset] = color[0];
-  pixels[offset + 1] = color[1];
-  pixels[offset + 2] = color[2];
-  pixels[offset + 3] = color[3];
+  pixels.set(color, offset);
 }
 
 async function encodeRaw(pixels: Buffer, width: number, height: number): Promise<Buffer> {

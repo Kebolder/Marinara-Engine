@@ -43,6 +43,10 @@ interface SlicedCell {
   sourceGrid?: SpriteGrid;
 }
 
+interface SpriteCleanupResult {
+  cells: Array<{ expression: string; base64: string }>;
+}
+
 interface SpriteGrid {
   cols: number;
   rows: number;
@@ -665,16 +669,15 @@ export function SpriteGenerationModal({
     [fullBodyExpressionMode, generationCapacity, matchedFullBodyExpressions, selectedExpressions],
   );
   const assignmentOptions = useMemo(() => {
-    const fallbackOptions = spriteType === "full-body" && !fullBodyExpressionMode ? ALL_FULL_BODY_POSES : ALL_EXPRESSIONS;
+    const fallbackOptions =
+      spriteType === "full-body" && !fullBodyExpressionMode ? ALL_FULL_BODY_POSES : ALL_EXPRESSIONS;
     const seen = new Set<string>();
 
-    return [...cappedSelectedExpressions, ...fallbackOptions]
-      .map(normalizeSpriteLabel)
-      .filter((label) => {
-        if (!label || seen.has(label)) return false;
-        seen.add(label);
-        return true;
-      });
+    return [...cappedSelectedExpressions, ...fallbackOptions].map(normalizeSpriteLabel).filter((label) => {
+      if (!label || seen.has(label)) return false;
+      seen.add(label);
+      return true;
+    });
   }, [cappedSelectedExpressions, fullBodyExpressionMode, spriteType]);
   const previewColumnCount = animatedExpressionMode
     ? Math.min(3, Math.max(1, Math.ceil(Math.sqrt(Math.max(1, cells.length || cappedSelectedExpressions.length)))))
@@ -699,7 +702,10 @@ export function SpriteGenerationModal({
     : (connectionId ?? defaultImageConnectionId ?? imageConnections[0]?.id ?? null);
   const activeGenerationConnections = animatedExpressionMode ? videoConnections : imageConnections;
   const selectedImageConnection = useMemo(
-    () => (animatedExpressionMode ? null : (imageConnections.find((connection) => connection.id === effectiveConnectionId) ?? null)),
+    () =>
+      animatedExpressionMode
+        ? null
+        : (imageConnections.find((connection) => connection.id === effectiveConnectionId) ?? null),
     [animatedExpressionMode, effectiveConnectionId, imageConnections],
   );
   const selectedImageModel = selectedImageConnection?.model?.trim().toLowerCase() ?? "";
@@ -988,9 +994,13 @@ export function SpriteGenerationModal({
       };
 
       if (reviewImagePromptsBeforeSend) {
-        const preview = await api.post<GenerateSheetPreviewResult>("/sprites/generate-animated-expressions/preview", payload, {
-          signal,
-        });
+        const preview = await api.post<GenerateSheetPreviewResult>(
+          "/sprites/generate-animated-expressions/preview",
+          payload,
+          {
+            signal,
+          },
+        );
         if (signal?.aborted) throw new SpriteGenerationAbortedError();
         if (preview.items.length > 0) {
           const overrides = await openPromptReview(preview.items);
@@ -1163,7 +1173,11 @@ export function SpriteGenerationModal({
       if (animatedExpressionMode) {
         const result = await requestGeneratedAnimatedExpressions(cappedSelectedExpressions);
         if (controller.signal.aborted) throw new SpriteGenerationAbortedError();
-        const generated = createGeneratedSpritesFromResult(result, { cols: 1, rows: result.cells.length }, "Animated expressions");
+        const generated = createGeneratedSpritesFromResult(
+          result,
+          { cols: 1, rows: result.cells.length },
+          "Animated expressions",
+        );
 
         setGeneratedSheet(null);
         setGeneratedSheets([]);
@@ -1290,6 +1304,19 @@ export function SpriteGenerationModal({
     setError(null);
   }, [abortActiveGeneration]);
 
+  const performCleanup = useCallback(
+    (cellsToClean: SlicedCell[]) =>
+      api.post<SpriteCleanupResult>("/sprites/cleanup", {
+        cleanupStrength,
+        engine: "auto",
+        cells: cellsToClean.map((cell) => ({
+          expression: cell.expression,
+          base64: cell.rawDataUrl,
+        })),
+      }),
+    [cleanupStrength],
+  );
+
   const handleApplyCleanup = useCallback(async () => {
     if (!noBackground || cells.length === 0) return;
 
@@ -1297,14 +1324,7 @@ export function SpriteGenerationModal({
     setError(null);
 
     try {
-      const result = await api.post<{ cells: Array<{ expression: string; base64: string }> }>("/sprites/cleanup", {
-        cleanupStrength,
-        engine: "auto",
-        cells: cells.map((cell) => ({
-          expression: cell.expression,
-          base64: cell.rawDataUrl,
-        })),
-      });
+      const result = await performCleanup(cells);
 
       setCells((prev) =>
         prev.map((cell, i) => ({
@@ -1318,7 +1338,7 @@ export function SpriteGenerationModal({
     } finally {
       setCleanupApplying(false);
     }
-  }, [cells, cleanupStrength, noBackground]);
+  }, [cells, noBackground, performCleanup]);
 
   const handleUseOriginal = useCallback(() => {
     setCells((prev) => prev.map((cell) => ({ ...cell, dataUrl: cell.rawDataUrl })));
@@ -1501,17 +1521,7 @@ export function SpriteGenerationModal({
       let reappliedCleanup = false;
       if (noBackground) {
         try {
-          const cleaned = await api.post<{ cells: Array<{ expression: string; base64: string }> }>(
-            "/sprites/cleanup",
-            {
-              cleanupStrength,
-              engine: "auto",
-              cells: slicedCells.map((cell) => ({
-                expression: cell.expression,
-                base64: cell.rawDataUrl,
-              })),
-            },
-          );
+          const cleaned = await performCleanup(slicedCells);
           adjustedCells = slicedCells.map((cell, index) => ({
             ...cell,
             dataUrl: cleaned.cells[index]?.base64
@@ -1537,10 +1547,10 @@ export function SpriteGenerationModal({
   }, [
     canAdjustSlices,
     cells,
-    cleanupStrength,
     generatedSheet,
     generationGrid,
     noBackground,
+    performCleanup,
     singleImageMode,
     sliceAdjustments,
   ]);
@@ -1554,9 +1564,7 @@ export function SpriteGenerationModal({
   }, []);
 
   const handleCellRenameBlur = useCallback((idx: number) => {
-    setCells((prev) =>
-      prev.map((c, i) => (i === idx ? { ...c, expression: normalizeSpriteLabel(c.expression) } : c)),
-    );
+    setCells((prev) => prev.map((c, i) => (i === idx ? { ...c, expression: normalizeSpriteLabel(c.expression) } : c)));
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -2087,14 +2095,14 @@ export function SpriteGenerationModal({
                     ? "Generate Animated Portrait"
                     : "Generate Animated Portraits"
                   : fullBodyExpressionMode
-                  ? "Generate Matched Batches"
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "Generate Pose"
-                      : "Generate Pose Sheet"
-                    : singleImageMode
-                      ? "Generate Sprite"
-                      : "Generate Sheet"}
+                    ? "Generate Matched Batches"
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "Generate Pose"
+                        : "Generate Pose Sheet"
+                      : singleImageMode
+                        ? "Generate Sprite"
+                        : "Generate Sheet"}
               </button>
             </div>
           </div>
@@ -2109,26 +2117,26 @@ export function SpriteGenerationModal({
                 {animatedExpressionMode
                   ? "Generating animated portrait GIFs..."
                   : fullBodyExpressionMode
-                  ? "Generating matched full-body batches..."
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "Generating full-body pose…"
-                      : "Generating full-body pose sheet…"
-                    : singleImageMode
-                      ? "Generating portrait sprite…"
-                      : "Generating expression sheet…"}
+                    ? "Generating matched full-body batches..."
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "Generating full-body pose…"
+                        : "Generating full-body pose sheet…"
+                      : singleImageMode
+                        ? "Generating portrait sprite…"
+                        : "Generating expression sheet…"}
               </p>
               {generationProgress && <p className="mt-1 text-xs text-[var(--primary)]">{generationProgress}</p>}
               <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                 {animatedExpressionMode
                   ? "Each expression becomes a short video first, then Marinara converts it to a GIF sprite."
                   : fullBodyExpressionMode
-                  ? "Each 2×2 batch gets one automatic retry before pausing for your decision."
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "This may take 30–60 seconds depending on the provider."
-                      : "This may take 30–60 seconds depending on the provider. The sheet will be sliced into poses after generation."
-                    : "This may take 30–60 seconds depending on the provider."}
+                    ? "Each 2×2 batch gets one automatic retry before pausing for your decision."
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "This may take 30–60 seconds depending on the provider."
+                        : "This may take 30–60 seconds depending on the provider. The sheet will be sliced into poses after generation."
+                      : "This may take 30–60 seconds depending on the provider."}
               </p>
             </div>
             <button
@@ -2457,8 +2465,8 @@ export function SpriteGenerationModal({
                     ? "Full-body Expressions"
                     : spriteType === "full-body"
                       ? "Poses"
-                      : "Sprites"} (
-                {selectedCount} selected)
+                      : "Sprites"}{" "}
+                ({selectedCount} selected)
               </label>
               <p className="mb-3 text-[0.625rem] text-[var(--muted-foreground)]">
                 Click an item to toggle selection. Assign or edit names as needed. Only selected items will be saved.

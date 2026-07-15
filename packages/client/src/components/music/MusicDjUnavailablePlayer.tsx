@@ -1,7 +1,8 @@
 import {
   useCallback,
-  useMemo,
+  useEffect,
   useRef,
+  useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -90,6 +91,7 @@ export function MusicDjUnavailablePlayer({
   const setCollapsed = useUIStore((state) => state.setSpotifyMobileWidgetCollapsed);
   const mobilePosition = useUIStore((state) => state.spotifyMobileWidgetPosition);
   const setMobilePosition = useUIStore((state) => state.setSpotifyMobileWidgetPosition);
+  const [, setViewportRevision] = useState(0);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -97,8 +99,27 @@ export function MusicDjUnavailablePlayer({
     originX: number;
     originY: number;
   } | null>(null);
-  const mobileWidgetStyle = useMemo(() => getMobileWidgetStyle(mobilePosition, collapsed), [collapsed, mobilePosition]);
-  const mobileExpandedPanelStyle = useMemo(() => getMobileExpandedPanelStyle(mobilePosition), [mobilePosition]);
+  const mobileWidgetStyle = getMobileWidgetStyle(mobilePosition, collapsed);
+  const mobileExpandedPanelStyle = getMobileExpandedPanelStyle(mobilePosition);
+
+  useEffect(() => {
+    if (!mobileOnly) return;
+
+    const refreshViewport = () => {
+      setViewportRevision((revision) => revision + 1);
+      const nextPosition = clampMobilePosition(mobilePosition.x, mobilePosition.y, collapsed);
+      if (nextPosition.x !== mobilePosition.x || nextPosition.y !== mobilePosition.y) {
+        setMobilePosition(nextPosition);
+      }
+    };
+
+    window.addEventListener("resize", refreshViewport);
+    window.addEventListener("orientationchange", refreshViewport);
+    return () => {
+      window.removeEventListener("resize", refreshViewport);
+      window.removeEventListener("orientationchange", refreshViewport);
+    };
+  }, [collapsed, mobileOnly, mobilePosition.x, mobilePosition.y, setMobilePosition]);
 
   const openDownloadAgents = () => {
     openRightPanel("agents");

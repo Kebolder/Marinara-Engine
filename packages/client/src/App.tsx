@@ -1,7 +1,16 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { Component, lazy, Suspense, useEffect, useMemo, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  type CSSProperties,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { CustomThemeInjector } from "./components/layout/CustomThemeInjector";
@@ -18,6 +27,7 @@ import {
   useUIStore,
 } from "./stores/ui.store";
 import { useSidecarStore } from "./stores/sidecar.store";
+import { useDialogStore } from "./stores/dialog.store";
 import { api } from "./lib/api-client";
 import { forceRefreshSpa } from "./lib/browser-runtime";
 import {
@@ -466,6 +476,7 @@ export function App() {
   const showDownloadModal = useSidecarStore((s) => s.showDownloadModal);
   const setShowDownloadModal = useSidecarStore((s) => s.setShowDownloadModal);
   const fetchSidecarStatus = useSidecarStore((s) => s.fetchStatus);
+  const hasAppDialogOpen = useDialogStore((s) => s.dialog !== null);
 
   // [#3104 diagnostic] warn on long main-thread tasks (see lib/perf-diagnostics.ts)
   useEffect(() => {
@@ -942,7 +953,7 @@ export function App() {
       <Suspense fallback={null}>
         <LazyAppShell />
       </Suspense>
-      <WhatsNewModal />
+      <WhatsNewModal presentationAllowed={!hasModalOpen && !hasAppDialogOpen && (isLite || !showDownloadModal)} />
       {!isLite && <ModelDownloadModal open={showDownloadModal} onClose={() => setShowDownloadModal(false)} />}
       {hasModalOpen && (
         <Suspense fallback={null}>

@@ -1,24 +1,7 @@
 // ──────────────────────────────────────────────
 // Sprite background contracts and matte cleanup
 // ──────────────────────────────────────────────
-
-// sharp is optional on platforms without native prebuilds. Keep the import lazy
-// so merely importing prompt helpers never prevents the server from starting.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SharpFn = any;
-
-let sharpModule: SharpFn | null = null;
-
-async function getSharp(): Promise<SharpFn> {
-  if (sharpModule) return sharpModule;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore - optional native dependency
-  const mod = await import("sharp");
-  sharpModule = (mod.default ?? mod) as SharpFn;
-  return sharpModule;
-}
-
-export type RgbColor = { red: number; green: number; blue: number };
+import { clampByte, clampUnit, getSharp, type RgbColor } from "./sharp-runtime.js";
 
 export type SpriteChromaMatte = {
   id: "green" | "magenta" | "cyan";
@@ -92,13 +75,10 @@ export function applySpriteBackgroundInstruction(
   const replacement = options.nativeTransparentPng
     ? `no background, transparent PNG format. If native transparency is unsupported, ${chromaFallback}`
     : chromaFallback;
-  const updated = prompt
-    .replace(/\bsolid white studio background\b/giu, replacement)
-    .replace(/\bsolid white background\b/giu, replacement)
-    .replace(/\bplain white studio background\b/giu, replacement)
-    .replace(/\bplain white background\b/giu, replacement)
-    .replace(/\bwhite studio background\b/giu, replacement)
-    .replace(/\bwhite background\b/giu, replacement);
+  const updated = prompt.replace(
+    /\b(?:(?:solid|plain) white(?: studio)? background|white studio background|white background)\b/giu,
+    () => replacement,
+  );
 
   if (updated !== prompt) return updated;
   return `${updated}, ${replacement}`;
@@ -114,14 +94,6 @@ export function spriteBackgroundContract(options: {
   return options.nativeTransparentPng
     ? `MANDATORY BACKGROUND CONTRACT: output native transparency with no backdrop. If the provider cannot return alpha transparency, ${matteInstruction}.`
     : `MANDATORY BACKGROUND CONTRACT: ${matteInstruction}.`;
-}
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
-}
-
-function clampUnit(value: number): number {
-  return Math.max(0, Math.min(1, value));
 }
 
 function rgbDistance(a: RgbColor, b: RgbColor): number {

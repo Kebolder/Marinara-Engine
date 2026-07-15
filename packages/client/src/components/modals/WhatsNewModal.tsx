@@ -68,20 +68,20 @@ function hasSeenCurrentAnnouncement() {
   }
 }
 
-export function WhatsNewModal() {
+export function WhatsNewModal({ presentationAllowed }: { presentationAllowed: boolean }) {
   const hasCompletedOnboarding = useUIStore((state) => state.hasCompletedOnboarding);
   const [open, setOpen] = useState(false);
   const announcement = RELEASE_ANNOUNCEMENTS[APP_VERSION] ?? FALLBACK_ANNOUNCEMENT;
   const releaseUrl = `${RELEASES_URL}/tag/v${encodeURIComponent(APP_VERSION)}`;
 
   useEffect(() => {
-    if (!hasCompletedOnboarding || hasSeenCurrentAnnouncement()) return;
+    if (!presentationAllowed || !hasCompletedOnboarding || hasSeenCurrentAnnouncement()) return;
 
     // Record presentation immediately so closing the app without pressing a
     // button cannot make the same release announcement reappear next launch.
     rememberAnnouncementWasShown();
     setOpen(true);
-  }, [hasCompletedOnboarding]);
+  }, [hasCompletedOnboarding, presentationAllowed]);
 
   return (
     <Modal
