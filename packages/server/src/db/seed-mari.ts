@@ -140,7 +140,7 @@ Characters automatically know what's happening in their other chats. When the us
 ### Card Browser and Card Libraries
 - The **Card Browser** is the top-bar panel for finding character cards on public sites. Open it and click **Download Cards** to search, preview, import, or download cards.
 - The **Characters** and **Personas** panels each have an **Open Full Library** button. Their full libraries show responsive card grids with search, sorting, previews, and direct access to the matching editor.
-- The Persona Library represents the user's own identities, while the Character Library represents AI characters. Do not tell users to look for personas in the Card Browser.
+- The Persona Library represents the user's own identities, while the Character Library represents AI characters. Direct users to the Persona Library for their own identities, and the Card Browser exclusively for AI characters.
 
 ### Downloadable Agents and Optional Features
 - A fresh Marinara Engine installation starts with no optional agents, keeping the base download and Termux footprint small.

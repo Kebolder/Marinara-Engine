@@ -105,6 +105,7 @@ export function TopBar() {
   const gameAssetsBrowserOpen = useUIStore((s) => s.gameAssetsBrowserOpen);
   const noodleOpen = useUIStore((s) => s.noodleOpen);
   const characterLibraryOpen = useUIStore((s) => s.characterLibraryOpen);
+  const cardLibraryKind = useUIStore((s) => s.cardLibraryKind);
   const headerRef = useRef<HTMLElement | null>(null);
   const leftControlsRef = useRef<HTMLDivElement | null>(null);
   const rightNavRef = useRef<HTMLElement | null>(null);
@@ -114,7 +115,9 @@ export function TopBar() {
 
   const isBotBrowserActive = (rightPanelOpen && rightPanel === "bot-browser") || botBrowserOpen;
   const isCharactersPanelActive =
-    (rightPanelOpen && rightPanel === "characters") || Boolean(characterDetailId) || characterLibraryOpen;
+    (rightPanelOpen && rightPanel === "characters") ||
+    Boolean(characterDetailId) ||
+    (characterLibraryOpen && cardLibraryKind === "characters");
   const panelContextActive: Record<RightPanelButtonPanel, boolean> = {
     lorebooks: (rightPanelOpen && rightPanel === "lorebooks") || Boolean(lorebookDetailId),
     presets:
@@ -124,7 +127,10 @@ export function TopBar() {
       Boolean(toolDetailId),
     connections: (rightPanelOpen && rightPanel === "connections") || Boolean(connectionDetailId),
     agents: (rightPanelOpen && rightPanel === "agents") || Boolean(agentDetailId),
-    personas: (rightPanelOpen && rightPanel === "personas") || Boolean(personaDetailId),
+    personas:
+      (rightPanelOpen && rightPanel === "personas") ||
+      Boolean(personaDetailId) ||
+      (characterLibraryOpen && cardLibraryKind === "personas"),
   };
   const isHomeActive =
     !activeChatId &&

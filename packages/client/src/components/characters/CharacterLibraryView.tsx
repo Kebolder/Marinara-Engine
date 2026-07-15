@@ -553,6 +553,7 @@ export function CharacterLibraryView() {
   return (
     <div
       ref={libraryRootScrollRef}
+      data-component="CharacterLibraryView"
       onScroll={handleLibraryScroll}
       className="mari-chrome-token-scope flex h-full min-h-0 flex-col overflow-y-auto overflow-x-hidden bg-[radial-gradient(circle_at_top_left,_color-mix(in_srgb,var(--marinara-chat-chrome-accent)_14%,transparent),_transparent_30%),radial-gradient(circle_at_top_right,_color-mix(in_srgb,var(--marinara-chat-chrome-text)_10%,transparent),_transparent_26%),var(--background)] text-[var(--marinara-chat-chrome-panel-text)] lg:overflow-hidden"
     >
@@ -605,7 +606,7 @@ export function CharacterLibraryView() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder={`Search ${copy.plural}`}
+                placeholder={isPersonaLibrary ? "Search personas" : 'Search characters or -tag:"tag name"'}
                 className={cn(libraryToolbarFieldClass, "pl-7 pr-2.5")}
               />
             </div>

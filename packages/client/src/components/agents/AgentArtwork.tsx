@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Sparkles } from "lucide-react";
 
 interface AgentArtworkProps {
@@ -7,12 +7,10 @@ interface AgentArtworkProps {
   iconSize: string;
 }
 
-export function AgentArtwork({ imageUrl, alt, iconSize }: AgentArtworkProps) {
+function AgentArtworkImage({ imageUrl, alt, iconSize }: Omit<AgentArtworkProps, "imageUrl"> & { imageUrl: string }) {
   const [imageFailed, setImageFailed] = useState(false);
 
-  useEffect(() => setImageFailed(false), [imageUrl]);
-
-  if (imageUrl && !imageFailed) {
+  if (!imageFailed) {
     return (
       <img
         src={imageUrl}
@@ -26,4 +24,12 @@ export function AgentArtwork({ imageUrl, alt, iconSize }: AgentArtworkProps) {
   }
 
   return <Sparkles size={iconSize} aria-hidden="true" data-component="AgentArtworkFallback" />;
+}
+
+export function AgentArtwork({ imageUrl, alt, iconSize }: AgentArtworkProps) {
+  if (!imageUrl) {
+    return <Sparkles size={iconSize} aria-hidden="true" data-component="AgentArtworkFallback" />;
+  }
+
+  return <AgentArtworkImage key={imageUrl} imageUrl={imageUrl} alt={alt} iconSize={iconSize} />;
 }

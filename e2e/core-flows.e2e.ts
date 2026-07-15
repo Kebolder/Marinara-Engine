@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const TRANSPARENT_GIF_BASE64 = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
 function collectUnexpectedErrors(page: Page) {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -769,6 +771,9 @@ test("Card Browser labels and the Persona full library stay available across vie
   await expect(page.getByText("Persona Library", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Browse your personas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "New persona" })).toBeVisible();
+  await expect(page.locator('[data-component="CharacterLibraryView"]').getByPlaceholder("Search personas")).toBeVisible();
+  await expect(page.locator('[data-tour="panel-personas"]')).toHaveClass(/mari-topbar-panel-icon--active/);
+  await expect(page.locator('[data-tour="panel-characters"]')).not.toHaveClass(/bg-\[var\(--accent\)\]/);
   expect(errors).toEqual([]);
 });
 
@@ -847,6 +852,9 @@ test("downloadable agent catalog is usable on desktop and mobile", async ({ page
   await page.locator('[data-tour="panel-characters"]').click();
   await page.getByRole("button", { name: "Open Full Library" }).click();
   await expect(page.getByRole("heading", { name: "Browse your characters" })).toBeVisible();
+  await expect(
+    page.locator('[data-component="CharacterLibraryView"]').getByPlaceholder('Search characters or -tag:"tag name"'),
+  ).toBeVisible();
   if (testInfo.project.name.includes("mobile")) {
     await expect(page.locator('[data-component="RightPanelMobile"]')).toHaveCount(0);
   } else {
@@ -1214,7 +1222,7 @@ test("installed package artwork appears in the sidebar and clears immediately on
     await route.fulfill({
       status: 200,
       contentType: "image/gif",
-      body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+      body: Buffer.from(TRANSPARENT_GIF_BASE64, "base64"),
     });
   });
   await page.route("**/api/capability-packages/prose-guardian", async (route) => {
@@ -1606,7 +1614,7 @@ test("Game setup only shows features owned by installed agents", async ({ page, 
     await route.fulfill({
       status: 200,
       contentType: "image/gif",
-      body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+      body: Buffer.from(TRANSPARENT_GIF_BASE64, "base64"),
     });
   });
   await page.addInitScript((chatId) => {
@@ -1735,7 +1743,7 @@ test("Roleplay and Game chat settings link empty agent libraries to Download Age
     await route.fulfill({
       status: 200,
       contentType: "image/gif",
-      body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+      body: Buffer.from(TRANSPARENT_GIF_BASE64, "base64"),
     });
   });
 
@@ -1788,7 +1796,7 @@ test("Roleplay setup points empty agent libraries to the Agents tab", async ({ p
     await route.fulfill({
       status: 200,
       contentType: "image/gif",
-      body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"),
+      body: Buffer.from(TRANSPARENT_GIF_BASE64, "base64"),
     });
   });
 
