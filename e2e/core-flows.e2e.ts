@@ -113,7 +113,7 @@ test("turning off the custom mouse pointer persists immediately and after reload
 
   const cursorToggle = page.getByLabel("Custom Mouse Pointer");
   await expect(cursorToggle).toBeChecked();
-  await cursorToggle.evaluate((element: HTMLInputElement) => element.click());
+  await page.getByText("Custom Mouse Pointer", { exact: true }).click();
   await expect(cursorToggle).not.toBeChecked();
   await page.waitForTimeout(100);
 

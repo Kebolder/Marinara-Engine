@@ -1044,7 +1044,7 @@ export function NoodleView() {
   const noodleDefaultPromptText = noodlePromptDefault.data?.template ?? "";
   const noodlePromptText =
     noodlePromptOverride?.enabled === true ? noodlePromptOverride.template : noodleDefaultPromptText;
-  const noodlePromptHasOverride = noodlePromptOverride !== null;
+  const noodlePromptHasOverride = noodlePromptOverride?.enabled === true;
   const noodlePromptLoading = noodlePromptDetail.isLoading || noodlePromptDefault.isLoading;
   const noodlePromptDirty = noodlePromptDraft !== noodlePromptText;
   const settings = data?.settings;
@@ -5588,7 +5588,9 @@ export function NoodleView() {
                 disabled={confirmActionPending}
                 className={cn(
                   "flex h-9 items-center justify-center gap-2 rounded-md px-4 text-xs font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                  confirmAction.kind === "delete-post" || confirmAction.kind === "delete-reply"
+                  confirmAction.kind === "delete-post" ||
+                  confirmAction.kind === "delete-reply" ||
+                  confirmAction.kind === "reset-timeline"
                     ? "bg-[var(--destructive)] text-[var(--destructive-foreground)] hover:opacity-90"
                     : "border border-[var(--noodle-blue)]/45 bg-[var(--noodle-blue)] text-[var(--background)] hover:bg-[var(--noodle-blue)]/85",
                 )}

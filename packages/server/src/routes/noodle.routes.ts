@@ -823,11 +823,13 @@ async function buildRefreshPrompt(input: {
   // includes the complete default adult-platform, persona-authorship, interaction, and JSON rules;
   // the voice text is deliberately appended last so users can tune style without hunting through
   // the structural instructions.
-  const timelineBaseText = await loadPrompt(input.promptOverrides, NOODLE_TIMELINE_BASE, {});
-  const timelineVoiceText = await loadPrompt(input.promptOverrides, NOODLE_TIMELINE_VOICE, {
-    enhanced: String(enhancedTimelineWriting),
-    allowRandomUsers: String(input.settings.allowRandomUsers),
-  });
+  const [timelineBaseText, timelineVoiceText] = await Promise.all([
+    loadPrompt(input.promptOverrides, NOODLE_TIMELINE_BASE, {}),
+    loadPrompt(input.promptOverrides, NOODLE_TIMELINE_VOICE, {
+      enhanced: String(enhancedTimelineWriting),
+      allowRandomUsers: String(input.settings.allowRandomUsers),
+    }),
+  ]);
   const system = composeNoodleTimelineSystemPrompt(timelineBaseText, timelineVoiceText);
   const timelineFeatureInstructions = noodleTimelineFeatureInstructions(input.settings);
 
