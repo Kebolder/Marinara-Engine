@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import type {
-  GameMap,
+  ResolvedOwnerSpatialProjection,
   SpatialContextDefinition,
   SpatialDefinitionIssueCode,
   SpatialLocation,
 } from "../../packages/shared/src/index.js";
+import {
+  registerCapabilityService,
+  resetCapabilityServices,
+} from "../../packages/server/src/services/capability-packages/capability-service-registry.service.js";
 import {
   resolveSpatialBreadcrumb,
   resolveSpatialDestinations,
@@ -15,12 +19,6 @@ import {
   validateSpatialTransition,
 } from "../../packages/shared/src/index.js";
 import {
-  buildSpatialMapDraftPrompt,
-  buildSpatialMapExpansionPrompt,
-  normalizeSpatialMapExpansionPlan,
-  normalizeSpatialMapPlan,
-} from "../../packages/server/src/services/spatial-context/ai-draft.js";
-import {
   buildOwnerSpatialProjection,
   formatOwnerSpatialBreadcrumb,
   formatOwnerSpatialPrompt,
@@ -29,7 +27,7 @@ import {
   projectGameSnapshotLocation,
 } from "../../packages/server/src/services/spatial-context/projection.js";
 import {
-  selectBoundGameMapForLocation,
+  GameMapBindingError,
   updateGameMapBinding,
 } from "../../packages/server/src/services/spatial-context/game-map-binding.js";
 
@@ -167,269 +165,7 @@ for (const legacyLocation of legacyDefinitionWithoutLoreRefs.locations as Array<
 const parsedLegacyDefinition = spatialContextDefinitionSchema.parse(legacyDefinitionWithoutLoreRefs);
 assert.ok(parsedLegacyDefinition.locations.every((entry) => entry.lorebookEntryIds.length === 0));
 
-const aiPrompt = buildSpatialMapDraftPrompt({
-  ownerMode: "game",
-  size: "small",
-  sourceContext: '{"setting":"foggy coast"}',
-  instructions: "Include a lighthouse and old sewers.",
-});
-assert.match(aiPrompt.messages[0]!.content, /never more than 12/);
-assert.match(aiPrompt.messages[0]!.content, /one relevant emoji grapheme/);
-assert.match(aiPrompt.messages[1]!.content, /lighthouse and old sewers/);
-assert.equal(aiPrompt.maxTokens, 6_000);
-
-const aiDraft = normalizeSpatialMapPlan(
-  {
-    startingLocationKey: "harbor",
-    locations: [
-      {
-        key: "world",
-        parentKey: null,
-        name: "The Shrouded Coast",
-        kind: "region",
-        icon: "world map",
-        description: "A stormy coastline of isolated settlements.",
-        childPresentation: "map",
-      },
-      {
-        key: "harbor",
-        parentKey: "world",
-        name: "Gloam Harbor",
-        kind: "settlement",
-        icon: "busy port",
-        description: "A crowded port beneath a permanent bank of fog.",
-        modelMemory: "The harbor master hides a smuggling ledger.",
-        links: [{ targetKey: "lighthouse", label: "Cliff road", bidirectional: true }],
-      },
-      {
-        key: "lighthouse",
-        parentKey: "world",
-        name: "Blackglass Lighthouse",
-        kind: "building",
-        icon: "beacon 🔦 at night",
-        description: "A black stone lighthouse above the cliffs.",
-        links: [{ targetKey: "missing", label: "Impossible road" }],
-      },
-      {
-        key: "tower",
-        parentKey: "world",
-        name: "Saltwatch Tower",
-        kind: "building",
-        description: "A watchtower overlooking the harbor.",
-      },
-      {
-        key: "tower-ground",
-        parentKey: "tower",
-        name: "Ground Floor",
-        kind: "floor",
-        description: "The tower entrance.",
-      },
-      {
-        key: "tower-top",
-        parentKey: "tower",
-        name: "Top Floor",
-        kind: "floor",
-        description: "The signal room.",
-      },
-      {
-        key: "cycle-a",
-        parentKey: "cycle-b",
-        name: "Cycle A",
-        description: "",
-      },
-      {
-        key: "cycle-b",
-        parentKey: "cycle-a",
-        name: "Cycle B",
-        description: "",
-      },
-    ],
-  },
-  { ownerMode: "game", revision: 7, enabled: false, size: "small" },
-);
-assert.equal(aiDraft.ownerMode, "game");
-assert.equal(aiDraft.revision, 7);
-assert.equal(aiDraft.enabled, false);
-assert.equal(spatialContextDefinitionSchema.safeParse(aiDraft).success, true);
-assert.equal(aiDraft.locations.find((entry) => entry.id === aiDraft.startingLocationId)?.name, "Gloam Harbor");
-assert.ok(aiDraft.locations.every((entry) => /^loc_[A-Za-z0-9_-]+$/u.test(entry.id)));
-const aiWorld = aiDraft.locations.find((entry) => entry.name === "The Shrouded Coast")!;
-const aiHarbor = aiDraft.locations.find((entry) => entry.name === "Gloam Harbor")!;
-const aiLighthouse = aiDraft.locations.find((entry) => entry.name === "Blackglass Lighthouse")!;
-const aiTower = aiDraft.locations.find((entry) => entry.name === "Saltwatch Tower")!;
-const aiFloors = aiDraft.locations.filter((entry) => entry.parentId === aiTower.id);
-assert.equal(aiWorld.childPresentation, "map");
-assert.equal(aiWorld.icon, "🌊");
-assert.equal(aiHarbor.icon, "⚓");
-assert.equal(aiLighthouse.icon, "🔦");
-assert.ok(aiHarbor.placement);
-assert.ok(aiLighthouse.placement);
-assert.equal(aiHarbor.links[0]?.targetId, aiLighthouse.id);
-assert.equal(aiLighthouse.links.length, 0);
-assert.equal(aiTower.childPresentation, "layers");
-assert.deepEqual(
-  aiFloors.map((entry) => entry.layerOrder),
-  [0, 1],
-);
-assert.equal(aiDraft.locations.find((entry) => entry.name === "Cycle A")?.parentId, null);
-assert.equal(aiDraft.locations.find((entry) => entry.name === "Cycle B")?.parentId, null);
-
-const loreSourceMap = new Map([["source_1", "entry_lighthouse"]]);
-const strictLorePrompt = buildSpatialMapDraftPrompt({
-  ownerMode: "game",
-  size: "small",
-  sourceContext: '{"setting":"foggy coast"}',
-  groundingMode: "lore_strict",
-  loreCatalog: "source_1 | Coast Canon | Blackglass Lighthouse | A black lighthouse guards the harbor.",
-});
-assert.match(strictLorePrompt.messages[0]!.content, /Strict canon mode/);
-assert.match(strictLorePrompt.messages[1]!.content, /source_1 \| Coast Canon \| Blackglass Lighthouse/);
-
-const groundedDraft = normalizeSpatialMapPlan(
-  {
-    startingLocationKey: "lighthouse",
-    locations: [
-      {
-        key: "lighthouse",
-        name: "Blackglass Lighthouse",
-        description: "A black lighthouse guards the harbor.",
-        sourceKeys: ["source_1", "source_missing", "source_1"],
-      },
-    ],
-  },
-  {
-    ownerMode: "game",
-    revision: 0,
-    enabled: false,
-    size: "small",
-    sourceEntryIdsByKey: loreSourceMap,
-    requireLoreSource: true,
-  },
-);
-assert.deepEqual(groundedDraft.locations[0]?.lorebookEntryIds, ["entry_lighthouse"]);
-assert.throws(
-  () =>
-    normalizeSpatialMapPlan(
-      { locations: [{ key: "invented", name: "Invented Plaza", sourceKeys: ["source_missing"] }] },
-      {
-        ownerMode: "game",
-        revision: 0,
-        enabled: false,
-        size: "small",
-        sourceEntryIdsByKey: loreSourceMap,
-        requireLoreSource: true,
-      },
-    ),
-  /did not cite a valid lore source/,
-);
-
-const groundedExpansion = normalizeSpatialMapExpansionPlan(
-  {
-    locations: [
-      {
-        key: "canon-annex",
-        name: "Canon Annex",
-        description: "A source-backed annex.",
-        sourceKeys: ["source_1"],
-      },
-    ],
-  },
-  {
-    definition: validDefinition,
-    targetLocationId: "capital",
-    size: "small",
-    sourceEntryIdsByKey: loreSourceMap,
-    requireLoreSource: true,
-  },
-);
-assert.deepEqual(groundedExpansion.locations.slice(0, validDefinition.locations.length), validDefinition.locations);
-assert.deepEqual(groundedExpansion.locations.at(-1)?.lorebookEntryIds, ["entry_lighthouse"]);
-
-const cappedAiDraft = normalizeSpatialMapPlan(
-  {
-    locations: Array.from({ length: 20 }, (_, index) => ({
-      key: `place-${index}`,
-      parentKey: null,
-      name: `Place ${index}`,
-      description: "",
-    })),
-  },
-  { ownerMode: "roleplay", revision: 0, enabled: false, size: "small" },
-);
-assert.equal(cappedAiDraft.locations.length, 12);
-assert.throws(
-  () =>
-    normalizeSpatialMapPlan({ locations: [] }, { ownerMode: "roleplay", revision: 0, enabled: false, size: "small" }),
-  /did not return any locations/,
-);
-
-const expansionPrompt = buildSpatialMapExpansionPrompt({
-  definition: validDefinition,
-  targetLocationId: "capital",
-  size: "small",
-  sourceContext: '{"setting":"foggy coast"}',
-  instructions: "Add a riverside district with an inn.",
-});
-assert.match(expansionPrompt.messages[0]!.content, /Return only new locations/);
-assert.match(expansionPrompt.messages[0]!.content, /one relevant emoji grapheme/);
-assert.match(expansionPrompt.messages[1]!.content, /Capital City/);
-assert.match(expansionPrompt.messages[1]!.content, /riverside district/);
-
-const expandedDefinition = normalizeSpatialMapExpansionPlan(
-  {
-    locations: [
-      {
-        key: "riverside",
-        parentKey: null,
-        name: "Riverside District",
-        kind: "place",
-        description: "A working district along the capital river.",
-        childPresentation: "map",
-      },
-      {
-        key: "silver-inn",
-        parentKey: "riverside",
-        name: "Silver Minnow Inn",
-        kind: "building",
-        icon: "beer mug",
-        description: "A crowded inn for river traders.",
-      },
-      {
-        key: "cellar",
-        parentKey: "silver-inn",
-        name: "Flooded Cellar",
-        kind: "room",
-        description: "A cellar connected to old drainage tunnels.",
-      },
-    ],
-  },
-  { definition: validDefinition, targetLocationId: "capital", size: "small" },
-);
-assert.equal(spatialContextDefinitionSchema.safeParse(expandedDefinition).success, true);
-assert.equal(expandedDefinition.startingLocationId, validDefinition.startingLocationId);
-assert.equal(expandedDefinition.revision, validDefinition.revision);
-assert.deepEqual(expandedDefinition.locations.slice(0, validDefinition.locations.length), validDefinition.locations);
-const riverside = expandedDefinition.locations.find((entry) => entry.name === "Riverside District")!;
-const silverInn = expandedDefinition.locations.find((entry) => entry.name === "Silver Minnow Inn")!;
-assert.equal(riverside.parentId, "capital");
-assert.ok(riverside.placement);
-assert.equal(silverInn.parentId, riverside.id);
-assert.equal(silverInn.icon, "🍺");
-assert.ok(
-  expandedDefinition.locations
-    .slice(validDefinition.locations.length)
-    .every((entry) => entry.icon && !/[A-Za-z]/u.test(entry.icon)),
-);
-assert.ok(expandedDefinition.locations.slice(validDefinition.locations.length).every((entry) => entry.id.startsWith("loc_")));
-assert.throws(
-  () =>
-    normalizeSpatialMapExpansionPlan(
-      { locations: [{ key: "x", name: "X" }] },
-      { definition: validDefinition, targetLocationId: "missing", size: "small" },
-    ),
-  /active location/,
-);
-
+// AI map drafting and normalization are package-owned and tested in Pasta-Devs/Marinara-Agents.
 assert.deepEqual(
   resolveSpatialBreadcrumb(validDefinition, "tower_library").map((entry) => entry.id),
   ["world", "capital", "tower", "tower_library"],
@@ -622,193 +358,106 @@ assert.equal(
   false,
 );
 
-const boundMap: GameMap = {
-  id: "tower-map",
-  type: "node",
-  name: "Wizard Tower",
-  description: "A local tower map.",
-  spatialLocationId: "tower",
-  nodes: [
-    {
-      id: "library-node",
-      emoji: "📚",
-      label: "Library",
-      x: 50,
-      y: 50,
-      discovered: true,
-      spatialLocationId: "tower_library",
-    },
-  ],
-  edges: [],
-  partyPosition: "library-node",
-};
-assert.equal(boundMap.spatialLocationId, "tower");
-assert.equal(boundMap.nodes?.[0]?.spatialLocationId, "tower_library");
+resetCapabilityServices();
 
-const worldMap: GameMap = {
-  id: "world-map",
-  type: "grid",
-  name: "Known World",
-  description: "The regional map.",
-  spatialLocationId: "world",
-  width: 1,
-  height: 1,
-  cells: [
-    {
-      x: 0,
-      y: 0,
-      emoji: "🏙️",
-      label: "Capital City",
-      discovered: true,
-      terrain: "city",
-    },
-  ],
-  partyPosition: { x: 0, y: 0 },
-};
-const gameMetadata = {
-  gameMaps: [worldMap, boundMap],
-  gameMap: worldMap,
-  activeGameMapId: "world-map",
-};
-
-const cellBoundMetadata = updateGameMapBinding(gameMetadata, {
-  target: "cell",
-  mapId: "world-map",
-  x: 0,
-  y: 0,
-  spatialLocationId: "capital",
-});
-assert.equal((cellBoundMetadata.gameMaps as GameMap[])[0]?.cells?.[0]?.spatialLocationId, "capital");
-assert.equal(cellBoundMetadata.activeGameMapId, "world-map");
-assert.equal((cellBoundMetadata.gameMap as GameMap).id, "world-map");
-
-const nodeClearedMetadata = updateGameMapBinding(gameMetadata, {
-  target: "node",
-  mapId: "tower-map",
-  nodeId: "library-node",
-  spatialLocationId: null,
-});
-assert.equal((nodeClearedMetadata.gameMaps as GameMap[])[1]?.nodes?.[0]?.spatialLocationId, undefined);
-assert.equal(nodeClearedMetadata.activeGameMapId, "world-map");
-
-const mapReboundMetadata = updateGameMapBinding(gameMetadata, {
-  target: "map",
-  mapId: "tower-map",
-  spatialLocationId: "tower_library",
-});
-assert.equal((mapReboundMetadata.gameMaps as GameMap[])[1]?.spatialLocationId, "tower_library");
-assert.equal(mapReboundMetadata.activeGameMapId, "world-map");
-
-const ancestorSelectedMetadata = selectBoundGameMapForLocation(gameMetadata, validDefinition, "tower_library");
-assert.equal(ancestorSelectedMetadata.activeGameMapId, "tower-map");
-assert.equal((ancestorSelectedMetadata.gameMap as GameMap).id, "tower-map");
-
-const exactSelectedMetadata = selectBoundGameMapForLocation(
-  {
-    ...gameMetadata,
-    gameMaps: [worldMap, boundMap, { ...worldMap, id: "library-map", spatialLocationId: "tower_library" }],
-  },
-  validDefinition,
-  "tower_library",
-);
-assert.equal(exactSelectedMetadata.activeGameMapId, "library-map");
-
-const unboundDefinition = definition([location("unbound-region", "Unbound Region", { kind: "region" })]);
-const unboundSelectionMetadata = selectBoundGameMapForLocation(gameMetadata, unboundDefinition, "unbound-region");
-assert.equal(unboundSelectionMetadata, gameMetadata);
-
-const ownerProjection = buildOwnerSpatialProjection("chat-roleplay", validDefinition, "tower_library");
-assert.ok(ownerProjection);
-assert.equal(ownerProjection.chatId, "chat-roleplay");
-assert.equal(ownerProjection.currentLocationId, "tower_library");
-assert.equal(ownerProjection.modelMemory, "The restricted shelf conceals a key.");
-assert.deepEqual(ownerProjection.lorebookEntryIds, ["lore_library"]);
-assert.deepEqual(
-  ownerProjection.destinations.map(({ id }) => id),
-  ["tower", "tower_observatory"],
-);
-
-const ownerBlock = formatOwnerSpatialPrompt(ownerProjection);
-assert.match(ownerBlock, /Current path: Known World > Capital City > Wizard Tower > Library/);
-assert.match(ownerBlock, /Private model context:\nThe restricted shelf conceals a key\./);
-assert.match(ownerBlock, /Observatory \[tower_observatory\] — Spiral stairs/);
-assert.doesNotMatch(ownerBlock, /Description for Market|Secret passage|placement|layerOrder|awarenessSummary/);
-
-const injectedOnce = injectOwnerSpatialPrompt(
-  [
-    { role: "system" as const, content: "Base instructions" },
-    { role: "user" as const, content: "Hello" },
-  ],
-  ownerProjection,
-);
-const injectedTwice = injectOwnerSpatialPrompt(injectedOnce, ownerProjection);
-assert.equal(injectedTwice.filter((message) => message.content.includes("<spatial_context")).length, 1);
-assert.equal(injectedTwice.find((message) => message.content.includes("<spatial_context"))?.content, ownerBlock);
-
-const wideProjection = buildOwnerSpatialProjection(
-  "chat-wide",
-  definition([
-    location("hub", "Hub", {
-      description: "H".repeat(4_100),
-      modelMemory: "M".repeat(8_100),
-    }),
-    ...Array.from({ length: 60 }, (_, index) =>
-      location(`destination_${String(index).padStart(2, "0")}`, `Destination ${String(index).padStart(2, "0")}`, {
-        parentId: "hub",
-        sortOrder: index,
-      }),
+assert.throws(
+  () =>
+    updateGameMapBinding(
+      {},
+      {
+        target: "map",
+        mapId: "missing-map",
+        spatialLocationId: "tower",
+      },
     ),
-    location("archived_secret", "Archived Secret", {
-      parentId: "hub",
-      description: "Never expose this archived description.",
-      modelMemory: "Never expose this archived memory.",
-      status: "archived",
-      sortOrder: 100,
-    }),
-  ]),
-  "hub",
+  (error: unknown) =>
+    error instanceof GameMapBindingError &&
+    error.code === "feature_unavailable" &&
+    error.message === "Hierarchical Maps is not active.",
 );
-assert.ok(wideProjection);
-assert.equal(wideProjection.description.length, 4_000);
-assert.equal(wideProjection.modelMemory?.length, 8_000);
-assert.equal(wideProjection.destinations.length, 50);
-assert.equal(wideProjection.omittedDestinationCount, 10);
-const wideBlock = formatOwnerSpatialPrompt(wideProjection);
-assert.match(wideBlock, /10 additional destinations omitted/);
-assert.doesNotMatch(wideBlock, /Destination 50|Archived Secret|Never expose/);
 
-const escapedProjection = buildOwnerSpatialProjection(
-  "chat-escaped",
-  definition([
-    location("escaped", "Room <One>", {
-      description: "Use <care> & caution.",
-      modelMemory: "Do not close </spatial_context> early.",
-    }),
-  ]),
-  "escaped",
-);
-assert.ok(escapedProjection);
-const escapedBlock = formatOwnerSpatialPrompt(escapedProjection);
-assert.match(escapedBlock, /Room &lt;One>|Use &lt;care> &amp; caution/);
-assert.doesNotMatch(escapedBlock, /Do not close <\/spatial_context> early/);
+const fallbackProjection: ResolvedOwnerSpatialProjection = {
+  kind: "owner",
+  chatId: "chat-roleplay",
+  ownerMode: "roleplay",
+  definitionRevision: 4,
+  currentLocationId: "tower_library",
+  breadcrumb: [
+    { id: "world", name: "Known World" },
+    { id: "tower_library", name: "Library" },
+  ],
+  description: "The library.",
+  modelMemory: "A hidden key.",
+  lorebookEntryIds: ["lore_library"],
+  destinations: [],
+  omittedDestinationCount: 0,
+};
+const fallbackMessages = [
+  { role: "system" as const, content: "Base instructions" },
+  { role: "user" as const, content: "Hello" },
+];
+const fallbackSnapshot = { location: "Model guess", weather: "Rain" };
+const fallbackPatch = { location: "Model guess", time: "Noon" };
+assert.equal(buildOwnerSpatialProjection("chat-roleplay", validDefinition, "tower_library"), null);
+assert.equal(formatOwnerSpatialBreadcrumb(fallbackProjection), "Known World > Library");
+assert.equal(formatOwnerSpatialPrompt(fallbackProjection), "");
+assert.equal(injectOwnerSpatialPrompt(fallbackMessages, fallbackProjection), fallbackMessages);
+assert.equal(projectGameSnapshotLocation(fallbackSnapshot, fallbackProjection), fallbackSnapshot);
+assert.equal(omitAuthoritativeGameLocation(fallbackPatch, fallbackProjection), fallbackPatch);
 
-const gameProjection = buildOwnerSpatialProjection(
-  "chat-game",
-  { ...validDefinition, ownerMode: "game" },
-  "tower_library",
-);
-assert.ok(gameProjection);
-assert.equal(formatOwnerSpatialBreadcrumb(gameProjection), "Known World > Capital City > Wizard Tower > Library");
-assert.deepEqual(projectGameSnapshotLocation({ location: "Model guess", weather: "Rain" }, gameProjection), {
-  location: "Known World > Capital City > Wizard Tower > Library",
+const delegatedProjection = { ...fallbackProjection, description: "Delegated package projection." };
+const delegatedMessages = [{ role: "system" as const, content: "<delegated />" }];
+const removeProjectionService = registerCapabilityService("hierarchical-maps:projection", {
+  buildOwnerSpatialProjection: () => delegatedProjection,
+  formatOwnerSpatialBreadcrumb: () => "Delegated > Breadcrumb",
+  formatOwnerSpatialPrompt: () => "<delegated-spatial-context />",
+  injectOwnerSpatialPrompt: () => delegatedMessages,
+  projectGameSnapshotLocation: (snapshot: object | null) =>
+    snapshot ? { ...snapshot, location: "Delegated > Breadcrumb" } : null,
+  omitAuthoritativeGameLocation: (patch: Record<string, unknown>) => {
+    const { location: _location, ...remaining } = patch;
+    return remaining;
+  },
+});
+const removeGameMapBindingService = registerCapabilityService("hierarchical-maps:game-map-binding", {
+  updateGameMapBinding: (metadata: Record<string, unknown>, input: Record<string, unknown>) => ({
+    ...metadata,
+    delegatedBinding: input,
+  }),
+});
+
+assert.equal(buildOwnerSpatialProjection("chat-roleplay", validDefinition, "tower_library"), delegatedProjection);
+assert.equal(formatOwnerSpatialBreadcrumb(delegatedProjection), "Delegated > Breadcrumb");
+assert.equal(formatOwnerSpatialPrompt(delegatedProjection), "<delegated-spatial-context />");
+assert.equal(injectOwnerSpatialPrompt(fallbackMessages, delegatedProjection), delegatedMessages);
+assert.deepEqual(projectGameSnapshotLocation(fallbackSnapshot, delegatedProjection), {
+  location: "Delegated > Breadcrumb",
   weather: "Rain",
 });
-assert.deepEqual(omitAuthoritativeGameLocation({ location: "Model guess", time: "Noon" }, gameProjection), {
-  time: "Noon",
-});
-assert.deepEqual(omitAuthoritativeGameLocation({ location: "Legacy", time: "Noon" }, null), {
-  location: "Legacy",
-  time: "Noon",
-});
+assert.deepEqual(omitAuthoritativeGameLocation(fallbackPatch, delegatedProjection), { time: "Noon" });
+assert.deepEqual(
+  updateGameMapBinding(
+    { existing: true },
+    {
+      target: "node",
+      mapId: "tower-map",
+      nodeId: "library-node",
+      spatialLocationId: "tower_library",
+    },
+  ),
+  {
+    existing: true,
+    delegatedBinding: {
+      target: "node",
+      mapId: "tower-map",
+      nodeId: "library-node",
+      spatialLocationId: "tower_library",
+    },
+  },
+);
+
+removeGameMapBindingService();
+removeProjectionService();
+resetCapabilityServices();
 
 process.stdout.write("Spatial context regression passed.\n");

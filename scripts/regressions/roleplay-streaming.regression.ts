@@ -12,7 +12,6 @@ import {
 } from "../../packages/client/src/lib/tts-autoplay.js";
 import { getAgentBatchLane, type ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { mergePairedBuiltInRewriteAgents } from "../../packages/server/src/services/generation/prose-guardian-settings.js";
-import { aboutMeKeeperAgentManifest } from "../../packages/shared/src/features/agents/about-me-keeper/manifest.js";
 import { estimateAgentLoadCost } from "../../packages/shared/src/utils/agent-cost.js";
 import {
   ECHO_CHAMBER_MESSAGE_INTERVAL_MAX_MS,
@@ -165,8 +164,6 @@ assert.equal(
   2,
   "rewrite editors should count as one call separate from the tracker call",
 );
-assert.equal(aboutMeKeeperAgentManifest.libraryHidden, true);
-
 const queuedEchoBatch = enqueueEchoChamberMessages(
   {
     messages: [{ characterName: "Watcher", reaction: "The old reaction.", timestamp: 1 }],
