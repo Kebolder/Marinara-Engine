@@ -7,6 +7,7 @@ import {
   APP_VERSION,
   capabilityCatalogSchema,
   capabilityPackageManifestSchema,
+  compareCapabilityPackageVersions,
   isInstalledCapabilityReady,
   installedCapabilityRegistrySchema,
   packagedAgentDefinitionsSchema,
@@ -56,22 +57,16 @@ function inside(root: string, candidate: string): string {
   return target;
 }
 
-function versionParts(value: string): number[] {
-  return value.split("-")[0]!.split(".").map((part) => Number.parseInt(part, 10) || 0);
-}
-
-function compareVersions(left: string, right: string): number {
-  const a = versionParts(left);
-  const b = versionParts(right);
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    const delta = (a[i] ?? 0) - (b[i] ?? 0);
-    if (delta) return delta;
-  }
-  return 0;
-}
-
 function runtimeBlockReason(installed: InstalledCapabilityPackage): string | null {
   return KNOWN_INCOMPATIBLE_RUNTIMES.get(`${installed.id}@${installed.version}`) ?? null;
+}
+
+function assertNotDowngrade(current: InstalledCapabilityPackage | undefined, nextVersion: string) {
+  if (current && compareCapabilityPackageVersions(nextVersion, current.version) < 0) {
+    throw new Error(
+      `Installed ${current.id} ${current.version} is newer than catalog version ${nextVersion}; refusing to downgrade`,
+    );
+  }
 }
 
 async function readRegistry() {
@@ -277,7 +272,12 @@ export const capabilityPackageManager = {
     const entry = catalog.packages.find((candidate) => candidate.manifest.id === packageId);
     if (!entry) throw new Error("Package is not present in the official catalog");
     const { manifest, artifact } = entry;
-    if (compareVersions(APP_VERSION, manifest.engine.min) < 0 || compareVersions(APP_VERSION, manifest.engine.maxExclusive) >= 0) {
+    const initiallyInstalled = (await readRegistry()).packages.find((item) => item.id === manifest.id);
+    assertNotDowngrade(initiallyInstalled, manifest.version);
+    if (
+      compareCapabilityPackageVersions(APP_VERSION, manifest.engine.min) < 0 ||
+      compareCapabilityPackageVersions(APP_VERSION, manifest.engine.maxExclusive) >= 0
+    ) {
       throw new Error(`Package requires Marinara Engine ${manifest.engine.min} to below ${manifest.engine.maxExclusive}`);
     }
     const archive = await fetchBytes(artifact.url, Math.min(artifact.bytes + 1, MAX_ARTIFACT_BYTES));
@@ -340,6 +340,7 @@ export const capabilityPackageManager = {
       await rename(temporary, destination);
       const registry = await readRegistry();
       const previous = registry.packages.find((item) => item.id === manifest.id);
+      assertNotDowngrade(previous, manifest.version);
       const installed: InstalledCapabilityPackage = {
         id: manifest.id,
         version: manifest.version,

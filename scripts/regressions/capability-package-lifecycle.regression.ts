@@ -59,6 +59,15 @@ function seedWhisperModels() {
 }
 
 try {
+  const { compareCapabilityPackageVersions } = await import(
+    "../../packages/shared/src/schemas/capability-package.schema.js"
+  );
+  assert.equal(compareCapabilityPackageVersions("1.0.1", "1.0.0"), 1);
+  assert.equal(compareCapabilityPackageVersions("1.0.0", "1.0.1"), -1);
+  assert.equal(compareCapabilityPackageVersions("1.0.1", "1.0.1"), 0);
+  assert.equal(compareCapabilityPackageVersions("1.0.1", "1.0.1-beta.2"), 1);
+  assert.equal(compareCapabilityPackageVersions("1.0.1-beta.10", "1.0.1-beta.2"), 1);
+
   writeRegistry([installedPackage("conversation-calls", ["agent", "conversation-calls"])]);
   seedWhisperModels();
 

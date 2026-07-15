@@ -137,6 +137,38 @@ export type CapabilityCatalog = z.infer<typeof capabilityCatalogSchema>;
 export type InstalledCapabilityPackage = z.infer<typeof installedCapabilityPackageSchema>;
 export type PackagedAgentDefinition = z.infer<typeof packagedAgentDefinitionSchema>;
 
+function parseCapabilityPackageVersion(value: string) {
+  const prereleaseSeparator = value.indexOf("-");
+  const core = prereleaseSeparator >= 0 ? value.slice(0, prereleaseSeparator) : value;
+  const prerelease = prereleaseSeparator >= 0 ? value.slice(prereleaseSeparator + 1).split(".") : [];
+  return { core: core.split(".").map((part) => Number.parseInt(part, 10)), prerelease };
+}
+
+export function compareCapabilityPackageVersions(left: string, right: string): number {
+  const a = parseCapabilityPackageVersion(left);
+  const b = parseCapabilityPackageVersion(right);
+  for (let index = 0; index < Math.max(a.core.length, b.core.length); index += 1) {
+    const difference = (a.core[index] ?? 0) - (b.core[index] ?? 0);
+    if (difference !== 0) return difference > 0 ? 1 : -1;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length === b.prerelease.length) return 0;
+    return a.prerelease.length === 0 ? 1 : -1;
+  }
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftPart = a.prerelease[index];
+    const rightPart = b.prerelease[index];
+    if (leftPart === undefined || rightPart === undefined) return leftPart === undefined ? -1 : 1;
+    if (leftPart === rightPart) continue;
+    const leftNumeric = /^\d+$/u.test(leftPart);
+    const rightNumeric = /^\d+$/u.test(rightPart);
+    if (leftNumeric && rightNumeric) return Number(leftPart) > Number(rightPart) ? 1 : -1;
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    return leftPart > rightPart ? 1 : -1;
+  }
+  return 0;
+}
+
 export function isInstalledCapabilityReady(installed: InstalledCapabilityPackage): boolean {
   if (installed.status !== "active") return false;
   return !installed.manifest.entrypoints.server || installed.readiness === "ready";

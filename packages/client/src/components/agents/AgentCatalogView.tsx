@@ -13,7 +13,7 @@ import {
   Trash2,
   WifiOff,
 } from "lucide-react";
-import type { CapabilityCatalogPackage } from "@marinara-engine/shared";
+import { compareCapabilityPackageVersions, type CapabilityCatalogPackage } from "@marinara-engine/shared";
 import { toast } from "sonner";
 import {
   useCapabilityCatalog,
@@ -105,6 +105,10 @@ export function AgentCatalogView() {
   const packageActionPending = install.isPending || uninstall.isPending || bulkActionPending;
   const selected =
     (catalog.data?.packages ?? []).find((item) => item.manifest.id === selectedId) ?? packages[0] ?? null;
+  const selectedInstalled = selected ? installedById.get(selected.manifest.id) : undefined;
+  const selectedVersionComparison = selectedInstalled
+    ? compareCapabilityPackageVersions(selected.manifest.version, selectedInstalled.version)
+    : 0;
 
   useEffect(() => {
     if (!selectedId && packages[0]) setSelectedId(packages[0].manifest.id);
@@ -485,7 +489,15 @@ export function AgentCatalogView() {
                 <span className="flex items-center gap-1.5">
                   <ShieldCheck size="0.8rem" /> Official verified package
                 </span>
-                <span>Agent v{selected.manifest.version}</span>
+                {selectedInstalled ? (
+                  <>
+                    <span>Installed v{selectedInstalled.version}</span>
+                    {selectedVersionComparison > 0 && <span>Catalog v{selected.manifest.version} available</span>}
+                    {selectedVersionComparison < 0 && <span>Catalog v{selected.manifest.version} (older)</span>}
+                  </>
+                ) : (
+                  <span>Agent v{selected.manifest.version}</span>
+                )}
                 <span>Marinara Engine v{selected.manifest.engine.min}+</span>
               </div>
 
@@ -528,7 +540,7 @@ export function AgentCatalogView() {
                         )}
                         Uninstall
                       </button>
-                      {installedById.get(selected.manifest.id)?.version !== selected.manifest.version && (
+                      {selectedVersionComparison > 0 && (
                         <button
                           type="button"
                           className="mari-chrome-control mari-chrome-control--primary px-4 py-2.5 max-sm:flex-1"
