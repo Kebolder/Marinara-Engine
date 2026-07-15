@@ -952,6 +952,8 @@ export async function processLorebooks(
     semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
     /** Cosine similarity threshold for semantic matching (0-1, default 0.3). */
     semanticThreshold?: number;
+    /** Unrelated-text cosine floor used to calibrate clustered embedding models. */
+    semanticSimilarityBaseline?: number;
     /** Per-chat entry state overrides (from chat metadata). When provided, ephemeral
      *  countdown is tracked here instead of modifying the global entry row. */
     entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -1072,6 +1074,7 @@ export async function processLorebooks(
     gameState: gameState ?? null,
     chatEmbedding: options?.chatEmbedding ?? null,
     semanticThreshold: options?.semanticThreshold,
+    semanticSimilarityBaseline: options?.semanticSimilarityBaseline,
     semanticEmbeddingsByLorebookId: options?.semanticEmbeddingsByLorebookId,
     semanticThresholdByLorebookId: new Map(
       effectiveLorebooks.map((book) => [book.id, normalizeLorebookVectorScoreThreshold(book.vectorScoreThreshold)]),

@@ -2884,7 +2884,7 @@ function VectorizeSection({
         <label className="space-y-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
           <span className="flex items-center gap-1">
             Score Threshold
-            <HelpTooltip text="Minimum semantic similarity required before a vectorized entry activates. Higher values are stricter." />
+            <HelpTooltip text="Minimum calibrated semantic similarity required before a vectorized entry activates. Higher values are stricter." />
           </span>
           <input
             type="number"

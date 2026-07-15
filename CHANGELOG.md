@@ -29,6 +29,9 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Calibrated Lorebook semantic similarity against an unrelated-text baseline so embedding models whose raw cosine scores cluster around 0.97 no longer inject unrelated entries at every usable threshold or suppress relevant entries near 1.0 (#3627).
+- Replaced the nested presence animation used by expandable right-sidebar folders with an accessible grid transition, preventing Connections and Lorebooks folders from crashing the app shell with React hook-order errors (#3630).
+- Recognized OpenRouter's positive-form `No endpoints found that support image input` rejection as a non-vision model response, allowing Noodle timeline refreshes to retry once with the existing text-only prompt (#3631).
 - Moved the Game Assets manifest and rescan lifecycle out of Zustand into one React Query cache shared by Game surfaces and the Asset Browser, consolidated model/runtime and Whisper download SSE parsing, and made failed sidecar delete/unload actions propagate instead of silently succeeding (#3616).
 - Fixed Game Journal tabs refusing to scroll on desktop and iOS by giving the embedded journal a bounded flex viewport, and made replaced/generated NPC portraits refresh immediately even when the server reuses the same image URL (#3624).
 - Updated the Character Colors preview to render the active card's cropped avatar with an icon fallback, while keeping its sample narration free of formatting asterisks (#3622).

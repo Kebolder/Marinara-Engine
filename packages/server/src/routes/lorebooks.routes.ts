@@ -1056,6 +1056,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     };
     let chatEmbedding: number[] | null = null;
     let semanticEmbeddingsByLorebookId: Map<string, number[] | null> | undefined;
+    let semanticSimilarityBaseline = 0;
     try {
       const activeEntries = (await storage.listActiveEntries(lorebookScopeFilters)) as unknown as LorebookEntry[];
       if (activeEntries.some((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0)) {
@@ -1073,6 +1074,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         });
         chatEmbedding = semanticEmbeddings.defaultEmbedding;
         semanticEmbeddingsByLorebookId = semanticEmbeddings.embeddingsByLorebookId;
+        semanticSimilarityBaseline = semanticEmbeddings.similarityBaseline;
       }
     } catch (err) {
       logger.debug(err, "[lorebooks] Semantic scan preview failed; falling back to keyword-only preview");
@@ -1089,6 +1091,7 @@ export async function lorebooksRoutes(app: FastifyInstance) {
       excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
       chatEmbedding,
       semanticEmbeddingsByLorebookId,
+      semanticSimilarityBaseline,
       forcedEntryIds:
         chat?.mode === "conversation" ? [] : (ownerSpatialProjection?.lorebookEntryIds ?? []),
       tokenBudget: typeof chatMeta.lorebookTokenBudget === "number" ? chatMeta.lorebookTokenBudget : undefined,

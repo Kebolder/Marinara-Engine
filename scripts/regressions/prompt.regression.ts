@@ -160,6 +160,10 @@ import {
   type SimpleMessage,
 } from "../../packages/server/src/routes/generate/generate-route-utils.js";
 import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/routes/generate/prompt-preset-selection.js";
+import {
+  calibrateLorebookSimilarity,
+  lorebookSimilarityBaseline,
+} from "../../packages/server/src/services/lorebook/embeddings.js";
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
@@ -3178,6 +3182,35 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         },
       );
       assert.equal(belowThreshold.length, 0);
+
+      assert.equal(calibrateLorebookSimilarity(0.97, 0.97), 0);
+      assert.ok(calibrateLorebookSimilarity(0.99, 0.97) > 0.6);
+      assert.ok(
+        Math.abs(lorebookSimilarityBaseline([[1, 0], [0.97, Math.sqrt(1 - 0.97 ** 2)]]) - 0.97) < 1e-12,
+      );
+
+      const clusteredIrrelevant = scanForActivatedEntries(
+        [{ role: "user", content: "unrelated query" }],
+        [{ ...entry, id: "entry-clustered-irrelevant", keys: [], embedding: [0.97, Math.sqrt(1 - 0.97 ** 2)] } as any],
+        {
+          chatEmbedding: [1, 0],
+          semanticSimilarityBaseline: 0.97,
+          semanticThresholdByLorebookId: new Map([["book-semantic", 0.3]]),
+        },
+      );
+      assert.equal(clusteredIrrelevant.length, 0);
+
+      const clusteredRelevant = scanForActivatedEntries(
+        [{ role: "user", content: "related query" }],
+        [{ ...entry, id: "entry-clustered-relevant", keys: [], embedding: [0.99, Math.sqrt(1 - 0.99 ** 2)] } as any],
+        {
+          chatEmbedding: [1, 0],
+          semanticSimilarityBaseline: 0.97,
+          semanticThresholdByLorebookId: new Map([["book-semantic", 0.3]]),
+        },
+      );
+      assert.equal(clusteredRelevant.length, 1);
+      assert.match(clusteredRelevant[0]?.matchedKeys[0] ?? "", /^\[semantic:0\.66/u);
     },
   },
 ];

@@ -62,6 +62,8 @@ export interface MarkerContext {
   chatEmbedding?: number[] | null;
   /** Per-lorebook pre-computed embeddings for semantic lorebook matching. */
   semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
+  /** Unrelated-text cosine floor used to calibrate clustered embedding models. */
+  semanticSimilarityBaseline?: number;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   /** Per-chat sticky/cooldown/delay timing state for lorebook entries. */
@@ -330,6 +332,7 @@ async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise
         tokenBudget: ctx.lorebookTokenBudget,
         chatEmbedding: ctx.chatEmbedding ?? null,
         semanticEmbeddingsByLorebookId: ctx.semanticEmbeddingsByLorebookId,
+        semanticSimilarityBaseline: ctx.semanticSimilarityBaseline,
         entryStateOverrides: ctx.entryStateOverrides,
         entryTimingStates: ctx.entryTimingStates,
         generationTriggers: ctx.generationTriggers ?? ["chat"],

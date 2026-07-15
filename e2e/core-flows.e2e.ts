@@ -1881,6 +1881,106 @@ test("desktop resource editors open beside their source sidebars", async ({ page
   }
 });
 
+test("desktop Connections and Lorebooks folders expand without a React hook error", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("mobile"), "Desktop right-sidebar folder regression.");
+  await page.setViewportSize({ width: 1360, height: 900 });
+
+  const suffix = Date.now().toString(36);
+  const connectionName = `Folder Connection ${suffix}`;
+  const connectionFolderName = `Connection Folder ${suffix}`;
+  const lorebookName = `Folder Lorebook ${suffix}`;
+  const lorebookFolderName = `Lorebook Folder ${suffix}`;
+  const connectionResponse = await page.request.post("/api/connections", {
+    data: { name: connectionName, provider: "custom" },
+  });
+  expect(connectionResponse.ok()).toBeTruthy();
+  const connection = (await connectionResponse.json()) as { id: string };
+  const connectionFolderResponse = await page.request.post("/api/connection-folders", {
+    data: { name: connectionFolderName },
+  });
+  expect(connectionFolderResponse.ok()).toBeTruthy();
+  const connectionFolder = (await connectionFolderResponse.json()) as { id: string };
+  expect(
+    (
+      await page.request.post("/api/connection-folders/move-connection", {
+        data: { connectionId: connection.id, folderId: connectionFolder.id },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  expect(
+    (
+      await page.request.patch(`/api/connection-folders/${connectionFolder.id}`, {
+        data: { collapsed: true },
+      })
+    ).ok(),
+  ).toBeTruthy();
+
+  const lorebookResponse = await page.request.post("/api/lorebooks", {
+    data: {
+      name: lorebookName,
+      description: "Folder expansion regression fixture.",
+      category: "world",
+      enabled: true,
+    },
+  });
+  expect(lorebookResponse.ok()).toBeTruthy();
+  const lorebook = (await lorebookResponse.json()) as { id: string };
+  await page.addInitScript(
+    ({ folderName, lorebookId }) => {
+      const now = new Date().toISOString();
+      localStorage.setItem(
+        "marinara-library-folders-v1",
+        JSON.stringify([
+          {
+            id: "folder-expansion-regression",
+            scope: "lorebooks",
+            name: folderName,
+            collapsed: false,
+            sortOrder: 0,
+            itemIds: [lorebookId],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]),
+      );
+    },
+    { folderName: lorebookFolderName, lorebookId: lorebook.id },
+  );
+
+  const errors = collectUnexpectedErrors(page);
+  try {
+    await page.goto("/");
+
+    await page.locator('[data-tour="panel-connections"]').click();
+    const resourceSidebar = page.locator('[data-component="RightPanelDesktop"]');
+    const connectionFolderToggle = resourceSidebar.locator(
+      `[data-connection-folder-id="${connectionFolder.id}"] > [role="button"]`,
+    );
+    await expect(connectionFolderToggle).toBeVisible();
+    await connectionFolderToggle.click();
+    await expect(connectionFolderToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(resourceSidebar.getByText(connectionName, { exact: true })).toBeVisible();
+
+    await page.locator('[data-tour="panel-lorebooks"]').click();
+    const lorebookFolderToggle = resourceSidebar.locator(
+      '[data-lorebook-folder-id="folder-expansion-regression"] > [role="button"]',
+    );
+    await expect(lorebookFolderToggle).toBeVisible();
+    await lorebookFolderToggle.click();
+    await expect(lorebookFolderToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(resourceSidebar.getByText(lorebookName, { exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    if (!page.isClosed()) {
+      await Promise.all([
+        page.request.delete(`/api/connections/${connection.id}`),
+        page.request.delete(`/api/connection-folders/${connectionFolder.id}`),
+        page.request.delete(`/api/lorebooks/${lorebook.id}`),
+      ]);
+    }
+  }
+});
+
 test("Professor Mari chat fills the mobile home viewport and keeps its composer visible", async ({
   page,
 }, testInfo) => {
