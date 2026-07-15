@@ -1110,7 +1110,15 @@ class FileTableStore {
       const childMeta = getMeta(cascade.child);
       const deletedValues = new Set(deletedRows.map((row) => row[cascade.parentKey]));
       const childColumn = childMeta.byKey.get(cascade.childKey)?.column;
-      if (childColumn) this.deleteWhere(childMeta, inArray(childColumn, Array.from(deletedValues)));
+      if (childColumn) {
+        this.deleteWhere(childMeta, inArray(childColumn, Array.from(deletedValues)));
+      } else {
+        const err = new Error(`Cascade child column ${cascade.child}.${cascade.childKey} is not registered`);
+        logger.error(
+          { err, parent: parentTable, parentKey: cascade.parentKey, child: cascade.child, childKey: cascade.childKey },
+          "[file-storage] Cascade configuration is invalid; child rows were not deleted",
+        );
+      }
     }
   }
 

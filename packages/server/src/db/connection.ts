@@ -17,7 +17,7 @@ async function createStorage(): Promise<DB> {
     await fileStore?.close();
     fileStore = null;
   };
-  return db as unknown as DB;
+  return db;
 }
 
 export async function getDB() {

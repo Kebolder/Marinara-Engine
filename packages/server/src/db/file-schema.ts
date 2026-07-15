@@ -14,7 +14,6 @@ export type FileColumn<TData = unknown, TNotNull extends boolean = boolean, THas
   primaryKey: () => FileColumn<TData, true, THasDefault>;
   notNull: () => FileColumn<TData, true, THasDefault>;
   default: (value: TData | (() => TData)) => FileColumn<TData, TNotNull, true>;
-  unique: () => FileColumn<TData, TNotNull, THasDefault>;
   references: (
     target: () => AnyFileColumn,
     options?: { onDelete?: string },
@@ -81,7 +80,6 @@ function column<TData>(name: string): FileColumn<TData, false, false> {
     primaryKey: () => unknown;
     notNull: () => unknown;
     default: (value: TData | (() => TData)) => unknown;
-    unique: () => unknown;
     references: (target: () => AnyFileColumn, options?: { onDelete?: string }) => unknown;
   } = {
     kind: "file-column" as const,
@@ -104,9 +102,6 @@ function column<TData>(name: string): FileColumn<TData, false, false> {
     default(value: TData | (() => TData)) {
       definition.hasDefault = true;
       definition.defaultValue = value;
-      return definition;
-    },
-    unique() {
       return definition;
     },
     references(_target: () => AnyFileColumn, _options?: { onDelete?: string }) {
@@ -134,26 +129,7 @@ export function real(name: string): FileColumn<number, false, false> {
   return column<number>(name);
 }
 
-type FileIndex = {
-  readonly name: string;
-  on: (...columns: AnyFileColumn[]) => FileIndex;
-  where: (condition: unknown) => FileIndex;
-};
-
-export function fileIndex(name: string): FileIndex {
-  const index: FileIndex = {
-    name,
-    on: () => index,
-    where: () => index,
-  };
-  return index;
-}
-
-export function fileTable<TColumns extends FileColumns>(
-  name: string,
-  columns: TColumns,
-  extraConfig?: (table: TColumns) => Record<string, unknown>,
-): FileTable<TColumns> {
+export function fileTable<TColumns extends FileColumns>(name: string, columns: TColumns): FileTable<TColumns> {
   const table = { ...columns } as FileTable<TColumns>;
   Object.defineProperty(table, FILE_TABLE_META, { value: { name, columns }, enumerable: false });
 
@@ -161,7 +137,6 @@ export function fileTable<TColumns extends FileColumns>(
     definition.key = key;
     definition.table = table;
   }
-  extraConfig?.(columns);
   return table;
 }
 

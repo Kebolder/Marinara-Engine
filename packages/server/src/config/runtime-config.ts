@@ -592,6 +592,6 @@ export function isAutoCreateDefaultConnectionDisabled(value = process.env.AUTO_C
 }
 
 export function logStorageDiagnostics(logger: { info(...args: any[]): void } = sharedLogger) {
-  logger.info(`[storage] DATA_DIR=${getDataDir()}`);
-  logger.info(`[storage] FILE_STORAGE_DIR=${getFileStorageDir()}`);
+  logger.info("[storage] DATA_DIR=%s", getDataDir());
+  logger.info("[storage] FILE_STORAGE_DIR=%s", getFileStorageDir());
 }

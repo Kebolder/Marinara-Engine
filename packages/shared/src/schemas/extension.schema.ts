@@ -21,9 +21,15 @@ function utf8ByteLength(value: string): number {
     if (code < 0x80) bytes += 1;
     else if (code < 0x800) bytes += 2;
     else if (code >= 0xd800 && code < 0xdc00) {
-      // High surrogate — the pair encodes one supplementary code point as 4 UTF-8 bytes.
-      bytes += 4;
-      i += 1;
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        // A valid surrogate pair encodes one supplementary code point.
+        bytes += 4;
+        i += 1;
+      } else {
+        // TextEncoder replaces an unpaired surrogate with U+FFFD (three bytes).
+        bytes += 3;
+      }
     } else bytes += 3;
   }
   return bytes;

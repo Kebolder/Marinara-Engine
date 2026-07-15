@@ -1981,8 +1981,6 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
     // Wipe all manual overrides when explicitly requested
     if (clearOverrides && updated) {
-      const { eq } = await import("../db/file-query.js");
-      const { gameStateSnapshots } = await import("../db/schema/index.js");
       await app.db
         .update(gameStateSnapshots)
         .set({ manualOverrides: null })

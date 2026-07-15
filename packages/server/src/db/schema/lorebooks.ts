@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Schema: Lorebooks, Folders & Entries
 // ──────────────────────────────────────────────
-import { fileTable, text, integer, real, fileIndex } from "../file-schema.js";
+import { fileTable, text, integer, real } from "../file-schema.js";
 
 export const lorebooks = fileTable("lorebooks", {
   id: text("id").primaryKey(),
@@ -33,35 +33,23 @@ export const lorebooks = fileTable("lorebooks", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const lorebookCharacterLinks = fileTable(
-  "lorebook_character_links",
-  {
-    id: text("id").primaryKey(),
-    lorebookId: text("lorebook_id")
-      .notNull()
-      .references(() => lorebooks.id, { onDelete: "cascade" }),
-    characterId: text("character_id").notNull(),
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => ({
-    lorebookCharacterUnique: fileIndex("uniq_lorebook_character_links_pair").on(table.lorebookId, table.characterId),
-  }),
-);
+export const lorebookCharacterLinks = fileTable("lorebook_character_links", {
+  id: text("id").primaryKey(),
+  lorebookId: text("lorebook_id")
+    .notNull()
+    .references(() => lorebooks.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});
 
-export const lorebookPersonaLinks = fileTable(
-  "lorebook_persona_links",
-  {
-    id: text("id").primaryKey(),
-    lorebookId: text("lorebook_id")
-      .notNull()
-      .references(() => lorebooks.id, { onDelete: "cascade" }),
-    personaId: text("persona_id").notNull(),
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => ({
-    lorebookPersonaUnique: fileIndex("uniq_lorebook_persona_links_pair").on(table.lorebookId, table.personaId),
-  }),
-);
+export const lorebookPersonaLinks = fileTable("lorebook_persona_links", {
+  id: text("id").primaryKey(),
+  lorebookId: text("lorebook_id")
+    .notNull()
+    .references(() => lorebooks.id, { onDelete: "cascade" }),
+  personaId: text("persona_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});
 
 /**
  * Lorebook folders — collapsible containers that group entries to reduce

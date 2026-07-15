@@ -169,11 +169,6 @@ function isToggleInteractionType(type: NoodleInteractionType) {
   return type === "like" || type === "repost";
 }
 
-function isUniqueConstraintError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return /duplicate primary key|unique constraint|constraint failed/i.test(message);
-}
-
 export function normalizeNoodleSettings(raw: unknown): NoodleSettings {
   const rawRecord = parseRecord(raw);
   const migratedMaxImagesPerRefresh =
@@ -697,25 +692,17 @@ export function createNoodleStorage(db: DB) {
       if (existingToggleInteraction) return existingToggleInteraction;
 
       const id = newId();
-      try {
-        await db.insert(noodleInteractions).values({
-          id,
-          postId,
-          parentInteractionId,
-          actorAccountId: input.actorAccountId,
-          type: input.type,
-          content: input.content?.trim() || null,
-          imageUrl: input.imageUrl?.trim() || null,
-          actorSnapshot: JSON.stringify(snapshotForAccount(actor)),
-          createdAt: now(),
-        });
-      } catch (error) {
-        if (isUniqueConstraintError(error)) {
-          const existing = await readExistingToggleInteraction();
-          if (existing) return existing;
-        }
-        throw error;
-      }
+      await db.insert(noodleInteractions).values({
+        id,
+        postId,
+        parentInteractionId,
+        actorAccountId: input.actorAccountId,
+        type: input.type,
+        content: input.content?.trim() || null,
+        imageUrl: input.imageUrl?.trim() || null,
+        actorSnapshot: JSON.stringify(snapshotForAccount(actor)),
+        createdAt: now(),
+      });
       const rows = await db.select().from(noodleInteractions).where(eq(noodleInteractions.id, id));
       return rows[0] ? mapInteraction(rows[0]) : null;
     },

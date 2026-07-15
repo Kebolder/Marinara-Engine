@@ -42,9 +42,9 @@ When adding persistent data:
 
 1. Define the table in `packages/server/src/db/schema/` with `fileTable` and the file-native column builders.
 2. Export it from `db/schema/index.ts`.
-3. Add its name to `FILE_BACKED_TABLES`.
-4. Add cascade or set-null relationships in `file-backed-store.ts` when required.
-5. Add JSON-column metadata to `services/mari-db/mari-db.service.ts` when a text field contains structured JSON.
+3. Register its name in `FILE_BACKED_TABLES`.
+4. Define cascade or set-null relationships in `file-backed-store.ts` when required.
+5. Include JSON-column metadata in `services/mari-db/mari-db.service.ts` when a text field contains structured JSON.
 6. Confirm profile backup and restore behavior.
 7. Run `pnpm check` and the relevant storage regressions.
 

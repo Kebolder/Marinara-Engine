@@ -1,9 +1,8 @@
 // ──────────────────────────────────────────────
 // File-Native Query Expressions
 // ──────────────────────────────────────────────
-import type { AnyFileColumn } from "./file-schema.js";
-
-type QueryValue = AnyFileColumn | unknown;
+// Query operands deliberately accept both columns and literal runtime values.
+type QueryValue = unknown;
 
 export type FileCondition =
   | {
