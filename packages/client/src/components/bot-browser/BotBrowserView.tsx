@@ -1897,73 +1897,100 @@ export function BotBrowserView() {
   };
 
   return (
-    <div className="mari-chrome-token-scope flex h-full flex-col overflow-hidden">
+    <div
+      data-component="BotBrowserView"
+      className="mari-chrome-token-scope flex h-full min-h-0 flex-col overflow-hidden bg-[radial-gradient(circle_at_top_left,_color-mix(in_srgb,var(--marinara-chat-chrome-accent)_14%,transparent),_transparent_30%),radial-gradient(circle_at_top_right,_color-mix(in_srgb,var(--marinara-chat-chrome-text)_10%,transparent),_transparent_26%),var(--background)] text-[var(--marinara-chat-chrome-panel-text)]"
+    >
       {/* ═══ Header ═══ */}
-      <div className="relative flex h-12 flex-shrink-0 items-center gap-3 bg-[var(--card)]/80 px-4 backdrop-blur-sm">
-        <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
-        <button
-          type="button"
-          onClick={closeBotBrowser}
-          className="mari-editor-action inline-flex shrink-0"
-          title="Back"
-          aria-label="Back"
-        >
-          <ArrowLeft size="1.125rem" />
-        </button>
-        <h2 className="mari-chrome-text-strong text-sm font-semibold">Browser</h2>
-        <div className="relative ml-2">
+      <header className="relative z-10 flex shrink-0 flex-col gap-2 border-b border-[var(--marinara-chat-chrome-panel-divider)] bg-[var(--card)]/85 px-3 py-2 backdrop-blur-xl md:px-6 md:py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
           <button
-            ref={sourceButtonRef}
-            onClick={() => setSourceOpen((v) => !v)}
-            className="mari-chrome-control mari-chrome-control--small px-3 py-1.5 text-xs"
+            type="button"
+            onClick={closeBotBrowser}
+            className="mari-chrome-control h-9 w-9 shrink-0 rounded-2xl p-0 md:h-10 md:w-10"
+            title="Close library"
+            aria-label="Close library"
           >
-            <span>{provider.icon}</span>
-            <span>{provider.name}</span>
-            <ChevronDown size="0.625rem" className={cn("transition-transform", sourceOpen && "rotate-180")} />
+            <ArrowLeft size="0.95rem" />
           </button>
+          <div className="min-w-0">
+            <p className="text-[0.625rem] font-semibold uppercase tracking-[0.28em] text-[var(--marinara-chat-chrome-panel-muted)]">
+              Cards Library
+            </p>
+            <h1 className="truncate text-base font-semibold text-[var(--marinara-chat-chrome-panel-title)] md:text-2xl">
+              Browse character cards online
+            </h1>
+            <p className="truncate text-xs text-[var(--marinara-chat-chrome-panel-muted)] md:text-sm">
+              {totalCount > 0
+                ? `${totalCount.toLocaleString()} cards from ${provider.name}`
+                : `Browsing ${provider.name}`}
+            </p>
+          </div>
         </div>
-        {sourceOpen &&
-          sourceMenuPosition &&
-          createPortal(
-            <div
-              className="mari-chrome-token-scope mari-chrome-selection-bar mari-chrome-selection-bar--opaque fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
-              style={{
-                left: sourceMenuPosition.left,
-                top: sourceMenuPosition.top,
-                maxHeight: sourceMenuPosition.maxHeight,
-              }}
+
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
+          <div className="relative">
+            <button
+              ref={sourceButtonRef}
+              onClick={() => setSourceOpen((v) => !v)}
+              className="mari-chrome-control h-9 px-3 text-xs md:h-10"
             >
-              {ALL_PROVIDERS.map((p) => (
+              <span>{provider.icon}</span>
+              <span>{provider.name}</span>
+              <ChevronDown size="0.625rem" className={cn("transition-transform", sourceOpen && "rotate-180")} />
+            </button>
+          </div>
+          {sourceOpen &&
+            sourceMenuPosition &&
+            createPortal(
+              <>
                 <button
-                  key={p.id}
-                  onClick={() => switchProvider(p.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs transition-colors",
-                    p.id === sourceId
-                      ? "mari-chrome-accent-surface mari-accent-animated font-semibold"
-                      : "hover:bg-[var(--accent)]",
-                  )}
+                  type="button"
+                  aria-label="Close provider menu"
+                  className="fixed inset-0 z-[9998] cursor-default"
+                  onClick={() => setSourceOpen(false)}
+                />
+                <div
+                  className="mari-chrome-token-scope mari-chrome-selection-bar mari-chrome-selection-bar--opaque fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
+                  style={{
+                    left: sourceMenuPosition.left,
+                    top: sourceMenuPosition.top,
+                    maxHeight: sourceMenuPosition.maxHeight,
+                  }}
                 >
-                  <span className="text-sm">{p.icon}</span>
-                  <span>{p.name}</span>
-                  {p.id === sourceId && <span className="ml-auto text-[0.6rem]">✓</span>}
-                </button>
-              ))}
-            </div>,
-            document.body,
+                  {ALL_PROVIDERS.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => switchProvider(p.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs transition-colors",
+                        p.id === sourceId
+                          ? "mari-chrome-accent-surface mari-accent-animated font-semibold"
+                          : "hover:bg-[var(--accent)]",
+                      )}
+                    >
+                      <span className="text-sm">{p.icon}</span>
+                      <span>{p.name}</span>
+                      {p.id === sourceId && <span className="ml-auto text-[0.6rem]">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              </>,
+              document.body,
+            )}
+          {/* Auth indicator for login providers */}
+          {sourceId === "pygmalion" && pygLoggedIn && (
+            <span className="flex items-center gap-1 text-[0.65rem] text-emerald-400">
+              <CheckCircle size="0.625rem" /> Logged in
+            </span>
           )}
-        {/* Auth indicator for login providers */}
-        {sourceId === "pygmalion" && pygLoggedIn && (
-          <span className="ml-auto flex items-center gap-1 text-[0.65rem] text-emerald-400">
-            <CheckCircle size="0.625rem" /> Logged in
-          </span>
-        )}
-        {sourceId === "chartavern" && ctLoggedIn && (
-          <span className="ml-auto flex items-center gap-1 text-[0.65rem] text-emerald-400">
-            <CheckCircle size="0.625rem" /> Session active
-          </span>
-        )}
-      </div>
+          {sourceId === "chartavern" && ctLoggedIn && (
+            <span className="flex items-center gap-1 text-[0.65rem] text-emerald-400">
+              <CheckCircle size="0.625rem" /> Session active
+            </span>
+          )}
+        </div>
+      </header>
 
       <div className="flex flex-1 overflow-hidden">
         {/* ═══ Tag Sidebar ═══ */}
@@ -2400,7 +2427,7 @@ export function BotBrowserView() {
                 </div>
               ) : error ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 py-12">
-                  <span className="text-sm text-[var(--destructive)]">{error}</span>
+                  <span className="text-sm font-medium text-[var(--marinara-chat-chrome-panel-title)]">{error}</span>
                   <button
                     onClick={doSearch}
                     className="mari-chrome-control mari-chrome-control--selected px-4 py-2 text-xs"

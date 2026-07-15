@@ -51,7 +51,7 @@ import { DATA_DIR } from "../utils/data-dir.js";
 import { createWriteStream, existsSync, rmSync, unlinkSync } from "fs";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from "../utils/security.js";
-import { logger } from "../lib/logger.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
 import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
 import {
@@ -63,8 +63,9 @@ import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
 import { newId } from "../utils/id-generator.js";
-import { resolveBaseUrl } from "./generate/generate-route-utils.js";
+import { resolveActivePersonaCandidate, resolveBaseUrl } from "./generate/generate-route-utils.js";
 import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
+import { createAboutMeMacroResolver } from "../services/conversation/about-me-macros.js";
 
 const CHARACTER_GALLERY_ROOT = join(DATA_DIR, "gallery", "characters");
 const PERSONA_GALLERY_ROOT = join(DATA_DIR, "gallery", "personas");
@@ -617,15 +618,41 @@ export async function charactersRoutes(app: FastifyInstance) {
     // Different cards store their substance differently — some leave card fields blank
     // and live entirely in a lorebook — so each source is individually selectable.
     const sources = resolveAboutMeSources(input.sources);
+    const allPersonas = await storage.listPersonas();
+    const aboutMeChat = input.chatId ? await createChatsStorage(app.db).getById(input.chatId) : null;
+    const activePersona = resolveActivePersonaCandidate(
+      allPersonas,
+      aboutMeChat?.personaId,
+      aboutMeChat?.mode ?? "conversation",
+    );
+    const resolveAboutMeMacros = createAboutMeMacroResolver({
+      kind: input.kind,
+      name: input.name,
+      source: input,
+      activePersonaName: typeof activePersona?.name === "string" ? activePersona.name : undefined,
+      activePersonaFields: activePersona
+        ? {
+            description: typeof activePersona.description === "string" ? activePersona.description : "",
+            personality: typeof activePersona.personality === "string" ? activePersona.personality : "",
+            scenario: typeof activePersona.scenario === "string" ? activePersona.scenario : "",
+            backstory: typeof activePersona.backstory === "string" ? activePersona.backstory : "",
+            appearance: typeof activePersona.appearance === "string" ? activePersona.appearance : "",
+          }
+        : undefined,
+    });
     const cardParts: string[] = [];
-    if (input.name) cardParts.push(`Name: ${input.name}`);
-    if (sources.description && input.description) cardParts.push(`Description: ${input.description}`);
-    if (sources.personality && input.personality) cardParts.push(`Personality: ${input.personality}`);
-    if (sources.scenario && input.scenario) cardParts.push(`Scenario: ${input.scenario}`);
-    if (sources.backstory && input.backstory) cardParts.push(`Backstory: ${input.backstory}`);
-    if (sources.appearance && input.appearance) cardParts.push(`Appearance: ${input.appearance}`);
+    const pushResolvedCardPart = (label: string, value: string) => {
+      const resolved = resolveAboutMeMacros(value).trim();
+      if (resolved) cardParts.push(`${label}: ${resolved}`);
+    };
+    if (input.name) pushResolvedCardPart("Name", input.name);
+    if (sources.description && input.description) pushResolvedCardPart("Description", input.description);
+    if (sources.personality && input.personality) pushResolvedCardPart("Personality", input.personality);
+    if (sources.scenario && input.scenario) pushResolvedCardPart("Scenario", input.scenario);
+    if (sources.backstory && input.backstory) pushResolvedCardPart("Backstory", input.backstory);
+    if (sources.appearance && input.appearance) pushResolvedCardPart("Appearance", input.appearance);
     if (sources.convoBehavior && input.convoBehavior?.trim())
-      cardParts.push(`How they behave in conversation: ${input.convoBehavior.trim()}`);
+      pushResolvedCardPart("How they behave in conversation", input.convoBehavior);
 
     // Lorebook entries (characters only). All of the character's lorebook entries come
     // through listByCharacter — the embedded card book is synced to a standalone that
@@ -639,8 +666,10 @@ export async function charactersRoutes(app: FastifyInstance) {
         const selectedEntryIds = Array.isArray(sources.lorebookEntryIds) ? new Set(sources.lorebookEntryIds) : null;
         for (const e of entries) {
           if (selectedEntryIds && (!e.id || !selectedEntryIds.has(e.id))) continue;
-          const content = e.content?.trim() ?? "";
-          loreLines.push(e.name ? `[${e.name}] ${content}` : content);
+          const content = resolveAboutMeMacros(e.content ?? "").trim();
+          if (!content) continue;
+          const name = resolveAboutMeMacros(e.name ?? "").trim();
+          loreLines.push(name ? `[${name}] ${content}` : content);
         }
         const lore = loreLines.join("\n").slice(0, 8000).trim();
         if (lore) cardParts.push(`From their lorebook:\n${lore}`);
@@ -660,8 +689,10 @@ export async function charactersRoutes(app: FastifyInstance) {
           content: string;
         }>;
         chatTranscript = recent
-          .map((m) => `${m.role}: ${(m.content ?? "").trim()}`)
-          .filter((line) => line.trim())
+          .flatMap((m) => {
+            const content = resolveAboutMeMacros(m.content ?? "").trim();
+            return content ? [`${m.role}: ${content}`] : [];
+          })
           .join("\n")
           .slice(-8000)
           .trim();
@@ -670,11 +701,24 @@ export async function charactersRoutes(app: FastifyInstance) {
       }
     }
 
+    const resolvedInstruction = input.instruction ? resolveAboutMeMacros(input.instruction).trim() : "";
     const userContent =
       `Here is what defines them:\n${cardParts.join("\n\n")}\n\n` +
       (chatTranscript ? `Recent conversation, for tone and context:\n${chatTranscript}\n\n` : "") +
-      (input.instruction?.trim() ? `Extra direction from the user: ${input.instruction.trim()}\n\n` : "") +
+      (resolvedInstruction ? `Extra direction from the user: ${resolvedInstruction}\n\n` : "") +
       `Write their Conversation-mode "about me" now, staying true to who they are.`;
+    logDebugOverride(
+      input.debugMode,
+      "[debug/conversation/about-me] Prompt sent to model:\n%s",
+      JSON.stringify(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+        null,
+        2,
+      ),
+    );
 
     // A short bio needs little output, but "thinking" models (e.g. Gemini 3.x) draw
     // reasoning tokens from the SAME output budget — so the old 512 cap was consumed

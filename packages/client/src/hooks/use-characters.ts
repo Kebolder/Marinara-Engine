@@ -979,7 +979,11 @@ export function useGenerateAboutMe() {
       characterId?: string;
       chatId?: string;
       instruction?: string;
-    }) => api.post<{ aboutMe: string }>("/characters/generate-about-me", body),
+    }) =>
+      api.post<{ aboutMe: string }>("/characters/generate-about-me", {
+        ...body,
+        debugMode: useUIStore.getState().debugMode,
+      }),
   });
 }
 

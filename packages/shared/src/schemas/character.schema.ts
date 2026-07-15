@@ -164,6 +164,8 @@ export const generateAboutMeSchema = z.object({
   chatId: z.string().optional(),
   /** Optional freeform steer from the user (e.g. "keep it one line, chronically online"). */
   instruction: z.string().max(2000).optional(),
+  /** Mirror the app's debug-mode prompt logging for this one-shot generation. */
+  debugMode: z.boolean().optional().default(false),
 });
 
 export type GenerateAboutMeInput = z.infer<typeof generateAboutMeSchema>;
