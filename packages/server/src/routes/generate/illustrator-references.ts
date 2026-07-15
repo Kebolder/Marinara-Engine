@@ -137,7 +137,7 @@ function buildNameAliases(name: string, opts: { includeStandaloneTokens?: boolea
   return [...aliases].sort((a, b) => b.length - a.length);
 }
 
-function readAppearance(data: Record<string, unknown>): string | null {
+export function readIllustratorAppearance(data: Record<string, unknown>): string | null {
   const extensions = parseRecord(data.extensions);
   const raw =
     typeof extensions.appearance === "string"
@@ -147,9 +147,11 @@ function readAppearance(data: Record<string, unknown>): string | null {
         : "";
   const cleaned = stripMacroComments(raw).replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
-  return cleaned.length > MAX_ILLUSTRATOR_APPEARANCE_CHARS
-    ? `${cleaned.slice(0, MAX_ILLUSTRATOR_APPEARANCE_CHARS).trimEnd()}...`
-    : cleaned;
+  if (cleaned.length <= MAX_ILLUSTRATOR_APPEARANCE_CHARS) return cleaned;
+  const limit = MAX_ILLUSTRATOR_APPEARANCE_CHARS - 3;
+  const clipped = cleaned.slice(0, limit).trimEnd();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  return `${(wordBoundary > 0 ? clipped.slice(0, wordBoundary) : clipped).trimEnd()}...`;
 }
 
 function textContainsAlias(normalizedText: string, alias: string): boolean {
@@ -165,7 +167,7 @@ function characterRowToSource(row: CharacterRowLike, sourceOrder: number): Chara
     id: row.id,
     name: rawName,
     avatarPath: typeof row.avatarPath === "string" ? row.avatarPath : null,
-    appearance: readAppearance(data),
+    appearance: readIllustratorAppearance(data),
     aliases: buildNameAliases(rawName),
     promptAliases: buildNameAliases(rawName, { includeStandaloneTokens: false }),
     sourceOrder,

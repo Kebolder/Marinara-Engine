@@ -121,6 +121,7 @@ export const GAME_BACKGROUND: PromptOverrideKeyDef<GameBackgroundCtx> = {
 export interface GameSceneIllustrationCtx extends Record<string, string | number | undefined> {
   sceneTitleLine: string;
   scenePrompt: string;
+  finalVisibilityRuleLine: string;
   narrativePurposeLine: string;
   charactersLine: string;
   referenceHandlingLine: string;
@@ -140,8 +141,13 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
     },
     {
       name: "scenePrompt",
-      description: "The exact illustrated moment, written by the scene-analyzer.",
+      description: "The exact illustrated moment written by the scene-analyzer, without visibility metadata.",
       example: "the moonlit duel finally ends — Korr falls to one knee, sword in the dirt",
+    },
+    {
+      name: "finalVisibilityRuleLine",
+      description: "Pre-formatted final visible-character constraint, or empty string.",
+      example: "Final visibility rule: Only depict these named visible characters: Lyra, Korr.",
     },
     {
       name: "narrativePurposeLine",
@@ -161,9 +167,8 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
     },
     {
       name: "appearanceNotesBlock",
-      description: "Pre-formatted appearance notes for visible characters without a reference, or empty string.",
-      example:
-        "Appearance notes for visible characters without an attached reference image:\n- Lyra: auburn hair, green eyes, leather jacket",
+      description: "Pre-formatted matched character-card appearance notes, or empty string.",
+      example: "Character appearance notes:\nLyra's Appearance: auburn hair, green eyes, leather jacket",
     },
     {
       name: "artDirectionLine",
@@ -181,6 +186,7 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
     [
       ctx.sceneTitleLine,
       `Scene moment: ${ctx.scenePrompt}`,
+      ctx.finalVisibilityRuleLine,
       ctx.narrativePurposeLine,
       ctx.charactersLine,
       ctx.referenceHandlingLine,
@@ -193,12 +199,12 @@ export const GAME_SCENE_ILLUSTRATION: PromptOverrideKeyDef<GameSceneIllustration
   exampleContext: {
     sceneTitleLine: "Lyra watching Korr fall after the moonlit duel.",
     scenePrompt: "the moonlit duel finally ends — Korr falls to one knee, sword in the dirt",
+    finalVisibilityRuleLine: "Final visibility rule: Only depict these named visible characters: Lyra, Korr.",
     narrativePurposeLine: "Narrative purpose: duel climax — major story beat.",
     charactersLine: "Characters: Lyra, Korr.",
     referenceHandlingLine:
       "Reference handling: attached character reference images are available. Use them to match faces, hair, build, colors, and distinctive features for the referenced characters.",
-    appearanceNotesBlock:
-      "Appearance notes for visible characters without an attached reference image:\n- Lyra: auburn hair, green eyes, leather jacket",
+    appearanceNotesBlock: "Character appearance notes:\nLyra's Appearance: auburn hair, green eyes, leather jacket",
     artDirectionLine:
       "Art direction: Watercolor fantasy illustration, soft edges, warm palette, Ghibli-inspired, fantasy, medieval kingdom.",
     imagePromptInstructionsLine:

@@ -115,7 +115,7 @@ The two selectors have separate preset lists. Illustration presets describe fini
 | Lane | Preset | Best for |
 | --- | --- | --- |
 | Illustration | **Still Keyframes** | Normal reading. Single-scene keyframes without comic panels, speech bubbles, captions, or SFX text. |
-| Illustration | **NovelAI Keyframes** | Compact still-image tag prompts tuned for NovelAI V4 and V4.5. Best paired with **Use Storyboard Prompt Directly**. |
+| Illustration | **NovelAI Keyframes** | Compact still-image tag prompts tuned for NovelAI V4 and V4.5. For a direct tag prompt, turn off **Use Storyboard Template**. |
 | Illustration | **Comic Page** | Finished comic-page illustrations with 2-6 panels, dialogue bubbles, captions, and lettering. |
 | Illustration | **Colored Manga** | Finished colored manga staging with cell shading, screentones, speech bubbles, and SFX. |
 | Illustration | **B&W Manga** | Finished black-and-white manga inks, screentones, heavy blacks, speech bubbles, and SFX. |
@@ -126,7 +126,7 @@ The two selectors have separate preset lists. Illustration presets describe fini
 | Animation | **Colored Manga Animation** | Text-free colored manga first frames with motion that preserves linework and cel shading. |
 | Animation | **B&W Manga Animation** | Text-free monochrome first frames with motion that preserves inks and screentones. |
 
-The **Still Keyframe Animation** preset is the style-neutral motion counterpart to **Still Keyframes**. The **Anime Episode Director** is a separate specialized option that pairs with **Anime Game Video** and **Use Storyboard Prompt Directly** when you want broadcast-anime shot planning. It keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
+The **Still Keyframe Animation** preset is the style-neutral motion counterpart to **Still Keyframes**. The **Anime Episode Director** is a separate specialized option that pairs with **Anime Game Video** when you want broadcast-anime shot planning. It keeps severe violence non-graphic and stages it through anticipation, obstruction, reaction, or aftermath where possible, which can reduce provider safety rejections without changing the GM's canonical story.
 
 The **Comic Page Animation** preset uses the animation clip duration to control page density. It defaults to 2 panels for a 6-7 second clip, allowing a third only for three simple beats with about 2 seconds each; it uses 2-3 panels for 8-10 seconds and no more than 4 for longer clips. Animation pages prioritize visual timing over comic lettering, keep each panel focused, and reserve a short ending hold. Panels follow cause and effect in reading order. **Comic Page Video** normally enters panel 1 immediately; it permits only a very brief full-page establish when doing so cannot reveal a later consequence early.
 
@@ -181,9 +181,7 @@ For steadier results:
 
 ## NovelAI options
 
-Two toggles help official NovelAI storyboards. Both are in the **Storyboards** card.
-
-**Use Storyboard Prompt Directly** sends each keyframe's image prompt to the image model with only global style tags added. This is off by default. It skips the extra prompt-wrapping and tag rewriting Marinara normally applies. Pair it with the **NovelAI Keyframes** preset for the cleanest NovelAI request.
+For a compact NovelAI request, choose **NovelAI Keyframes** and turn off **Use Storyboard Template** in the **Storyboards** card. This sends the planned scene prompt directly while keeping the separate appearance, reference-image, image-instruction, and style settings available.
 
 **Use NovelAI Character Prompts** sends each visible character through native NovelAI Add Character captions and positions. This is on by default. Important: it only takes effect for an official NovelAI connection using a V4 or V4.5 model on novelai.net. For any other provider or model, the toggle does nothing, and Marinara uses the shared legacy prompt instead.
 

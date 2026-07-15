@@ -525,7 +525,6 @@ const sharedGameSetup = formatGameSetupShareText({
     gameGmPromptTemplateId: "anime-game-prompt",
     gameStoryboardAnimationPromptTemplateId: "comic-page-animation",
     gameStoryboardVideoPromptTemplateId: "comic-page-game-video",
-    gameStoryboardUseDirectScenePrompt: true,
     enableLorebookKeeper: true,
     customHudWidgets: [
       {

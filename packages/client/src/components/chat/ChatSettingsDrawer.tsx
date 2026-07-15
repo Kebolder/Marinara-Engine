@@ -1726,6 +1726,7 @@ export function ChatSettingsDrawer({
   const selfieIncludeCharacterAppearance = metadata.selfieIncludeCharacterAppearance === true;
   const gameImageUseAvatarReferences = metadata.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
+  const gameStoryboardUsePromptTemplate = metadata.gameStoryboardUsePromptTemplate !== false;
   const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
   const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
   const effectiveCombatStyle: GameCombatStyle =
@@ -1734,7 +1735,6 @@ export function ChatSettingsDrawer({
     "classic";
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
-  const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
   const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
   const selectedGameGmPromptTemplateId = useMemo(() => {
     const selected = typeof metadata.gameGmPromptTemplateId === "string" ? metadata.gameGmPromptTemplateId.trim() : "";
@@ -7687,7 +7687,7 @@ export function ChatSettingsDrawer({
                           </label>
                           <AgentSettingsToggle
                             label="Attach Card Appearance"
-                            description="Append matched character appearance details to generated scene image prompts."
+                            description="Append matched character appearance details to the final scene image prompt. The storyboard planner always receives appearance context."
                             enabled={gameImageIncludeCharacterAppearance}
                             onToggle={() =>
                               updateMeta.mutate({
@@ -7829,17 +7829,6 @@ export function ChatSettingsDrawer({
                             ...(nextEnabled ? { gameStoryboardAutoIllustrationsEnabled: true } : {}),
                           });
                         }}
-                      />
-                      <AgentSettingsToggle
-                        label="Use Storyboard Prompt Directly"
-                        description="Send each planner imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses Storyboard Illustration Prompt and prevents tag distillation."
-                        enabled={gameStoryboardUseDirectScenePrompt}
-                        onToggle={() =>
-                          updateMeta.mutate({
-                            id: chat.id,
-                            gameStoryboardUseDirectScenePrompt: !gameStoryboardUseDirectScenePrompt,
-                          })
-                        }
                       />
                       <AgentSettingsToggle
                         label="Use NovelAI Character Prompts"
@@ -8034,6 +8023,17 @@ export function ChatSettingsDrawer({
                             These format each planner result into the final request sent to the image or video model.
                           </p>
                         </div>
+                        <AgentSettingsToggle
+                          label="Use Storyboard Template"
+                          description="Off sends the planned scene directly."
+                          enabled={gameStoryboardUsePromptTemplate}
+                          onToggle={() =>
+                            updateMeta.mutate({
+                              id: chat.id,
+                              gameStoryboardUsePromptTemplate: !gameStoryboardUsePromptTemplate,
+                            })
+                          }
+                        />
                         <div className="grid gap-2 md:grid-cols-2">
                           <GamePromptTemplateSelect
                             label="Storyboard Illustration Prompt"

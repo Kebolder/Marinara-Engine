@@ -6,6 +6,7 @@ export const STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID = "storyboard-illustr
 export const GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_VARIABLES = [
   "sceneTitleLine",
   "scenePrompt",
+  "finalVisibilityRuleLine",
   "narrativePurposeLine",
   "charactersLine",
   "referenceHandlingLine",
@@ -17,6 +18,7 @@ export const GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_VARIABLES = [
 export const GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE = [
   "${sceneTitleLine}",
   "Scene moment: ${scenePrompt}",
+  "${finalVisibilityRuleLine}",
   "${narrativePurposeLine}",
   "${charactersLine}",
   "${referenceHandlingLine}",
@@ -28,6 +30,7 @@ export const GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE = [
 export const STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE = [
   "${sceneTitleLine}",
   "Storyboard keyframe: ${scenePrompt}",
+  "${finalVisibilityRuleLine}",
   "${referenceHandlingLine}",
   "${appearanceNotesBlock}",
   "${artDirectionLine}",

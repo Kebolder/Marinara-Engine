@@ -251,7 +251,6 @@ export function buildGameSetupSummarySections(source: GameSetupShareSource): Gam
             ? titleCaseToken(config.gameStoryboardVideoPromptTemplateId)
             : "Built-in default",
         },
-        { label: "Direct scene prompts", value: config.gameStoryboardUseDirectScenePrompt ? "On" : "Off" },
       ],
     },
     {
