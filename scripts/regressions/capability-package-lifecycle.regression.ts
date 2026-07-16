@@ -177,13 +177,13 @@ try {
     "../../packages/server/src/services/capability-packages/legacy-capability-migration.js"
   );
 
-  assert.deepEqual(
+  assert.equal(
     buildLegacyChatCapabilityPatch({
       mode: "roleplay",
       metadata: { enableAgents: false, activeAgentIds: ["illustrator", "custom-agent"] },
     }),
-    { activeAgentIds: ["illustrator", "custom-agent", "hierarchical-maps"] },
-    "Legacy capability selection must not alter the agent execution master switch",
+    null,
+    "Legacy capability migration must preserve a chat that did not select Hierarchical Maps",
   );
 
   const migrationSteps: string[] = [];
