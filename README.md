@@ -155,7 +155,7 @@ An optional one-click catalog of 29 first-party agents and feature packages. Fre
 
 - **Writer Agents:** Prose Guardian, Continuity Checker, Narrative Director, Knowledge Retrieval, Knowledge Router, and Card Evolution Auditor.
 - **Tracker Agents:** World State, Expression Engine, Quest Tracker, Background, Character Tracker, Persona Stats, Custom Tracker, and Hierarchical Maps.
-- **Misc Agents:** Echo Chamber, Illustrator, Lorebook Keeper, Combat, Immersive HTML, Music DJ, Haptic Feedback, CYOA Choices, Conversation Calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
+- **Misc Agents:** Echo Chamber, Illustrator, Lorebook Keeper, Combat, Immersive HTML, Music DJ, Haptic Feedback, CYOA Choices, Calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
 
 See the [Downloadable Agents Reference](docs/agents/built-in-agents.md) for modes, behavior, and setup guidance for every package, or browse the [official Agent repository](https://github.com/Pasta-Devs/Marinara-Agents) directly.
 

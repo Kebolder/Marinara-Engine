@@ -3152,7 +3152,7 @@ function VideoGenerationSettings() {
   return (
     <SettingsSection
       title="Video Generation"
-      description="Set default clip lengths and edit reusable video prompts for Game, Gallery, and Conversation Calls."
+      description="Set default clip lengths and edit reusable video prompts for Game, Gallery, and Calls."
       icon={<Film size="0.875rem" />}
       {...getSettingsSectionAnchorProps("video-generation")}
     >
