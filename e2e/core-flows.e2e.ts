@@ -4036,11 +4036,14 @@ test("Roleplay displays a selected background when its file route is GET-only", 
         contentType: "application/json",
         body: JSON.stringify([
           {
+            id: "user:rp-background-smoke.png",
             filename: "rp-background-smoke.png",
             url: backgroundUrl,
             originalName: "Roleplay background smoke",
             tags: [],
             source: "user",
+            createdAt: "2026-07-16T00:00:00.000Z",
+            folderId: null,
           },
         ]),
       });
@@ -4086,5 +4089,128 @@ test("Roleplay displays a selected background when its file route is GET-only", 
     expect(requestedMethods).not.toContain("HEAD");
   } finally {
     await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("Background library organization works with desktop drag and touch drag", async ({ page }, testInfo) => {
+  const suffix = testInfo.project.name.includes("mobile") ? "mobile" : "desktop";
+  const originalFilename = `background-folder-${suffix}.gif`;
+  const uploadResponse = await page.request.post("/api/backgrounds/upload", {
+    multipart: {
+      file: {
+        name: originalFilename,
+        mimeType: "image/gif",
+        buffer: Buffer.from(TRANSPARENT_GIF_BASE64, "base64"),
+      },
+    },
+  });
+  expect(uploadResponse.ok()).toBeTruthy();
+  const uploaded = (await uploadResponse.json()) as { filename: string; url: string };
+  const backgroundId = `user:${uploaded.filename}`;
+  let folderId: string | null = null;
+
+  try {
+    const tagResponse = await page.request.patch(
+      `/api/backgrounds/${encodeURIComponent(uploaded.filename)}/tags`,
+      { data: { tags: ["smoke-folder"] } },
+    );
+    expect(tagResponse.ok()).toBeTruthy();
+
+    await page.goto("/");
+    await page.locator('[data-tour="panel-settings"]').click();
+    await page.getByRole("tab", { name: "Appearance" }).click();
+    await page.getByPlaceholder("Search settings").fill("Backgrounds");
+    await page.getByRole("button", { name: /Backgrounds Section/ }).click();
+
+    await expect(page.getByText("Drag and drop backgrounds to folders, double-click or double-tap to rename.")).toBeVisible();
+    const sortSelect = page.getByLabel("Sort backgrounds");
+    await expect(sortSelect.locator("option")).toHaveText(["A-Z", "Z-A", "Newest", "Oldest"]);
+    await page.getByRole("button", { name: /Tags \(/ }).click();
+    await page.getByRole("button", { name: "smoke-folder", exact: true }).click();
+
+    const backgroundRow = page.locator(`[data-background-id="${backgroundId}"]`);
+    await expect(backgroundRow).toBeVisible();
+    const defaultToggle = backgroundRow.locator("[data-background-default-toggle]");
+    await defaultToggle.scrollIntoViewIfNeeded();
+    const starBefore = await defaultToggle.boundingBox();
+    await defaultToggle.click();
+    await expect(defaultToggle).toHaveAttribute("aria-pressed", "true");
+    const starAfter = await defaultToggle.boundingBox();
+    expect(Math.abs((starAfter?.x ?? 0) - (starBefore?.x ?? 0))).toBeLessThan(1);
+    expect(Math.abs((starAfter?.y ?? 0) - (starBefore?.y ?? 0))).toBeLessThan(1);
+    await defaultToggle.click();
+
+    const foldersBefore = (await (await page.request.get("/api/backgrounds/folders")).json()) as Array<{
+      id: string;
+      name: string;
+    }>;
+    await page.getByRole("button", { name: "New Folder" }).click();
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/backgrounds/folders");
+        const folders = (await response.json()) as Array<{ id: string; name: string }>;
+        const created = folders.find((folder) => !foldersBefore.some((existing) => existing.id === folder.id));
+        folderId = created?.id ?? null;
+        return folderId;
+      })
+      .not.toBeNull();
+
+    const folder = page.locator(`[data-background-folder-id="${folderId}"]`);
+    await expect(folder).toBeVisible();
+    if (testInfo.project.name.includes("mobile")) {
+      await page.evaluate(
+        ({ sourceId, targetFolderId }) => {
+          const source = document.querySelector<HTMLElement>(`[data-background-id="${sourceId}"]`);
+          const handle = source?.querySelector<HTMLElement>("button[title^='Drag']");
+          const target = document.querySelector<HTMLElement>(`[data-background-folder-id="${targetFolderId}"]`);
+          if (!source || !handle || !target) throw new Error("Background touch drag fixtures were not rendered");
+          const startRect = handle.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const start = new Touch({
+            identifier: 1,
+            target: handle,
+            clientX: startRect.left + startRect.width / 2,
+            clientY: startRect.top + startRect.height / 2,
+          });
+          const end = new Touch({
+            identifier: 1,
+            target: handle,
+            clientX: targetRect.left + targetRect.width / 2,
+            clientY: targetRect.top + Math.min(targetRect.height / 2, 20),
+          });
+          handle.dispatchEvent(
+            new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [start], changedTouches: [start] }),
+          );
+          window.dispatchEvent(
+            new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [end], changedTouches: [end] }),
+          );
+          window.dispatchEvent(
+            new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [end] }),
+          );
+        },
+        { sourceId: backgroundId, targetFolderId: folderId! },
+      );
+    } else {
+      await backgroundRow.dragTo(folder);
+    }
+
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/backgrounds");
+        const backgrounds = (await response.json()) as Array<{ id: string; folderId: string | null }>;
+        return backgrounds.find((background) => background.id === backgroundId)?.folderId ?? null;
+      })
+      .toBe(folderId);
+
+    const folderHeader = folder.getByRole("button", { name: /folder .*Double-tap or press F2 to rename/i });
+    await folderHeader.dblclick();
+    const folderNameInput = folder.locator("input");
+    await expect(folderNameInput).toBeVisible();
+    await folderNameInput.fill(`Scenes ${suffix}`);
+    await folderNameInput.press("Enter");
+    await expect(folder.getByText(`Scenes ${suffix}`, { exact: true })).toBeVisible();
+  } finally {
+    if (folderId) await page.request.delete(`/api/backgrounds/folders/${encodeURIComponent(folderId)}`);
+    await page.request.delete(`/api/backgrounds/${encodeURIComponent(uploaded.filename)}`);
   }
 });

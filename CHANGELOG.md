@@ -6,6 +6,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [3.2.2]
 
+### Added
+
+- Added responsive Background library folders, desktop and touch drag-and-drop organization, A-Z/Z-A/Newest/Oldest sorting, and collapsible tag filters without limiting the Background agent's available choices (#3678).
+
 ### Fixed
 
 - Fixed merged Roleplay group prompts stripping every historical speaker-tag example. The latest assistant message now keeps its `<speaker>` wrappers while older tags are still trimmed, and the instruction remains inside `<output_format>` when available or otherwise appends to the last user message (#3673).
@@ -15,6 +19,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed Professor Mari returning blank character or lorebook generation turns, normalized common character-card field names, and made lorebook creation save generated entries atomically (#3674).
 - Fixed Tic-Tac-Toe failing to render when an installed legacy game client expects React on the global scope (#3675).
 - Kept cropped Character and Persona avatars contained inside the Colors message preview, including cards with additional sprites, instead of letting the preview image cover the editor (#3678).
+- Kept the Roleplay-default star anchored in one place when its selected state changes (#3678).
 
 ## [2.3.1]
 
