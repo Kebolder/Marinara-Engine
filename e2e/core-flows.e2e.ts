@@ -81,12 +81,8 @@ test("What's New opens once for each Marinara Engine version", async ({ page }) 
   const announcement = page.getByRole("dialog", { name: "What's New?" });
   await expect(announcement).toBeVisible();
   await expect(announcement.getByText(`Version ${APP_VERSION}`)).toBeVisible();
-  await expect(announcement.getByRole("heading", { name: "Marinara Engine has been updated." })).toBeVisible();
-  await expect(
-    announcement.getByText(
-      "Marinara Engine has been updated! Read the release notes for everything included in this version.",
-    ),
-  ).toBeVisible();
+  await expect(announcement.getByRole("heading", { name: "A quick patch with bug fixes!" })).toBeVisible();
+  await expect(announcement.getByText("Marinara Engine has been updated.", { exact: true })).toHaveCount(0);
   await expect(announcement.getByText("Hierarchical Maps")).toHaveCount(0);
   await expect(announcement.getByText("Tactical Combat Mode in Games")).toHaveCount(0);
   await expect(announcement.getByRole("link", { name: "View release" })).toHaveAttribute(
