@@ -3798,9 +3798,8 @@ export function NoodleView() {
                   const parentReply = reply.parentInteractionId
                     ? (replyById.get(reply.parentInteractionId) ?? null)
                     : null;
-                  const parentActor = parentReply
-                    ? (accountById.get(parentReply.actorAccountId) ?? parentReply.actorSnapshot)
-                    : null;
+                  const parentActorAccount = parentReply ? (accountById.get(parentReply.actorAccountId) ?? null) : null;
+                  const parentActor = parentActorAccount ?? parentReply?.actorSnapshot ?? null;
                   const replyLikes = postInteractions.filter(
                     (interaction) => interaction.type === "like" && interaction.parentInteractionId === reply.id,
                   );
@@ -3853,14 +3852,18 @@ export function NoodleView() {
                           {parentActor && (
                             <p className="mt-0.5 text-[var(--muted-foreground)]">
                               Replying to{" "}
-                              <button
-                                type="button"
-                                onClick={() => openProfile(parentActor)}
-                                className="font-medium text-[var(--noodle-blue)] hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--noodle-blue)]/70"
-                                aria-label={`View @${parentActor.handle} profile`}
-                              >
-                                @{parentActor.handle}
-                              </button>
+                              {parentActorAccount ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openProfile(parentActorAccount)}
+                                  className="font-medium text-[var(--noodle-blue)] hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--noodle-blue)]/70"
+                                  aria-label={`View @${parentActorAccount.handle} profile`}
+                                >
+                                  @{parentActorAccount.handle}
+                                </button>
+                              ) : (
+                                <span className="text-[var(--noodle-blue)]">@{parentActor.handle}</span>
+                              )}
                             </p>
                           )}
                           {editingReplyId === reply.id ? (

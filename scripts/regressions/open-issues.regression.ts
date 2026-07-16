@@ -25,6 +25,7 @@ import {
 } from "../../packages/client/src/lib/slash-commands.js";
 import { getAvatarCropStyle } from "../../packages/client/src/lib/utils.js";
 import { getApiErrorMessage } from "../../packages/client/src/lib/api-client.js";
+import { parseCustomParametersDraft } from "../../packages/client/src/lib/generation-custom-parameters.js";
 import {
   isSameNpcAvatarResource,
   withFreshNpcAvatarRevision,
@@ -1120,5 +1121,28 @@ queuedAbortController.abort(new Error("expected queued abort"));
 await assert.rejects(abortedQueuedImage, /expected queued abort/u);
 releaseBlockingQueuedImage();
 await blockingQueuedImage;
+
+assert.deepEqual(parseCustomParametersDraft('{ "reasoning_effort": high, "awesomesauce": enabled }'), {
+  ok: true,
+  value: { reasoning_effort: "high", awesomesauce: "enabled" },
+});
+assert.deepEqual(
+  parseCustomParametersDraft(
+    '{ "string": "potatoes!", "count": 3, "enabled": true, "empty": null, "list": ["a", 2], "nested": { "mode": "deep" } }',
+  ),
+  {
+    ok: true,
+    value: {
+      string: "potatoes!",
+      count: 3,
+      enabled: true,
+      empty: null,
+      list: ["a", 2],
+      nested: { mode: "deep" },
+    },
+  },
+);
+assert.equal(parseCustomParametersDraft("[1, 2]").ok, false);
+assert.equal(parseCustomParametersDraft('{ "broken": [1, }').ok, false);
 
 console.info("Open-issue regressions passed.");
