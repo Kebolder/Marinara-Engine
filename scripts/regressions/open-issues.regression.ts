@@ -81,6 +81,12 @@ import {
 } from "../../packages/server/src/services/image/illustrator-prompt-review.js";
 import { resolveReviewedImagePromptSubmission } from "../../packages/server/src/services/image/image-prompt-review.js";
 import {
+  cleanupStagedProfileImportAssets,
+  promoteStagedProfileAssets,
+  rollbackPromotedProfileAssets,
+  stageProfileImportAssets,
+} from "../../packages/server/src/services/import/profile-import-assets.js";
+import {
   buildVeniceApiUrl,
   buildVeniceImageRequest,
   normalizeVeniceImageModels,
@@ -291,6 +297,44 @@ assert.deepEqual(
   }),
   [{ id: "chroma", name: "Chroma" }],
 );
+
+const profileImportAssetRoot = mkdtempSync(join(tmpdir(), "marinara-profile-import-atomic-"));
+try {
+  const liveAvatarPath = join(profileImportAssetRoot, "avatars", "character.png");
+  mkdirSync(join(profileImportAssetRoot, "avatars"), { recursive: true });
+  writeFileSync(liveAvatarPath, "live-avatar");
+  await assert.rejects(
+    stageProfileImportAssets(
+      profileImportAssetRoot,
+      [
+        { path: "avatars/character.png", expectedSize: 15, read: () => Buffer.from("imported-avatar") },
+        {
+          path: "gallery/corrupt.png",
+          expectedSize: 8,
+          read: () => {
+            throw new Error("simulated corrupt archive member");
+          },
+        },
+      ],
+      1024,
+    ),
+    /simulated corrupt archive member/u,
+  );
+  assert.equal(readFileSync(liveAvatarPath, "utf8"), "live-avatar");
+
+  const stagedProfileAssets = await stageProfileImportAssets(
+    profileImportAssetRoot,
+    [{ path: "avatars/character.png", expectedSize: 15, read: () => Buffer.from("imported-avatar") }],
+    1024,
+  );
+  await promoteStagedProfileAssets(stagedProfileAssets);
+  assert.equal(readFileSync(liveAvatarPath, "utf8"), "imported-avatar");
+  await rollbackPromotedProfileAssets(stagedProfileAssets);
+  assert.equal(readFileSync(liveAvatarPath, "utf8"), "live-avatar");
+  await cleanupStagedProfileImportAssets(stagedProfileAssets);
+} finally {
+  rmSync(profileImportAssetRoot, { recursive: true, force: true });
+}
 
 const mainPromptConnection: IllustratorPromptConnection = {
   id: "main-prompt-connection",
