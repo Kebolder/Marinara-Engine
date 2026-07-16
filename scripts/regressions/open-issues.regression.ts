@@ -27,6 +27,7 @@ import { getAvatarCropStyle } from "../../packages/client/src/lib/utils.js";
 import { getApiErrorMessage } from "../../packages/client/src/lib/api-client.js";
 import {
   isSameNpcAvatarResource,
+  normalizeNpcAvatarName,
   withFreshNpcAvatarRevision,
   withoutNpcAvatarRevision,
 } from "../../packages/client/src/lib/game-npc-avatar.js";
@@ -47,7 +48,10 @@ import {
   stripConversationPromptTimestamps,
   stripConversationResponseEnvelope,
 } from "../../packages/server/src/services/conversation/transcript-sanitize.js";
-import { resolveInitialGameGmConnectionId } from "../../packages/server/src/services/game/initial-game-setup.js";
+import {
+  GAME_SETUP_GENERATION_TIMEOUT_MS,
+  resolveInitialGameGmConnectionId,
+} from "../../packages/server/src/services/game/initial-game-setup.js";
 import {
   resolveIllustratorPromptRuntime,
   type IllustratorPromptConnection,
@@ -245,6 +249,7 @@ assert.deepEqual(completeProfessorMariPersona.convoBehavior, {
 assert.equal(resolveInitialGameGmConnectionId(undefined, "chat-connection"), "chat-connection");
 assert.equal(resolveInitialGameGmConnectionId("explicit-connection", "chat-connection"), "explicit-connection");
 assert.equal(resolveInitialGameGmConnectionId(undefined, null), null);
+assert.equal(GAME_SETUP_GENERATION_TIMEOUT_MS, 500_000);
 assert.equal(DEFAULT_GENERATION_PARAMS.reasoningEffort, "maximum");
 
 const mainPromptConnection: IllustratorPromptConnection = {
@@ -796,6 +801,7 @@ const refreshedNpcAvatar = withFreshNpcAvatarRevision("/avatars/npc/chat/albedo.
 assert.match(refreshedNpcAvatar, /mariAvatarRevision=/u);
 assert.equal(withoutNpcAvatarRevision(refreshedNpcAvatar), "/avatars/npc/chat/albedo.png?size=small#portrait");
 assert.equal(isSameNpcAvatarResource(refreshedNpcAvatar, "/avatars/npc/chat/albedo.png?size=small#portrait"), true);
+assert.equal(normalizeNpcAvatarName("Director Althea Voss Friendly"), normalizeNpcAvatarName("Director Althea Voss"));
 
 const noodleAvatarCrop = parseNoodleAvatarCrop(
   JSON.stringify({ srcX: 0.25, srcY: 0.1, srcWidth: 0.5, srcHeight: 0.5 }),
