@@ -4,6 +4,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+### Fixed
+
+- Kept existing cropped Character avatars contained inside the Metadata upload preview instead of allowing the image to cover the card editor (#3741).
+
 ## [2.3.3]
 
 ### Added

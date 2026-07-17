@@ -1357,7 +1357,7 @@ function MetadataTab({
         >
           <span
             className={cn(
-              "flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)]",
+              "relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)]",
               !avatarPreview && "mari-avatar-placeholder mari-avatar-placeholder--character",
             )}
           >

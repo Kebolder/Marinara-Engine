@@ -682,6 +682,11 @@ assert.doesNotMatch(agentEditorSource, /fetch\(["']\/api\/game-assets\/pick-loca
 assert.match(agentEditorSource, /api\.post<[^>]+>\(["']\/game-assets\/pick-local-music-folder["']\)/u);
 assert.match(characterEditorSource, /avatar preview/u);
 assert.match(characterEditorSource, /getAvatarCropStyle/u);
+assert.match(
+  characterEditorSource,
+  /"relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl/u,
+  "The Metadata avatar preview must contain absolutely positioned saved crops",
+);
 assert.match(gameJournalSource, /data-game-journal-scroll/u);
 assert.match(gameSurfaceSource, /h-\[min\(42rem,calc\(100dvh-6rem\)\)\]/u);
 assert.match(gameAssetHooksSource, /export function useGameAssetManifest/u);
