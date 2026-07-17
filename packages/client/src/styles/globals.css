@@ -1690,15 +1690,22 @@
 }
 
 /* Pulse ticks update root accent variables every 500ms. Keep dense editor reading
-   surfaces on the selected base accent so Chromium does not rerasterize their text
-   on every tick; headers and explicitly animated chrome continue to pulse. */
-[data-marinara-accent-animation] .mari-editor-content {
+   surfaces and native selectors on the selected base accent so Chromium does not
+   rerasterize their text on every tick; explicit accent chrome continues to pulse. */
+[data-marinara-accent-animation] :where(.mari-editor-content, select) {
   --primary: var(--marinara-app-accent-static);
   --ring: var(--marinara-app-accent-static);
   --marinara-app-accent-solid: var(--marinara-app-accent-static);
   --marinara-app-accent-gradient: var(--marinara-app-accent-static-gradient);
   --marinara-chat-chrome-accent: var(--marinara-app-accent-static);
   --marinara-chat-chrome-accent-gradient: var(--marinara-app-accent-static-gradient);
+}
+
+/* Native select text is painted by the platform. Transitioning an inherited
+   accent border can invalidate that text layer and make the label appear to
+   flicker or shift even though its own color is unchanged. */
+[data-marinara-accent-animation] select {
+  transition: none;
 }
 
 .mari-editor-content-inner {
