@@ -19,6 +19,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Removed the redundant **Maps** and **Conversation Game** kind badges from Agent catalog details while preserving their manifest metadata, catalog filtering, and search labels (#3736).
 - Kept native selector labels and their shared Agent and Lorebook editor shells visually stable while Accent Pulse is enabled, including Hierarchical Maps, Agent Connection Override, Lorebook Prompt Position, and Connection Defaults controls (#3733).
 - Added a clearly labeled avatar upload/replace field above Name in Character Metadata, reusing the same upload and crop flow as the editor portrait so the action is discoverable on desktop and touch devices.
 - Accepted dot or comma decimal input for Connection temperature, top-p, and other generation parameters without truncating fractional values (#3713).

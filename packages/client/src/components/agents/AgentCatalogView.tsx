@@ -24,6 +24,7 @@ import {
   useUninstallCapabilityPackage,
 } from "../../hooks/use-capability-packages";
 import { ApiError, getPrivilegedActionErrorMessage } from "../../lib/api-client";
+import { isAgentCatalogKindBadgeVisible } from "../../lib/agent-catalog-kind-badges";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
@@ -542,7 +543,7 @@ export function AgentCatalogView() {
                     {selected.manifest.description}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {selected.manifest.kind.map((kind) => (
+                    {selected.manifest.kind.filter(isAgentCatalogKindBadgeVisible).map((kind) => (
                       <span
                         key={kind}
                         className="rounded-full border border-[var(--border)] px-2.5 py-1 text-[0.68rem]"
