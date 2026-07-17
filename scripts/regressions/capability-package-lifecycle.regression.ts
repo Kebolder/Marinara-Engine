@@ -168,8 +168,30 @@ try {
   writeRegistry([installedPackage("conversation-calls", ["agent", "conversation-calls"])]);
   seedWhisperModels();
 
-  const { capabilityPackageManager, findCompatibleCapabilityPackageUpdates } = await import(
+  const {
+    capabilityPackageManager,
+    findCompatibleCapabilityPackageUpdates,
+    resolveCapabilityCatalogUrl,
+  } = await import(
     "../../packages/server/src/services/capability-packages/package-manager.service.js"
+  );
+  assert.equal(
+    resolveCapabilityCatalogUrl("2.3.1", ""),
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/v2/catalog.json",
+  );
+  assert.equal(
+    resolveCapabilityCatalogUrl("3.2.2-beta.1", ""),
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/v3/catalog.json",
+  );
+  assert.equal(
+    resolveCapabilityCatalogUrl("development", ""),
+    "https://raw.githubusercontent.com/Pasta-Devs/Marinara-Agents/main/catalog/catalog.json",
+    "Non-release builds must fall back to the legacy catalog instead of requesting a nonexistent lane",
+  );
+  assert.equal(
+    resolveCapabilityCatalogUrl("3.2.2", " https://catalog.example.test/custom.json "),
+    "https://catalog.example.test/custom.json",
+    "An operator catalog override must remain exact and take precedence over Engine lane selection",
   );
   const {
     buildHierarchicalMapsSelectionCorrectionPatch,
