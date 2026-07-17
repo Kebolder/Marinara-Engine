@@ -27,9 +27,9 @@ type ReleaseAnnouncement = {
 // entry still get a one-time update notice and a link to their full release.
 const RELEASE_ANNOUNCEMENTS: Record<string, ReleaseAnnouncement> = {
   "2.3.3": {
-    headline: "A critical stability update.",
+    headline: "We fixed the most glaring issues.",
     intro:
-      "This update repairs Hierarchical Maps activation and upgrade crashes, restores reliable Game message sending, and clears stale Character panel filters so your full library is visible again.",
+      "We’re sorry for the inconvenience caused by the last update. Version 2.3.3 fixes the most disruptive Hierarchical Maps, Game message sending, Character library, and Accent Pulse problems, along with several smaller regressions.",
     highlights: [],
   },
   "2.3.2": {

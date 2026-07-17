@@ -4,6 +4,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+## [2.3.3]
+
 ### Added
 
 - Added `CHAT_GENERATION_TIMEOUT_MS` for slow Conversation, Roleplay, and Game providers and `AUTO_UPDATE_ENABLED=false` for persistent launcher update opt-out on Windows, macOS/Linux, and Termux, without disabling manual updates (#3730).
@@ -11,21 +13,17 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added compatibility-aware official Agent catalog selection so each Engine major installs and updates only from its matching catalog lane (#3712).
 - Added configurable pauses between generated TTS dialogue lines, with the saved preference shared across playback sessions (#3718).
 
-### Fixed
-
-- Kept native selector labels visually stable while Accent Pulse is enabled, including Agent Connection Override, Lorebook Prompt Position, and Connection Defaults controls (#3733).
-- Added a clearly labeled avatar upload/replace field above Name in Character Metadata, reusing the same upload and crop flow as the editor portrait so the action is discoverable on desktop and touch devices.
-- Accepted dot or comma decimal input for Connection temperature, top-p, and other generation parameters without truncating fractional values (#3713).
-- Kept mobile Game CYOA choices visible between compact widget rails and exposed a direct host action from the world-map surface to the full hierarchical map editor (#3691).
-
-## [2.3.3]
-
 ### Changed
 
 - Synchronized the stable release identity as v2.3.3 across the Engine, PWA manifest, Windows installer, Android bootstrap APK, update checks, and Home release link. Android uses `versionName` `2.3.3` with `versionCode` `38` so it updates over every previously published APK.
 
 ### Fixed
 
+- Kept native selector labels and their shared Agent and Lorebook editor shells visually stable while Accent Pulse is enabled, including Hierarchical Maps, Agent Connection Override, Lorebook Prompt Position, and Connection Defaults controls (#3733).
+- Added a clearly labeled avatar upload/replace field above Name in Character Metadata, reusing the same upload and crop flow as the editor portrait so the action is discoverable on desktop and touch devices.
+- Accepted dot or comma decimal input for Connection temperature, top-p, and other generation parameters without truncating fractional values (#3713).
+- Kept mobile Game CYOA choices visible between compact widget rails and exposed a direct host action from the world-map surface to the full hierarchical map editor (#3691).
+- Prevented duplicate style and appearance instructions in image-generation prompts while preserving configured styles through compact-token and final prompt-length limits (#3728).
 - Stopped the v2.3.2 capability migration from selecting Hierarchical Maps in every Roleplay, Visual Novel, and Game chat. A one-time correction removes only the accidental selections from chats without existing map definitions or snapshots, preserving intentional Maps usage and all other agent selections (#3723).
 - Made Hierarchical Maps obey each chat's **Enable Agents** master toggle across Roleplay and Game UI, prompt generation, lorebook previews, retries, tracker state patches, session carryover, and checkpoints. Disabled chats no longer initialize or call Maps services.
 - Quarantined incompatible Hierarchical Maps 1.0.x runtimes before their database adapter can load, preventing the recurring `t.select is not a function` crash while leaving compatible package updates available.
