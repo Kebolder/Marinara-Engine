@@ -602,17 +602,28 @@ function compileGameImagePrompt(
     };
   }
   if (kind === "illustration" && req.preserveFullScenePrompt) {
-    const compiledPrefix = compileImagePrompt({
-      kind,
-      prompt: "",
-      negativePrompt,
-      hardNegative,
-      styleProfiles: req.styleProfiles,
-      styleProfileId: req.styleProfileId,
-      imageDefaults: req.imgDefaults,
-      generatedStyle: req.artStyle,
-      applyPromptModeToSourcePrompt: false,
-    });
+    const compilePrefix = (dedupeAgainstPrompt: string) =>
+      compileImagePrompt({
+        kind,
+        prompt: "",
+        dedupeAgainstPrompt,
+        negativePrompt,
+        hardNegative,
+        styleProfiles: req.styleProfiles!,
+        styleProfileId: req.styleProfileId,
+        imageDefaults: req.imgDefaults,
+        generatedStyle: req.artStyle,
+        applyPromptModeToSourcePrompt: false,
+      });
+    // The preliminary prefix determines how much preserved source text can actually fit.
+    // Compare against only that guaranteed slice so truncation cannot remove the sole style copy.
+    const preliminaryPrefix = compilePrefix(prompt);
+    const preliminaryHeader = [canonicalPrefix, preliminaryPrefix.prompt].filter(Boolean).join(", ");
+    const guaranteedSourceLength = Math.max(
+      0,
+      maxLength - preliminaryHeader.length - (preliminaryHeader && prompt.trim() ? 2 : 0),
+    );
+    const compiledPrefix = compilePrefix(prompt.trim().slice(0, guaranteedSourceLength));
     const protectedPrompt = [canonicalPrefix, compiledPrefix.prompt, prompt.trim()].filter(Boolean).join(", ");
     return {
       prompt: protectedPrompt.slice(0, maxLength),

@@ -2615,6 +2615,201 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "image prompt compilation suppresses exact provider-visible duplicate inputs",
+    run() {
+      const styleProfiles = createDefaultImageStyleProfileSettings();
+      const generatedStyle = "Watercolor fantasy illustration, soft edges, warm palette";
+      const appearance = "silver-furred fox-woman, persimmon kimono, debt-scroll tucked in her sleeve";
+      const countValue = (prompt: string, value: string) =>
+        prompt.toLowerCase().split(value.toLowerCase()).length - 1;
+
+      for (const profile of styleProfiles.profiles) {
+        for (const kind of ["portrait", "background", "illustration"] as const) {
+          const compiled = compileImagePrompt({
+            kind,
+            prompt: `Art style: ${generatedStyle}. A moonlit graveyard scene with one clear subject.`,
+            styleProfiles,
+            styleProfileId: profile.id,
+            generatedStyle,
+            applyPromptModeToSourcePrompt: kind !== "portrait",
+          });
+
+          assert.equal(
+            countValue(compiled.prompt, generatedStyle),
+            1,
+            `${profile.id}/${kind} repeated the generated style: ${compiled.prompt}`,
+          );
+        }
+
+        const sprite = compileImagePrompt({
+          kind: "sprite",
+          prompt: `Single full-body character sprite, ${appearance}, idle pose.`,
+          userPositive: appearance,
+          styleProfiles,
+          styleProfileId: profile.id,
+        });
+        assert.equal(
+          countValue(sprite.prompt, appearance),
+          1,
+          `${profile.id}/sprite repeated the supplied appearance: ${sprite.prompt}`,
+        );
+        assert.match(sprite.prompt, /silver-furred/i);
+        assert.match(sprite.prompt, /persimmon kimono/i);
+        assert.match(sprite.prompt, /debt-scroll/i);
+        if (profile.id === "anime") {
+          const compactAppearance = "natural expression";
+          const compactBudgetPrompt = [
+            ...Array.from({ length: 40 }, (_, index) => `forest detail ${index}`),
+            compactAppearance,
+          ].join(", ");
+          const compactSprite = compileImagePrompt({
+            kind: "sprite",
+            prompt: compactBudgetPrompt,
+            userPositive: compactAppearance,
+            styleProfiles,
+            styleProfileId: profile.id,
+          });
+          assert.equal(
+            countValue(compactSprite.prompt, compactAppearance),
+            1,
+            `compact sprite lost the supplied appearance: ${compactSprite.prompt}`,
+          );
+        }
+
+        const preservedPrompt = `Art direction: ${generatedStyle}. Lyra raises a lantern in the graveyard.`;
+        const preservedPrefix = compileImagePrompt({
+          kind: "illustration",
+          prompt: "",
+          dedupeAgainstPrompt: preservedPrompt,
+          styleProfiles,
+          styleProfileId: profile.id,
+          generatedStyle,
+        });
+        const preservedProviderPrompt = [preservedPrefix.prompt, preservedPrompt].filter(Boolean).join(", ");
+        assert.equal(
+          countValue(preservedProviderPrompt, generatedStyle),
+          1,
+          `${profile.id}/preserved illustration repeated the generated style: ${preservedProviderPrompt}`,
+        );
+        assert.ok(preservedPrefix.diagnostics.removedPositiveDuplicates.includes(generatedStyle));
+      }
+
+      const zImageStyleAlreadyPresent = compileImagePrompt({
+        kind: "portrait",
+        prompt: `Art style: ${generatedStyle}. Centered portrait of Lyra.`,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleAlreadyPresent.prompt, generatedStyle), 1);
+      assert.doesNotMatch(zImageStyleAlreadyPresent.prompt, /Z-Image Turbo prompt that keeps compact narrative/);
+
+      const zImageStyleMissing = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait of Lyra.",
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleMissing.prompt, generatedStyle), 1);
+
+      const zImageStyleOnlyNegated = compileImagePrompt({
+        kind: "portrait",
+        prompt: `Avoid ${generatedStyle}. Centered portrait of Lyra.`,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleOnlyNegated.prompt, generatedStyle), 1);
+      assert.equal(zImageStyleOnlyNegated.diagnostics.removedPositiveDuplicates.includes(generatedStyle), false);
+
+      const zImageAppearanceMissing = compileImagePrompt({
+        kind: "sprite",
+        prompt: "Single full-body character sprite in an idle pose.",
+        userPositive: appearance,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+      });
+      assert.equal(countValue(zImageAppearanceMissing.prompt, appearance), 1);
+
+      const compactBudgetPrompt = [
+        ...Array.from({ length: 40 }, (_, index) => `blue eyes detail ${index}`),
+        `Art style: ornate rococo oil painting`,
+      ].join(", ");
+      for (const profileId of ["anime", "danbooru", "realistic", "painterly"] as const) {
+        const compact = compileImagePrompt({
+          kind: "portrait",
+          prompt: compactBudgetPrompt,
+          styleProfiles,
+          styleProfileId: profileId,
+          generatedStyle: "ornate rococo oil painting",
+        });
+        assert.equal(
+          countValue(compact.prompt, "ornate rococo oil painting"),
+          1,
+          `${profileId} compact prompt lost the configured style: ${compact.prompt}`,
+        );
+      }
+
+      const semicolonNegation = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait; avoid ornate rococo oil painting",
+        styleProfiles,
+        styleProfileId: "danbooru",
+        generatedStyle: "ornate rococo oil painting",
+      });
+      assert.equal(countValue(semicolonNegation.prompt, "ornate rococo oil painting"), 1);
+      assert.match(semicolonNegation.negativePrompt, /ornate rococo oil painting/i);
+
+      const embeddedNegation = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait, avoid ornate rococo oil painting, blue eyes",
+        styleProfiles,
+        styleProfileId: "anime",
+        generatedStyle: "ornate rococo oil painting",
+      });
+      assert.equal(countValue(embeddedNegation.prompt, "ornate rococo oil painting"), 1);
+      assert.match(embeddedNegation.negativePrompt, /ornate rococo oil painting/i);
+    },
+  },
+  {
+    name: "preserved storyboard prompts retain one configured style through final truncation",
+    async run() {
+      const generatedStyle = "ornate rococo oil painting";
+      const longScene = `${"moonlit forest atmosphere ".repeat(280).slice(0, 6900)} Art direction: ${generatedStyle}.`;
+      const compiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "style-truncation-regression",
+        prompt: "A moonlit forest scene.",
+        artStyle: generatedStyle,
+        preserveFullScenePrompt: true,
+        dynamicPromptGenerator: async () => longScene,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+
+      assert.equal(compiled.prompt.length, 7000);
+      assert.equal(compiled.prompt.toLowerCase().split(generatedStyle).length - 1, 1);
+
+      const styleLeadingScene = `Art direction: ${generatedStyle}. ${"moonlit forest atmosphere ".repeat(280)}`;
+      const styleLeading = await buildSceneIllustrationProviderPrompt({
+        chatId: "style-deduplication-regression",
+        prompt: "A moonlit forest scene.",
+        artStyle: generatedStyle,
+        preserveFullScenePrompt: true,
+        dynamicPromptGenerator: async () => styleLeadingScene,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.equal(styleLeading.prompt.toLowerCase().split(generatedStyle).length - 1, 1);
+    },
+  },
+  {
     name: "danbooru illustration prompts preserve generated tags",
     run() {
       const compiled = compileImagePrompt({

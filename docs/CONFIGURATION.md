@@ -17,7 +17,14 @@ You might edit configuration when you want to:
 
 Almost everything else, like your AI provider keys, characters, and chat options, is set inside the app, not here. To add an AI provider, see [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
 
-Optional first-party agents are also managed inside the app. Open **Agents → Download Agents** to install or uninstall them. On every server startup, installed official packages check the [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog and automatically upgrade to the newest version compatible with the running Engine before package runtimes activate. The same behavior applies to desktop, Docker, and Termux-hosted Android installations; iOS and other browser clients use the packages installed on their Marinara host server. Packages live under `DATA_DIR/capability-packages`, so Docker volumes, custom data directories, backups, and normal upgrades preserve them. Existing packages continue working at their installed version when outbound GitHub HTTPS is unavailable or an update fails verification.
+Optional first-party agents are also managed inside the app. Open **Agents → Download Agents** to install or uninstall them. Marinara automatically selects the [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog lane matching its Engine major version.
+
+Package lifecycle and storage:
+
+- **Updates:** On every server startup, already-installed official packages automatically upgrade to the newest compatible version before their runtimes activate and self-check. A fresh install remains empty until you choose packages.
+- **Platforms:** The same behavior applies to desktop, Docker, and Termux-hosted Android installations. iOS and other browser clients use the packages installed on their Marinara host server.
+- **Persistence:** Packages live under `DATA_DIR/capability-packages`. Docker volumes, custom data directories, backups, and normal upgrades preserve them.
+- **Offline resilience:** Existing packages continue working at their installed version when outbound GitHub HTTPS is unavailable or an update fails verification.
 
 ## Where the .env file is
 
