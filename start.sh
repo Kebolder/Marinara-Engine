@@ -13,6 +13,34 @@ echo ""
 # Navigate to script directory
 cd "$(dirname "$0")"
 
+SKIP_UPDATE=0
+for arg in "$@"; do
+    case "$arg" in
+        --skip-update|--no-update) SKIP_UPDATE=1 ;;
+        -h|--help)
+            echo "Usage: ./start.sh [--skip-update]"
+            exit 0
+            ;;
+        *)
+            echo "  [ERROR] Unknown option: $arg"
+            exit 1
+            ;;
+    esac
+done
+
+# Load launcher settings before the update decision. Server settings are reused below.
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+
+AUTO_UPDATE_ENABLED_NORMALIZED=$(printf '%s' "${AUTO_UPDATE_ENABLED:-true}" | tr '[:upper:]' '[:lower:]' | tr -d '\r ')
+case "$AUTO_UPDATE_ENABLED_NORMALIZED" in
+  0|false|no|off) AUTO_UPDATE_DISABLED=1 ;;
+  *) AUTO_UPDATE_DISABLED=0 ;;
+esac
+
 # ── Check Node.js ──
 if ! command -v node &> /dev/null; then
     echo "  [ERROR] Node.js is not installed."
@@ -98,7 +126,11 @@ has_git_worktree_changes() {
 }
 
 # ── Auto-update from Git ──
-if [ -d ".git" ]; then
+if [ "$SKIP_UPDATE" = "1" ]; then
+    echo "  [OK] Skipping update check; starting the current local install."
+elif [ "$AUTO_UPDATE_DISABLED" = "1" ]; then
+    echo "  [OK] Automatic Engine updates disabled by AUTO_UPDATE_ENABLED=false."
+elif [ -d ".git" ]; then
     echo "  [..] Checking for updates..."
     OLD_HEAD=$(git rev-parse HEAD 2>/dev/null)
     CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || true)
@@ -211,13 +243,6 @@ if [ ! -d "node_modules" ] || ! node scripts/check-workspace-install.mjs >/dev/n
     echo "       This may take a few minutes."
     echo ""
     run_pnpm install --force
-fi
-
-# Load .env if present (respects user overrides)
-if [ -f .env ]; then
-  set -a
-  . ./.env
-  set +a
 fi
 
 # ── Optional AI sprite background remover ──

@@ -81,6 +81,6 @@ The hidden arc is stored with the **Narrative Director** agent. Clearing your ch
 
 ## Related guides
 
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Roleplay Mode: Getting Started](getting-started.md)
 - [Guided Generation and Impersonate](../chats/guided-and-impersonate.md)

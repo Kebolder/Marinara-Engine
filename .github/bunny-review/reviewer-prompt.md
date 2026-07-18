@@ -97,7 +97,7 @@ When the packet includes prior Bunny findings or repair contracts from earlier h
 Treat these as high-signal Marinara review concerns:
 
 - Product behavior placed outside its owning package or mode.
-- `packages/shared` importing React, DOM, Fastify, Drizzle, filesystem, network, or provider SDK code; it must stay the runtime-agnostic contract.
+- `packages/shared` importing React, DOM, Fastify, server-storage, filesystem, network, or provider SDK code; it must stay the runtime-agnostic contract.
 - Client code calling the server with raw `fetch()` instead of the `@/lib/api-client` wrapper, putting async logic in Zustand stores, or adding barrel/index files.
 - Server code using `console.*` instead of the shared Pino logger, logging errors without the error object first, or putting domain logic in route handlers instead of services.
 - Chat, roleplay, and game mode behavior crossing ownership boundaries, or shared generation/prompt changes silently altering an unrelated mode.

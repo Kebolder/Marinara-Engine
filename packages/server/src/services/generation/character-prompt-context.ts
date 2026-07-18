@@ -1,6 +1,7 @@
 import {
   formatRpgStatsForPrompt,
   nameToXmlTag,
+  normalizeRpgStatPools,
   resolveMacros,
   type CharacterMacroProfile,
   type MacroContext,
@@ -27,6 +28,7 @@ export type CharacterPromptInfo = {
   talkativeness: number;
   avatarPath: string | null;
   avatarCrop: unknown | null;
+  rpgStats?: RPGStatsConfig;
   /** Conversation-only: cosmetic display name + whether to declare it on the card. */
   convoDisplayName?: string;
   convoDisplayNameInCard?: boolean;
@@ -42,6 +44,35 @@ type GenerationPromptMessage = {
 };
 
 type WrapFormat = "xml" | "markdown" | "none";
+
+/** Normalize persisted character-card RPG data before prompt consumers access it. */
+export function normalizeCharacterRpgStats(value: unknown): RPGStatsConfig | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Partial<RPGStatsConfig>;
+  if (raw.enabled !== true) return undefined;
+  const pools = normalizeRpgStatPools(raw as RPGStatsConfig);
+  const attributes = Array.isArray(raw.attributes)
+    ? raw.attributes
+        .filter(
+          (attribute): attribute is { name: string; value: number } =>
+            typeof attribute === "object" &&
+            attribute !== null &&
+            typeof attribute.name === "string" &&
+            !!attribute.name.trim() &&
+            typeof attribute.value === "number" &&
+            Number.isFinite(attribute.value),
+        )
+        .map((attribute) => ({ name: attribute.name.trim(), value: attribute.value }))
+    : [];
+  const hpPool = pools[0] ?? { value: 100, max: 100 };
+  return {
+    enabled: true,
+    attributes,
+    hp: { value: hpPool.value, max: hpPool.max },
+    pools,
+  };
+}
+
 type CharacterFallbackFieldKey =
   | "description"
   | "personality"
@@ -128,6 +159,7 @@ export async function loadCharacterPromptInfo({
       talkativeness: Math.max(0, Math.min(1, Number(charData.extensions?.talkativeness ?? 0.5))),
       avatarPath: (charRow.avatarPath as string) ?? null,
       avatarCrop: charData.extensions?.avatarCrop ?? null,
+      rpgStats: normalizeCharacterRpgStats(charData.extensions?.rpgStats),
       convoDisplayName:
         typeof charData.extensions?.convoDisplayName === "string" ? charData.extensions.convoDisplayName : undefined,
       convoDisplayNameInCard: charData.extensions?.convoDisplayNameInCard === true,
@@ -254,15 +286,17 @@ export function injectIdentityFallbackMessages(args: {
         ? `Conversation display name: ${sanitizePromptLeaf(convoName, args.wrapFormat)}\n`
         : "";
 
-    const fieldsToInject = namedProfilePresent
-      ? []
-      : CHARACTER_FALLBACK_FIELDS.flatMap((field) => {
-          const value = resolvedFields[field.key];
-          if (!value.trim()) return [];
-          if (sourceReferencesAnyMacro(promptTemplateSources, field.macroAliases)) return [];
-          if (contentIncludesResolvedField(allContent, value)) return [];
-          return [{ label: field.label, value }];
-        });
+    const fieldsToInject = CHARACTER_FALLBACK_FIELDS.flatMap((field) => {
+      // A custom Conversation prompt may already provide a named profile while
+      // omitting the card's Advanced System Prompt. Preserve the custom profile,
+      // but never let its presence suppress character-authored instructions.
+      if (namedProfilePresent && field.key !== "systemPrompt") return [];
+      const value = resolvedFields[field.key];
+      if (!value.trim()) return [];
+      if (sourceReferencesAnyMacro(promptTemplateSources, field.macroAliases)) return [];
+      if (contentIncludesResolvedField(allContent, value)) return [];
+      return [{ label: field.label, value }];
+    });
     const fieldParts = wrapFieldEntries(fieldsToInject, args.wrapFormat);
     if (fieldParts.length === 0 && !convoNameLine) continue;
 

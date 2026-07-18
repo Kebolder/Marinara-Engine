@@ -27,6 +27,7 @@ import { logger } from "../lib/logger.js";
 // origins can't grow process memory without bound.
 const MAX_ANNOUNCED_REJECTED_ORIGINS = 2048;
 const announcedRejectedOrigins = new Set<string>();
+const EXPOSED_RESPONSE_HEADERS = ["X-Marinara-Fallback-Used"];
 
 function announceRejectedOrigin(origin: string) {
   if (announcedRejectedOrigins.has(origin)) return;
@@ -73,7 +74,7 @@ function originIsAllowed(origin: string): boolean {
 
 export type CorsDelegateCallback = (
   err: Error | null,
-  options?: { origin: boolean | string; credentials?: boolean },
+  options?: { origin: boolean | string; credentials?: boolean; exposedHeaders?: string[] },
 ) => void;
 
 /**
@@ -86,20 +87,28 @@ export type CorsDelegateCallback = (
 export function corsDelegate(req: FastifyRequest, callback: CorsDelegateCallback) {
   const origin = firstHeader(req.headers.origin);
   if (!origin) {
-    return callback(null, { origin: true });
+    return callback(null, { origin: true, exposedHeaders: EXPOSED_RESPONSE_HEADERS });
   }
 
   const selfOrigin = selfOriginFromRequest(req);
   if (selfOrigin && origin === selfOrigin) {
-    return callback(null, { origin: true, credentials: getCorsConfig().credentials });
+    return callback(null, {
+      origin: true,
+      credentials: getCorsConfig().credentials,
+      exposedHeaders: EXPOSED_RESPONSE_HEADERS,
+    });
   }
 
   if (originIsAllowed(origin)) {
     const config = getCorsConfig();
     if (config.origin === "*") {
-      return callback(null, { origin: true, credentials: false });
+      return callback(null, { origin: true, credentials: false, exposedHeaders: EXPOSED_RESPONSE_HEADERS });
     }
-    return callback(null, { origin: true, credentials: config.credentials });
+    return callback(null, {
+      origin: true,
+      credentials: config.credentials,
+      exposedHeaders: EXPOSED_RESPONSE_HEADERS,
+    });
   }
 
   announceRejectedOrigin(origin);

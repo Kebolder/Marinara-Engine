@@ -16,6 +16,8 @@ export interface CompiledImagePrompt {
 export interface CompileImagePromptInput {
   kind: ImagePromptKind;
   prompt: string;
+  /** Additional provider-visible prompt text used only to suppress exact repeated inputs. */
+  dedupeAgainstPrompt?: string | null;
   negativePrompt?: string | null;
   styleProfiles: ImageStyleProfileSettings;
   styleProfileId?: string | null;
@@ -29,6 +31,31 @@ export interface CompileImagePromptInput {
 }
 
 export function compileImagePrompt(input: CompileImagePromptInput): CompiledImagePrompt {
+  const initial = compileImagePromptPass(input, false, false);
+  const generatedStyle = input.generatedStyle?.trim() ?? "";
+  const userPositive = input.userPositive?.trim() ?? "";
+  if (!generatedStyle && !userPositive) return initial;
+
+  // Only trust deduplication after transformation and compaction. If they removed the
+  // source copy, rebuild with explicit inputs protected from the compacting budget.
+  const { fragmentMode } = resolveImagePromptCompilationMode(input, initial.profile);
+  const providerVisiblePrompt = [initial.prompt, input.dedupeAgainstPrompt].filter(Boolean).join("\n");
+  const protectGeneratedStyle =
+    Boolean(generatedStyle) &&
+    !promptContainsPositiveNormalizedValue(providerVisiblePrompt, generatedStyle, fragmentMode);
+  const protectUserPositive =
+    Boolean(userPositive) &&
+    !promptContainsPositiveNormalizedValue(providerVisiblePrompt, userPositive, fragmentMode);
+  if (!protectGeneratedStyle && !protectUserPositive) return initial;
+
+  return compileImagePromptPass(input, protectGeneratedStyle, protectUserPositive);
+}
+
+function compileImagePromptPass(
+  input: CompileImagePromptInput,
+  protectGeneratedStyle: boolean,
+  protectUserPositive: boolean,
+): CompiledImagePrompt {
   const profile = findImageStyleProfile(
     input.styleProfiles,
     input.styleProfileId || input.imageDefaults?.styleProfileId || input.styleProfiles.defaultProfileId,
@@ -39,21 +66,24 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const movedNegativeFragments: string[] = [];
 
   const generatedStyle = input.generatedStyle?.trim() ?? "";
+  const userPositive = input.userPositive?.trim() ?? "";
+  const {
+    preserveGeneratedPrompt,
+    compactPrompt,
+    fragmentMode,
+  } = resolveImagePromptCompilationMode(input, profile);
+  const duplicateComparisonPrompt = [input.prompt, input.dedupeAgainstPrompt].filter(Boolean).join("\n");
+  const generatedStylePart = protectGeneratedStyle
+    ? generatedStyle
+    : omitPromptValueAlreadyPresent(generatedStyle, duplicateComparisonPrompt, fragmentMode, positiveDiagnostics);
+  const userPositivePart = protectUserPositive
+    ? userPositive
+    : omitPromptValueAlreadyPresent(userPositive, duplicateComparisonPrompt, fragmentMode, positiveDiagnostics);
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
-  const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
-  const applyPromptModeToSourcePrompt = input.applyPromptModeToSourcePrompt === true;
-  const preserveGeneratedPrompt =
-    !applyPromptModeToSourcePrompt &&
-    (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
-  const compactTags = !applyPromptModeToSourcePrompt && !preserveGeneratedPrompt && taggedPromptMode;
-  const compactVisualPrompt =
-    profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
-  const compactPrompt = compactTags || compactVisualPrompt;
   const sourceCueText = [input.prompt, input.userPositive].filter(Boolean).join("\n");
   const sourceCues = compactPrompt ? deriveTaggedSourceCues(sourceCueText) : [];
   const profileSubjectTags = reconcileProfileSubjectTags(profile.subjectTags[input.kind] ?? "", sourceCues);
-  const fragmentMode = compactPrompt ? "tagged" : promptMode;
   const profileStyleText =
     compactPrompt || (profile.styleText && generatedStyle)
       ? ""
@@ -67,9 +97,17 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
     ? [
         { value: promptPrefix, sourcePrompt: false, hardPrefix: true },
         { value: sourceCues.join(", "), sourcePrompt: false },
-        { value: generatedStyle, sourcePrompt: true },
+        {
+          value: generatedStylePart,
+          sourcePrompt: !protectGeneratedStyle,
+          hardPrefix: protectGeneratedStyle,
+        },
         { value: input.prompt, sourcePrompt: true },
-        { value: input.userPositive, sourcePrompt: true },
+        {
+          value: userPositivePart,
+          sourcePrompt: !protectUserPositive,
+          hardPrefix: protectUserPositive,
+        },
         { value: profileSubjectTags, sourcePrompt: false },
         { value: profile.positiveTags, sourcePrompt: false },
       ]
@@ -78,9 +116,9 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
         { value: profile.positiveTags, sourcePrompt: false },
         { value: profileSubjectTags, sourcePrompt: false },
         { value: profileStyleText, sourcePrompt: false },
-        { value: generatedStyle, sourcePrompt: false },
+        { value: generatedStylePart, sourcePrompt: false },
         { value: input.prompt, sourcePrompt: true },
-        { value: input.userPositive, sourcePrompt: true },
+        { value: userPositivePart, sourcePrompt: !protectUserPositive },
       ];
   const negativeParts = [
     negativePromptPrefix,
@@ -128,7 +166,11 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
     hardPrefix.length,
   );
   if (positive.length === 0) {
-    positive = fallbackPositiveFragments(input, promptMode, compactPrompt);
+    positive = fallbackPositiveFragments(
+      [generatedStylePart, input.prompt, userPositivePart],
+      promptMode,
+      compactPrompt,
+    );
   }
   const negative = dedupeFragments(negativeFragments, profile.rules.dedupeStrength, negativeDiagnostics);
 
@@ -144,12 +186,62 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   };
 }
 
+function resolveImagePromptCompilationMode(input: CompileImagePromptInput, profile: ImageStyleProfile) {
+  const promptMode = profile.promptMode;
+  const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
+  const applyPromptModeToSourcePrompt = input.applyPromptModeToSourcePrompt === true;
+  const preserveGeneratedPrompt =
+    !applyPromptModeToSourcePrompt &&
+    (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
+  const compactTags = !applyPromptModeToSourcePrompt && !preserveGeneratedPrompt && taggedPromptMode;
+  const compactVisualPrompt =
+    profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
+  const compactPrompt = compactTags || compactVisualPrompt;
+  return {
+    preserveGeneratedPrompt,
+    compactPrompt,
+    fragmentMode: compactPrompt ? ("tagged" as const) : promptMode,
+  };
+}
+
+function omitPromptValueAlreadyPresent(
+  value: string,
+  prompt: string,
+  promptMode: ImageStyleProfile["promptMode"],
+  diagnostics: string[],
+): string {
+  if (!value || !promptContainsPositiveNormalizedValue(prompt, value, promptMode)) return value;
+  diagnostics.push(value);
+  return "";
+}
+
+function promptContainsPositiveNormalizedValue(
+  prompt: string,
+  value: string,
+  promptMode: ImageStyleProfile["promptMode"],
+): boolean {
+  const normalizedValue = normalizePromptContainmentText(value);
+  if (!normalizedValue) return false;
+  const positivePrompt = splitPromptFragments(prompt, promptMode)
+    .filter((fragment) => !extractNegativeFragment(fragment) && !hasAvoidInstructionPrefix(fragment))
+    .join(" ");
+  return ` ${normalizePromptContainmentText(positivePrompt)} `.includes(` ${normalizedValue} `);
+}
+
+function normalizePromptContainmentText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function fallbackPositiveFragments(
-  input: CompileImagePromptInput,
+  values: Array<string | null | undefined>,
   promptMode: ImageStyleProfile["promptMode"],
   compactPrompt: boolean,
 ): string[] {
-  const fallbackFragments = [input.generatedStyle, input.prompt, input.userPositive]
+  const fallbackFragments = values
     .flatMap((value) => splitPromptFragments(value, "natural"))
     .filter((fragment) => !extractNegativeFragment(fragment) && !hasAvoidInstructionPrefix(fragment))
     .map((fragment) => cleanPromptFragment(fragment, promptMode))

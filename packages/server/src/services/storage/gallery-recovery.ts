@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, statSync } from "fs";
 import { logger } from "../../lib/logger.js";
 import { join, extname } from "path";
-import { eq } from "drizzle-orm";
+import { eq } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { chatImages, chats } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

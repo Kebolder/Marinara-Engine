@@ -1,6 +1,9 @@
 export interface CharacterDisplayInfo {
   name: string;
   comment?: string | null;
+  description?: string | null;
+  tags?: string[];
+  creator?: string | null;
 }
 
 const LOOKUP_ALIAS_SEPARATOR = /\s+(?:-|\/|\||:|\u2013|\u2014)\s+/;
@@ -48,6 +51,20 @@ export function getCharacterLookupAliases(character: CharacterDisplayInfo | null
   return aliases;
 }
 
+export function characterMatchesSearch(
+  character: CharacterDisplayInfo | null | undefined,
+  search: string,
+): boolean {
+  const query = search.trim().toLowerCase();
+  if (!query) return true;
+  return [
+    ...getCharacterLookupAliases(character),
+    character?.description ?? "",
+    character?.creator ?? "",
+    ...(character?.tags ?? []),
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
 export function parseCharacterDisplayData(raw: { data: unknown; comment?: string | null }): CharacterDisplayInfo {
   const comment = typeof raw.comment === "string" ? raw.comment.trim() : "";
 
@@ -55,8 +72,13 @@ export function parseCharacterDisplayData(raw: { data: unknown; comment?: string
     const parsed = typeof raw.data === "string" ? JSON.parse(raw.data) : raw.data;
     const record = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
     const name = typeof record?.name === "string" && record.name.trim() ? record.name.trim() : "Unknown";
-    return { name, comment };
+    const description = typeof record?.description === "string" ? record.description : "";
+    const creator = typeof record?.creator === "string" ? record.creator : "";
+    const tags = Array.isArray(record?.tags)
+      ? record.tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+      : [];
+    return { name, comment, description, tags, creator };
   } catch {
-    return { name: "Unknown", comment };
+    return { name: "Unknown", comment, description: "", tags: [], creator: "" };
   }
 }

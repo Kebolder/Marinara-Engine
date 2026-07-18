@@ -11,6 +11,8 @@ The **Characters panel** is the character list in the side panel. It holds every
 - Click the **Import** button (the download icon) to import a character file.
 - Click the **Select** button (the check icon) to turn on multi-select mode for bulk actions.
 
+The full library uses the chroma text color selected in **Settings**, and keeps your selected card, sort order, and scroll position when you open a character for editing and return.
+
 Each character row shows the avatar, name, an optional title line, the creator and version, up to 3 tags, and a rough token estimate. A small star badge marks a favorite. When you hover a row, a **Duplicate** button and a **Delete** button appear.
 
 If you have many characters, a **Load more** button appears at the bottom. Click it to load the next page of characters.
@@ -39,12 +41,12 @@ You can combine plain text and exclusion in the same box. For example, `mage -ta
 
 Next to the search box is the sort dropdown. Pick one of these orders:
 
-| Option | What it does |
-| --- | --- |
-| **A-Z** | Names from A to Z. |
-| **Z-A** | Names from Z to A. |
-| **Newest** | Most recently created first. |
-| **Oldest** | Oldest created first. |
+| Option        | What it does                    |
+| ------------- | ------------------------------- |
+| **A-Z**       | Names from A to Z.              |
+| **Z-A**       | Names from Z to A.              |
+| **Newest**    | Most recently created first.    |
+| **Oldest**    | Oldest created first.           |
 | **Favorites** | Favorites first, then the rest. |
 
 ## Folders

@@ -2,7 +2,7 @@
 // Full-Page Connection Editor
 // Click a connection → opens this editor (like presets/characters)
 // ──────────────────────────────────────────────
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ChangeEvent } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import {
   useConnection,
@@ -498,13 +498,15 @@ export function ConnectionEditor() {
   const selectedVideoProvider = videoSourceToProviderOption(selectedVideoService);
   const selectedVideoDefaultsService = videoSelectionToDefaultsService(selectedVideoService, localModel, localBaseUrl);
   const apiKeyLink =
-    localProvider === "video_generation" && selectedVideoDefaultsService === "xai"
-      ? API_KEY_LINKS.xai
-      : localProvider === "video_generation" && selectedVideoDefaultsService === "openrouter"
-        ? API_KEY_LINKS.openrouter
-        : localProvider === "video_generation" && selectedVideoDefaultsService === "seedance"
-          ? { label: "Open Seedance API docs", url: "https://seedance2.ai/api-docs" }
-          : API_KEY_LINKS[localProvider];
+    localProvider === "image_generation" && selectedImageService === "venice"
+      ? { label: "Get your Venice API key", url: "https://venice.ai/settings/api" }
+      : localProvider === "video_generation" && selectedVideoDefaultsService === "xai"
+        ? API_KEY_LINKS.xai
+        : localProvider === "video_generation" && selectedVideoDefaultsService === "openrouter"
+          ? API_KEY_LINKS.openrouter
+          : localProvider === "video_generation" && selectedVideoDefaultsService === "seedance"
+            ? { label: "Open Seedance API docs", url: "https://seedance2.ai/api-docs" }
+            : API_KEY_LINKS[localProvider];
 
   useEffect(() => {
     if (localProvider !== "image_generation" || !selectedImageDefaultsService) {
@@ -1991,7 +1993,7 @@ export function ConnectionEditor() {
               </div>
               <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
                 {isGrokSubscriptionProvider
-                  ? "Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. A value you set here is used as-is — raise it gradually, and lower it if requests start failing with \"max turns reached\"."
+                  ? 'Grok CLI starts at a safer 32k window because very large roleplay prompts can make the local CLI hit its own turn limit. A value you set here is used as-is — raise it gradually, and lower it if requests start failing with "max turns reached".'
                   : "This is auto-set when selecting a model from the list. Override manually if needed."}
               </p>
             </FieldGroup>
@@ -2207,50 +2209,12 @@ export function ConnectionEditor() {
             </FieldGroup>
           )}
 
-          {/* ── Default for Agents ── */}
-          <FieldGroup
-            label={
-              isImageGenerationProvider
-                ? "Default for Illustrator"
-                : isVideoGenerationProvider
-                  ? "Default for Videos"
-                  : "Default for Agents"
-            }
-            icon={<Sparkles size="0.875rem" className="text-sky-400" />}
-            help={
-              isImageGenerationProvider
-                ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
-                : isVideoGenerationProvider
-                  ? "When enabled, Marinara uses this video generation connection by default when a chat has no specific Video Generation Connection assigned."
-                  : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
-            }
-          >
-            <SettingsSwitch
-              label={
-                isImageGenerationProvider
-                  ? "Use as default Illustrator agent connection"
-                  : isVideoGenerationProvider
-                    ? "Use as default video connection"
-                    : "Use as default agent connection"
-              }
-              checked={localDefaultForAgents}
-              onChange={(checked) => {
-                setLocalDefaultForAgents(checked);
-                markDirty();
-              }}
-              className="px-2 py-1"
-            />
-            {isImageGenerationProvider && (
-              <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Only one image generation connection should be marked as the default for the Illustrator agent.
-              </p>
-            )}
-            {isVideoGenerationProvider && (
-              <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Only one video generation connection should be marked as the default video connection.
-              </p>
-            )}
-            {isVideoGenerationProvider && selectedVideoDefaultsService === "seedance" && localVideoDefaults && (
+          {isVideoGenerationProvider && selectedVideoDefaultsService === "seedance" && localVideoDefaults && (
+            <FieldGroup
+              label="Seedance References"
+              icon={<Sparkles size="0.875rem" className="text-sky-400" />}
+              help="Controls temporary reference-frame uploads for Seedance video generations using this connection."
+            >
               <div className="mx-2 mt-2 space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
                 <SettingsSwitch
                   label="Upload Seedance reference frames temporarily"
@@ -2307,8 +2271,8 @@ export function ConnectionEditor() {
                   Marinara install.
                 </p>
               </div>
-            )}
-          </FieldGroup>
+            </FieldGroup>
+          )}
 
           {/* ── Claude (Subscription) — Fast Mode toggle ── */}
           {isClaudeSubscriptionProvider && (
@@ -2865,6 +2829,37 @@ function ImageGenerationDefaultsPanel({
     });
   };
 
+  const handleNovelAiStylePlateUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose an image file for the NovelAI style plate.");
+      input.value = "";
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("The NovelAI style plate must be 10 MB or smaller.");
+      input.value = "";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        updateNovelAi({ styleReferenceImage: reader.result });
+      } else {
+        toast.error("The NovelAI style plate could not be read.");
+      }
+      input.value = "";
+    };
+    reader.onerror = () => {
+      toast.error("The NovelAI style plate could not be read.");
+      input.value = "";
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <FieldGroup
       label="Local Image Defaults"
@@ -3151,6 +3146,70 @@ function ImageGenerationDefaultsPanel({
                     options={NOVELAI_NOISE_SCHEDULE_OPTIONS}
                     onChange={(noiseSchedule) => updateNovelAi({ noiseSchedule })}
                   />
+                </div>
+                <SettingsCheckbox
+                  label="Choose resolution from character count"
+                  description="Uses portrait for one subject, square for two, and landscape for three or more. Free-form prompts without a detectable count keep the requested size."
+                  checked={novelai.dynamicResolutionBySubjectCount}
+                  onChange={(checked) => updateNovelAi({ dynamicResolutionBySubjectCount: checked })}
+                  className="bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]"
+                  labelClassName="text-[var(--foreground)]"
+                />
+                <div className="space-y-2 rounded-lg bg-[var(--card)] px-3 py-2 ring-1 ring-[var(--border)]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[0.625rem] font-medium text-[var(--foreground)]">NovelAI V4.5 style plate</p>
+                      <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                        A persistent style-only reference applied first to every V4.5 generation, including scenes without characters.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]">
+                        <Upload size="0.6875rem" />
+                        {novelai.styleReferenceImage ? "Replace" : "Choose image"}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          className="sr-only"
+                          onChange={handleNovelAiStylePlateUpload}
+                        />
+                      </label>
+                      {novelai.styleReferenceImage && (
+                        <button
+                          type="button"
+                          onClick={() => updateNovelAi({ styleReferenceImage: null })}
+                          className="rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {novelai.styleReferenceImage && (
+                    <img
+                      src={novelai.styleReferenceImage}
+                      alt="NovelAI style plate preview"
+                      className="h-24 w-full rounded-md object-cover ring-1 ring-[var(--border)]"
+                    />
+                  )}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <NumberSetting
+                      label="Style Strength"
+                      value={novelai.styleReferenceStrength}
+                      min={0}
+                      max={1}
+                      integer={false}
+                      onCommit={(styleReferenceStrength) => updateNovelAi({ styleReferenceStrength })}
+                    />
+                    <NumberSetting
+                      label="Style Fidelity"
+                      value={novelai.styleReferenceFidelity}
+                      min={0}
+                      max={1}
+                      integer={false}
+                      onCommit={(styleReferenceFidelity) => updateNovelAi({ styleReferenceFidelity })}
+                    />
+                  </div>
                 </div>
                 <p className="text-[0.55rem] text-[var(--muted-foreground)]">
                   These values are sent with native NovelAI requests and embedded in generated PNG metadata for

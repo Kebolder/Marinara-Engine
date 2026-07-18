@@ -198,6 +198,15 @@ export function groupConsecutiveSegments(segments: SpeakerSegment[]): GroupedSeg
 }
 
 /**
+ * Expand the source lines inside one canonical speaker group for Bubble display.
+ * Reaction indexes stay attached to the stable group while inherited `Name:`
+ * lines can still render as individual message bubbles.
+ */
+export function splitGroupedSegmentDisplayLines(segment: GroupedSegment): string[] {
+  return segment.lines.flatMap((chunk) => chunk.split(/\r?\n/)).filter((line) => line.trim().length > 0);
+}
+
+/**
  * The full grouped-segment derivation for a message's content: complete speaker
  * tags win; the `Name: ` prefix format is only consulted when no tag exists;
  * null when the content has no recognizable speaker structure. This is the

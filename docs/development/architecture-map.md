@@ -45,7 +45,7 @@ Current contents:
 
 Rules:
 
-- No React, DOM, Fastify, Drizzle, filesystem, network, or provider SDK code.
+- No React, DOM, Fastify, server storage, filesystem, network, or provider SDK code.
 - Move code here only when both client and server need the same contract or pure algorithm.
 - Do not turn `shared` into a general dumping ground for client-only helpers.
 
@@ -76,11 +76,11 @@ Important current crossovers:
 
 ### packages/server
 
-Fastify API, file-backed storage, a temporary in-memory SQL compatibility index, and provider integrations. It currently holds several hundred source files.
+Fastify API, file-native storage, and provider integrations. It currently holds several hundred source files.
 
 Current top-level shape:
 
-- `app.ts`, `index.ts`: app factory, bootstrap, static serving, file-storage hydration, compatibility migrations, seeders.
+- `app.ts`, `index.ts`: app factory, bootstrap, static serving, file-storage hydration, and seeders.
 - `routes`: many route files. Most are thin CRUD APIs, but `generate.routes.ts` and `game.routes.ts` are large orchestration files. A `routes/generate/` folder holds the first extracted pieces of the generation path.
 - `services/storage`: storage facade layer for chats, characters, prompts, lorebooks, settings, assets, themes, game state.
 - `services/llm`: provider registry, base provider contract, OpenAI-compatible providers, local sidecar bridge.
@@ -90,8 +90,9 @@ Current top-level shape:
 - `services/sidecar`: local runtime, model management, scene analysis, scene postprocessing.
 - `services/agents`: agent execution and knowledge routing.
 - Feature foundations: `services/import`, `services/lorebook`, `services/image`, `services/haptic`, `services/tools`, `services/extensions`, `services/regex`, `services/professor-mari`, `services/mari-db`, `services/turn-games`, `services/spotify`, `services/video`, `services/generation`, `services/chat-summary`, `services/achievements`, `services/prompt-overrides`, `services/setup`, `services/noodle`, `services/memory-recall`, and `discord-webhook.ts`.
-- `db/schema`: temporary compatibility schema for the in-memory SQL index while durable data lives in `DATA_DIR/storage`.
-- `db/file-backed-store.ts`: the bridge that imports legacy SQLite into JSON snapshots and autosaves runtime changes back to files. See [File Storage Migration (Developers)](file-storage-migration.md).
+- `db/schema`: file-table definitions for data stored under `DATA_DIR/storage`.
+- `db/file-schema.ts`, `db/file-query.ts`: native table metadata and query expressions.
+- `db/file-backed-store.ts`: in-memory table store, transaction boundary, crash recovery, and JSON snapshot persistence. See [File-Native Storage (Developers)](file-storage.md).
 
 Important current crossovers:
 
@@ -310,4 +311,4 @@ For the next cleanup PR, use this order:
 ## Related guides
 
 - [Frontend Architecture (Developers)](frontend.md)
-- [File Storage Migration (Developers)](file-storage-migration.md)
+- [File-Native Storage (Developers)](file-storage.md)

@@ -156,6 +156,7 @@ export function isUnsupportedNoodleVisionInputError(error: unknown): boolean {
     /(?:not supported|unsupported|does not support|invalid content type).{0,100}(?:image|vision|multimodal|image_url)/i.test(
       message,
     ) ||
+    /no (?:available )?endpoints? found.{0,80}(?:image|vision|multimodal|image_url)/i.test(message) ||
     /(?:expected|must be).{0,60}(?:content|message).{0,60}(?:string|text)|(?:expected|must be).{0,60}(?:string|text).{0,60}(?:content|message)|(?:content|message).{0,60}(?:expected|must be).{0,60}(?:string|text)/i.test(message)
   );
 }

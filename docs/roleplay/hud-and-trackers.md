@@ -97,7 +97,7 @@ To set which stat bars and RPG attributes a persona or character starts with, us
 
 ## Related guides
 
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Agents: AI Helpers for Your Chats](../agents/agents-overview.md)
 - [Character Colors and RPG Stats](../characters/colors-and-stats.md)
 - [Roleplay Mode: Getting Started](getting-started.md)

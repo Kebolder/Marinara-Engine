@@ -140,6 +140,18 @@ export function useRemoveNoodleCharacter() {
   });
 }
 
+/** Clear every Noodle invitation source and refresh the bootstrap cache. */
+export function useClearNoodleInvites() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<NoodleBootstrap>("/noodle/invites"),
+    onSuccess: (bootstrap) => {
+      qc.setQueryData<NoodleBootstrap>(noodleKeys.bootstrap(), bootstrap);
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
 export function useCreateNoodlePost() {
   const qc = useQueryClient();
   return useMutation({

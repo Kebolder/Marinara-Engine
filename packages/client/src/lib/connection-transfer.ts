@@ -15,8 +15,10 @@ export type ConnectionTransferRow = {
   anthropicExtendedCacheTtl?: unknown;
   cachingAtDepth?: unknown;
   isDefault?: unknown;
+  fallbackForMain?: unknown;
   useForRandom?: unknown;
   defaultForAgents?: unknown;
+  fallbackForAgents?: unknown;
   embeddingModel?: unknown;
   embeddingBaseUrl?: unknown;
   embeddingConnectionId?: unknown;
@@ -46,8 +48,10 @@ export type SafeConnectionExport = {
   anthropicExtendedCacheTtl: boolean;
   cachingAtDepth: number;
   isDefault: boolean;
+  fallbackForMain: boolean;
   useForRandom: boolean;
   defaultForAgents: boolean;
+  fallbackForAgents: boolean;
   embeddingModel: string;
   embeddingBaseUrl: string;
   embeddingConnectionId: string | null;
@@ -101,8 +105,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
   const defaultParameters = parseDefaultParameters(value.defaultParameters);
   const imageService = asNullableString(value.imageService ?? value.service);
-  const videoService =
-    provider === "video_generation" ? asNullableString(value.videoService ?? value.service) : null;
+  const videoService = provider === "video_generation" ? asNullableString(value.videoService ?? value.service) : null;
 
   return {
     connection: {
@@ -113,8 +116,10 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       model: asString(value.model),
       maxContext: asPositiveInteger(value.maxContext, 128000),
       isDefault: false,
+      fallbackForMain: false,
       useForRandom: false,
       defaultForAgents: false,
+      fallbackForAgents: false,
       enableCaching: asBoolean(value.enableCaching),
       anthropicExtendedCacheTtl: asBoolean(value.anthropicExtendedCacheTtl),
       cachingAtDepth: asNonNegativeInteger(value.cachingAtDepth, 5),
@@ -156,8 +161,10 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     anthropicExtendedCacheTtl: asBoolean(connection.anthropicExtendedCacheTtl),
     cachingAtDepth: asNonNegativeInteger(connection.cachingAtDepth, 5),
     isDefault: asBoolean(connection.isDefault),
+    fallbackForMain: asBoolean(connection.fallbackForMain),
     useForRandom: asBoolean(connection.useForRandom),
     defaultForAgents: asBoolean(connection.defaultForAgents),
+    fallbackForAgents: asBoolean(connection.fallbackForAgents),
     embeddingModel: asString(connection.embeddingModel),
     embeddingBaseUrl: asString(connection.embeddingBaseUrl),
     embeddingConnectionId: asNullableString(connection.embeddingConnectionId),

@@ -6,7 +6,7 @@ New to agents? Read [Agents: AI Helpers for Your Chats](agents-overview.md) firs
 
 ## When to build a custom agent
 
-Marinara Engine ships many built-in agents. See the [Built-in Agents Reference](built-in-agents.md) before you build your own. A built-in agent may already do what you want.
+Marinara Engine offers many official downloadable agents. See the [Downloadable Agents Reference](built-in-agents.md) and the public [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) package repository before you build your own. A catalog agent may already do what you want, and the official manifests provide working package examples.
 
 Build a custom agent when you need something the built-ins do not cover. Good reasons include:
 
@@ -15,14 +15,14 @@ Build a custom agent when you need something the built-ins do not cover. Good re
 - You want to rewrite each reply in a certain style.
 - You want an agent to call your own custom tool.
 
-If a built-in agent is close, copy it instead. In the **Agents** panel, hover an agent card and click **Copy agent**. This makes an editable custom copy.
+If an installed first-party agent is close, copy it instead. In the **Agents** panel, hover its card and click **Copy agent**. This makes an editable custom copy.
 
 ## Before you start
 
 Two facts matter before you build:
 
 1. Agents are set per chat, not per character. Building an agent in the library does not run it. You must add it to a chat and turn on **Enable Agents** in **Chat Settings**.
-2. Custom agents work in every chat mode: Roleplay, Game Mode, and Conversation. Conversation does not expose built-in agents in its picker, but your own custom agents remain available there.
+2. Custom agents work in every chat mode: Roleplay, Game Mode, and Conversation. Official packages appear only in their supported modes, while your own custom agents remain available everywhere.
 
 ## Creating a custom agent
 
@@ -185,6 +185,6 @@ To import, open the **Agents** panel and click **Import agents** for a single fi
 ## Related guides
 
 - [Agents: AI Helpers for Your Chats](agents-overview.md)
-- [Built-in Agents Reference](built-in-agents.md)
+- [Downloadable Agents Reference](built-in-agents.md)
 - [Custom Tools](../extending/custom-tools.md)
 - [Macros](../prompts/macros.md)

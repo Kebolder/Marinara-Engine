@@ -160,7 +160,7 @@ const DOC_ORDER: Record<string, string[]> = {
   development: [
     "architecture-map.md",
     "frontend.md",
-    "file-storage-migration.md",
+    "file-storage.md",
     "noodle-internals.md",
     "writing-extensions.md",
     "ios-pwa-safe-area.md",

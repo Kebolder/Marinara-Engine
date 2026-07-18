@@ -18,7 +18,7 @@ import type {
   TrackerThoughtBubbleDisplay,
 } from "../../../../stores/ui.store";
 import { cn } from "../../../../lib/utils";
-import { visibleText } from "../../lib/tracker-display";
+import { trackerEditableText, visibleText } from "../../lib/tracker-display";
 import {
   makeUniqueCharacterCustomFieldName,
   normalizeCharacterCustomFieldName,
@@ -223,13 +223,16 @@ export function CharacterTrackerCard({
     );
   }
 
-  const customFields = Object.entries(character.customFields ?? {});
+  const customFields = Object.entries((character.customFields ?? {}) as Record<string, unknown>).map(
+    ([name, value]) => [name, value, trackerEditableText(value)] as const,
+  );
   const characterStats = Array.isArray(character.stats) ? character.stats : [];
   const hasDeleteAction = !!onRemove && deleteMode;
   const avatarMedia = characterPicture ?? character.avatarPath ?? null;
   const compactAvatarUpload = characterPicture ? undefined : onUploadAvatar;
   const hasEditableCustomFieldAdd = !!onUpdate && addMode;
-  const characterFieldKey = (field: HideableCharacterField) => characterTrackerLockKey(character, characterIndex, field);
+  const characterFieldKey = (field: HideableCharacterField) =>
+    characterTrackerLockKey(character, characterIndex, field);
   const fieldHidden = (field: HideableCharacterField) =>
     isTrackerFieldHidden(hiddenTrackerFields, characterFieldKey(field));
   const toggleCharacterFieldHidden = (field: HideableCharacterField) => {
@@ -267,9 +270,9 @@ export function CharacterTrackerCard({
     ? "z-[5] mt-0 w-[clamp(2.25rem,28%,3rem)] -translate-y-0.5"
     : "z-[5] mt-0 w-[clamp(3rem,36%,3.75rem)] -translate-y-0.5";
   const avatarSocketSize = hasDenseContent ? "dense" : "regular";
-  const updateCustomField = (oldName: string, nextName: string, nextValue: string) => {
+  const updateCustomField = (oldName: string, nextName: string, nextValue: unknown) => {
     if (!onUpdate) return;
-    const nextFields = { ...(character.customFields ?? {}) };
+    const nextFields: Record<string, unknown> = { ...(character.customFields ?? {}) };
     const trimmedName = resolveCharacterCustomFieldName(nextName, oldName);
     if (
       trimmedName !== oldName &&
@@ -292,7 +295,7 @@ export function CharacterTrackerCard({
     }
     delete nextFields[oldName];
     nextFields[trimmedName] = nextValue;
-    onUpdate({ ...character, customFields: nextFields });
+    onUpdate({ ...character, customFields: nextFields as Record<string, string> });
   };
   const addCharacterStat = () => {
     if (!onUpdate) return;
@@ -479,7 +482,7 @@ export function CharacterTrackerCard({
 
       {(customFields.length > 0 || hasEditableCustomFieldAdd) && (
         <div className={CHARACTER_CUSTOM_FIELD_LIST_CLASS}>
-          {customFields.map(([name, value]) => (
+          {customFields.map(([name, rawValue, displayValue]) => (
             <div
               key={name}
               className={cn(
@@ -491,7 +494,7 @@ export function CharacterTrackerCard({
               {onUpdate ? (
                 <InlineEdit
                   value={name}
-                  onSave={(nextName) => updateCustomField(name, nextName, value)}
+                  onSave={(nextName) => updateCustomField(name, nextName, rawValue)}
                   placeholder="Field"
                   ariaLabel={`${name} field name`}
                   className="min-w-0 px-0.5 py-0 font-medium"
@@ -513,7 +516,7 @@ export function CharacterTrackerCard({
               )}
               {onUpdate ? (
                 <InlineEdit
-                  value={value}
+                  value={displayValue}
                   onSave={(nextValue) => updateCustomField(name, name, nextValue)}
                   placeholder="Value"
                   ariaLabel={`${name} value`}
@@ -536,13 +539,13 @@ export function CharacterTrackerCard({
                 />
               ) : (
                 <span
-                  title={value}
+                  title={displayValue}
                   className={cn(
                     "min-w-0 text-[color:var(--tracker-profile-text)]",
                     readableCustomFields ? "line-clamp-2 whitespace-normal break-words" : "truncate",
                   )}
                 >
-                  {value}
+                  {displayValue}
                 </span>
               )}
               {deleteMode && onUpdate && (

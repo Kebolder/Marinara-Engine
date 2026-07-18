@@ -10,7 +10,6 @@ import {
   Paperclip,
   Keyboard,
   AtSign,
-  Users,
   Languages,
   Loader2,
   FileText,
@@ -18,16 +17,12 @@ import {
   Sparkles,
   WandSparkles,
 } from "lucide-react";
-import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useChatStore } from "../../stores/chat.store";
 import { useAgentStore } from "../../stores/agent.store";
 import { useUIStore } from "../../stores/ui.store";
-import { useUnoGameStore } from "../../stores/uno-game.store";
-import { useChessGameStore } from "../../stores/chess-game.store";
-import { usePokerGameStore } from "../../stores/poker-game.store";
-import { useEightBallGameStore } from "../../stores/eightball-game.store";
+import { useConversationGamesStore } from "../../stores/conversation-games.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../hooks/use-chats";
@@ -36,12 +31,13 @@ import {
   matchSlashCommand,
   shouldExecuteQuickPostAsCommand,
   getSlashCompletions,
+  type ConversationGameSlashContribution,
   type SlashCommand,
   type SlashCommandContext,
 } from "../../lib/slash-commands";
 import { createInputMacroResolverForChat, isPromptPreviewMacro } from "../../lib/chat-macros";
 import { parseChatMetadata } from "../../lib/chat-display";
-import { cn, getAvatarCropStyle, type AvatarCropValue } from "../../lib/utils";
+import { cn, type AvatarCropValue } from "../../lib/utils";
 import { applyTextareaQuoteFormat } from "../../lib/textarea-quotes";
 import { translateDraftText } from "../../lib/draft-translation";
 import { prepareImageAttachment } from "../../lib/chat-attachment-images";
@@ -63,8 +59,8 @@ import {
   type ConversationMediaPickerTab,
   type ConversationMediaPickerTabId,
 } from "./ConversationMediaPickerPanel";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import {
-  buildGuidedGenerationInstructionMessage,
   formatTextQuotes,
   includesTextForMatch,
   MARI_STARTER_CHIPS,
@@ -73,6 +69,7 @@ import {
   startsWithTextForMatch,
   type MariSuggestionChip,
   type Message,
+  isInstalledCapabilityReady,
 } from "@marinara-engine/shared";
 
 interface Attachment {
@@ -164,6 +161,8 @@ function stripLeadingQuote(value: string): string {
 function buildConversationSlashCompletions(
   input: string,
   characters: Array<{ id: string; name: string }> | undefined,
+  availableCapabilityIds: ReadonlySet<string>,
+  conversationGames: readonly ConversationGameSlashContribution[],
 ): ConversationSlashCompletion[] {
   if (!input.startsWith("/")) return [];
 
@@ -220,7 +219,7 @@ function buildConversationSlashCompletions(
       });
   }
 
-  return getSlashCompletions(input)
+  return getSlashCompletions(input, { mode: "conversation", availableCapabilityIds, conversationGames })
     .filter((command) => !isConversationHiddenSlashCommand(command))
     .map((command) => {
       const { value, cursor } = buildSlashCommandPrefill(command, characters);
@@ -302,7 +301,6 @@ interface ConversationInputProps {
   mobileHistoryCollapsed?: boolean;
   onMobileHistoryCollapsedChange?: (collapsed: boolean) => void;
   characterNames?: string[];
-  groupResponseOrder?: string;
   chatCharacters?: Array<{
     id: string;
     name: string;
@@ -313,16 +311,17 @@ interface ConversationInputProps {
   }>;
   onPeekPrompt?: () => void;
   onIllustrate?: () => void | Promise<void>;
+  onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
 }
 
 export function ConversationInput({
   mobileHistoryCollapsed = false,
   onMobileHistoryCollapsedChange,
   characterNames = [],
-  groupResponseOrder,
   chatCharacters,
   onPeekPrompt,
   onIllustrate,
+  onGenerateSelfie,
 }: ConversationInputProps) {
   const [hasInput, setHasInput] = useState(false);
   const [completions, setCompletions] = useState<ConversationSlashCompletion[]>([]);
@@ -345,13 +344,9 @@ export function ConversationInput({
   const [selectedEmojiCompletion, setSelectedEmojiCompletion] = useState(0);
   const [emojiStartPos, setEmojiStartPos] = useState(0);
   const { list: customEmojiList } = useConversationCustomEmojis();
-  const [charPickerOpen, setCharPickerOpen] = useState(false);
-  const [charPickerPos, setCharPickerPos] = useState<{ left: number; top: number } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const charPickerBtnRef = useRef<HTMLButtonElement>(null);
-  const charPickerMenuRef = useRef<HTMLDivElement>(null);
   const inputBarRef = useRef<HTMLDivElement>(null);
   const focusAfterMobileRestoreRef = useRef(false);
   const attachmentsRef = useRef<Attachment[]>([]);
@@ -364,6 +359,30 @@ export function ConversationInput({
   const clearMariChips = useAgentStore((s) => s.clearMariChips);
   const professorMariSuggestionsEnabled = useUIStore((s) => s.professorMariSuggestionsEnabled);
   const { data: activeChat } = useChat(activeChatId);
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages();
+  const availableCapabilityIds = useMemo(
+    () => new Set(installedCapabilities.filter((item) => item.status === "active").map((item) => item.id)),
+    [installedCapabilities],
+  );
+  const availableConversationGames = useMemo(
+    () => installedCapabilities.filter(
+      (item) =>
+        isInstalledCapabilityReady(item) &&
+        item.manifest.kind.includes("turn-game") &&
+        item.manifest.entrypoints.client &&
+        item.manifest.contributions?.conversationGame,
+    ),
+    [installedCapabilities],
+  );
+  const conversationGameSlashContributions = useMemo<ConversationGameSlashContribution[]>(
+    () => availableConversationGames.map((game) => ({
+      packageId: game.id,
+      packageName: game.manifest.name,
+      command: game.manifest.contributions!.conversationGame!.command,
+      aliases: game.manifest.contributions!.conversationGame!.aliases,
+    })),
+    [availableConversationGames],
+  );
   const chatName = activeChat?.name;
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreamingGlobal = useChatStore((s) => s.isStreaming);
@@ -377,7 +396,6 @@ export function ConversationInput({
   const { generate } = useGenerate();
   const { applyToUserInput } = useApplyRegex();
   const enterToSend = useUIStore((s) => s.enterToSendConvo);
-  const guideGenerations = useUIStore((s) => s.guideGenerations);
   const showQuickRepliesMenu = useUIStore((s) => s.showQuickRepliesMenu);
   const showQuickReplyPostOnly = useUIStore((s) => s.showQuickReplyPostOnly);
   const showQuickReplyGuide = useUIStore((s) => s.showQuickReplyGuide);
@@ -398,8 +416,7 @@ export function ConversationInput({
     attachments.length === 0 &&
     !isReadingAttachments &&
     !isStreaming &&
-    !mobilePickerOpen &&
-    !charPickerOpen;
+    !mobilePickerOpen;
   const chatMetadata = useMemo(() => parseChatMetadata(activeChat?.metadata), [activeChat?.metadata]);
   const inactiveCharacterIds = useMemo(
     () =>
@@ -418,21 +435,12 @@ export function ConversationInput({
     () => (activeChatCharacters ? activeChatCharacters.map((character) => character.name) : characterNames),
     [activeChatCharacters, characterNames],
   );
-  const requiresManualGuideTarget = groupResponseOrder === "manual" && activeCharacterNames.length > 1;
   const inputPlaceholder = useMemo(() => {
-    if (groupResponseOrder === "manual") {
-      if (isMobileComposerViewport) {
-        return activeCharacterNames.length > 0 ? `Message… @${activeCharacterNames[0]}` : "Message freely…";
-      }
-      return activeCharacterNames.length > 0
-        ? `Message freely; @${activeCharacterNames[0]} to get a reply`
-        : "Message freely...";
-    }
     if (isMobileComposerViewport) return "Message… /cmds";
     if (activeCharacterNames.length > 1 && chatName) return `Message ${chatName}, / for commands`;
     if (activeCharacterNames.length > 0) return `Message @${activeCharacterNames[0]}, / for commands`;
     return "Message...";
-  }, [activeCharacterNames, chatName, groupResponseOrder, isMobileComposerViewport]);
+  }, [activeCharacterNames, chatName, isMobileComposerViewport]);
 
   // Read from the existing infinite-message cache so an empty Send can retry
   // after a failed generation without adding a second user message.
@@ -471,7 +479,7 @@ export function ConversationInput({
     return null;
   }, [messagesData]);
   const lastMessageRole = lastMessage?.role ?? null;
-  const canRetry = !isStreaming && groupResponseOrder !== "manual" && lastMessageRole === "user";
+  const canRetry = !isStreaming && lastMessageRole === "user";
   const canSubmit = hasInput || attachments.length > 0 || canRetry;
   const showRetrySendState = canRetry && !hasInput && attachments.length === 0;
   const sendButtonTitle = isActuallyGenerating ? "Stop generating" : showRetrySendState ? "Retry generation" : "Send";
@@ -940,7 +948,11 @@ export function ConversationInput({
     }
 
     // Slash command check
-    const matched = matchSlashCommand(raw);
+    const matched = matchSlashCommand(raw, {
+      mode: "conversation",
+      availableCapabilityIds,
+      conversationGames: conversationGameSlashContributions,
+    });
     if (matched) {
       if (isConversationHiddenSlashCommand(matched.command)) {
         setFeedback("Impersonate is not available in Conversation mode.");
@@ -960,6 +972,9 @@ export function ConversationInput({
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
         lastMessageRole,
         illustrate: onIllustrate,
+        selfie: onGenerateSelfie,
+        availableCapabilityIds,
+        conversationGames: conversationGameSlashContributions,
       };
       const submittedDraft = textareaRef.current?.value ?? "";
       const submittedHeight = textareaRef.current?.style.height ?? "auto";
@@ -1010,33 +1025,22 @@ export function ConversationInput({
       return;
     }
 
-    // Natural-language launchers: "let's play uno" / "let's play chess" / "let's
-    // play poker" / "let's play pool" open the game setup. The message still
-    // sends normally, so the characters can react too.
+    // Downloaded games contribute their own aliases. The message still sends so characters can react.
     {
-      const activeUno = useUnoGameStore.getState().current;
-      const unoActive = !!activeUno && activeUno.chatId === activeChatId && activeUno.status !== "finished";
-      if (!unoActive && /\b(?:play|start)\b[^.!?\n]{0,16}\buno\b/i.test(raw)) {
-        useUnoGameStore.getState().openSetup(activeChatId);
-      }
-      const activeChess = useChessGameStore.getState().current;
-      const chessActive = !!activeChess && activeChess.chatId === activeChatId && activeChess.status !== "finished";
-      if (!chessActive && /\b(?:play|start)\b[^.!?\n]{0,16}\bchess\b/i.test(raw)) {
-        useChessGameStore.getState().openSetup(activeChatId);
-      }
-      const activePoker = usePokerGameStore.getState().current;
-      const pokerActive = !!activePoker && activePoker.chatId === activeChatId && activePoker.status !== "finished";
-      if (!pokerActive && /\b(?:play|start|deal)\b[^.!?\n]{0,24}\bpoker\b/i.test(raw)) {
-        usePokerGameStore.getState().openSetup(activeChatId);
-      }
-      const activeEightBall = useEightBallGameStore.getState().current;
-      const eightBallActive =
-        !!activeEightBall && activeEightBall.chatId === activeChatId && activeEightBall.status !== "finished";
-      if (
-        !eightBallActive &&
-        /\b(?:play|start|rack)\b[^.!?\n]{0,24}\b(?:8-ball|8 ball|eightball|pool|billiards)\b/i.test(raw)
-      ) {
-        useEightBallGameStore.getState().openSetup(activeChatId);
+      const normalized = raw.toLocaleLowerCase();
+      if (/\b(?:play|start|deal|rack)\b/i.test(normalized)) {
+        const matchedGame = availableConversationGames.find((game) => {
+          const contribution = game.manifest.contributions!.conversationGame!;
+          const aliases = [
+            game.manifest.name,
+            contribution.command.slice(1),
+            ...contribution.aliases,
+          ].map((alias) => alias.toLocaleLowerCase());
+          return aliases.some((alias) => normalized.includes(alias));
+        });
+        if (matchedGame) {
+          useConversationGamesStore.getState().openSetup(matchedGame.id, activeChatId);
+        }
       }
     }
 
@@ -1078,21 +1082,6 @@ export function ConversationInput({
     // Extract @mentions from the raw message (before regex transforms)
     const mentioned = extractMentions(raw);
 
-    if (groupResponseOrder === "manual" && mentioned.length === 0) {
-      const created = await createMessage.mutateAsync({
-        role: "user",
-        content: message,
-        characterId: null,
-      });
-      if (pendingAttachments.length) {
-        await updateMessageExtra.mutateAsync({
-          messageId: created.id,
-          extra: { attachments: pendingAttachments },
-        });
-      }
-      return;
-    }
-
     await generate({
       chatId: activeChatId,
       connectionId: null,
@@ -1102,6 +1091,7 @@ export function ConversationInput({
     });
   }, [
     activeChatId,
+    availableConversationGames,
     activeChatCharacters,
     lastMessageRole,
     attachments,
@@ -1119,7 +1109,6 @@ export function ConversationInput({
     _mentionQuery,
     mentionCompletions,
     latestAssistantMessage,
-    groupResponseOrder,
     qc,
     syncInputState,
     setInputDraft,
@@ -1127,13 +1116,20 @@ export function ConversationInput({
     updateAttachments,
     onPeekPrompt,
     onIllustrate,
+    onGenerateSelfie,
+    availableCapabilityIds,
+    conversationGameSlashContributions,
   ]);
 
   const runQuickSlashCommand = useCallback(
     async (commandLine: string, fallbackError: string) => {
       if (!activeChatId) return;
       const submittingChatId = activeChatId;
-      const matched = matchSlashCommand(commandLine);
+      const matched = matchSlashCommand(commandLine, {
+        mode: "conversation",
+        availableCapabilityIds,
+        conversationGames: conversationGameSlashContributions,
+      });
       if (!matched) return;
       if (isConversationHiddenSlashCommand(matched.command)) {
         toast.info("Impersonate is not available in Conversation mode.");
@@ -1158,6 +1154,9 @@ export function ConversationInput({
         latestAssistantMessageId: latestAssistantMessage?.id ?? null,
         lastMessageRole,
         illustrate: onIllustrate,
+        selfie: onGenerateSelfie,
+        availableCapabilityIds,
+        conversationGames: conversationGameSlashContributions,
       };
 
       const previousDraft = textareaRef.current?.value ?? "";
@@ -1222,6 +1221,9 @@ export function ConversationInput({
       generate,
       latestAssistantMessage,
       onIllustrate,
+      onGenerateSelfie,
+      availableCapabilityIds,
+      conversationGameSlashContributions,
       qc,
       setInputDraft,
       syncInputState,
@@ -1240,7 +1242,11 @@ export function ConversationInput({
     const hasFiles = attachments.length > 0;
     if (!hasText && !hasFiles) return;
 
-    if (shouldExecuteQuickPostAsCommand(raw)) {
+    if (shouldExecuteQuickPostAsCommand(raw, {
+      mode: "conversation",
+      availableCapabilityIds,
+      conversationGames: conversationGameSlashContributions,
+    })) {
       await handleSend();
       return;
     }
@@ -1361,14 +1367,12 @@ export function ConversationInput({
     deleteMessage,
     updateMessageExtra,
     handleSend,
+    availableCapabilityIds,
+    conversationGameSlashContributions,
   ]);
 
   const handleGuidedGenerationButton = useCallback(async () => {
     if (!activeChatId || isStreaming) return;
-    if (requiresManualGuideTarget) {
-      toast.info("Choose a character from the reply picker to guide a specific reply.");
-      return;
-    }
     if (hasPendingAttachments) {
       toast.info("Clear or send attachments before using guided generation.");
       return;
@@ -1376,7 +1380,7 @@ export function ConversationInput({
     const text = textareaRef.current?.value?.trim() ?? "";
     if (!text) return;
     await runQuickSlashCommand(`/guided ${text}`, "Guided generation failed");
-  }, [activeChatId, isStreaming, requiresManualGuideTarget, hasPendingAttachments, runQuickSlashCommand]);
+  }, [activeChatId, isStreaming, hasPendingAttachments, runQuickSlashCommand]);
 
   const quickReplyActions = useMemo<QuickReplyAction[]>(() => {
     const actions: QuickReplyAction[] = [];
@@ -1390,7 +1394,6 @@ export function ConversationInput({
     const getGuideDisabledReason = () => {
       if (!activeChatId) return "Select or create a chat first.";
       if (isStreaming) return "Wait for the current stream to finish.";
-      if (requiresManualGuideTarget) return "Choose a character from the reply picker.";
       if (hasPendingAttachments) return "Clear or post attachments first.";
       if (!hasInput) return "Type a direction first.";
       return undefined;
@@ -1412,7 +1415,7 @@ export function ConversationInput({
         label: "Guide reply",
         description: "Send as /guided direction",
         icon: <WandSparkles size="0.875rem" />,
-        disabled: !activeChatId || isStreaming || requiresManualGuideTarget || !hasInput || hasPendingAttachments,
+        disabled: !activeChatId || isStreaming || !hasInput || hasPendingAttachments,
         disabledReason: getGuideDisabledReason(),
         onSelect: handleGuidedGenerationButton,
       });
@@ -1425,7 +1428,6 @@ export function ConversationInput({
     hasInput,
     attachments.length,
     hasPendingAttachments,
-    requiresManualGuideTarget,
     showQuickReplyPostOnly,
     showQuickReplyGuide,
     handlePostOnlyButton,
@@ -1565,7 +1567,12 @@ export function ConversationInput({
 
       // Slash completions
       if (formatted.startsWith("/")) {
-        const results = buildConversationSlashCompletions(formatted, activeChatCharacters);
+        const results = buildConversationSlashCompletions(
+          formatted,
+          activeChatCharacters,
+          availableCapabilityIds,
+          conversationGameSlashContributions,
+        );
         setCompletions(results);
         setSelectedCompletion(0);
       } else {
@@ -1629,6 +1636,8 @@ export function ConversationInput({
       quoteFormat,
       setInputDraft,
       syncInputState,
+      availableCapabilityIds,
+      conversationGameSlashContributions,
     ],
   );
 
@@ -1702,11 +1711,6 @@ export function ConversationInput({
         return;
       }
 
-      if (groupResponseOrder === "manual" && activeCharacterNames.length > 1) {
-        createMessage.mutate({ role: "user", content: gifUrl, characterId: null });
-        return;
-      }
-
       await generate({
         chatId: activeChatId,
         connectionId: null,
@@ -1714,7 +1718,7 @@ export function ConversationInput({
         ...(gifAttachments ? { attachments: gifAttachments } : {}),
       });
     },
-    [activeChatId, isStreaming, groupResponseOrder, activeCharacterNames.length, generate, createMessage],
+    [activeChatId, isStreaming, generate, createMessage],
   );
 
   const handleStickerSelect = useCallback(
@@ -1741,85 +1745,12 @@ export function ConversationInput({
         createMessage.mutate({ role: "user", content: token, characterId: null });
         return;
       }
-      if (groupResponseOrder === "manual" && activeCharacterNames.length > 1) {
-        createMessage.mutate({ role: "user", content: token, characterId: null });
-        return;
-      }
       await generate({ chatId: activeChatId, connectionId: null, userMessage: token });
     },
-    [
-      activeChatId,
-      isStreaming,
-      groupResponseOrder,
-      activeCharacterNames.length,
-      generate,
-      createMessage,
-      insertStickerToken,
-    ],
+    [activeChatId, isStreaming, generate, createMessage, insertStickerToken],
   );
-
-  const handleCharacterResponse = useCallback(
-    async (characterId: string) => {
-      if (!activeChatId || isStreaming) return;
-      setCharPickerOpen(false);
-      setCharPickerPos(null);
-      const guideText = textareaRef.current?.value ?? "";
-      try {
-        await generate(
-          guideGenerations && hasInput
-            ? {
-                chatId: activeChatId,
-                connectionId: null,
-                forCharacterId: characterId,
-                generationGuide: buildGuidedGenerationInstructionMessage(guideText),
-                generationGuideSource: "guide",
-              }
-            : { chatId: activeChatId, connectionId: null, forCharacterId: characterId },
-        );
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : "Generation failed";
-        toast.error(msg);
-      }
-    },
-    [activeChatId, isStreaming, generate, guideGenerations, hasInput],
-  );
-
-  useEffect(() => {
-    if (!charPickerOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (
-        charPickerMenuRef.current &&
-        !charPickerMenuRef.current.contains(e.target as Node) &&
-        charPickerBtnRef.current &&
-        !charPickerBtnRef.current.contains(e.target as Node)
-      ) {
-        setCharPickerOpen(false);
-        setCharPickerPos(null);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [charPickerOpen]);
-
-  useEffect(() => {
-    if (!charPickerOpen || !charPickerBtnRef.current) return;
-    const rect = charPickerBtnRef.current.getBoundingClientRect();
-    const inputBox = charPickerBtnRef.current.closest(".rounded-2xl") as HTMLElement | null;
-    const anchorTop = inputBox ? inputBox.getBoundingClientRect().top : rect.top;
-    requestAnimationFrame(() => {
-      const menuEl = charPickerMenuRef.current;
-      const menuHeight = menuEl?.offsetHeight || 300;
-      const menuWidth = menuEl?.offsetWidth || 220;
-      let left = rect.right - menuWidth;
-      if (left < 8) left = 8;
-      setCharPickerPos({ left, top: Math.max(8, anchorTop - menuHeight - 4) });
-    });
-  }, [charPickerOpen]);
-
-  const showCharPicker = groupResponseOrder === "manual" && !!activeChatCharacters && activeChatCharacters.length > 1;
   const showDraftTranslateButton = chatMetadata.showInputTranslateButton === true;
   const showMobileToolsTab =
-    showCharPicker ||
     showDraftTranslateButton ||
     speechToTextEnabled ||
     (showQuickRepliesMenu && quickReplyActions.length > 0);
@@ -1908,73 +1839,9 @@ export function ConversationInput({
     window.setTimeout(focus, 120);
   }, [ensureInputVisible, mobileHistoryCollapsed]);
 
-  const statusDotClass = (status?: string) =>
-    status === "offline"
-      ? "bg-gray-400"
-      : status === "dnd"
-        ? "bg-red-500"
-        : status === "idle"
-          ? "bg-yellow-500"
-          : "bg-green-500";
-  const statusLabel = (status?: string) =>
-    status === "offline" ? "Offline" : status === "dnd" ? "Busy" : status === "idle" ? "Away" : null;
-
   const mediaPickerToolsContent =
     mobilePickerTab === "tools" ? (
       <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
-        {showCharPicker && activeChatCharacters && (
-          <div className="space-y-1.5">
-            <div className="px-1 text-[0.6875rem] font-semibold uppercase text-foreground/45">Trigger Response</div>
-            <div className="grid gap-1">
-              {activeChatCharacters.map((char) => (
-                <button
-                  key={char.id}
-                  type="button"
-                  onClick={() => {
-                    setMobilePickerOpen(false);
-                    handleCharacterResponse(char.id);
-                  }}
-                  className={cn(
-                    "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-foreground/10",
-                    (char.conversationStatus === "dnd" || char.conversationStatus === "offline") && "opacity-60",
-                  )}
-                >
-                  <div className="relative shrink-0">
-                    {char.avatarUrl ? (
-                      <span className="relative block h-7 w-7 overflow-hidden rounded-full">
-                        <img
-                          src={char.avatarUrl}
-                          alt={char.name}
-                          className="h-full w-full object-cover"
-                          style={getAvatarCropStyle(char.avatarCrop)}
-                        />
-                      </span>
-                    ) : (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-foreground/10 text-[0.6875rem] font-semibold text-foreground/45">
-                        {(char.name || "?")[0].toUpperCase()}
-                      </div>
-                    )}
-                    <span
-                      className={cn(
-                        "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[var(--card)]",
-                        statusDotClass(char.conversationStatus),
-                      )}
-                    />
-                  </div>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{char.name}</span>
-                    {(char.conversationActivity || statusLabel(char.conversationStatus)) && (
-                      <span className="block truncate text-xs text-foreground/45">
-                        {char.conversationActivity || statusLabel(char.conversationStatus)}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div className="grid gap-2">
           {showDraftTranslateButton && (
             <button
@@ -2356,26 +2223,6 @@ export function ConversationInput({
             )}
           </div>
 
-          {showCharPicker && (
-            <button
-              ref={charPickerBtnRef}
-              onClick={() => setCharPickerOpen((v) => !v)}
-              className={cn(
-                "hidden h-11 w-11 items-center justify-center rounded-full transition-colors sm:flex sm:h-8 sm:w-8",
-                guideGenerations && hasInput
-                  ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20 hover:bg-foreground/15"
-                  : charPickerOpen
-                    ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
-                    : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
-              )}
-              title={
-                guideGenerations && hasInput ? "Trigger character response (guided)" : "Trigger character response"
-              }
-            >
-              <Users size="1rem" />
-            </button>
-          )}
-
           {showDraftTranslateButton && (
             <button
               type="button"
@@ -2439,65 +2286,6 @@ export function ConversationInput({
           </button>
         </div>
       </div>
-      {showCharPicker &&
-        charPickerOpen &&
-        createPortal(
-          <div
-            ref={charPickerMenuRef}
-            className="fixed z-[9999] flex max-h-[320px] min-w-[220px] max-w-[280px] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-2xl"
-            style={
-              charPickerPos ? { left: charPickerPos.left, top: charPickerPos.top } : { visibility: "hidden" as const }
-            }
-          >
-            <div className="flex items-center justify-center border-b border-foreground/10 px-3 py-2 text-[0.6875rem] font-semibold">
-              Trigger Response
-            </div>
-            <div className="overflow-y-auto p-1">
-              {activeChatCharacters!.map((char) => (
-                <button
-                  key={char.id}
-                  onClick={() => handleCharacterResponse(char.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-foreground/10",
-                    (char.conversationStatus === "dnd" || char.conversationStatus === "offline") && "opacity-60",
-                  )}
-                >
-                  <div className="relative shrink-0">
-                    {char.avatarUrl ? (
-                      <span className="relative block h-7 w-7 overflow-hidden rounded-full">
-                        <img
-                          src={char.avatarUrl}
-                          alt={char.name}
-                          className="h-full w-full object-cover"
-                          style={getAvatarCropStyle(char.avatarCrop)}
-                        />
-                      </span>
-                    ) : (
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-foreground/10 text-[0.6875rem] font-semibold text-foreground/45">
-                        {(char.name || "?")[0].toUpperCase()}
-                      </div>
-                    )}
-                    <span
-                      className={cn(
-                        "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[var(--card)]",
-                        statusDotClass(char.conversationStatus),
-                      )}
-                    />
-                  </div>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs">{char.name}</span>
-                    {(char.conversationActivity || statusLabel(char.conversationStatus)) && (
-                      <span className="block truncate text-[0.625rem] text-foreground/45">
-                        {char.conversationActivity || statusLabel(char.conversationStatus)}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>,
-          document.body,
-        )}
     </div>
   );
 }

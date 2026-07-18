@@ -43,6 +43,10 @@ interface SlicedCell {
   sourceGrid?: SpriteGrid;
 }
 
+interface SpriteCleanupResult {
+  cells: Array<{ expression: string; base64: string }>;
+}
+
 interface SpriteGrid {
   cols: number;
   rows: number;
@@ -623,9 +627,6 @@ export function SpriteGenerationModal({
   }, [connectionsList]);
   const spriteGenerationUnavailable = spriteCapabilities?.spriteGenerationAvailable === false;
   const spriteGenerationReason = spriteCapabilities?.reason ?? "Sprite generation is unavailable on this platform.";
-  const backgroundRemoverUnavailable = spriteCapabilities?.backgroundRemover?.installed === false;
-  const backgroundRemoverReason =
-    spriteCapabilities?.backgroundRemover?.reason ?? "Local backgroundremover is not installed.";
   const existingPortraitExpressions = useMemo(() => {
     const seen = new Set<string>();
     const names: string[] = [];
@@ -668,16 +669,15 @@ export function SpriteGenerationModal({
     [fullBodyExpressionMode, generationCapacity, matchedFullBodyExpressions, selectedExpressions],
   );
   const assignmentOptions = useMemo(() => {
-    const fallbackOptions = spriteType === "full-body" && !fullBodyExpressionMode ? ALL_FULL_BODY_POSES : ALL_EXPRESSIONS;
+    const fallbackOptions =
+      spriteType === "full-body" && !fullBodyExpressionMode ? ALL_FULL_BODY_POSES : ALL_EXPRESSIONS;
     const seen = new Set<string>();
 
-    return [...cappedSelectedExpressions, ...fallbackOptions]
-      .map(normalizeSpriteLabel)
-      .filter((label) => {
-        if (!label || seen.has(label)) return false;
-        seen.add(label);
-        return true;
-      });
+    return [...cappedSelectedExpressions, ...fallbackOptions].map(normalizeSpriteLabel).filter((label) => {
+      if (!label || seen.has(label)) return false;
+      seen.add(label);
+      return true;
+    });
   }, [cappedSelectedExpressions, fullBodyExpressionMode, spriteType]);
   const previewColumnCount = animatedExpressionMode
     ? Math.min(3, Math.max(1, Math.ceil(Math.sqrt(Math.max(1, cells.length || cappedSelectedExpressions.length)))))
@@ -702,7 +702,10 @@ export function SpriteGenerationModal({
     : (connectionId ?? defaultImageConnectionId ?? imageConnections[0]?.id ?? null);
   const activeGenerationConnections = animatedExpressionMode ? videoConnections : imageConnections;
   const selectedImageConnection = useMemo(
-    () => (animatedExpressionMode ? null : (imageConnections.find((connection) => connection.id === effectiveConnectionId) ?? null)),
+    () =>
+      animatedExpressionMode
+        ? null
+        : (imageConnections.find((connection) => connection.id === effectiveConnectionId) ?? null),
     [animatedExpressionMode, effectiveConnectionId, imageConnections],
   );
   const selectedImageModel = selectedImageConnection?.model?.trim().toLowerCase() ?? "";
@@ -991,9 +994,13 @@ export function SpriteGenerationModal({
       };
 
       if (reviewImagePromptsBeforeSend) {
-        const preview = await api.post<GenerateSheetPreviewResult>("/sprites/generate-animated-expressions/preview", payload, {
-          signal,
-        });
+        const preview = await api.post<GenerateSheetPreviewResult>(
+          "/sprites/generate-animated-expressions/preview",
+          payload,
+          {
+            signal,
+          },
+        );
         if (signal?.aborted) throw new SpriteGenerationAbortedError();
         if (preview.items.length > 0) {
           const overrides = await openPromptReview(preview.items);
@@ -1166,7 +1173,11 @@ export function SpriteGenerationModal({
       if (animatedExpressionMode) {
         const result = await requestGeneratedAnimatedExpressions(cappedSelectedExpressions);
         if (controller.signal.aborted) throw new SpriteGenerationAbortedError();
-        const generated = createGeneratedSpritesFromResult(result, { cols: 1, rows: result.cells.length }, "Animated expressions");
+        const generated = createGeneratedSpritesFromResult(
+          result,
+          { cols: 1, rows: result.cells.length },
+          "Animated expressions",
+        );
 
         setGeneratedSheet(null);
         setGeneratedSheets([]);
@@ -1293,6 +1304,19 @@ export function SpriteGenerationModal({
     setError(null);
   }, [abortActiveGeneration]);
 
+  const performCleanup = useCallback(
+    (cellsToClean: SlicedCell[]) =>
+      api.post<SpriteCleanupResult>("/sprites/cleanup", {
+        cleanupStrength,
+        engine: "auto",
+        cells: cellsToClean.map((cell) => ({
+          expression: cell.expression,
+          base64: cell.rawDataUrl,
+        })),
+      }),
+    [cleanupStrength],
+  );
+
   const handleApplyCleanup = useCallback(async () => {
     if (!noBackground || cells.length === 0) return;
 
@@ -1300,14 +1324,7 @@ export function SpriteGenerationModal({
     setError(null);
 
     try {
-      const result = await api.post<{ cells: Array<{ expression: string; base64: string }> }>("/sprites/cleanup", {
-        cleanupStrength,
-        engine: "backgroundremover",
-        cells: cells.map((cell) => ({
-          expression: cell.expression,
-          base64: cell.rawDataUrl,
-        })),
-      });
+      const result = await performCleanup(cells);
 
       setCells((prev) =>
         prev.map((cell, i) => ({
@@ -1321,7 +1338,7 @@ export function SpriteGenerationModal({
     } finally {
       setCleanupApplying(false);
     }
-  }, [cells, cleanupStrength, noBackground]);
+  }, [cells, noBackground, performCleanup]);
 
   const handleUseOriginal = useCallback(() => {
     setCells((prev) => prev.map((cell) => ({ ...cell, dataUrl: cell.rawDataUrl })));
@@ -1500,8 +1517,25 @@ export function SpriteGenerationModal({
         }),
       );
 
-      setCells(slicedCells);
-      setCleanupApplied(false);
+      let adjustedCells = slicedCells;
+      let reappliedCleanup = false;
+      if (noBackground) {
+        try {
+          const cleaned = await performCleanup(slicedCells);
+          adjustedCells = slicedCells.map((cell, index) => ({
+            ...cell,
+            dataUrl: cleaned.cells[index]?.base64
+              ? `data:image/png;base64,${cleaned.cells[index]!.base64}`
+              : cell.dataUrl,
+          }));
+          reappliedCleanup = true;
+        } catch (cleanupError: any) {
+          setError(cleanupError?.message || "Slices were adjusted, but background cleanup could not be reapplied");
+        }
+      }
+
+      setCells(adjustedCells);
+      setCleanupApplied(reappliedCleanup);
       setActiveFrameIndex(null);
       setFrameAdjustments(DEFAULT_SPRITE_FRAME_ADJUSTMENTS);
       setFramePreviewUrl(null);
@@ -1510,7 +1544,16 @@ export function SpriteGenerationModal({
     } finally {
       setSliceApplying(false);
     }
-  }, [canAdjustSlices, cells, generatedSheet, generationGrid, singleImageMode, sliceAdjustments]);
+  }, [
+    canAdjustSlices,
+    cells,
+    generatedSheet,
+    generationGrid,
+    noBackground,
+    performCleanup,
+    singleImageMode,
+    sliceAdjustments,
+  ]);
 
   const handleCellToggle = useCallback((idx: number) => {
     setCells((prev) => prev.map((c, i) => (i === idx ? { ...c, selected: !c.selected } : c)));
@@ -1521,9 +1564,7 @@ export function SpriteGenerationModal({
   }, []);
 
   const handleCellRenameBlur = useCallback((idx: number) => {
-    setCells((prev) =>
-      prev.map((c, i) => (i === idx ? { ...c, expression: normalizeSpriteLabel(c.expression) } : c)),
-    );
+    setCells((prev) => prev.map((c, i) => (i === idx ? { ...c, expression: normalizeSpriteLabel(c.expression) } : c)));
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -1850,16 +1891,19 @@ export function SpriteGenerationModal({
               />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">
-                  {animatedExpressionMode ? "Prefer clean transparent-style background" : "Prefer transparent PNG"}
+                  {animatedExpressionMode
+                    ? "Prefer clean transparent-style background"
+                    : "Transparent sprite background"}
                 </span>
                 <span className="mt-0.5 block text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
                   {animatedExpressionMode
                     ? "Adds a flat transparent-friendly background instruction to the video prompt. GIF transparency is not guaranteed."
-                    : "Adds transparent-output instructions when the selected model supports them, then applies cleanup before review when needed."}
+                    : "Uses native transparency when available. Otherwise, Marinara chooses a flat chroma matte that avoids the character's colors, removes it, and cleans color spill around soft edges."}
                 </span>
                 {!animatedExpressionMode && selectedModelIsGptImage2 && nativeTransparentPng && (
                   <span className="mt-1 block text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                    GPT-Image-2 does not support native transparent backgrounds right now, so cleanup is the fallback.
+                    GPT-Image-2 does not support native transparency right now, so Marinara will use the adaptive matte
+                    fallback.
                   </span>
                 )}
               </span>
@@ -2051,14 +2095,14 @@ export function SpriteGenerationModal({
                     ? "Generate Animated Portrait"
                     : "Generate Animated Portraits"
                   : fullBodyExpressionMode
-                  ? "Generate Matched Batches"
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "Generate Pose"
-                      : "Generate Pose Sheet"
-                    : singleImageMode
-                      ? "Generate Sprite"
-                      : "Generate Sheet"}
+                    ? "Generate Matched Batches"
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "Generate Pose"
+                        : "Generate Pose Sheet"
+                      : singleImageMode
+                        ? "Generate Sprite"
+                        : "Generate Sheet"}
               </button>
             </div>
           </div>
@@ -2073,26 +2117,26 @@ export function SpriteGenerationModal({
                 {animatedExpressionMode
                   ? "Generating animated portrait GIFs..."
                   : fullBodyExpressionMode
-                  ? "Generating matched full-body batches..."
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "Generating full-body pose…"
-                      : "Generating full-body pose sheet…"
-                    : singleImageMode
-                      ? "Generating portrait sprite…"
-                      : "Generating expression sheet…"}
+                    ? "Generating matched full-body batches..."
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "Generating full-body pose…"
+                        : "Generating full-body pose sheet…"
+                      : singleImageMode
+                        ? "Generating portrait sprite…"
+                        : "Generating expression sheet…"}
               </p>
               {generationProgress && <p className="mt-1 text-xs text-[var(--primary)]">{generationProgress}</p>}
               <p className="mt-1 text-xs text-[var(--muted-foreground)]">
                 {animatedExpressionMode
                   ? "Each expression becomes a short video first, then Marinara converts it to a GIF sprite."
                   : fullBodyExpressionMode
-                  ? "Each 2×2 batch gets one automatic retry before pausing for your decision."
-                  : spriteType === "full-body"
-                    ? singleImageMode
-                      ? "This may take 30–60 seconds depending on the provider."
-                      : "This may take 30–60 seconds depending on the provider. The sheet will be sliced into poses after generation."
-                    : "This may take 30–60 seconds depending on the provider."}
+                    ? "Each 2×2 batch gets one automatic retry before pausing for your decision."
+                    : spriteType === "full-body"
+                      ? singleImageMode
+                        ? "This may take 30–60 seconds depending on the provider."
+                        : "This may take 30–60 seconds depending on the provider. The sheet will be sliced into poses after generation."
+                      : "This may take 30–60 seconds depending on the provider."}
               </p>
             </div>
             <button
@@ -2321,9 +2365,9 @@ export function SpriteGenerationModal({
                         <span className="text-[0.6875rem] text-[var(--muted-foreground)]">{cleanupStrength}</span>
                         <button
                           onClick={handleApplyCleanup}
-                          disabled={cleanupApplying || backgroundRemoverUnavailable || cells.length === 0}
+                          disabled={cleanupApplying || cells.length === 0}
                           className="rounded-lg bg-[var(--primary)] px-2.5 py-1 text-[0.6875rem] font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
-                          title={backgroundRemoverUnavailable ? backgroundRemoverReason : "Run local backgroundremover"}
+                          title="Rerun automatic matte cleanup"
                         >
                           {cleanupApplying ? "Applying..." : cleanupApplied ? "Reapply Cleanup" : "Apply Cleanup"}
                         </button>
@@ -2340,12 +2384,9 @@ export function SpriteGenerationModal({
                     )}
                   </div>
                   <p className="mt-1 text-[0.625rem] text-[var(--muted-foreground)]">
-                    Cleanup is applied after generation when enabled. Use Apply Cleanup to rerun it on the current
-                    slices without regenerating.
+                    Cleanup is applied after generation when enabled. It preserves native alpha, removes flat chroma or
+                    legacy white mattes, and uses AI only as an optional fallback for complex backgrounds.
                   </p>
-                  {backgroundRemoverUnavailable && noBackground && (
-                    <p className="mt-1 text-[0.625rem] text-amber-300/80">{backgroundRemoverReason}</p>
-                  )}
                 </div>
               )}
               {!animatedExpressionMode && activeFrameCell && (
@@ -2424,8 +2465,8 @@ export function SpriteGenerationModal({
                     ? "Full-body Expressions"
                     : spriteType === "full-body"
                       ? "Poses"
-                      : "Sprites"} (
-                {selectedCount} selected)
+                      : "Sprites"}{" "}
+                ({selectedCount} selected)
               </label>
               <p className="mb-3 text-[0.625rem] text-[var(--muted-foreground)]">
                 Click an item to toggle selection. Assign or edit names as needed. Only selected items will be saved.

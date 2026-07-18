@@ -4,7 +4,7 @@
 // Chunks conversation messages into groups, embeds them, and provides
 // semantic recall: given a query, find the most relevant past
 // conversation fragments from specified chats.
-import { eq, desc, and, gt, inArray, isNotNull, isNull } from "drizzle-orm";
+import { eq, desc, and, gt, inArray, isNotNull, isNull } from "../db/file-query.js";
 import type { DB } from "../db/connection.js";
 import { messages, memoryChunks } from "../db/schema/index.js";
 import { newId, now } from "../utils/id-generator.js";

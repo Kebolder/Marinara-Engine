@@ -9,14 +9,9 @@ import {
   updateGroupSchema,
   createPersonaGroupSchema,
   updatePersonaGroupSchema,
-  generateAboutMeSchema,
-  resolveAboutMeSources,
-  DEFAULT_ABOUT_ME_CHAT_CONTEXT_LIMIT,
   PROFESSOR_MARI_ID,
-  PROVIDERS,
   CONVERSATION_CALL_CHARACTER_VIDEO_CLIP_KINDS,
 } from "@marinara-engine/shared";
-import { createLLMProvider } from "../services/llm/provider-registry.js";
 import type { ConversationCallCharacterVideoClipKind, ExportEnvelope } from "@marinara-engine/shared";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
@@ -29,6 +24,7 @@ import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
+import { resolveImageConnectionFallback } from "../services/generation/media-connection-fallback.js";
 import {
   ConversationCallVideoClipAvatarMismatchError,
   ConversationCallVideoClipNotFoundError,
@@ -61,6 +57,7 @@ import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
 import { newId } from "../utils/id-generator.js";
+import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
 
 const CHARACTER_GALLERY_ROOT = join(DATA_DIR, "gallery", "characters");
 const PERSONA_GALLERY_ROOT = join(DATA_DIR, "gallery", "personas");
@@ -554,146 +551,6 @@ export async function charactersRoutes(app: FastifyInstance) {
   const personaGallery = createPersonaGalleryStorage(app.db);
   const lorebooksStorage = createLorebooksStorage(app.db);
   const connections = createConnectionsStorage(app.db);
-  const loadCharacterLorebookEntries = async (characterId: string) => {
-    const books = (await lorebooksStorage.listByCharacter(characterId)) as Array<{ id: string }>;
-    if (books.length === 0) return [];
-    const entries = (await lorebooksStorage.listEntriesByLorebooks(books.map((b) => b.id))) as Array<{
-      id?: string;
-      name?: string;
-      content?: string;
-      enabled?: boolean;
-    }>;
-    return entries.filter((e) => e.enabled !== false && typeof e.content === "string" && e.content.trim().length > 0);
-  };
-
-  /**
-   * POST /api/characters/generate-about-me
-   * AI-write a Convo-mode "about me" from card/persona fields. One-shot,
-   * non-streaming. The prompt deliberately produces an IN-CHARACTER bio, which
-   * for many characters means something short, empty, joking, or barely there.
-   */
-  app.post("/generate-about-me", async (req) => {
-    const input = generateAboutMeSchema.parse(req.body);
-    const conn = await connections.getWithKey(input.connectionId);
-    if (!conn) throw Object.assign(new Error("API connection not found"), { statusCode: 400 });
-
-    let baseUrl = conn.baseUrl;
-    if (!baseUrl) baseUrl = PROVIDERS[conn.provider as keyof typeof PROVIDERS]?.defaultBaseUrl ?? "";
-    if (!baseUrl && conn.provider === "claude_subscription") baseUrl = "claude-agent-sdk://local";
-    if (!baseUrl && conn.provider === "openai_chatgpt") baseUrl = "openai-chatgpt://codex-auth";
-    if (!baseUrl) throw Object.assign(new Error("No base URL configured for this connection"), { statusCode: 400 });
-
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
-
-    const who = input.kind === "persona" ? "this user persona" : "this character";
-    const systemPrompt = [
-      `You write a Conversation-mode "about me" — a short self-authored profile blurb, like a Discord bio — for ${who}, in their own voice.`,
-      "This is THEIR bio as THEY would write it, not a description of them by someone else. Write only the bio text; no quotes, labels, or preamble.",
-      "Authenticity over completeness: real people's bios are wildly uneven. Depending on who they are, the right answer might be a single line, a couple of emoji, an inside joke, something cryptic or deflecting, a wall of oversharing, or genuinely nothing at all.",
-      "Do NOT default to a tidy, thorough, earnest bio. Let their personality decide the length, tone, and effort — a guarded or aloof character writes little or nothing; a chaotic oversharer writes a mess. Match them.",
-      "If they plausibly wouldn't have a bio, it is correct to return an empty string or a bare placeholder.",
-    ].join("\n");
-
-    // Draw only from the sources the character opted into (default: personality only).
-    // Different cards store their substance differently — some leave card fields blank
-    // and live entirely in a lorebook — so each source is individually selectable.
-    const sources = resolveAboutMeSources(input.sources);
-    const cardParts: string[] = [];
-    if (input.name) cardParts.push(`Name: ${input.name}`);
-    if (sources.description && input.description) cardParts.push(`Description: ${input.description}`);
-    if (sources.personality && input.personality) cardParts.push(`Personality: ${input.personality}`);
-    if (sources.scenario && input.scenario) cardParts.push(`Scenario: ${input.scenario}`);
-    if (sources.backstory && input.backstory) cardParts.push(`Backstory: ${input.backstory}`);
-    if (sources.appearance && input.appearance) cardParts.push(`Appearance: ${input.appearance}`);
-    if (sources.convoBehavior && input.convoBehavior?.trim())
-      cardParts.push(`How they behave in conversation: ${input.convoBehavior.trim()}`);
-
-    // Lorebook entries (characters only). All of the character's lorebook entries come
-    // through listByCharacter — the embedded card book is synced to a standalone that
-    // shows up here too, so every entry has a stable db id that matches the source
-    // picker's selection. Capped so a big lorebook can't blow up this one-shot request.
-    if (sources.lorebook && input.characterId && input.kind === "character") {
-      try {
-        const loreLines: string[] = [];
-        const entries = await loadCharacterLorebookEntries(input.characterId);
-        // When the user picked specific entries, include only those; absent → all.
-        const selectedEntryIds = Array.isArray(sources.lorebookEntryIds) ? new Set(sources.lorebookEntryIds) : null;
-        for (const e of entries) {
-          if (selectedEntryIds && (!e.id || !selectedEntryIds.has(e.id))) continue;
-          const content = e.content?.trim() ?? "";
-          loreLines.push(e.name ? `[${e.name}] ${content}` : content);
-        }
-        const lore = loreLines.join("\n").slice(0, 8000).trim();
-        if (lore) cardParts.push(`From their lorebook:\n${lore}`);
-      } catch {
-        /* lorebook is best-effort context; ignore fetch/parse errors */
-      }
-    }
-
-    // Chat context — only meaningful for a chat-specific (override) about me.
-    let chatTranscript = "";
-    if (sources.chatContext && input.chatId) {
-      try {
-        const chatsStorage = createChatsStorage(app.db);
-        const limit = Math.max(1, Math.min(200, sources.chatContextLimit ?? DEFAULT_ABOUT_ME_CHAT_CONTEXT_LIMIT));
-        const recent = (await chatsStorage.listMessagesPaginated(input.chatId, limit)) as Array<{
-          role: string;
-          content: string;
-        }>;
-        chatTranscript = recent
-          .map((m) => `${m.role}: ${(m.content ?? "").trim()}`)
-          .filter((line) => line.trim())
-          .join("\n")
-          .slice(-8000)
-          .trim();
-      } catch {
-        /* chat context is best-effort; ignore errors */
-      }
-    }
-
-    const userContent =
-      `Here is what defines them:\n${cardParts.join("\n\n")}\n\n` +
-      (chatTranscript ? `Recent conversation, for tone and context:\n${chatTranscript}\n\n` : "") +
-      (input.instruction?.trim() ? `Extra direction from the user: ${input.instruction.trim()}\n\n` : "") +
-      `Write their Conversation-mode "about me" now, staying true to who they are.`;
-
-    // A short bio needs little output, but "thinking" models (e.g. Gemini 3.x) draw
-    // reasoning tokens from the SAME output budget — so the old 512 cap was consumed
-    // entirely by thinking and returned no content ("finished without content
-    // (MAX_TOKENS)"). Use a generous ceiling (not a target — a short bio still stops
-    // early, so this doesn't inflate cost) plus low reasoning effort so thinking
-    // models don't overthink a casual bio and always leave room for the text.
-    const result = await provider.chatComplete(
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
-      ],
-      { model: conn.model, temperature: 0.9, maxTokens: 4096, reasoningEffort: "low" },
-    );
-    return { aboutMe: (result.content ?? "").trim() };
-  });
-
-  /**
-   * GET /api/characters/:id/lorebook-entries
-   * A character's lorebook entries (embedded + linked — the embedded card book is
-   * synced to a standalone that shows up here too, so ids match generation). Used by
-   * the AI-write source picker to choose which entries feed the "about me". Names only.
-   */
-  app.get<{ Params: { id: string } }>("/:id/lorebook-entries", async (req) => {
-    const entries = await loadCharacterLorebookEntries(req.params.id);
-    return {
-      entries: entries.flatMap((e) =>
-        typeof e.id === "string" ? [{ id: e.id, name: e.name || "(unnamed entry)" }] : [],
-      ),
-    };
-  });
 
   // ── Characters ──
 
@@ -800,6 +657,7 @@ export async function charactersRoutes(app: FastifyInstance) {
     const imgSource = conn.imageGenerationSource || imgModel;
     const imgServiceHint = conn.imageService || imgSource;
     const imageDefaults = resolveConnectionImageDefaults(conn);
+    const imageFallback = await resolveImageConnectionFallback(connections, conn.id);
     const compiled = promptOverride
       ? {
           prompt: promptOverride.prompt,
@@ -825,6 +683,8 @@ export async function charactersRoutes(app: FastifyInstance) {
         imageEndpointId: conn.imageEndpointId || undefined,
         comfyWorkflow: conn.comfyuiWorkflow || undefined,
         imageDefaults,
+        fallback: imageFallback,
+        onFallback: createReplyFallbackNotifier(reply),
       });
       return {
         image: `data:${result.mimeType};base64,${result.base64}`,

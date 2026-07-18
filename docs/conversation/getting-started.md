@@ -39,22 +39,20 @@ When a connection and at least one character are set, click **Start Chatting** t
 
 ### The Automation step
 
-The **Automation** step has four toggles. Their default states are:
+The **Automation** step always includes these controls:
 
 | Toggle | Default | What it does |
 |---|---|---|
 | **Autonomous Messages** | On | Characters can message you first when you are inactive. |
 | **Generate Schedules** | Off | Builds optional weekly routines. Only shown when Autonomous Messages is on. |
-| **Audio/Video Calls** | Off | Adds a call button and a call-only transcript. |
-| **Commands** | On | Lets characters use hidden actions like selfies, scenes, music, and notes. |
 
-For calls, see [Conversation Audio and Video Calls](calls.md).
+If you have installed an agent package that contributes Conversation commands, the step also shows **Commands**. Calls, Illustrator selfies, Music DJ, Haptic Feedback, and each table game appear only when their matching packages are installed. For calls, see [Conversation Audio and Video Calls](calls.md).
 
 ### The Commands grid
 
-When **Commands** is on, a grid of 15 command families appears. Each one is a hidden action a character can take on its own. Every family starts on. Turning a toggle off only removes that one family. Commands are model-driven actions, not things you type.
+When **Commands** is available and on, a grid of up to 17 command families appears. Each one is a hidden action a character can take on its own. Package-owned choices appear only when that package is installed. Every visible family starts on. Turning a toggle off only removes that one family. Commands are model-driven actions, not things you type.
 
-The 15 command families are:
+The complete set of command families is:
 
 - **Schedule Updates**: let characters change their current status.
 - **Cross-Post**: let characters redirect a message into another chat.
@@ -71,6 +69,8 @@ The 15 command families are:
 - **Chess**: let characters accept a one-on-one chess challenge at the table.
 - **Poker**: let characters sit down for a game of Texas Hold'em poker at the table.
 - **8-Ball Pool**: let characters rack up a game of 8-ball pool at the table.
+- **Tic-Tac-Toe**: let characters accept a one-on-one tic-tac-toe challenge.
+- **Rock-Paper-Scissors**: let characters accept a one-on-one rock-paper-scissors match.
 
 A single master **Commands** toggle gates all of them. When the master toggle is off, no command family works, even if it looks enabled.
 
@@ -103,13 +103,13 @@ When a character messages you in a chat you are not currently viewing, a floatin
 
 Characters can send you selfies, which are AI-generated photos of the character. Selfies differ from the scene art used in Roleplay and Game Mode, because a selfie is tied to one character.
 
-To use selfies, open the chat settings drawer, go to the **Commands** section, and set a **Selfie Connection**. A selfie connection is an image-generation provider. Each selfie costs one image-generation call.
+To use selfies, install **Illustrator** from **Agents → Download Agents**. Then open the chat settings drawer, go to **Agents → Illustrator Settings**, and set a **Selfie Connection**. A selfie connection is an image-generation provider. Each selfie costs one image-generation call.
 
 Full setup, including style, resolution, and the manual request button, lives in [Selfies](selfies.md).
 
 ## Table games
 
-Conversation Mode has built-in table games you can play against a character: **UNO**, **Chess**, **Poker**, and **8-Ball Pool**. The app deals the board, enforces the rules, and has each character narrate its own moves in character. Table games only run in Conversation chats.
+Conversation Mode has six optional table-game packages: **UNO**, **Chess**, **Poker**, **8-Ball Pool**, **Tic-Tac-Toe**, and **Rock-Paper-Scissors**. Install the games you want from **Agents → Download Agents**. The app deals the board, enforces the rules, and has each character narrate its own moves in character. Table games only run in Conversation chats.
 
 You can start a game three ways:
 
@@ -117,7 +117,7 @@ You can start a game three ways:
 2. Type a normal message like "let's play uno".
 3. Let a character invite you, when its command family is on.
 
-These are the three slash commands:
+The slash commands are:
 
 ```
 /uno
@@ -129,6 +129,18 @@ These are the three slash commands:
 
 ```
 /poker
+```
+
+```
+/8ball
+```
+
+```
+/tictactoe
+```
+
+```
+/rps
 ```
 
 Each game has its own setup box with options. For the full rules, setup boxes, and boards, see [Table Games](table-games.md).

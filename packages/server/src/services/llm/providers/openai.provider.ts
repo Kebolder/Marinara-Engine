@@ -205,14 +205,27 @@ export class OpenAIProvider extends BaseLLMProvider {
 
   private static extractSseJsonPayload(raw: string): string | null {
     const lines = raw.split(/\r?\n/);
+    let fallbackPayload: string | null = null;
     for (const line of lines) {
       const trimmed = line.trim();
       const payload = OpenAIProvider.extractSseData(trimmed);
       if (payload == null) continue;
       if (!payload || payload === "[DONE]") continue;
-      return payload;
+      fallbackPayload = payload;
+      try {
+        const parsed = JSON.parse(payload) as Record<string, unknown>;
+        const firstChoice = Array.isArray(parsed.choices)
+          ? (parsed.choices[0] as { message?: { content?: unknown }; delta?: { content?: unknown } } | undefined)
+          : undefined;
+        const content = firstChoice?.message?.content ?? firstChoice?.delta?.content;
+        if ((typeof content === "string" && content.trim()) || (Array.isArray(content) && content.length > 0)) {
+          return payload;
+        }
+      } catch {
+        // Keep scanning. parseJsonBody reports the detailed error if recovery fails.
+      }
     }
-    return null;
+    return fallbackPayload;
   }
 
   private static extractSseData(trimmedLine: string): string | null {
@@ -510,7 +523,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
   }
 
-  /** Build standard request headers, adding OpenRouter app tracking when applicable. */
+  /** Build standard request headers. OpenRouter attribution is enforced by safeFetch. */
   private buildHeaders(): Record<string, string> {
     const apiKey = this.apiKey.trim();
     const h: Record<string, string> = {
@@ -521,10 +534,6 @@ export class OpenAIProvider extends BaseLLMProvider {
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       ...(this.extraHeaders ?? {}),
     };
-    if (!this.isGenericCustomProvider() && this.baseUrl.includes("openrouter.ai")) {
-      h["HTTP-Referer"] = "https://github.com/Pasta-Devs/Marinara-Engine";
-      h["X-Title"] = "Marinara Engine";
-    }
     return h;
   }
 
@@ -682,6 +691,15 @@ export class OpenAIProvider extends BaseLLMProvider {
     return !!reasoningEffort && reasoningEffort !== "none";
   }
 
+  private requestReasoningLogValue(body: Record<string, unknown>): string {
+    if (typeof body.reasoning_effort === "string") return body.reasoning_effort;
+    if (!body.reasoning || typeof body.reasoning !== "object" || Array.isArray(body.reasoning)) return "none";
+    const reasoning = body.reasoning as Record<string, unknown>;
+    if (typeof reasoning.effort === "string") return reasoning.effort;
+    if (reasoning.enabled === true) return "enabled";
+    return Object.keys(reasoning).length > 0 ? "configured" : "none";
+  }
+
   private isOpenRouterEndpoint(): boolean {
     return (
       this.providerKind === "openrouter" || (!this.isGenericCustomProvider() && this.baseUrl.includes("openrouter.ai"))
@@ -734,11 +752,12 @@ export class OpenAIProvider extends BaseLLMProvider {
     )
       return;
 
-    if (
-      this.supportsOpenRouterUnifiedReasoning(options.model) &&
-      this.hasActiveReasoningEffort(options.reasoningEffort)
-    ) {
-      body.reasoning = { effort: options.reasoningEffort };
+    if (this.isOpenRouterEndpoint() && this.hasActiveReasoningEffort(options.reasoningEffort)) {
+      const existingReasoning =
+        body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning)
+          ? (body.reasoning as Record<string, unknown>)
+          : {};
+      body.reasoning = { ...existingReasoning, effort: options.reasoningEffort };
       return;
     }
 
@@ -1043,10 +1062,6 @@ export class OpenAIProvider extends BaseLLMProvider {
         body.verbosity = options.verbosity;
       }
 
-      if (this.shouldSendParameter(options, "reasoningEffort")) {
-        this.applyChatCompletionsReasoning(body, options);
-      }
-
       // OpenRouter provider routing preference
       const openrouterProvider = this.resolveOpenrouterProvider(options.openrouterProvider);
       if (this.shouldApplyOpenRouterProviderOverride(openrouterProvider)) {
@@ -1062,15 +1077,22 @@ export class OpenAIProvider extends BaseLLMProvider {
       }
     }
 
+    if (
+      this.shouldSendParameter(options, "reasoningEffort") &&
+      (!suppressModelParameters || this.isOpenRouterEndpoint())
+    ) {
+      this.applyChatCompletionsReasoning(body, options);
+    }
+
     this.applyOpenRouterServiceTier(body, options);
     this.applyCustomParameters(body, options);
     this.stripUnsupportedSamplerParameters(body, options);
 
     logger.debug(
-      "[OpenAI chat()] stream=%s model=%s reasoning_effort=%s enableThinking=%s verbosity=%s max_completion_tokens=%s max_tokens=%s temperature=%s top_p=%s tools=%s",
+      "[OpenAI chat()] stream=%s model=%s reasoning=%s enableThinking=%s verbosity=%s max_completion_tokens=%s max_tokens=%s temperature=%s top_p=%s tools=%s",
       body.stream,
       body.model,
-      body.reasoning_effort ?? "none",
+      this.requestReasoningLogValue(body),
       !!options.enableThinking,
       body.verbosity ?? "default",
       body.max_completion_tokens ?? "n/a",
@@ -1180,27 +1202,35 @@ export class OpenAIProvider extends BaseLLMProvider {
             }
             continue;
           }
-          const choice0 = parsed.choices[0] as { finish_reason?: string | null } | undefined;
+          const choice0 = parsed.choices[0] as
+            | {
+                finish_reason?: string | null;
+                delta?: Record<string, unknown> & { content?: string | unknown[]; refusal?: string };
+                message?: Record<string, unknown> & { content?: string | unknown[] | null; refusal?: string };
+              }
+            | undefined;
           if (choice0?.finish_reason) finishReason = choice0.finish_reason;
-          const delta = (
-            parsed.choices[0] as
-              | { delta?: Record<string, unknown> & { content?: string | unknown[]; refusal?: string } }
-              | undefined
-          )?.delta;
-          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta);
-          const reasoning = OpenAIProvider.extractReasoning(delta);
+          const delta = choice0?.delta;
+          const message = choice0?.message;
+          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta ?? message);
+          const reasoning = OpenAIProvider.extractReasoning(delta ?? message);
           if (reasoning && options.onThinking) {
             options.onThinking(reasoning);
           }
           // Handle OpenRouter content block arrays (Anthropic-style)
-          const blocks = OpenAIProvider.extractContentBlocks(delta?.content);
+          const content = delta?.content ?? message?.content;
+          const refusal =
+            (typeof delta?.refusal === "string" && delta.refusal) ||
+            (typeof message?.refusal === "string" && message.refusal) ||
+            "";
+          const blocks = OpenAIProvider.extractContentBlocks(content);
           if (blocks) {
             if (!reasoning && blocks.thinking && options.onThinking) options.onThinking(blocks.thinking);
             if (blocks.text) yield blocks.text;
-          } else if (delta?.content) {
-            yield delta.content as string;
-          } else if (typeof delta?.refusal === "string" && delta.refusal) {
-            yield delta.refusal;
+          } else if (typeof content === "string" && content) {
+            yield content;
+          } else if (refusal) {
+            yield refusal;
           }
         }
         if (done) break;
@@ -1314,10 +1344,6 @@ export class OpenAIProvider extends BaseLLMProvider {
         body.verbosity = options.verbosity;
       }
 
-      if (this.shouldSendParameter(options, "reasoningEffort")) {
-        this.applyChatCompletionsReasoning(body, options);
-      }
-
       // OpenRouter provider routing preference
       const openrouterProvider = this.resolveOpenrouterProvider(options.openrouterProvider);
       if (this.shouldApplyOpenRouterProviderOverride(openrouterProvider)) {
@@ -1333,11 +1359,26 @@ export class OpenAIProvider extends BaseLLMProvider {
       }
     }
 
+    if (
+      this.shouldSendParameter(options, "reasoningEffort") &&
+      (!suppressModelParameters || this.isOpenRouterEndpoint())
+    ) {
+      this.applyChatCompletionsReasoning(body, options);
+    }
+
     this.applyOpenRouterServiceTier(body, options);
     this.applyCustomParameters(body, options);
     this.stripUnsupportedSamplerParameters(body, options);
 
-    logger.debug("[OpenAI chatComplete()] stream=%s model=%s onToken=%s", useStream, body.model, !!options.onToken);
+    logger.debug(
+      "[OpenAI chatComplete()] stream=%s model=%s reasoning=%s enableThinking=%s verbosity=%s onToken=%s",
+      useStream,
+      body.model,
+      this.requestReasoningLogValue(body),
+      !!options.enableThinking,
+      body.verbosity ?? "default",
+      !!options.onToken,
+    );
 
     const response = await llmFetch(url, {
       method: "POST",
@@ -1466,9 +1507,14 @@ export class OpenAIProvider extends BaseLLMProvider {
 
           const choice = (
             parsed.choices as Array<{
-              delta: Record<string, unknown> & {
+              delta?: Record<string, unknown> & {
                 content?: string | unknown[];
+                refusal?: string;
                 tool_calls?: unknown;
+              };
+              message?: Record<string, unknown> & {
+                content?: string | unknown[] | null;
+                refusal?: string;
               };
               finish_reason?: string;
             }>
@@ -1480,28 +1526,34 @@ export class OpenAIProvider extends BaseLLMProvider {
           }
 
           const delta = choice.delta;
-          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta);
+          const message = choice.message;
+          OpenAIProvider.appendReasoningMetadata(reasoningMetadata, delta ?? message);
 
           // Stream reasoning/thinking
-          const reasoning = OpenAIProvider.extractReasoning(delta);
+          const reasoning = OpenAIProvider.extractReasoning(delta ?? message);
           if (reasoning && options.onThinking) {
             options.onThinking(reasoning);
           }
 
           // Handle OpenRouter content block arrays (Anthropic-style)
-          const blocks = OpenAIProvider.extractContentBlocks(delta?.content);
+          const textContent = delta?.content ?? message?.content;
+          const refusal =
+            (typeof delta?.refusal === "string" && delta.refusal) ||
+            (typeof message?.refusal === "string" && message.refusal) ||
+            "";
+          const blocks = OpenAIProvider.extractContentBlocks(textContent);
           if (blocks) {
             if (!reasoning && blocks.thinking && options.onThinking) options.onThinking(blocks.thinking);
             if (blocks.text) {
               content += blocks.text;
               await options.onToken?.(blocks.text);
             }
-          } else if (delta?.content) {
-            content += delta.content as string;
-            await options.onToken?.(delta.content as string);
-          } else if (typeof delta?.refusal === "string" && delta.refusal) {
-            content += delta.refusal;
-            await options.onToken?.(delta.refusal);
+          } else if (typeof textContent === "string" && textContent) {
+            content += textContent;
+            await options.onToken?.(textContent);
+          } else if (refusal) {
+            content += refusal;
+            await options.onToken?.(refusal);
           }
 
           // Accumulate tool call deltas. Some OpenAI-compatible backends (including llama.cpp)

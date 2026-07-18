@@ -73,7 +73,10 @@ export function GameChoiceCards({ choices, onSelect, onDismiss, disabled, replay
           )}
         </div>
 
-        <div className="flex min-h-0 flex-1 touch-pan-y flex-col gap-2 overflow-y-auto overscroll-contain pr-1 [-webkit-overflow-scrolling:touch]">
+        <div
+          data-component="GameChoiceCards.Options"
+          className="flex min-h-0 flex-1 touch-pan-y flex-col gap-2 overflow-y-auto overscroll-contain pr-1 [-webkit-overflow-scrolling:touch]"
+        >
           {choices.map((choice, i) => {
             const isRecordedChoice = !replayMode || normalizeChoiceText(choice) === normalizedReplayChoice;
             const choiceDisabled = disabled || selected !== null || !isRecordedChoice;

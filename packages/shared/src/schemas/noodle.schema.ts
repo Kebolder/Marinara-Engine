@@ -29,6 +29,9 @@ export const DEFAULT_NOODLE_SETTINGS = {
   allowGalleryImageAttachments: false,
   imageCaptioningEnabled: false,
   imageCaptioningConnectionId: null,
+  enableLorebookContext: false,
+  enableEnhancedTimelineWriting: false,
+  allowProfessorMari: true,
   allowRandomUsers: false,
   invitedCharacterGroupIds: [],
   carryoverMode: "off",
@@ -72,6 +75,9 @@ export const noodleSettingsSchema = z.object({
     .min(1)
     .nullable()
     .default(DEFAULT_NOODLE_SETTINGS.imageCaptioningConnectionId),
+  enableLorebookContext: z.boolean().default(DEFAULT_NOODLE_SETTINGS.enableLorebookContext),
+  enableEnhancedTimelineWriting: z.boolean().default(DEFAULT_NOODLE_SETTINGS.enableEnhancedTimelineWriting),
+  allowProfessorMari: z.boolean().default(DEFAULT_NOODLE_SETTINGS.allowProfessorMari),
   allowRandomUsers: z.boolean().default(DEFAULT_NOODLE_SETTINGS.allowRandomUsers),
   invitedCharacterGroupIds: z
     .array(z.string().min(1))
@@ -238,7 +244,7 @@ export const noodleRescheduleRefreshSchema = z.object({
 
 export const noodleGeneratedPostSchema = z.object({
   tempId: z.string().min(1).optional(),
-  authorEntityId: z.string().min(1),
+  authorHandle: z.string().min(1),
   content: z.string().min(1).max(4000),
   imagePrompt: z.string().max(2000).nullable().optional(),
   attachGalleryImage: z.boolean().optional().default(false),
@@ -247,7 +253,7 @@ export const noodleGeneratedPostSchema = z.object({
 
 export const noodleGeneratedInteractionSchema = z
   .object({
-    actorEntityId: z.string().min(1),
+    actorHandle: z.string().min(1),
     targetTempId: z
       .string()
       .min(1)
@@ -291,8 +297,8 @@ export const noodleGeneratedInteractionSchema = z
   });
 
 export const noodleGeneratedFollowSchema = z.object({
-  actorEntityId: z.string().min(1),
-  targetEntityId: z.string().min(1),
+  actorHandle: z.string().min(1),
+  targetHandle: z.string().min(1),
 });
 
 export const noodleGeneratedDigestSchema = z.object({
@@ -300,12 +306,24 @@ export const noodleGeneratedDigestSchema = z.object({
   content: z.string().min(1).max(1200),
 });
 
+function boundedGeneratedProfileText(maxLength: number, minimumLength = 0) {
+  return z
+    .string()
+    .transform((value) => {
+      if (value.length <= maxLength) return value;
+      const truncated = value.slice(0, maxLength);
+      // Avoid leaving a dangling UTF-16 high surrogate when truncating emoji.
+      return /[\uD800-\uDBFF]$/.test(truncated) ? truncated.slice(0, -1) : truncated;
+    })
+    .pipe(z.string().min(minimumLength).max(maxLength));
+}
+
 export const noodleGeneratedProfileSchema = z.object({
   entityId: z.string().min(1),
-  name: z.string().min(1).max(120),
-  handle: z.string().min(1).max(40),
-  bio: z.string().max(500).default(""),
-  location: z.string().max(120).default(""),
+  name: boundedGeneratedProfileText(120, 1),
+  handle: boundedGeneratedProfileText(40, 1),
+  bio: boundedGeneratedProfileText(500).default(""),
+  location: boundedGeneratedProfileText(120).default(""),
 });
 
 export const noodleGeneratedRefreshSchema = z.object({
@@ -336,3 +354,4 @@ export type NoodleRefreshInput = z.infer<typeof noodleRefreshSchema>;
 export type NoodleRescheduleRefreshInput = z.infer<typeof noodleRescheduleRefreshSchema>;
 export type NoodleGeneratedRefresh = z.infer<typeof noodleGeneratedRefreshSchema>;
 export type NoodleGeneratedProfiles = z.infer<typeof noodleGeneratedProfilesSchema>;
+export type NoodleGeneratedProfile = z.infer<typeof noodleGeneratedProfileSchema>;

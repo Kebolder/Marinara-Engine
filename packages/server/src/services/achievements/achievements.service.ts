@@ -12,6 +12,7 @@ import {
   PROFESSOR_MARI_ID,
 } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
+import { isFileUniqueConstraintError } from "../../db/file-schema.js";
 import { achievementUnlocks, characters, chats, lorebooks, personas } from "../../db/schema/index.js";
 import { now } from "../../utils/id-generator.js";
 
@@ -41,7 +42,7 @@ function buildProgress(
   if (!definition) return null;
 
   const target = definition.target ?? null;
-  const progress = definition.metric ? counts[definition.metric] ?? 0 : unlockedRow ? 1 : 0;
+  const progress = definition.metric ? (counts[definition.metric] ?? 0) : unlockedRow ? 1 : 0;
 
   return {
     id,
@@ -57,21 +58,6 @@ function collectMetricUnlockIds(counts: AchievementCounts) {
     if (!definition.metric || !definition.target) return [];
     return counts[definition.metric] >= definition.target ? [definition.id] : [];
   });
-}
-
-function isDuplicateUnlockError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const maybeCode = (error as { code?: unknown }).code;
-  const code = typeof maybeCode === "string" ? maybeCode.toUpperCase() : "";
-  const message = error.message.toLowerCase();
-  return (
-    code === "23505" ||
-    code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
-    code === "SQLITE_CONSTRAINT_UNIQUE" ||
-    message.includes("duplicate key value violates unique constraint") ||
-    message.includes("duplicate primary key") ||
-    (message.includes("unique") && message.includes("achievement_unlocks"))
-  );
 }
 
 export function createAchievementsService(db: DB) {
@@ -114,7 +100,7 @@ export function createAchievementsService(db: DB) {
         await db.insert(achievementUnlocks).values(row);
         newlyUnlockedRows.push(row);
       } catch (error) {
-        if (!isDuplicateUnlockError(error)) throw error;
+        if (!isFileUniqueConstraintError(error, "achievement_unlocks", ["id"])) throw error;
       }
     }
 

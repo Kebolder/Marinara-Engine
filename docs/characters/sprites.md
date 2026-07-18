@@ -73,7 +73,7 @@ Fill in the window:
 1. Pick an **Image Generation Connection** from the dropdown.
 2. Add up to four **Reference Images** if you want the art to match a look. You can also tick the box to use the current avatar as a reference.
 3. Write an **Appearance Description** of how the character looks. This is required.
-4. Optionally turn on **Prefer transparent PNG** so the AI leaves the background empty. Some image models cannot make a clear background, so Marinara falls back to background cleanup afterward.
+4. Optionally turn on **Transparent sprite background**. Marinara requests native PNG transparency first. If the provider cannot return alpha, it chooses a saturated green, magenta, or cyan matte that least overlaps the colors in your **Appearance Description**, then removes that matte automatically.
 5. Choose how many images to make with **Expression Count** (or **Pose Count** for full-body), then pick which expressions or poses to fill.
 6. Click the **Generate** button.
 
@@ -92,7 +92,7 @@ On the **Expressions (Portrait)** source there is a checkbox called **Generate a
 
 ## Cleaning up sprite backgrounds
 
-A sprite looks best when only the character shows and the background is see-through. Marinara has two ways to clean up a background.
+A sprite looks best when only the character shows and the background is see-through. Generated still sprites use native transparency when the provider supports it. Otherwise, Marinara removes a flat adaptive chroma matte with a soft edge and cleans its color out of hair, fabric, and other partially transparent pixels. Older white-background sprites remain supported.
 
 ### Clean one sprite by hand
 
@@ -109,7 +109,7 @@ After a batch cleanup, Marinara keeps a safety copy. A line reads "Last cleanup 
 
 Background cleanup works on PNG, JPG, JPEG, WEBP, and AVIF images. It does not work on GIF or SVG files.
 
-Marinara can also use an optional higher-quality background remover if it is installed on the server. When it is not installed, Marinara uses a built-in cleanup instead. The built-in one still works but is less precise on busy backgrounds.
+Automatic cleanup examines the image before choosing an engine. The fast built-in matte cleanup handles flat chroma and legacy white backgrounds first. If the border is not actually uniform, Marinara can use the optional AI background remover as a fallback when it is installed. The manual cleanup editor remains the safest option for a busy scene or a subject whose colors are nearly identical to the background.
 
 ## Exporting sprites
 
@@ -127,7 +127,7 @@ Uploading sprites is only half the job. You also decide when and how they appear
 
 ### Roleplay Mode
 
-In **Roleplay Mode**, an agent called the **Expression Engine** drives sprite display. An agent is an AI helper that runs alongside your chat. The Expression Engine reads the mood of each message and picks a matching expression sprite. See [Built-in Agents Reference](../agents/built-in-agents.md) for how to add it.
+In **Roleplay Mode**, the optional **Expression Engine** agent drives sprite display. Download it from **Agents → Download Agents**, then add it to the chat. It reads the mood of each message and picks a matching expression sprite. See [Downloadable Agents Reference](../agents/built-in-agents.md) for details.
 
 For sprites to appear in a Roleplay chat, all of the following must be true:
 
@@ -164,4 +164,4 @@ The **Clips** category in the **Sprites** tab is a different feature. It makes s
 - [Game Mode: Getting Started](../game/getting-started.md)
 - [Conversation Audio and Video Calls](../conversation/calls.md)
 - [Animated Expressions](../media/animated-expressions.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)

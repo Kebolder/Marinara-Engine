@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
 import { logger } from "../lib/logger.js";
+import { fetchBotBrowserJson } from "../services/bot-browser/fetch-json.js";
 import { resolveValidatedImage, safeFetch } from "../utils/security.js";
 
 const CT_API_BASE = "https://character-tavern.com/api";
@@ -13,21 +14,6 @@ const CT_UA =
 
 // In-memory session cookie store (persists until server restart)
 let ctSessionCookie: string = "";
-
-async function proxyFetch(url: string, init?: RequestInit): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`Upstream ${res.status}: ${text.slice(0, 300)}`);
-    }
-    return res.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 async function fetchAvatarImage(url: string, signal: AbortSignal): Promise<
   | {
@@ -211,22 +197,10 @@ export async function botBrowserChartavernRoutes(app: FastifyInstance) {
     if (hasLorebook === "true") params.set("hasLorebook", "true");
     if (isOC === "true") params.set("isOC", "true");
 
-    // Use cookie-aware headers for authenticated NSFW search
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const res = await fetch(`${CT_API_BASE}/search/cards?${params}`, {
-        headers: ctHeaders(),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Upstream ${res.status}: ${text.slice(0, 300)}`);
-      }
-      return res.json();
-    } finally {
-      clearTimeout(timeout);
-    }
+    return fetchBotBrowserJson(`${CT_API_BASE}/search/cards?${params}`, {
+      allowedHosts: ["character-tavern.com"],
+      headers: ctHeaders(),
+    });
   });
 
   /** Get full character detail from CharacterTavern */
@@ -234,26 +208,19 @@ export async function botBrowserChartavernRoutes(app: FastifyInstance) {
     const { author, slug } = req.params;
     if (!author || !slug) throw new Error("Missing author or slug");
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const res = await fetch(`${CT_API_BASE}/character/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`, {
+    return fetchBotBrowserJson(
+      `${CT_API_BASE}/character/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`,
+      {
+        allowedHosts: ["character-tavern.com"],
         headers: ctHeaders(),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`Upstream ${res.status}: ${text.slice(0, 300)}`);
-      }
-      return res.json();
-    } finally {
-      clearTimeout(timeout);
-    }
+      },
+    );
   });
 
   /** Fetch top tags from CharacterTavern */
   app.get("/chartavern/top-tags", async () => {
-    const data = await proxyFetch(`${CT_API_BASE}/catalog/top-tags`, {
+    const data = await fetchBotBrowserJson(`${CT_API_BASE}/catalog/top-tags`, {
+      allowedHosts: ["character-tavern.com"],
       headers: { Accept: "application/json" },
     });
     return data;

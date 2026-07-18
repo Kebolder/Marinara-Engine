@@ -1,5 +1,6 @@
 import { logger } from "../../lib/logger.js";
 import { escapeXmlText } from "../prompt/prompt-escaping.js";
+import { getZonedDayBounds } from "../conversation/timezone.js";
 
 type CharactersStore = {
   getById(id: string): Promise<{ data: unknown } | null>;
@@ -16,14 +17,15 @@ export async function mergeConversationCharacterMemories({
   chars,
   characterIds,
   awarenessBlock,
+  timeZone,
 }: {
   chars: CharactersStore;
   characterIds: string[];
   awarenessBlock: string | null;
+  timeZone?: string;
 }): Promise<string | null> {
   const memoryLines: string[] = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getZonedDayBounds(new Date(), timeZone).start;
 
   for (const characterId of characterIds) {
     const charRow = await chars.getById(characterId);

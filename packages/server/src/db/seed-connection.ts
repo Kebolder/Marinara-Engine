@@ -6,7 +6,7 @@
 import { logger } from "../lib/logger.js";
 import type { DB } from "./connection.js";
 import { apiConnections } from "./schema/connections.js";
-import { eq } from "drizzle-orm";
+import { eq } from "./file-query.js";
 import { DEFAULT_CONNECTION_ID } from "@marinara-engine/shared";
 
 export async function seedDefaultConnection(db: DB) {

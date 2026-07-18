@@ -296,6 +296,23 @@ function characterFieldsFromProfile(profile: CharacterMacroProfile): NonNullable
   };
 }
 
+/**
+ * Scope otherwise shared prompt macros to the character whose provider request
+ * is about to run. This is used by the final prompt pass so late injections
+ * resolve {{char}} and card-field macros against the actual responder.
+ */
+export function scopePromptMacroContextToCharacter(
+  macroCtx: MacroContext,
+  profile: CharacterMacroProfile,
+): MacroContext {
+  return {
+    ...macroCtx,
+    char: profile.name,
+    charPhonetic: profile.phoneticName || profile.name,
+    characterFields: characterFieldsFromProfile(profile),
+  };
+}
+
 function macroContextForMessage(
   message: PromptMacroMessage,
   macroCtx: MacroContext,
@@ -303,13 +320,7 @@ function macroContextForMessage(
 ): MacroContext {
   const profile = message.characterId ? profilesById?.get(message.characterId) : undefined;
   if (!profile) return macroCtx;
-
-  return {
-    ...macroCtx,
-    char: profile.name,
-    charPhonetic: profile.phoneticName || profile.name,
-    characterFields: characterFieldsFromProfile(profile),
-  };
+  return scopePromptMacroContextToCharacter(macroCtx, profile);
 }
 
 export function resolvePromptMessageMacros<T extends PromptMacroMessage>(
@@ -440,4 +451,36 @@ export async function collectCharacterPostHistoryEntries(
   }
 
   return entries;
+}
+
+export async function collectCharacterAdvancedPromptEntries(
+  db: DB,
+  characterIds: string[],
+  macroCtx: MacroContext,
+  wrapFormat: WrapFormat,
+): Promise<PromptDepthEntry[]> {
+  const [depthEntries, postHistoryEntries] = await Promise.all([
+    collectCharacterDepthPromptEntries(db, characterIds, macroCtx),
+    collectCharacterPostHistoryEntries(db, characterIds, macroCtx, wrapFormat),
+  ]);
+  return [...depthEntries, ...postHistoryEntries];
+}
+
+export function resolveCharacterAdvancedPromptIds(
+  characterIds: string[],
+  chatMode: string,
+  chatMetadata: Record<string, unknown>,
+): string[] {
+  const resolved = new Set(characterIds.filter((id) => id && !id.startsWith("npc:")));
+  if (chatMode !== "game") return [...resolved];
+
+  const partyIds = Array.isArray(chatMetadata.gamePartyCharacterIds)
+    ? chatMetadata.gamePartyCharacterIds
+    : [];
+  for (const id of partyIds) {
+    if (typeof id === "string" && id && !id.startsWith("npc:")) resolved.add(id);
+  }
+  const gmCharacterId = chatMetadata.gameGmCharacterId;
+  if (typeof gmCharacterId === "string" && gmCharacterId) resolved.add(gmCharacterId);
+  return [...resolved];
 }

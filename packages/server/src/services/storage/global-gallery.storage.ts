@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Global Gallery Images & Folders
 // ──────────────────────────────────────────────
-import { eq, desc, isNull } from "drizzle-orm";
+import { eq, desc, isNull } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { globalImages, galleryFolders } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

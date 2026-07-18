@@ -34,9 +34,7 @@ Your images, audio, and other media files live in their own folders, each named 
 | `custom-emojis` | Custom emoji images |
 | `custom-stickers` | Custom sticker images |
 
-If you upgraded from an older version of Marinara, the data folder may also contain a file named `marinara-engine.db`. This is a leftover copy of your old database. Marinara reads it once to bring your old data into the `storage` folder, then leaves it alone as a recovery copy. Do not delete it unless you are sure your data moved over safely.
-
-For a deeper technical explanation of how the `storage` folder works, developers can read [File Storage Migration](../development/file-storage-migration.md).
+For a deeper technical explanation of how the `storage` folder works, developers can read [File-Native Storage](../development/file-storage.md).
 
 ## The encryption key file
 
@@ -58,4 +56,4 @@ For the full backup and restore steps on every platform, see [Backing Up and Res
 
 - [Backing Up and Restoring Marinara](backup-and-restore.md)
 - [Server Configuration Reference](../CONFIGURATION.md)
-- [File Storage Migration](../development/file-storage-migration.md)
+- [File-Native Storage](../development/file-storage.md)

@@ -1,7 +1,8 @@
 // ──────────────────────────────────────────────
 // Storage: API Connection Folders
 // ──────────────────────────────────────────────
-import { eq } from "drizzle-orm";
+import { eq } from "../../db/file-query.js";
+import type { CreateConnectionFolderInput, UpdateFolderInput } from "@marinara-engine/shared";
 import type { DB } from "../../db/connection.js";
 import { apiConnectionFolders, apiConnections } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
@@ -17,7 +18,7 @@ export function createConnectionFoldersStorage(db: DB) {
       return rows[0] ?? null;
     },
 
-    async create(input: { name: string; color?: string }) {
+    async create(input: CreateConnectionFolderInput) {
       const id = newId();
       const timestamp = now();
       // Shift existing folders down and place new folder at the top.
@@ -25,11 +26,11 @@ export function createConnectionFoldersStorage(db: DB) {
       // half-shifted state with no new folder.
       await db.transaction(async (tx) => {
         const existing = await tx.select().from(apiConnectionFolders);
-        for (const f of existing) {
+        for (const folder of existing) {
           await tx
             .update(apiConnectionFolders)
-            .set({ sortOrder: f.sortOrder + 1 })
-            .where(eq(apiConnectionFolders.id, f.id));
+            .set({ sortOrder: folder.sortOrder + 1 })
+            .where(eq(apiConnectionFolders.id, folder.id));
         }
         await tx.insert(apiConnectionFolders).values({
           id,
@@ -44,7 +45,7 @@ export function createConnectionFoldersStorage(db: DB) {
       return this.getById(id);
     },
 
-    async update(id: string, data: Partial<{ name: string; color: string; sortOrder: number; collapsed: boolean }>) {
+    async update(id: string, data: UpdateFolderInput) {
       await db
         .update(apiConnectionFolders)
         .set({
@@ -69,11 +70,11 @@ export function createConnectionFoldersStorage(db: DB) {
       // would leave the folder list with mixed sort orders.
       const timestamp = now();
       await db.transaction(async (tx) => {
-        for (let i = 0; i < orderedIds.length; i++) {
+        for (let index = 0; index < orderedIds.length; index++) {
           await tx
             .update(apiConnectionFolders)
-            .set({ sortOrder: i, updatedAt: timestamp })
-            .where(eq(apiConnectionFolders.id, orderedIds[i]!));
+            .set({ sortOrder: index, updatedAt: timestamp })
+            .where(eq(apiConnectionFolders.id, orderedIds[index]!));
         }
       });
     },

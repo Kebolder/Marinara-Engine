@@ -56,8 +56,7 @@ function FieldRow({ label, help, children }: { label: string; help?: string; chi
   );
 }
 
-const INPUT_CLS =
-  "w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]";
+const INPUT_CLS = "mari-chrome-field w-full px-3 py-2.5 text-sm placeholder:text-[var(--muted-foreground)]";
 
 const TTS_SOURCE_DEFAULTS: Record<
   TTSSource,
@@ -422,6 +421,7 @@ export function TTSConfigCard() {
   const [autoplayGame, setAutoplayGame] = useState(false);
   const [progressivePlayback, setProgressivePlayback] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
+  const [dialoguePauseMs, setDialoguePauseMs] = useState(300);
   const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
   const [callAudioEnabled, setCallAudioEnabled] = useState(false);
   const [callAudioInputMode, setCallAudioInputMode] = useState<TTSConversationCallAudioInputMode>("local_whisper");
@@ -477,6 +477,7 @@ export function TTSConfigCard() {
     setAutoplayGame(savedConfig.autoplayGame);
     setProgressivePlayback(savedConfig.progressivePlayback ?? false);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
+    setDialoguePauseMs(savedConfig.dialoguePauseMs ?? 300);
     setAudioFormat(savedConfig.audioFormat ?? "mp3");
     setCallAudioEnabled(savedConfig.callAudioEnabled ?? false);
     setCallAudioInputMode(savedConfig.callAudioInputMode ?? "local_whisper");
@@ -546,6 +547,7 @@ export function TTSConfigCard() {
     autoplayGame,
     progressivePlayback,
     dialogueOnly,
+    dialoguePauseMs,
     audioFormat,
     callAudioEnabled,
     callSttConnectionId: "",
@@ -947,7 +949,7 @@ export function TTSConfigCard() {
 
       {/* ── Expanded body ── */}
       {expanded && (
-        <div className="mt-4 space-y-4">
+        <div className="mt-3 space-y-4 border-t border-sky-400/10 pt-3">
           {/* Source */}
           <FieldRow label="Source" help="Choose the provider used by the server-side TTS proxy.">
             <select
@@ -1172,7 +1174,7 @@ export function TTSConfigCard() {
 
           {voiceMode === "per-character" && (
             <FieldRow label="Character Voices" help="Assign voices to specific characters from your Characters tab.">
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
+              <div className="space-y-2 rounded-xl border border-sky-400/15 bg-sky-400/5 p-2">
                 <div className="grid gap-2 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)] sm:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_auto]">
                   <span>Character</span>
                   <span>Voice</span>
@@ -1249,7 +1251,7 @@ export function TTSConfigCard() {
             label="Narrator Voice"
             help="Use a separate voice for narrator messages, game narration, and roleplay narration outside speaker-tagged dialogue."
           >
-            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
+            <div className="space-y-2 rounded-xl border border-sky-400/15 bg-sky-400/5 p-2">
               <ToggleRow
                 label="Use separate narrator voice"
                 checked={narratorVoiceEnabled}
@@ -1339,7 +1341,7 @@ export function TTSConfigCard() {
             label="Random NPC Voices"
             help="When enabled, tracked game NPCs without a character-specific voice use a stable random provider voice. If voice metadata is available, Marinara prefers matching male/female pools."
           >
-            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
+            <div className="space-y-2 rounded-xl border border-sky-400/15 bg-sky-400/5 p-2">
               <ToggleRow
                 label="Use default voices for random NPCs"
                 checked={npcDefaultVoicesEnabled}
@@ -1492,9 +1494,33 @@ export function TTSConfigCard() {
                 mark({ dialogueOnly: v });
               }}
             />
+            {dialogueOnly && (
+              <FieldRow
+                label={`Pause between dialogues — ${dialoguePauseMs} ms`}
+                help="Adds silence between separate dialogue lines in the same message. It does not pause between chunks of the same long dialogue."
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={1500}
+                  step={50}
+                  value={dialoguePauseMs}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    setDialoguePauseMs(next);
+                    mark({ dialoguePauseMs: next });
+                  }}
+                  className="w-full accent-rose-400"
+                />
+                <div className="flex justify-between text-[0.6rem] text-[var(--muted-foreground)]">
+                  <span>No pause</span>
+                  <span>1500 ms</span>
+                </div>
+              </FieldRow>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 px-2.5 py-2">
+          <div className="flex items-center gap-2 rounded-xl border border-sky-400/15 bg-sky-400/5 px-2.5 py-2">
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium">Cached clips</div>
               <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">

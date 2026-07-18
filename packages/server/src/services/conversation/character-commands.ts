@@ -16,6 +16,8 @@
 // - [chess] (start a one-on-one chess game against the user; Conversation mode)
 // - [poker] (start a game of Texas Hold'em poker at the table; Conversation mode)
 // - [eightball] (start a one-on-one 8-ball pool game against the user; Conversation mode)
+// - [tic_tac_toe] (start a one-on-one tic-tac-toe game against the user; Conversation mode)
+// - [rock_paper_scissors] (start a one-on-one rock-paper-scissors match against the user; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
@@ -26,10 +28,10 @@
 // - [dm: character="CharName", message="text"] (Roleplay-only: open a direct-message conversation)
 //
 // Assistant commands (Professor Mari):
-// - [create_persona: name="...", description="...", personality="...", appearance="..."]
-// - [create_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
-// - [update_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
-// - [update_persona: name="...", description="...", personality="...", appearance="...", scenario="...", backstory="..."]
+// - [create_persona: name="...", description="...", personality="...", appearance="...", about_me="..."]
+// - [create_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", about_me="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
+// - [update_character: name="...", description="...", personality="...", first_message="...", scenario="...", backstory="...", appearance="...", about_me="...", mes_example="...", creator_notes="...", system_prompt="...", post_history_instructions="...", creator="...", character_version="...", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="...", depth_prompt="...", depth_prompt_depth=4, depth_prompt_role="system"]
+// - [update_persona: name="...", description="...", personality="...", appearance="...", scenario="...", backstory="...", about_me="..."]
 // - <create_lorebook>{"name":"...","description":"...","category":"...","tags":["..."],"entries":[{"name":"...","content":"...","keys":["..."],"tag":"..."}]}</create_lorebook>
 // - <update_lorebook>{"name":"Existing","description":"...","entries":[{"name":"Entry","content":"refined content","keys":["..."]}]}</update_lorebook>
 // - <create_preset>{"name":"...","description":"...","sections":[{"name":"...","content":"...","role":"system"}],"choiceBlocks":[{"variableName":"...","question":"...","options":[{"label":"...","value":"..."}]}]}</create_preset>
@@ -41,6 +43,10 @@
 import { normalizeTextForMatch, stripLeadingMessageTimestamps } from "@marinara-engine/shared";
 
 import { stripConversationPromptTimestamps } from "./transcript-sanitize.js";
+import {
+  parseCapabilityConversationCommands,
+  stripCapabilityConversationCommands,
+} from "../capability-packages/capability-command-registry.service.js";
 
 export interface ScheduleUpdateCommand {
   type: "schedule_update";
@@ -105,6 +111,21 @@ export interface PokerCommand {
 export interface EightballCommand {
   /** Start a one-on-one 8-ball pool game against the user. Param-less; the system racks + runs the table. */
   type: "eightball";
+}
+
+export interface TicTacToeCommand {
+  /** Start a one-on-one tic-tac-toe game against the user. Param-less; the system sets up + runs the board. */
+  type: "tic_tac_toe";
+}
+
+export interface RockPaperScissorsCommand {
+  /** Start a one-on-one rock-paper-scissors match against the user. Param-less; the system sets up + runs the match. */
+  type: "rock_paper_scissors";
+}
+
+export interface CapabilityConversationCommand {
+  type: "capability";
+  commandType: string;
 }
 
 export interface InfluenceCommand {
@@ -177,6 +198,7 @@ export interface CreatePersonaCommand {
   description?: string;
   personality?: string;
   appearance?: string;
+  aboutMe?: string;
 }
 
 export interface CreateCharacterCommand {
@@ -188,6 +210,7 @@ export interface CreateCharacterCommand {
   scenario?: string;
   backstory?: string;
   appearance?: string;
+  aboutMe?: string;
   mesExample?: string;
   creatorNotes?: string;
   systemPrompt?: string;
@@ -213,6 +236,7 @@ export interface UpdateCharacterCommand {
   scenario?: string;
   backstory?: string;
   appearance?: string;
+  aboutMe?: string;
   mesExample?: string;
   creatorNotes?: string;
   systemPrompt?: string;
@@ -237,6 +261,7 @@ export interface UpdatePersonaCommand {
   appearance?: string;
   scenario?: string;
   backstory?: string;
+  aboutMe?: string;
 }
 
 export interface CreateLorebookEntryCommand {
@@ -379,6 +404,9 @@ export type CharacterCommand =
   | ChessCommand
   | PokerCommand
   | EightballCommand
+  | TicTacToeCommand
+  | RockPaperScissorsCommand
+  | CapabilityConversationCommand
   | InfluenceCommand
   | NoteCommand
   | DirectMessageCommand
@@ -403,14 +431,6 @@ const SELFIE_RE = /\[selfie(?::\s*(?:context="([^"]*)"|"([^"]*)"|([^\]\r\n"]+)))
 const MEMORY_RE = /\[memory:\s*target="([^"]+)"\s*,\s*summary="([^"]+)"\]/gi;
 const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const CALL_RE = new RegExp(`\\[call(?::\\s*(${QUOTED_PARAM_BLOCK}))?\\]`, "gi");
-// Param-less UNO trigger. Tolerates a stray `[uno: ...]` so a chatty model can't dodge the match.
-const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
-// Param-less chess trigger. Same tolerant shape as UNO_RE.
-const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
-// Param-less poker trigger. Same tolerant shape as UNO_RE.
-const POKER_RE = /\[poker(?::[^\]\r\n]*)?\]/gi;
-// Param-less 8-ball trigger. Same tolerant shape as UNO_RE.
-const EIGHTBALL_RE = /\[eightball(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -1041,6 +1061,7 @@ function applyCommonCharacterFields(
   assignText("scenario", "scenario");
   assignText("backstory", "backstory");
   assignText("appearance", "appearance");
+  assignText("aboutMe", "about_me");
   assignText("mesExample", "mes_example");
   assignText("creatorNotes", "creator_notes");
   assignText("systemPrompt", "system_prompt");
@@ -1154,29 +1175,7 @@ export function parseCharacterCommands(content: string): {
     break;
   }
 
-  // Parse uno command — start a game of UNO. Param-less; only one per message.
-  for (const _unoMatch of content.matchAll(UNO_RE)) {
-    commands.push({ type: "uno" });
-    break;
-  }
-
-  // Parse chess command — start a one-on-one chess game. Param-less; only one per message.
-  for (const _chessMatch of content.matchAll(CHESS_RE)) {
-    commands.push({ type: "chess" });
-    break;
-  }
-
-  // Parse poker command — start a game of Texas Hold'em. Param-less; only one per message.
-  for (const _pokerMatch of content.matchAll(POKER_RE)) {
-    commands.push({ type: "poker" });
-    break;
-  }
-
-  // Parse eightball command — start a one-on-one 8-ball pool game. Param-less; only one per message.
-  for (const _eightballMatch of content.matchAll(EIGHTBALL_RE)) {
-    commands.push({ type: "eightball" });
-    break;
-  }
+  commands.push(...parseCapabilityConversationCommands(content));
 
   // Parse influence commands (<influence>text</influence>)
   for (const match of content.matchAll(INFLUENCE_RE)) {
@@ -1266,6 +1265,8 @@ export function parseCharacterCommands(content: string): {
     if (personality) cmd.personality = personality;
     const appearance = parseQuotedParam(params, "appearance");
     if (appearance) cmd.appearance = appearance;
+    const aboutMe = parseQuotedParam(params, "about_me");
+    if (aboutMe) cmd.aboutMe = aboutMe;
     if (cmd.name) commands.push(cmd);
   }
 
@@ -1302,6 +1303,8 @@ export function parseCharacterCommands(content: string): {
     if (scenario !== undefined) cmd.scenario = scenario;
     const backstory = parseQuotedParam(params, "backstory", true);
     if (backstory !== undefined) cmd.backstory = backstory;
+    const aboutMe = parseQuotedParam(params, "about_me", true);
+    if (aboutMe !== undefined) cmd.aboutMe = aboutMe;
     if (cmd.name) commands.push(cmd);
   }
 
@@ -1393,17 +1396,13 @@ export function parseCharacterCommands(content: string): {
   }
 
   // Strip all commands from the visible content
-  let cleanContent = content
+  let cleanContent = stripCapabilityConversationCommands(content)
     .replace(SCHEDULE_UPDATE_RE, "")
     .replace(CROSS_POST_RE, "")
     .replace(SELFIE_RE, "")
     .replace(MEMORY_RE, "")
     .replace(SCENE_RE, "")
     .replace(CALL_RE, "")
-    .replace(UNO_RE, "")
-    .replace(CHESS_RE, "")
-    .replace(POKER_RE, "")
-    .replace(EIGHTBALL_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")

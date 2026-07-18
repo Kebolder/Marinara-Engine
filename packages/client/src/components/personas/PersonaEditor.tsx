@@ -1379,7 +1379,7 @@ export function PersonaEditor() {
               value={formData.comment}
               onChange={(e) => updateField("comment", e.target.value)}
               className="mari-editor-subtitle-input"
-              placeholder="Comment (e.g. 'Modern AU version')"
+              placeholder="Title / comment (e.g. 'Modern AU version')"
             />
             <p className="mari-editor-meta text-[0.625rem]">
               {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.personaVersion || "1.0"}
@@ -1569,9 +1569,6 @@ function PersonaSpritesTab({
   const spriteGenerationReason = spriteCapabilities?.reason ?? "Sprite generation is unavailable on this platform.";
   const backgroundCleanupUnavailable = spriteCapabilities?.backgroundRemovalAvailable === false;
   const backgroundCleanupReason = spriteCapabilities?.reason ?? "Background cleanup is unavailable on this platform.";
-  const backgroundRemoverUnavailable = spriteCapabilities?.backgroundRemover?.installed === false;
-  const backgroundRemoverReason =
-    spriteCapabilities?.backgroundRemover?.reason ?? "Local backgroundremover is not installed.";
 
   const categoryTabs = (
     <div className="inline-flex rounded-xl bg-[var(--secondary)] p-1 ring-1 ring-[var(--border)]">
@@ -1758,10 +1755,10 @@ function PersonaSpritesTab({
         setLastCleanupBackupId(result.backupId ?? null);
         const engineDetails =
           result.backgroundRemoverProcessed && result.builtinProcessed
-            ? ` with backgroundremover and built-in fallback`
+            ? ` with automatic matte cleanup and AI fallback`
             : result.backgroundRemoverProcessed
-              ? ` with backgroundremover`
-              : ` with built-in cleanup`;
+              ? ` with AI fallback`
+              : ` with automatic matte cleanup`;
         toast.success(`Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"}${engineDetails}.`);
       }
       if (result.failed.length > 0) {
@@ -1990,7 +1987,7 @@ function PersonaSpritesTab({
         {cleaningSprites && (
           <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             <Loader2 size="0.75rem" className="animate-spin text-[var(--primary)]" />
-            Running local backgroundremover on saved sprites…
+            Applying automatic matte cleanup to saved sprites…
           </div>
         )}
         {lastCleanupBackupId && (
@@ -2015,11 +2012,6 @@ function PersonaSpritesTab({
         {backgroundCleanupUnavailable && !spriteGenerationUnavailable && (
           <div className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             {backgroundCleanupReason}
-          </div>
-        )}
-        {backgroundRemoverUnavailable && !backgroundCleanupUnavailable && (
-          <div className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
-            {backgroundRemoverReason}
           </div>
         )}
         <div className="flex gap-2">
@@ -2293,13 +2285,22 @@ function PersonaColorsTab({
         {extracting ? "Extracting..." : avatarUrl ? "Extract Colors from Avatar" : "Upload an avatar first"}
       </button>
 
-      <div className="rounded-xl border border-[var(--border)] bg-black/30 p-4 space-y-3">
+      <div className="space-y-3 overflow-hidden rounded-xl border border-[var(--border)] bg-black/30 p-4">
         <p className="text-[0.625rem] font-medium uppercase tracking-widest text-[var(--muted-foreground)]">Preview</p>
         <div className="flex gap-3 flex-row-reverse">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-neutral-500 to-neutral-600 ring-2 ring-white/15">
-            <User size="1rem" className="text-white" />
+          <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-neutral-500 to-neutral-600 ring-2 ring-white/15">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={`${formData.name || "Persona"} avatar preview`}
+                className="h-full w-full object-cover"
+                style={getAvatarCropStyle(formData.avatarCrop)}
+              />
+            ) : (
+              <User size="1rem" className="text-white" />
+            )}
           </div>
-          <div className="flex-1 space-y-1 items-end flex flex-col">
+          <div className="flex min-w-0 flex-1 flex-col items-end space-y-1">
             <span
               className="text-[0.75rem] font-bold tracking-tight"
               style={
@@ -2329,11 +2330,11 @@ function PersonaColorsTab({
                   : { backgroundColor: "rgba(255, 255, 255, 0.12)" }
               }
             >
-              <span className="text-neutral-100">*You step forward confidently.* </span>
+              <span className="text-neutral-100">I turn around and raise my hand. </span>
               <strong
                 style={formData.dialogueColor ? { color: formData.dialogueColor } : { color: "rgb(255, 255, 255)" }}
               >
-                &ldquo;I&apos;m ready for this.&rdquo;
+                &ldquo;General Kenobi.&rdquo;
               </strong>
             </div>
           </div>
@@ -2518,7 +2519,7 @@ function PersonaStatsTab({
               <button
                 type="button"
                 onClick={addBar}
-                className="flex items-center gap-1 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[0.6875rem] font-medium text-emerald-400 transition-colors hover:bg-emerald-500/25"
+                className="mari-chrome-accent-surface mari-accent-animated flex items-center gap-1 rounded-lg px-2.5 py-1 text-[0.6875rem] font-medium transition-colors"
               >
                 <Plus size="0.75rem" />
                 Add
@@ -2734,7 +2735,7 @@ function PersonaMetadataTab({
     <div className="space-y-5">
       <SectionHeader
         title="Metadata"
-        subtitle="Basic persona info — name, creator, version, avatar, tags."
+        subtitle="Basic persona info: name, title, creator, version, avatar, tags."
         helpText={PERSONA_METADATA_HELP}
       />
 
@@ -2771,7 +2772,7 @@ function PersonaMetadataTab({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
             Name{" "}
             <HelpTooltip text="Your persona's display name. This is injected into prompts as the user's persona identity." />
@@ -2783,16 +2784,16 @@ function PersonaMetadataTab({
             placeholder="Persona name"
           />
         </label>
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Creator{" "}
-            <HelpTooltip text="The person who made this persona. Useful for credit when sharing persona cards." />
+            Title / comment{" "}
+            <HelpTooltip text="A short note shown under the persona name in the library, useful for variants or alternate versions." />
           </span>
           <input
-            value={formData.creator}
-            onChange={(e) => updateField("creator", e.target.value)}
+            value={formData.comment}
+            onChange={(e) => updateField("comment", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Your name"
+            placeholder="Modern AU version"
           />
         </label>
         <label className="space-y-1.5">
@@ -2809,14 +2810,14 @@ function PersonaMetadataTab({
         </label>
         <label className="space-y-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
-            Title / Comment{" "}
-            <HelpTooltip text="A short private note shown under the persona name in the library, useful for variants or alternate versions." />
+            Creator{" "}
+            <HelpTooltip text="The person who made this persona. Useful for credit when sharing persona cards." />
           </span>
           <input
-            value={formData.comment}
-            onChange={(e) => updateField("comment", e.target.value)}
+            value={formData.creator}
+            onChange={(e) => updateField("creator", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-            placeholder="Modern AU version"
+            placeholder="Your name"
           />
         </label>
         <label className="space-y-1.5">
@@ -3202,14 +3203,6 @@ function PersonaConvoTab({
       onAboutMeChange={(v) => updateField("aboutMe", v)}
       behavior={formData.convoBehavior}
       onBehaviorChange={(b) => updateField("convoBehavior", b)}
-      aiSource={{
-        name: formData.name,
-        description: formData.description,
-        personality: formData.personality,
-        scenario: formData.scenario,
-        backstory: formData.backstory,
-        appearance: formData.appearance,
-      }}
     />
   );
 }

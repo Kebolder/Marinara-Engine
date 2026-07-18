@@ -31,6 +31,9 @@ import type {
   CombatPlayerAction,
   HudWidget,
   GameBlueprint,
+  TacticalCombatState,
+  TacticalAction,
+  TacticalEvent,
 } from "@marinara-engine/shared";
 import type { Chat } from "@marinara-engine/shared";
 
@@ -134,6 +137,15 @@ interface MapMoveResponse {
   activeGameMapId?: string | null;
 }
 
+export type UpdateGameMapBindingInput =
+  | { target: "map"; chatId: string; mapId: string; spatialLocationId: string | null }
+  | { target: "cell"; chatId: string; mapId: string; x: number; y: number; spatialLocationId: string | null }
+  | { target: "node"; chatId: string; mapId: string; nodeId: string; spatialLocationId: string | null };
+
+interface UpdateGameMapBindingResponse extends MapMoveResponse {
+  sessionChat: Chat;
+}
+
 interface UpdateGameWidgetsResponse {
   ok: boolean;
 }
@@ -202,14 +214,23 @@ export function useGameSetup() {
   const store = useGameModeStore;
 
   return useMutation({
-    mutationFn: (data: { chatId: string; connectionId?: string; promptPresetId?: string | null; preferences: string }) =>
+    mutationFn: (data: {
+      chatId: string;
+      connectionId?: string;
+      promptPresetId?: string | null;
+      preferences: string;
+      keepSetupActive?: boolean;
+    }) =>
       api.post<SetupResponse>("/game/setup", {
-        ...data,
+        chatId: data.chatId,
+        connectionId: data.connectionId,
+        promptPresetId: data.promptPresetId,
+        preferences: data.preferences,
         streaming: useUIStore.getState().enableStreaming,
         debugMode: useUIStore.getState().debugMode,
       }),
-    onSuccess: (res) => {
-      store.getState().setSetupActive(false);
+    onSuccess: (res, variables) => {
+      if (!variables.keepSetupActive) store.getState().setSetupActive(false);
       if (Array.isArray(res.gameNpcs)) {
         store.getState().setNpcs(res.gameNpcs);
       }
@@ -601,6 +622,22 @@ export function useMoveOnMap() {
   });
 }
 
+export function useUpdateGameMapBinding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateGameMapBindingInput) =>
+      api.put<UpdateGameMapBindingResponse>("/game/map/binding", data),
+    onSuccess: (response, variables) => {
+      useGameModeStore.getState().setMaps(response.maps ?? [response.map], response.activeGameMapId);
+      qc.setQueryData(chatKeys.detail(variables.chatId), response.sessionChat);
+      if (useChatStore.getState().activeChatId === variables.chatId) {
+        useChatStore.getState().setActiveChat(response.sessionChat);
+      }
+      void qc.invalidateQueries({ queryKey: chatKeys.list() });
+    },
+  });
+}
+
 export function useUpdateGameWidgets() {
   const qc = useQueryClient();
 
@@ -781,6 +818,36 @@ export function useCombatRound() {
       playerAction?: CombatPlayerAction;
       mechanics?: import("@marinara-engine/shared").CombatMechanic[];
     }) => api.post<{ result: CombatRoundResult; combatants: Combatant[] }>("/game/combat/round", data),
+  });
+}
+
+// ── Tactical (grid) combat ──
+// Mirrors useCombatRound's shape: thin mutations over the pure shared engine that
+// lives server-side behind these endpoints. State round-trips through the client
+// exactly like classic combat (no new DB table); the client persists the returned
+// snapshot to chat metadata.
+
+/** Start a fresh tactical battle. Server builds the seeded grid + spawns. */
+export function useTacticalCombatStart() {
+  return useMutation({
+    mutationFn: (data: {
+      chatId: string;
+      party: Combatant[];
+      enemies: Combatant[];
+      seed?: number;
+      /** Blueprint scene context — themes the terrain (styleNotes.environmentType). */
+      environment?: string;
+      /** Blueprint battlefield.formation — drives spawn placement. */
+      formation?: string;
+    }) => api.post<{ state: TacticalCombatState }>("/game/combat/tactical/start", data),
+  });
+}
+
+/** Apply one tactical action; server validates + resolves, running the enemy phase if it flips. */
+export function useTacticalCombatAction() {
+  return useMutation({
+    mutationFn: (data: { chatId: string; state: TacticalCombatState; action: TacticalAction }) =>
+      api.post<{ state: TacticalCombatState; events: TacticalEvent[] }>("/game/combat/tactical/action", data),
   });
 }
 

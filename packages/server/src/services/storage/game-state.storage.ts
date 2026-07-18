@@ -1,10 +1,11 @@
 // ──────────────────────────────────────────────
 // Storage: Game State Snapshots
 // ──────────────────────────────────────────────
-import { eq, and, ne, desc, inArray } from "drizzle-orm";
+import { eq, and, ne, desc, inArray, lte } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { gameStateSnapshots } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
+import { ensureTimestampAfter } from "../import/import-timestamps.js";
 import {
   coerceGameStateTextValue,
   normalizeWorldCustomFields,
@@ -141,6 +142,23 @@ export function createGameStateStorage(db: DB) {
         .orderBy(desc(gameStateSnapshots.createdAt))
         .limit(1);
       return rows[0] ?? null;
+    },
+
+    async getRecent(chatId: string, limit = 100, throughCreatedAt?: string | null) {
+      return db
+        .select()
+        .from(gameStateSnapshots)
+        .where(
+          throughCreatedAt
+            ? and(
+                eq(gameStateSnapshots.chatId, chatId),
+                eq(gameStateSnapshots.committed, 1),
+                lte(gameStateSnapshots.createdAt, throughCreatedAt),
+              )
+            : and(eq(gameStateSnapshots.chatId, chatId), eq(gameStateSnapshots.committed, 1)),
+        )
+        .orderBy(desc(gameStateSnapshots.createdAt))
+        .limit(Math.max(1, Math.min(500, limit)));
     },
 
     async getById(id: string) {
@@ -313,6 +331,7 @@ export function createGameStateStorage(db: DB) {
     },
 
     async create(state: Omit<GameState, "id" | "createdAt">, manualOverrides?: Record<string, string> | null) {
+      const latestBeforeInsert = await this.getLatest(state.chatId);
       // Remove any prior snapshot for the same message + swipe so duplicates don't accumulate
       if (state.messageId) {
         await db
@@ -337,7 +356,7 @@ export function createGameStateStorage(db: DB) {
         fieldLocks: serializeFieldLocks(state.fieldLocks),
         hiddenTrackerFields: serializeHiddenTrackerFields(state.hiddenTrackerFields),
         committed: state.committed ? 1 : 0,
-        createdAt: now(),
+        createdAt: ensureTimestampAfter(now(), latestBeforeInsert?.createdAt),
       });
       return id;
     },
@@ -365,7 +384,8 @@ export function createGameStateStorage(db: DB) {
      *
      * options.baseSnapshot is intentionally presence-sensitive: omitted falls back
      * to getLatest(chatId), while an explicit null means no base and creates an
-     * empty snapshot for the target.
+     * empty snapshot for the target. options.compatibilityLocation lets an
+     * authoritative location system seed only newly cloned legacy snapshots.
      */
     async updateByMessage(
       messageId: string,
@@ -373,7 +393,10 @@ export function createGameStateStorage(db: DB) {
       chatId: string,
       fields: GameStateUpdateFields,
       manual?: boolean,
-      options?: { baseSnapshot?: typeof gameStateSnapshots.$inferSelect | null },
+      options?: {
+        baseSnapshot?: typeof gameStateSnapshots.$inferSelect | null;
+        compatibilityLocation?: string | null;
+      },
     ) {
       const snap = await this.getByMessage(messageId, swipeIndex);
       if (snap) return this._applyUpdate(snap, fields, manual);
@@ -393,7 +416,10 @@ export function createGameStateStorage(db: DB) {
         swipeIndex,
         date: coerceGameStateTextValue(latest?.date),
         time: coerceGameStateTextValue(latest?.time),
-        location: coerceGameStateTextValue(latest?.location),
+        location:
+          options && Object.prototype.hasOwnProperty.call(options, "compatibilityLocation")
+            ? coerceGameStateTextValue(options.compatibilityLocation)
+            : coerceGameStateTextValue(latest?.location),
         weather: coerceGameStateTextValue(latest?.weather),
         temperature: coerceGameStateTextValue(latest?.temperature),
         worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(latest?.worldCustomFields, [])),

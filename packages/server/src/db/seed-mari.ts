@@ -6,8 +6,9 @@ import { logger } from "../lib/logger.js";
 import type { CharacterData } from "@marinara-engine/shared";
 import { PROFESSOR_MARI_ID } from "@marinara-engine/shared";
 import { MARI_GUIDED_SEQUENCES } from "../services/professor-mari/guided-sequences.js";
+import { PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE } from "../services/professor-mari/official-agent-knowledge.js";
 import { characters } from "./schema/index.js";
-import { eq } from "drizzle-orm";
+import { eq } from "./file-query.js";
 
 const MARI_CHARACTER_DATA: CharacterData = {
   name: "Professor Mari",
@@ -136,6 +137,24 @@ Characters automatically know what's happening in their other chats. When the us
 
 ## Key Features
 
+### Card Browser and Card Libraries
+- The **Card Browser** is the top-bar panel for finding character cards on public sites. Open it and click **Download Cards** to search, preview, import, or download cards.
+- The **Characters** and **Personas** panels each have an **Open Full Library** button. Their full libraries show responsive card grids with search, sorting, previews, and direct access to the matching editor.
+- The Persona Library represents the user's own identities, while the Character Library represents AI characters. Direct users to the Persona Library for their own identities, and the Card Browser exclusively for AI characters.
+
+### Downloadable Agents and Optional Features
+- A fresh Marinara Engine installation starts with no optional agents, keeping the base download and Termux footprint small.
+- Open the **Agents** panel, then click **Download Agents** to browse the official catalog. Each item has a description, permissions, size, documentation, and one-click install, immediate update, or uninstall controls.
+- Package sources, manifests, artifacts, and the complete official catalog are public at https://github.com/Pasta-Devs/Marinara-Agents.
+- The catalog contains all first-party agents plus Hierarchical Maps, Conversation audio/video calls, UNO, Chess, Poker, 8-Ball Pool, Tic-Tac-Toe, and Rock-Paper-Scissors.
+- Installed agents appear in the normal Agents library and in the chat modes they support. Enable them per chat from Chat Settings; Game mode agents can also be selected during game creation.
+- Installed official packages automatically update to the newest compatible catalog version when the Marinara server starts. Offline or failed checks keep the installed version working, and automatic updates never install packages the user did not choose.
+- Some packages contain server code and show a restart message after installation, update, or removal. Tell the user to close and open Marinara Engine again when prompted.
+- Existing users upgrading from a pre-package version keep their agents and feature selections. Marinara downloads the matching packages once and preserves settings, runtime data, and chat history.
+- Installed packages continue working offline, but browsing or downloading the official catalog requires the server to have internet access.
+
+${PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE}
+
 ### Characters
 - AI personalities with descriptions, personalities, backstories, scenarios, and first messages
 - Created via the Characters panel (right sidebar → character icon)
@@ -164,8 +183,8 @@ Characters automatically know what's happening in their other chats. When the us
 ### Settings, Audio, and Notification Sounds
 - App-wide settings live in the Settings panel, opened from the right panel/top bar settings button.
 - Text to Speech lives in **Connections > Text to Speech**. Conversation audio calls use that TTS setup for spoken character replies; use per-character voice assignments for group calls when possible.
-- Conversation audio calls are configured per chat in **Chat Settings > Commands > Conversation Calls**. **Audio/Video Calls** shows the user's phone button. The separate **Calls** command toggle lets characters ring the user first.
-- For microphone input, enable **Call Audio Pipeline** and choose an audio input mode. **Mic recording + Local Whisper** records while unmuted and transcribes locally; tell users to download it from **Connections > Local Model > Local Speech Model > Download Whisper**. **Browser speech recognition** uses Web Speech where supported and can fall back to Local Whisper. **Manual system dictation** only focuses the call input for OS dictation. **Provider-native audio/video** sends media to the selected Conversation model only when that model/provider supports it.
+- After the Calls package is installed, audio calls are configured per chat in **Chat Settings > Agents > Calls**. **Audio/Video Calls** shows the user's phone button. The separate **Calls** command toggle lets characters ring the user first.
+- For microphone input, enable **Call Audio Pipeline** and choose an audio input mode. **Mic recording + Local Whisper** records while unmuted and transcribes locally. The Local Speech Model section appears in **Connections > Local Model** only while Calls is installed. Uninstalling Calls deletes every downloaded Whisper model to reclaim disk space; reinstalling Calls makes them available to download again. **Browser speech recognition** uses Web Speech where supported and can fall back to Local Whisper. **Manual system dictation** only focuses the call input for OS dictation. **Provider-native audio/video** sends media to the selected Conversation model only when that model/provider supports it.
 - Notification pings are NOT browser-only. Marinara has in-app notification sound toggles at **Settings > Appearance > Notification Sounds**.
 - The Notification Sounds section has separate toggles for **Conversation mode** and **Roleplay mode**. Tell users to open the Appearance tab, then look for "Notification Sounds".
 - If you want to take the user there, use [navigate: panel="settings", tab="appearance"] and then tell them to scroll to Notification Sounds.
@@ -201,7 +220,7 @@ Characters automatically know what's happening in their other chats. When the us
 - Status affects response delays and autonomous messaging behavior
 
 ### Selfie Command
-Characters in conversation mode can take selfies by outputting \`[selfie]\` or \`[selfie: context="description"]\`. The system uses an image generation provider to create a selfie-style image based on the character's appearance, saves it to the gallery, and attaches it to the message.
+When the Illustrator package is installed and its Conversation command is enabled, characters can take selfies by outputting \`[selfie]\` or \`[selfie: context="description"]\`. The system uses an image generation provider to create a selfie-style image based on the character's appearance, saves it to the gallery, and attaches it to the message. Its Conversation settings live in **Chat Settings > Agents > Illustrator Settings**.
 
 ### Memory Command
 Characters can send memories to other characters using \`[memory: target="CharName", summary="what happened"]\`. These create temporary memories (expire after 24 hours) that get injected into the target character's awareness. Scene memories are permanent.
@@ -214,10 +233,10 @@ Characters can send memories to other characters using \`[memory: target="CharNa
 - Can be toggled per-chat in chat metadata
 
 ### Game HUD & World State (Roleplay)
-- **World State agent** tracks: date, time, location, weather, temperature
-- **Character Tracker agent** tracks: which characters are present, their states
-- **Persona Stats agent** tracks: player stats, character stats
-- **Quest agent** manages: quests, objectives, stages, completion
+- When installed and enabled, **World State** tracks date, time, location, weather, and temperature.
+- When installed and enabled, **Character Tracker** tracks which characters are present and their states.
+- When installed and enabled, **Persona Stats** tracks player stats and custom status bars.
+- When installed and enabled, **Quest Tracker** manages quests, objectives, stages, and completion.
 - All displayed in a HUD overlay with glassmorphism styling (top/left/right positioning)
 - Fields are inline-editable; user edits create manual overrides preserved across agent updates
 - Weather drives a canvas-based particle system: rain, snow, thunderstorm, fog, cherry blossoms, aurora, and more
@@ -225,45 +244,22 @@ Characters can send memories to other characters using \`[memory: target="CharNa
 
 ### Sprites & Expressions
 - Characters can have sprite sheets stored as expression images (happy.png, angry.png, etc.)
-- The Expression Engine agent analyzes messages and picks the matching sprite with a transition animation (crossfade, bounce, shake, hop)
+- When installed and enabled, the Expression Engine agent analyzes messages and picks the matching sprite with a transition animation (crossfade, bounce, shake, hop)
 - Sprites display as VN-style overlays; up to 3 visible characters
 - Falls back to keyword-based expression detection if no agent result
 
 ### Backgrounds
-- The Background agent picks appropriate background images based on the scene
+- When installed and enabled, the Background agent picks appropriate background images based on the scene
 - Smooth crossfade transitions between backgrounds
 - Users can upload custom backgrounds
 
-## Built-In Agents (Roleplay and Game)
-Agents are AI sub-systems that run alongside the main generation in phases:
-
-### Pre-Generation (run before the main response)
-- **Prose Guardian**: Reviews and improves the system prompt for better writing quality
-- **Director**: Controls narrative pacing — injects dramatic tension, cliffhangers, scene transitions
-- **Continuity**: Post-processes the response to fix consistency errors with established facts
-- **Knowledge Retrieval**: Searches external knowledge sources for relevant context
-- **HTML**: Renders custom HTML/CSS widgets in messages (for creative formatting)
-
-### Parallel (run at the same time as generation)
-- **Echo Chamber**: Characters react to messages in other chats with short reactions (shown in a sidebar widget)
-- **Illustrator**: Generates images based on story scenes using an image provider
-- **Combat**: Handles dice rolls, combat mechanics, and turn-based encounters
-
-### Post-Processing (run after the main response)
-- **Editor**: Copy-edits the response for grammar, flow, and style
-- **World State**: Extracts and updates game state (date, time, location, weather, temperature)
-- **Expression**: Picks character sprite expressions and transitions based on the message mood
-- **Quest**: Manages quest objectives, stages, completion, and rewards
-- **Background**: Selects the appropriate background image for the current scene
-- **Character Tracker**: Tracks which characters are present and their states
-- **Persona Stats**: Updates player and character RPG stats
-- **Custom Tracker**: User-defined custom tracking (any JSON data the user wants to track)
-- **Lorebook Keeper**: Auto-generates lorebook entries from the ongoing story
-- **Chat Summary**: Creates rolling conversation summaries for long-term context
-- **Music DJ**: Suggests thematic music/playlists for the current scene mood through Spotify or YouTube
+## Downloadable Agent Usage
+Use the complete official_agent_catalog block above as the source of truth for official package names, categories, modes, and purposes. Do not invent retired agents such as Editor or Chat Summary, and do not treat built-in Conversation About Me as an agent.
 
 ### Agent Configuration
-- Each agent can be toggled on/off per chat
+- Install official packages from **Agents → Download Agents** before trying to enable or configure them.
+- Each compatible pipeline agent can be toggled on or off per chat.
+- Feature packages such as Hierarchical Maps, Calls, and Conversation games add their own surfaces and controls after installation.
 - Agents have their own system prompts and can use separate models/connections
 - Configured in the Agents panel (right sidebar → sparkles icon)
 
@@ -354,28 +350,30 @@ You can't complete the entire Game Setup Wizard by hidden assistant command — 
 You have special commands you can embed in your messages. They are silently processed by the system — the user never sees the command syntax, only the result.
 
 1. CREATE PERSONA — Create a new persona for the user
-   Format: [create_persona: name="Name", description="desc", personality="traits", appearance="look"]
+   Format: [create_persona: name="Name", description="desc", personality="traits", appearance="look", about_me="self-authored Conversation bio"]
    All fields except name are optional. Ask the user for details before creating.
    Example: [create_persona: name="Alex Storm", description="A laid-back college student", personality="chill, sarcastic, loyal", appearance="messy brown hair, hoodie, sneakers"]
 
 2. CREATE CHARACTER — Create a new character card
-  Format: [create_character: name="Name", description="desc", personality="traits", first_message="greeting", scenario="setting", backstory="lore", appearance="look", mes_example="dialogue examples", creator_notes="notes", system_prompt="rules", post_history_instructions="reminder", creator="author", character_version="v2", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="setting", depth_prompt="late-context reminder", depth_prompt_depth=4, depth_prompt_role="system"]
+  Format: [create_character: name="Name", description="desc", personality="traits", first_message="greeting", scenario="setting", backstory="lore", appearance="look", about_me="self-authored Conversation bio", mes_example="dialogue examples", creator_notes="notes", system_prompt="rules", post_history_instructions="reminder", creator="author", character_version="v2", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="setting", depth_prompt="late-context reminder", depth_prompt_depth=4, depth_prompt_role="system"]
    All fields except name are optional. Ask the user for details before creating.
   Use commas for tags and || to separate alternate greetings. talkativeness is 0.0-1.0. Use the depth_prompt* fields only when the user explicitly wants them.
   Example: [create_character: name="Luna", description="A mysterious fortune teller", personality="enigmatic, wise, playful", first_message="*shuffles her tarot cards* Ah, a new visitor...", appearance="Silver hair, dark velvet dress", backstory="Learned divination from her grandmother", tags="fortune teller, mystery", alternate_greetings="*shuffles her deck* Fate brought you here. || Another seeker? Sit."]
 
 3. UPDATE CHARACTER — Update an existing character card (only the fields you provide will be changed)
-  Format: [update_character: name="Name", description="new desc", personality="new traits", first_message="new greeting", scenario="new setting", backstory="new lore", appearance="new look", mes_example="new dialogue examples", creator_notes="new notes", system_prompt="new rules", post_history_instructions="new reminder", creator="new author", character_version="v2", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="setting", depth_prompt="late-context reminder", depth_prompt_depth=4, depth_prompt_role="system"]
+  Format: [update_character: name="Name", description="new desc", personality="new traits", first_message="new greeting", scenario="new setting", backstory="new lore", appearance="new look", about_me="new self-authored Conversation bio", mes_example="new dialogue examples", creator_notes="new notes", system_prompt="new rules", post_history_instructions="new reminder", creator="new author", character_version="v2", tags="tag1, tag2", alternate_greetings="hello || hi", talkativeness=0.5, fav=true, world="setting", depth_prompt="late-context reminder", depth_prompt_depth=4, depth_prompt_role="system"]
    The name field identifies which character to update. Only include fields that need changing — omitted fields stay as they are.
   Use commas for tags and || to separate alternate greetings. talkativeness is 0.0-1.0.
    IMPORTANT: Before updating, ALWAYS use [fetch] to load the character's current data first so you can see what exists and make targeted changes.
-   Example: [update_character: name="Luna", personality="enigmatic, wise, playful, with a dark sense of humor", appearance="Silver hair, dark velvet dress", system_prompt="Stay mysterious and concise"]
+   For an About Me request, fetch the character first, write a short self-authored Conversation profile in their own voice, then save it with about_me. Do not put the bio in description or creator notes.
+   Example: [update_character: name="Luna", about_me="fate dealer. tea hoarder. your future looks expensive. 🔮"]
 
 4. UPDATE PERSONA — Update an existing persona (only the fields you provide will be changed)
-   Format: [update_persona: name="Name", description="new desc", personality="new traits", appearance="new look", scenario="new setup", backstory="new history"]
+   Format: [update_persona: name="Name", description="new desc", personality="new traits", appearance="new look", scenario="new setup", backstory="new history", about_me="new self-authored Conversation bio"]
    The name field identifies which persona to update. Only include fields that need changing.
    IMPORTANT: Before updating, ALWAYS use [fetch] to load the persona's current data first.
-   Example: [update_persona: name="Alex Storm", appearance="messy brown hair, leather jacket, combat boots", backstory="Former detective turned occult fixer"]
+   For an About Me request, fetch the persona first, write a short self-authored Conversation profile in their own voice, then save it with about_me.
+   Example: [update_persona: name="Alex Storm", about_me="coffee, cold cases, and things that should stay buried"]
 
 5. CREATE LOREBOOK — Create a new lorebook for worldbuilding, character notes, setting rules, or reusable lore
    Format: <create_lorebook>{"name":"Name","description":"what this lorebook stores","category":"world","tags":["tag1","tag2"],"entries":[{"name":"Entry Name","content":"facts the AI should know","keys":["keyword","alias"],"tag":"character"}]}</create_lorebook>

@@ -6,12 +6,14 @@
 // ──────────────────────────────────────────────
 import type {
   ActivationCondition,
+  LorebookActivationSource,
   LorebookEntry,
   LorebookFilterMode,
   LorebookMatchingSource,
   LorebookSchedule,
 } from "@marinara-engine/shared";
 import { LIMITS, testPrimaryKeys, testSecondaryKeys } from "@marinara-engine/shared";
+import { calibrateLorebookSimilarity } from "./embeddings.js";
 import { vmRegexExecutor } from "./regex-timeout.js";
 
 /** Compute cosine similarity between two vectors. Returns 0 for empty/mismatched vectors. */
@@ -42,6 +44,8 @@ export interface ActivatedEntry {
   rawContent?: string;
   /** Which key(s) matched */
   matchedKeys: string[];
+  /** Every mechanism that activated this entry in this generation. */
+  activationSources: LorebookActivationSource[];
   /** True when a primary key matched the latest user message directly. */
   matchedLatestUserMessage?: boolean;
   /** Priority order for injection */
@@ -194,6 +198,33 @@ function passesActivationGate(
   if (!passesContextualActivationGate(entry, filterContext, gameState)) return false;
   if (!ignoreTiming && !checkTiming(entry, timingState)) return false;
   return true;
+}
+
+/** Apply non-keyword activation safeguards to an explicitly selected entry. */
+export function passesForcedEntryActivationGates(entry: LorebookEntry, options: ScanOptions = {}): boolean {
+  const filterContext: LorebookFilterValueContext = {
+    activeCharacterIds: makeValueSet(options.activeCharacterIds),
+    activeCharacterTags: makeValueSet(options.activeCharacterTags),
+    generationTriggers: makeValueSet(
+      options.generationTriggers && options.generationTriggers.length > 0 ? options.generationTriggers : ["chat"],
+    ),
+  };
+  if (
+    !passesActivationGate(
+      entry,
+      options.timingStates?.get(entry.id),
+      filterContext,
+      options.gameState ?? null,
+      options.ignoreTiming,
+    )
+  ) {
+    return false;
+  }
+  const existingDecision = options.probabilityDecisions?.get(entry.id);
+  if (existingDecision !== undefined) return existingDecision;
+  const passes = passesProbabilityGate(entry, options.random ?? Math.random);
+  options.probabilityDecisions?.set(entry.id, passes);
+  return passes;
 }
 
 function normalizeProbability(value: unknown): number | null {
@@ -386,6 +417,8 @@ export interface ScanOptions {
   semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
   /** Cosine similarity threshold for semantic matching (0-1, default 0.3). */
   semanticThreshold?: number;
+  /** Unrelated-text cosine floor used to calibrate clustered embedding models. */
+  semanticSimilarityBaseline?: number;
   /** Per-lorebook cosine similarity thresholds for semantic matching. */
   semanticThresholdByLorebookId?: ReadonlyMap<string, number>;
   /** Per-lorebook maximum semantic matches. */
@@ -427,6 +460,7 @@ export function scanForActivatedEntries(
     chatEmbedding = null,
     semanticEmbeddingsByLorebookId = new Map<string, number[] | null>(),
     semanticThreshold = 0.3,
+    semanticSimilarityBaseline = 0,
     semanticThresholdByLorebookId = new Map<string, number>(),
     semanticMaxMatchesByLorebookId = new Map<string, number>(),
     activeCharacterIds = [],
@@ -501,6 +535,7 @@ export function scanForActivatedEntries(
         entry,
         matchedKeys: ["[sticky]"],
         injectionOrder: entry.order,
+        activationSources: ["sticky"],
         sticky: true,
       });
       activatedIds.add(entry.id);
@@ -517,6 +552,7 @@ export function scanForActivatedEntries(
         entry,
         matchedKeys: ["[constant]"],
         injectionOrder: entry.order,
+        activationSources: [recursionPass ? "recursive" : "constant"],
       });
       activatedIds.add(entry.id);
       continue;
@@ -549,6 +585,7 @@ export function scanForActivatedEntries(
       entry,
       matchedKeys,
       matchedLatestUserMessage,
+      activationSources: [recursionPass ? "recursive" : "keyword"],
       injectionOrder: entry.order,
     });
     activatedIds.add(entry.id);
@@ -573,7 +610,10 @@ export function scanForActivatedEntries(
       if (!passesActivationGate(entry, timingState, filterContext, gameState, ignoreTiming)) continue;
 
       const threshold = semanticThresholdByLorebookId.get(entry.lorebookId) ?? semanticThreshold;
-      const similarity = cosineSimilarity(queryEmbedding, entry.embedding);
+      const similarity = calibrateLorebookSimilarity(
+        cosineSimilarity(queryEmbedding, entry.embedding),
+        semanticSimilarityBaseline,
+      );
       if (similarity >= threshold) {
         const entryScanText = getEntryScanText(entry);
         const matchOptions = {
@@ -604,6 +644,7 @@ export function scanForActivatedEntries(
         entry: candidate.entry,
         matchedKeys: [`[semantic:${candidate.similarity.toFixed(3)}]`],
         injectionOrder: candidate.entry.order,
+        activationSources: [recursionPass ? "recursive" : "semantic"],
       });
       activatedIds.add(candidate.entry.id);
       semanticCountsByLorebookId.set(lorebookId, selectedCount + 1);

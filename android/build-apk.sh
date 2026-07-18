@@ -63,10 +63,10 @@ else
 fi
 
 if [ "$BUILD_TYPE" = "release" ]; then
-    $GRADLE_CMD "${GRADLE_ARGS[@]}" assembleRelease
+    "$GRADLE_CMD" ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"} assembleRelease
     APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n1)
 else
-    $GRADLE_CMD "${GRADLE_ARGS[@]}" assembleDebug
+    "$GRADLE_CMD" ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"} assembleDebug
     APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
 fi
 

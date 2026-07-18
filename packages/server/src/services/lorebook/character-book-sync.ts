@@ -18,7 +18,7 @@
 // These helpers mirror standalone-lorebook mutations back into the
 // character's `data.character_book` so the two stores stay coherent.
 
-import { like } from "drizzle-orm";
+import { like } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import type { CharacterBook, CharacterBookEntry } from "@marinara-engine/shared";
 import { characters } from "../../db/schema/index.js";

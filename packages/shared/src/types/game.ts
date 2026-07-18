@@ -10,6 +10,13 @@ export type GameActiveState = "exploration" | "dialogue" | "combat" | "travel_re
 /** How the Game Master is controlled. */
 export type GameGmMode = "standalone" | "character";
 
+/**
+ * Combat presentation preference for Game Mode.
+ * - `classic`: existing cinematic JRPG menu combat (GameCombatUI + combat.service).
+ * - `tactical`: Fire Emblem / FFT style grid battle (tactical-combat feature engine).
+ */
+export type GameCombatStyle = "classic" | "tactical";
+
 /** Status of a game session. */
 export type GameSessionStatus = "setup" | "active" | "concluded";
 
@@ -28,6 +35,8 @@ export interface GridCell {
   terrain: string;
   /** Optional longer description shown on hover/click */
   description?: string;
+  /** Explicit hierarchical-location binding. Unbound cells remain tactical positions. */
+  spatialLocationId?: string;
 }
 
 /** A node in a dungeon/interior node-graph map. */
@@ -41,6 +50,8 @@ export interface MapNode {
   y: number;
   discovered: boolean;
   description?: string;
+  /** Explicit hierarchical-location binding. Unbound nodes remain tactical positions. */
+  spatialLocationId?: string;
 }
 
 /** An edge connecting two nodes in a node-graph map. */
@@ -57,6 +68,8 @@ export interface GameMap {
   type: "grid" | "node";
   name: string;
   description: string;
+  /** Hierarchical location represented by this local or tactical map. */
+  spatialLocationId?: string;
   /** Grid dimensions (only for type: "grid") */
   width?: number;
   height?: number;
@@ -166,6 +179,8 @@ export interface GameSetupConfig {
   gmMode: GameGmMode;
   /** Content rating: sfw or nsfw */
   rating: "sfw" | "nsfw";
+  /** Combat presentation preference (classic menu battles vs tactical grid battles). Defaults to "classic". */
+  combatStyle?: GameCombatStyle;
   /** Character ID to use as GM (only when gmMode is "character") */
   gmCharacterId?: string | null;
   /** Party member IDs; library character IDs or `npc:<slug>` tracked-NPC IDs. */
@@ -191,12 +206,16 @@ export interface GameSetupConfig {
   gameGmPromptTemplateId?: string | null;
   /** Selected animation-ready storyboard director template. */
   gameStoryboardAnimationPromptTemplateId?: string | null;
+  /** Selected provider-facing image prompt template for storyboard keyframes. */
+  gameStoryboardImagePromptTemplateId?: string | null;
   /** Selected prompt template used only for storyboard keyframe videos. */
   gameStoryboardVideoPromptTemplateId?: string | null;
-  /** Send storyboard imagePrompt directly to the image compiler/provider. */
-  gameStoryboardUseDirectScenePrompt?: boolean;
-  /** Unified art style prompt applied to all generated images (auto-generated at setup) */
+  /** Unified art style prompt applied to all generated images (auto-generated at setup, user-editable). */
   artStylePrompt?: string;
+  /** Original setup-generated art style, retained so user edits can be restored. */
+  generatedArtStylePrompt?: string;
+  /** Whether the campaign art style is included in generated image prompts. Defaults to true. */
+  useCampaignArtStyle?: boolean;
   /** Optional image style profile applied to generated images in this game. */
   imageStyleProfileId?: string | null;
   /** Lorebook IDs to activate for this game */
@@ -316,6 +335,8 @@ export interface Combatant {
   element?: string;
   /** Current elemental aura applied to this combatant */
   elementAura?: { element: string; gauge: number; sourceId: string } | null;
+  /** Tactical-combat class hint (fighter/knight/rogue/archer/mage/healer). Classic combat ignores this. */
+  combatClass?: string;
 }
 
 export interface CombatStatusEffect {

@@ -9,6 +9,23 @@ echo  ^|       Marinara Engine  -  Launcher        ^|
 echo  +==========================================+
 echo.
 
+set "SKIP_UPDATE="
+if /I "%~1"=="--skip-update" set "SKIP_UPDATE=1"
+if /I "%~1"=="--no-update" set "SKIP_UPDATE=1"
+
+:: Load launcher settings before the update decision. Server settings are reused below.
+if not exist .env goto :early_env_done
+for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
+    if not "%%A"=="" if not "%%B"=="" set "%%A=%%~B"
+)
+:early_env_done
+
+set "AUTO_UPDATE_DISABLED="
+if /I "%AUTO_UPDATE_ENABLED%"=="0" set "AUTO_UPDATE_DISABLED=1"
+if /I "%AUTO_UPDATE_ENABLED%"=="false" set "AUTO_UPDATE_DISABLED=1"
+if /I "%AUTO_UPDATE_ENABLED%"=="no" set "AUTO_UPDATE_DISABLED=1"
+if /I "%AUTO_UPDATE_ENABLED%"=="off" set "AUTO_UPDATE_DISABLED=1"
+
 :: Check for Node.js
 where node >nul 2>&1
 if errorlevel 1 (
@@ -105,6 +122,14 @@ set "INSTALL_REQUIRED=0"
 set "BUILD_REQUIRED=0"
 
 :: Auto-update from Git
+if defined SKIP_UPDATE (
+    echo  [OK] Skipping update check; starting the current local install.
+    goto :skip_update
+)
+if defined AUTO_UPDATE_DISABLED (
+    echo  [OK] Automatic Engine updates disabled by AUTO_UPDATE_ENABLED=false.
+    goto :skip_update
+)
 if not exist ".git" goto :skip_update
 echo  [..] Checking for updates...
 for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set "OLD_HEAD=%%i"
@@ -247,12 +272,6 @@ call :run_pnpm install --force
 if errorlevel 1 echo  [ERROR] Failed to install dependencies. & pause & exit /b 1
 
 :skip_install
-
-:: Load .env if present (respects user overrides)
-if not exist .env goto :skip_env
-for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
-    if not "%%A"=="" if not "%%B"=="" set "%%A=%%~B"
-)
 
 :skip_env
 :: Optional AI sprite background remover

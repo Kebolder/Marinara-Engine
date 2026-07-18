@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Custom Tools
 // ──────────────────────────────────────────────
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { customTools } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

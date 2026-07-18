@@ -24,6 +24,7 @@ import {
   normalizeTrackerHiddenFields,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
+  getBuiltInAgentDefaultPrompt,
   normalizeRpgStatPools,
   resolveMacros,
 } from "@marinara-engine/shared";
@@ -123,7 +124,7 @@ function musicDjUsesJsonOnlyProvider(config: Pick<AgentExecConfig, "type" | "set
 function getDefaultPromptForAgent(config: Pick<AgentExecConfig, "type" | "settings">): string {
   if (musicDjUsesYoutube(config)) return getDefaultAgentPrompt("youtube");
   if (musicDjUsesCustom(config)) return getDefaultAgentPrompt("local-music");
-  return getDefaultAgentPrompt(config.type);
+  return getBuiltInAgentDefaultPrompt(config.type) || getDefaultAgentPrompt(config.type);
 }
 
 function stringifyAgentSettingMacroValue(value: unknown): string {
@@ -395,7 +396,9 @@ function getAgentOutputTemplate(
 ): string {
   return (
     renderedTemplates?.get(config.type) ??
-    renderAgentPromptTemplate(config.promptTemplate || getDefaultPromptForAgent(config), config.settings, context)
+    renderAgentPromptTemplate(config.promptTemplate || getDefaultPromptForAgent(config), config.settings, context, {
+      escapeValues: normalizeAgentContextWrapFormat(context.wrapFormat) === "xml",
+    })
   );
 }
 
@@ -442,14 +445,18 @@ function buildAgentOutputFormatBody(
   return parts.join("\n");
 }
 
-function buildAgentOutputFormatBlock(
+export function buildAgentOutputFormatBlock(
   configs: AgentExecConfig[],
   context: AgentContext,
   renderedTemplates?: RenderedAgentTemplateMap,
 ): string {
   const wrapFormat = normalizeAgentContextWrapFormat(context.wrapFormat);
   const body = buildAgentOutputFormatBody(configs, context, renderedTemplates);
-  return wrapContent(sanitizePromptLeaf(body, wrapFormat), "Output Format", wrapFormat);
+  // The contract contains trusted, user-authored prompt-template markup. Escape
+  // interpolated macro values when rendering the template, but preserve literal
+  // tags such as <chat_summary> and <existing_entries> in the contract itself.
+  const formattedBody = wrapFormat === "xml" ? body : sanitizePromptLeaf(body, wrapFormat);
+  return wrapContent(formattedBody, "Output Format", wrapFormat);
 }
 
 export function formatToolPayloadForLog(payload: string, maxLength = 400): string {
@@ -605,6 +612,7 @@ export async function executeAgent(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
       context,
+      { escapeValues: normalizeAgentContextWrapFormat(context.wrapFormat) === "xml" },
     );
     if (!template) {
       return makeError(config, "No prompt template configured", startTime);
@@ -2146,6 +2154,19 @@ function buildLoreBlock(context: AgentContext): string {
       pushLoreField(parts, "Personality", char.personality, CHARACTER_LORE_FIELD_LIMIT);
       pushLoreField(parts, "Backstory", char.backstory, CHARACTER_LORE_FIELD_LIMIT);
       pushLoreField(parts, "Scenario", char.scenario, CHARACTER_LORE_FIELD_LIMIT);
+      if (char.rpgStats?.enabled) {
+        const pools = normalizeRpgStatPools(char.rpgStats);
+        if (pools.length > 0) {
+          parts.push(`Configured RPG pools: ${pools.map((pool) => `${pool.name}: ${pool.value}/${pool.max}`).join(", ")}`);
+        }
+        if (Array.isArray(char.rpgStats.attributes) && char.rpgStats.attributes.length > 0) {
+          parts.push(
+            `Configured RPG attributes: ${char.rpgStats.attributes
+              .map((attribute) => `${attribute.name}: ${attribute.value}`)
+              .join(", ")}`,
+          );
+        }
+      }
       parts.push(`</character>`);
     }
     parts.push(`</characters>`);
@@ -2272,6 +2293,15 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`<current_game_state>`);
     parts.push(JSON.stringify(compactGameStateForAgentContext(context.gameState, agentTypes)));
     parts.push(`</current_game_state>`);
+  }
+
+  if (agentTypes.includes("character-tracker") && context.characterTrackerHistory?.length) {
+    parts.push(`<character_tracker_history>`);
+    parts.push(
+      "Latest known state for recurring characters, including characters currently absent. Use it for continuity when someone returns; this list does not mean everyone is present now.",
+    );
+    parts.push(JSON.stringify(context.characterTrackerHistory));
+    parts.push(`</character_tracker_history>`);
   }
 
   const gameImageStylePrompt =

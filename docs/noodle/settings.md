@@ -16,6 +16,7 @@ All Noodle settings are global. They apply to every persona and every chat, not 
 
 The **Invites** section chooses which characters can take part in a Noodle refresh. A refresh is when the AI writes a batch of posts, replies, reposts, and likes for the invited accounts.
 
+- **Professor Mari participates**: a toggle, default **on**. Turn it off to hide Professor Mari from Noodle account discovery and exclude her from future generated posts, replies, reactions, mentions, profile generation, and chat carryover. Existing timeline history is preserved, and turning the toggle back on restores her account.
 - **Characters to Invite**: a search box. Type here to filter both the folder list and the character list below it.
 - **Add from Folder**: click to expand a list of your character folders. Check one or more folders, then click the invite button at the bottom. The button label changes with your selection:
   - **Select folders to invite** when nothing is checked.
@@ -47,7 +48,9 @@ The **Active Accounts** section sets how many eligible accounts take part in one
 - With **Exact count**, one field appears: **Active count** (1 to 100). It sets a fixed number of accounts.
 - With **All invited**, every eligible account takes part, with no cap.
 
-Your active persona and Professor Mari are always eligible on top of these accounts.
+Your active persona is always eligible on top of these accounts. Professor Mari is eligible while **Professor Mari participates** is on.
+
+Noodle chooses the active accounts before it prepares first-time profiles. Only active characters without an existing generated Noodle profile receive a profile-generation request; inactive invited characters are not included. The timeline-writing request likewise receives character cards only for the accounts selected for that refresh.
 
 ## Activity
 
@@ -79,6 +82,24 @@ If you turn on **Image generation** but have no usable image connection, a refre
 
 The template Noodle uses to write these image prompts is called **Noodle Post Image**. You can edit it under **Settings** > **Generations** > **Image Generation Prompt Overrides**. Your **Prompt instructions** text is passed into that template, and the result then goes through your normal image style profile. See [Prompt Overrides for Image and Video](../prompts/prompt-overrides.md) and [Image Style Profiles](../media/style-profiles.md). Professor Mari has no character card, so her image posts use her built-in avatar and reference art instead.
 
+## Timeline Writing
+
+The **Timeline Writing** section tunes the refresh writer's tone and long-term memory behavior.
+
+- **Enhanced tone & continuity**: a toggle, default **off**. When on, each account's voice is grounded more strongly in its own Personality/Description/Backstory instead of a default upbeat tone, accounts are encouraged to react to, quote, or argue with each other's posts within the same refresh, older-post recall happens more often (and favors posts relevant to currently active accounts instead of picking purely at random), and the recall instruction allows rather than discourages references. Off reproduces Noodle's original tone and recall behavior exactly, so turning this on is the only way your timelines change.
+
+## Customizing the timeline writer's voice
+
+Noodle's refresh writer follows a built-in set of tone and creative-freedom instructions: how much personality each account's posts should carry, and how much accounts may banter, joke, or clash with each other. You can rewrite this text under **Settings** > **Generations** > **Image Generation Prompt Overrides** > **Noodle Timeline Voice & Tone** (the section title says "Image," but this list holds every customizable Noodle/Conversation text prompt, not only image ones). The default text shown there follows the **Enhanced tone & continuity** toggle above until you customize it; once you save your own text, it is used regardless of that toggle.
+
+This override only covers voice and tone. The rules that keep a refresh's output valid (which structured actions are allowed, how interactions must be targeted, and so on) are not part of this text and always stay in effect, so a rewritten voice cannot break a refresh.
+
+## World / Lore
+
+The **World / Lore** section lets a refresh pull in lorebook entries, the same lorebook system used by chat generation.
+
+- **Lorebook context**: a toggle, default **off**. When on, each refresh scans recent Noodle post and reply text, plus the active characters' profiles, for lorebook keyword matches, and includes any matching entries as world/lore context for the accounts taking part in that refresh. Only lorebooks linked to an active character (or marked global) can activate. Activated world/lore content has a hard 8,192-token budget per refresh. This is off by default, so existing timelines are unaffected until you turn it on.
+
 ## Carryover
 
 The **Carryover** section pushes recent Noodle activity into your chats. When on, a chat's prompt gets a "Recent Social Media Activity" block describing what your characters have been doing on Noodle.
@@ -88,6 +109,7 @@ The **Carryover** section pushes recent Noodle activity into your chats. When on
 - **Carry items**: a number, 1 to 50, default **8**. This is the most activity summaries added to one chat turn.
 
 Carryover only pulls activity for characters who are invited on Noodle, plus the chat's active persona. Folder-only inclusion is not enough here.
+The complete wrapped carryover block has a separate hard 8,192-token budget per chat generation. If the item limit would exceed it, Marinara keeps the newest summaries that fit and renders them in chronological order.
 
 ## Reset Noodle
 
@@ -111,7 +133,7 @@ Noodle and your chats can share context in two directions. These are two separat
 
 **Carryover to chats** (set in Noodle settings) sends Noodle activity into a chat. It adds the "Recent Social Media Activity" block to that chat's prompt, as described in the Carryover section above.
 
-**Allow Noodle references** is a per-chat toggle. It sends chat activity the other way, into Noodle. You find it in the chat's own settings, near the **Connected Chats** area. See [Chat Settings Overview](../chats/chat-settings.md). It is **off** by default for every chat. Its description reads "Timeline refreshes may include recent messages from this chat, with the chat name, mode, and participants stated in the prompt."
+**Allow Noodle references** is a per-chat toggle. It sends chat activity the other way, into Noodle. You find it in the chat's own settings, near the **Connected Chats** area. See [Chat Settings Overview](../chats/chat-settings.md). It is **off** by default for every chat. Its description reads "Timeline refreshes may include recent messages from this chat, with the chat name, mode, and participants stated in the prompt." If that chat also has a [Conversation character schedule](../conversation/schedules.md) running, a character's current status and activity in that story (for example, "currently dnd (At the office)") is included alongside its messages, scoped to that one chat.
 
 To make Noodle activity appear in a chat, turn on the matching **Carryover to chats** mode. To let a Noodle refresh read from a chat, turn on that chat's **Allow Noodle references**. You can use either one alone, or both together.
 
@@ -130,6 +152,7 @@ This table lists every Noodle setting with its default and range.
 | Setting | Default | Range or options |
 |---|---|---|
 | **Generation connection** | none | any text connection (required for refresh) |
+| **Professor Mari participates** | on | on or off |
 | **Refreshes/day** | 2 | 0 to 24 (0 turns automatic refreshes off) |
 | **Active selection** | Random range | Random range, Exact count, All invited |
 | **Min active** | 2 | 1 to 100 (Random range only) |
@@ -146,6 +169,8 @@ This table lists every Noodle setting with its default and range.
 | **Include descriptions** | on | on or off |
 | **Images/refresh** | 3 | 0 to 50 |
 | **Attach gallery images** | off | on or off |
+| **Lorebook context** | off | on or off |
+| **Enhanced tone & continuity** | off | on or off |
 | **Carryover: Conversations** | off | on or off |
 | **Carryover: Roleplays** | off | on or off |
 | **Carryover: Games** | off | on or off |

@@ -8,24 +8,26 @@ Selfies are a Conversation Mode feature. A character can send a generated pictur
 
 Selfies use image generation. Each selfie your character sends uses one image generation request from the connection you pick. Because of this, selfies are turned off until you set them up.
 
+Selfies are supplied by the optional **Illustrator** package. Install Illustrator from **Agents → Download Agents** before setting them up.
+
 ## Turning selfies on
 
-Selfies live inside the **Commands** section of a Conversation chat. **Commands** are hidden actions that a character can take on their own, such as sending a selfie or playing a song. The **Commands** section only appears in Conversation Mode.
+Selfies live inside **Illustrator Settings** in the **Agents** section of a Conversation chat. **Commands** are hidden actions that a character can take on their own, such as sending a selfie or playing a song. The command controls appear inside **Agents** when a command-providing package is installed.
 
 To turn selfies on:
 
 1. Open a Conversation chat.
 2. Open **Chat Settings** (the sliders icon).
-3. Find the **Commands** section.
-4. Turn on the master **Commands** toggle at the top of the section. Characters cannot use any hidden action while this is off.
-5. Find the **Selfies** card.
+3. Find the **Agents** section.
+4. Turn on the master **Commands** toggle inside it. Characters cannot use any hidden action while this is off.
+5. Find **Illustrator Settings**.
 6. Turn on the **Generated Selfies** switch.
 
 After you turn on **Generated Selfies**, the selfie settings appear below the switch. You should see fields for the connection, prompt model, style, and references. The **Resolution** buttons appear only after you pick a **Selfie Connection**.
 
 ## Selfie settings
 
-Once selfies are on, set up how they look and which service makes them. All of these settings are in the **Selfies** card in **Chat Settings**. They apply to the current chat only.
+Once selfies are on, set up how they look and which service makes them. All of these settings are in **Illustrator Settings** in **Chat Settings → Agents**. They apply to the current chat only.
 
 ### Selfie Connection
 
@@ -59,14 +61,14 @@ To learn more about styles, see [Image Style Profiles](../media/style-profiles.m
 
 The size options are:
 
-| Resolution | Shape |
-| --- | --- |
-| 512x512 | Square |
-| 512x768 | Portrait |
-| 768x768 | Square |
-| 768x1024 | Portrait |
-| 896x1152 | Portrait (default) |
-| 1024x1024 | Square |
+| Resolution | Shape              |
+| ---------- | ------------------ |
+| 512x512    | Square             |
+| 512x768    | Portrait           |
+| 768x768    | Square             |
+| 768x1024   | Portrait           |
+| 896x1152   | Portrait (default) |
+| 1024x1024  | Square             |
 
 ## How a character sends a selfie
 
@@ -79,7 +81,8 @@ You can also request a selfie yourself instead of waiting for the character.
 1. Open the chat **Gallery** panel.
 2. Click the **Selfie** button (the camera icon).
 3. If the chat has more than one character, pick who should take the selfie from the character list next to the button.
-4. Wait while the button shows **Generating...**.
+4. If **Expose media prompts before sending** is enabled under **Settings**, **Generations**, **Image Generation**, review or edit the final compiled selfie prompt and click **Generate**. Canceling the review does not send an image request.
+5. Wait while the button shows **Generating...**.
 
 When the selfie is ready, you should see a "Selfie generated." message, and the picture appears in the chat. This manual request also uses your chosen **Selfie Connection**, so it uses one image generation request too.
 

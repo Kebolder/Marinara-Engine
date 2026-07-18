@@ -23,7 +23,23 @@ export type GenerateGameTurnStoryboardInput = {
   durationSeconds?: number;
   aspectRatio?: GameSceneVideoAspectRatio;
   generateVideos?: boolean;
+  plannedStoryboard?: unknown;
+  promptOverrides?: Array<{
+    id: string;
+    prompt: string;
+    negativePrompt?: string;
+  }>;
   debugMode?: boolean;
+};
+
+export type GameStoryboardPromptPreviewItem = {
+  id: string;
+  kind: "illustration";
+  title: string;
+  prompt: string;
+  negativePrompt?: string;
+  width: number;
+  height: number;
 };
 
 const RENDERING_STORYBOARD_STATUSES = new Set(["planning", "rendering_images", "rendering_videos"]);
@@ -69,5 +85,15 @@ export function useGenerateGameTurnStoryboard() {
   return useMutation({
     mutationFn: (input: GenerateGameTurnStoryboardInput) =>
       api.post<{ storyboard: GameTurnStoryboard }>("/game/storyboard/generate", input),
+  });
+}
+
+export function usePreviewGameTurnStoryboardPrompts() {
+  return useMutation({
+    mutationFn: (input: GenerateGameTurnStoryboardInput) =>
+      api.post<{ items: GameStoryboardPromptPreviewItem[]; plannedStoryboard: unknown }>("/game/storyboard/generate", {
+        ...input,
+        previewOnly: true,
+      }),
   });
 }

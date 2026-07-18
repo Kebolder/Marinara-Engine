@@ -40,6 +40,9 @@ export interface NoodleSettings {
   allowGalleryImageAttachments: boolean;
   imageCaptioningEnabled: boolean;
   imageCaptioningConnectionId: string | null;
+  enableLorebookContext: boolean;
+  enableEnhancedTimelineWriting: boolean;
+  allowProfessorMari: boolean;
   allowRandomUsers: boolean;
   invitedCharacterGroupIds: string[];
   carryoverMode: NoodleCarryoverMode;
@@ -112,6 +115,16 @@ export interface NoodleDigestEntry {
   createdAt: string;
 }
 
+export type NoodleRefreshAttemptKind = "initial" | "text_only_fallback" | "correction";
+
+export interface NoodleRefreshAttempt {
+  sequence: number;
+  kind: NoodleRefreshAttemptKind;
+  response: string;
+  rejectionReason: string | null;
+  createdAt: string;
+}
+
 export interface NoodleRefreshRun {
   id: string;
   status: "running" | "completed" | "failed";
@@ -119,6 +132,7 @@ export interface NoodleRefreshRun {
   prompt: string;
   result: string | null;
   error: string | null;
+  attempts: NoodleRefreshAttempt[];
   createdAt: string;
   updatedAt: string;
 }

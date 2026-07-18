@@ -30,6 +30,8 @@ export interface GmPromptContext {
   playerCard?: string | null;
   gmCharacterCard: string | null;
   difficulty: string;
+  /** "classic" (menu combat) or "tactical" (grid battle). Absent = classic. */
+  combatStyle?: string;
   genre: string;
   setting: string;
   tone: string;
@@ -428,15 +430,21 @@ export function buildGmSystemPrompt(ctx: GmPromptContext): string {
     );
   }
 
-  sections.push(
+  const gameBlockLines = [
     `<game>`,
     `You are driving an RPG/VN game:`,
     `- Genre: ${ctx.genre}.`,
     `- Setting: ${ctx.setting}.`,
     `- Tone: ${ctx.tone}.`,
     `- Difficulty: ${ctx.difficulty}.`,
-    `</game>`,
-  );
+  ];
+  if (ctx.combatStyle === "tactical") {
+    gameBlockLines.push(
+      `- Combat style: tactical grid-battle. Battles resolve in a dedicated tactical UI (movement, terrain, forecasts); narrate the aftermath from the battle report and do not resolve the tactics yourself in prose.`,
+    );
+  }
+  gameBlockLines.push(`</game>`);
+  sections.push(...gameBlockLines);
 
   sections.push(wrapGameInstructions(normalizePromptText(ctx.gameSystemPrompt) || DEFAULT_GAME_SYSTEM_PROMPT));
 

@@ -4,7 +4,7 @@ This guide explains how to play background music in Marinara Engine using the **
 
 ## What Music DJ is
 
-**Music DJ** is a built-in agent. An agent is a helper that runs automatically in the background of a chat. After each reply, **Music DJ** reads the mood of the scene and plays matching background music.
+**Music DJ** is an optional downloadable agent. An agent is a helper that runs automatically in the background of a chat. Open **Agents**, select **Download Agents**, and install **Music DJ** before configuring it. After each reply, Music DJ can read the mood of the scene and play matching background music.
 
 **Music DJ** can play music from three sources:
 
@@ -14,7 +14,7 @@ This guide explains how to play background music in Marinara Engine using the **
 
 Whichever source is active shows up as a small **Music Player** pinned in the top bar of the app. On phones and narrow windows it becomes a small floating round widget you can drag.
 
-**Music DJ** is off by default. You turn it on for a chat like any other agent. It is available in **Roleplay** chats, and in **Game** mode through a separate toggle (see Music DJ in Game Mode below). In **Conversation** mode you use the **Music** command instead (see The Conversation Music command below).
+**Music DJ** is off by default after installation. You turn it on for a chat like any other agent. It is available in **Roleplay** chats, and in **Game** mode through a separate toggle (see Music DJ in Game Mode below). In **Conversation** mode you use the **Music** command instead (see The Conversation Music command below).
 
 You set up **Music DJ** in one shared place. Open the right-side **Agents** panel, then open **Music DJ**. You can also click the gear icon on the mini player. Its tooltip reads **Music DJ setup**.
 
@@ -104,7 +104,7 @@ Playing from a folder outside Game Assets needs local access on the server. If y
 
 The **Music Player** appears as a small pill in the top bar on desktop, or a draggable floating widget on mobile. You can hide or show it with a setting.
 
-Open **Settings**, go to the **General** tab, and find the **App Behavior** section. Toggle **Music Player** on or off. The help text reads "Shows the compact Music Player. Switch between Spotify and YouTube from the player itself or the Music DJ agent settings." This toggle is on by default.
+Open **Settings**, go to the **General** tab, and find the **App Behavior** section. Toggle **Music Player** on or off. The help text reads "Shows the compact Music Player. Switch between Spotify, YouTube, and Custom from the player itself or the Music DJ agent settings." This toggle is always available and is on by default. If it is enabled without Music DJ installed, the desktop or mobile player surface instead reads **Download Music DJ Agent to configure** and provides a **Download Agents** button.
 
 On a fresh profile the visible source starts as **YouTube**. You can change the source three ways:
 
@@ -173,7 +173,7 @@ If Spotify is not connected or lacks playback permission, a Spotify song command
 
 ## Related guides
 
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Agents: AI Helpers for Your Chats](../agents/agents-overview.md)
 - [Connecting to an AI Provider](../connections/connecting-to-a-provider.md)
 - [Game Assets](../game/game-assets.md)

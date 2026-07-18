@@ -111,7 +111,7 @@ The expanded drawer holds a few more fields.
 
 - **Role**: sets whether the injected text is labeled as **System**, **User**, or **Assistant**. This only matters when **Position** is **@ Depth**. The default is **System**.
 - **Group** and **Tag**: put entries in the same **Group** so only one of them activates at a time. The **Tag** is a free-text label for your own sorting.
-- **Locked**: prevents the **Lorebook Keeper** agent from changing this entry. See [Built-in Agents Reference](../agents/built-in-agents.md).
+- **Locked**: prevents the **Lorebook Keeper** agent from changing this entry. See [Downloadable Agents Reference](../agents/built-in-agents.md).
 - **No Vector** and the vector-status badge relate to semantic search. See [Semantic Search for Lorebooks](semantic-search.md).
 
 The drawer also has a **Context filters & matching sources** section. There you can limit an entry to certain characters, character tags, or generation types. You can also scan extra card fields (such as the character description) for the entry's keywords.

@@ -107,13 +107,15 @@ The AI avatar option appears only when you have at least one image-generation co
 6. Click **Generate**. To try again, click **Regenerate**.
 7. When you like the result, click **Use Avatar**.
 
-The picture size comes from the **Portraits** image-size setting in the image-generation settings, which defaults to 1024 by 1024. If you have turned on **Expose image prompts before sending**, a prompt-review step appears before each request.
+The picture size comes from the **Portraits** image-size setting in the image-generation settings, which defaults to 1024 by 1024. If you have turned on **Expose media prompts before sending**, a prompt-review step appears before each request.
 
 ## Advanced tab
 
 The **Advanced** tab holds prompt controls for advanced users. You can leave all of these empty for a normal character.
 
-- **System Prompt**. Character-specific instructions added through the active preset's character block. This does not replace the chat's main system prompt.
+These character-authored prompt controls apply in Conversation, Roleplay, Visual Novel, and Game modes. A selected Conversation or Game preset changes the surrounding prompt, but does not disable the character's Post-History Instructions or Depth Prompt.
+
+- **System Prompt**. Character-specific instructions added through the active preset's character block, Conversation character context, or Game character/GM card as appropriate. This does not replace the chat's main system prompt.
 - **Post-History Instructions**. Text placed near the end of the prompt, close to generation. A common use is a short reminder like "Stay in character".
 - **Depth Prompt**. Text injected at a chosen point in the chat history. **Depth** sets how many messages back it goes. Depth 0 is right after the latest message, and depth 4 is four messages back. The default depth is 4. **Role** sets whether the text is inserted as **System**, **User**, or **Assistant**. The default role is System.
 

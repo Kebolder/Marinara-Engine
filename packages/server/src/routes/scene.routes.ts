@@ -15,6 +15,9 @@ import { createConnectionsStorage } from "../services/storage/connections.storag
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createGameStateStorage } from "../services/storage/game-state.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
+import type { GenerationFallbackNotifier } from "../services/generation/fallback-notification.js";
+import { createReplyFallbackNotifier } from "./generate/fallback-notification.js";
 import { stripConversationPromptTimestamps } from "../services/conversation/transcript-sanitize.js";
 import { DATA_DIR } from "../utils/data-dir.js";
 import type { ChatCompletionResult, ChatMessage } from "../services/llm/base-provider.js";
@@ -31,7 +34,10 @@ import type {
   ScenePromptPreferences,
   SceneFullPlan,
 } from "@marinara-engine/shared";
-import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
+import {
+  resolveActivePersonaCandidate,
+  resolveBaseUrl as resolveSceneConnectionBaseUrl,
+} from "./generate/generate-route-utils.js";
 
 const BG_DIR = join(DATA_DIR, "backgrounds");
 const ALLOWED_BG_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
@@ -134,10 +140,9 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
 
 /**
  * Build persona context. Prefers the chat-scoped persona (`chat.personaId`)
- * before falling back to the globally active persona — the same resolution
- * order used elsewhere (see `chats.routes.ts`). Game mode skips the fallback:
- * persona must be explicitly selected in the setup wizard, so a persona-less
- * game stays persona-less in scene prompts too.
+ * before Conversation-only fallback to the globally active Persona — the same
+ * resolution order used elsewhere (see `chats.routes.ts`). Roleplay and Game
+ * may intentionally remain Persona-less in scene prompts.
  */
 async function buildPersonaContext(
   chars: ReturnType<typeof createCharactersStorage>,
@@ -274,6 +279,32 @@ export async function sceneRoutes(app: FastifyInstance) {
   const chars = createCharactersStorage(app.db);
   const gsStorage = createGameStateStorage(app.db);
 
+  async function createSceneProvider(
+    conn: NonNullable<Awaited<ReturnType<typeof connections.getWithKey>>>,
+    baseUrl: string,
+    onFallback?: GenerationFallbackNotifier,
+  ) {
+    const fallbackConnection = await connections.getFallbackForMain();
+    return withConnectionFallbackProvider({
+      primary: createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+        conn.claudeFastMode === "true",
+        conn.treatAsLocalEndpoint === "true",
+        conn.defaultParameters,
+      ),
+      primaryConnectionId: conn.id,
+      fallbackConnection,
+      fallbackBaseUrl: fallbackConnection ? resolveSceneConnectionBaseUrl(fallbackConnection) : "",
+      category: "main",
+      onFallback,
+    });
+  }
+
   // ───────────────────────── CREATE ─────────────────────────
   // Creates a new roleplay chat for the scene using the full plan,
   // injects description as narrator + firstMessage as character message,
@@ -394,14 +425,7 @@ export async function sceneRoutes(app: FastifyInstance) {
 
     // Resolve connection
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, sceneChat.connectionId);
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const provider = await createSceneProvider(conn, baseUrl, createReplyFallbackNotifier(reply));
 
     // Build context — the scene chat inherits its personaId from the origin;
     // the game guard has to come from the origin since scene chats are "roleplay"
@@ -765,14 +789,7 @@ export async function sceneRoutes(app: FastifyInstance) {
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
 
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, chat.connectionId);
-    const provider = createLLMProvider(
-      conn.provider,
-      baseUrl,
-      conn.apiKey,
-      conn.maxContext,
-      conn.openrouterProvider,
-      conn.maxTokensOverride,
-    );
+    const provider = await createSceneProvider(conn, baseUrl, createReplyFallbackNotifier(reply));
 
     const characterIds: string[] =
       typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds as string[]);

@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Synced Custom Themes
 // ──────────────────────────────────────────────
-import { desc, eq } from "drizzle-orm";
+import { desc, eq } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { customThemes } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

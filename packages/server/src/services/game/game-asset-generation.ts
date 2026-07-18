@@ -12,7 +12,7 @@ import { createHash } from "crypto";
 import { logger } from "../../lib/logger.js";
 import { basename, join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
-import { generateImage, type ImageGenResult } from "../image/image-generation.js";
+import { generateImage, type ImageGenRequest, type ImageGenResult } from "../image/image-generation.js";
 import { buildAssetManifest, GAME_ASSETS_DIR } from "./asset-manifest.service.js";
 import type { PromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
 import { loadPrompt, GAME_NPC_PORTRAIT, GAME_BACKGROUND, GAME_SCENE_ILLUSTRATION } from "../prompt-overrides/index.js";
@@ -24,6 +24,7 @@ import {
 } from "@marinara-engine/shared";
 import type { ImageGenerationSize } from "../image/image-generation-settings.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
+import { loadGameStoryboardImagePrompt } from "../image/game-storyboard-image-prompt.js";
 
 const NPC_AVATAR_DIR = join(DATA_DIR, "avatars", "npc");
 const CHAT_BACKGROUND_DIR = join(DATA_DIR, "backgrounds");
@@ -39,6 +40,7 @@ const GAME_BACKGROUND_NEGATIVE_PROMPT =
   "text, letters, captions, subtitles, UI, watermark, logo, signature, foreground character, main character, named character, portrait, close-up person, posed subject, split screen, panel, collage, contact sheet, grid, multiple frames, low quality";
 const GAME_ILLUSTRATION_NEGATIVE_PROMPT =
   "text, letters, captions, subtitles, UI, watermark, logo, signature, speech bubble, split screen, panel, collage, contact sheet, character sheet, grid, four images, duplicated face, extra head, unrelated character, bad anatomy, low quality";
+const MAX_SCENE_ILLUSTRATION_APPEARANCE_NOTES_CHARS = 4800;
 const MAX_GENERATED_ASSET_SLUG_BYTES = 180;
 const DEFAULT_SCENE_ILLUSTRATION_REFERENCE_IMAGE_LIMIT = 4;
 const OPENAI_COMPAT_SCENE_ILLUSTRATION_REFERENCE_IMAGE_LIMIT = 16;
@@ -115,10 +117,9 @@ function normalizeSceneIllustrationImageSource(value: string | null | undefined)
   return SCENE_ILLUSTRATION_IMAGE_BACKENDS.has(normalized) ? normalized : "";
 }
 
-function resolveSceneIllustrationImageBackend(req: Pick<
-  SceneIllustrationGenRequest,
-  "imgSource" | "imgModel" | "imgBaseUrl" | "imgService"
->): string {
+function resolveSceneIllustrationImageBackend(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+): string {
   const inferred = inferImageSource(req.imgModel || req.imgSource || "", req.imgBaseUrl || "");
   const explicit = normalizeSceneIllustrationImageSource(req.imgService || req.imgSource);
   if (!explicit) return inferred;
@@ -142,10 +143,9 @@ export function supportsSceneIllustrationStructuredCharacterPrompts(
   return /^nai-diffusion-(?:4(?:-(?:curated-preview|full))?|4-5(?:-(?:curated|full))?)$/i.test(req.imgModel.trim());
 }
 
-export function resolveSceneIllustrationReferenceImageLimit(req: Pick<
-  SceneIllustrationGenRequest,
-  "imgSource" | "imgModel" | "imgBaseUrl" | "imgService"
->): number {
+export function resolveSceneIllustrationReferenceImageLimit(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+): number {
   const backend = resolveSceneIllustrationImageBackend(req);
   const model = [req.imgModel, req.imgSource, req.imgService].filter(Boolean).join(" ").toLowerCase();
   const isGeminiImageModel = model.includes("gemini") && model.includes("image");
@@ -502,6 +502,7 @@ export interface NpcPortraitRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -584,27 +585,45 @@ function compileGameImagePrompt(
   negativePrompt?: string | null,
 ) {
   const canonicalAppearance = kind === "portrait" && typeof req.appearance === "string" ? req.appearance.trim() : "";
-  const canonicalPrefix = canonicalAppearance
-    ? `Required canonical NPC visual profile: ${canonicalAppearance.slice(0, 700)}`
+  const protectedCanonicalAppearance = canonicalAppearance.slice(0, 700);
+  const canonicalPrefix = protectedCanonicalAppearance
+    ? `Required canonical NPC visual profile: ${protectedCanonicalAppearance}`
     : "";
   if (!req.styleProfiles) {
     return {
-      prompt: [canonicalPrefix, prompt].filter(Boolean).join(". ").slice(0, maxLength),
+      prompt: prependCanonicalAppearanceIfMissing(
+        prompt,
+        protectedCanonicalAppearance,
+        canonicalPrefix,
+        maxLength,
+        ". ",
+      ),
       negativePrompt: [negativePrompt, hardNegative].filter(Boolean).join(", "),
     };
   }
   if (kind === "illustration" && req.preserveFullScenePrompt) {
-    const compiledPrefix = compileImagePrompt({
-      kind,
-      prompt: "",
-      negativePrompt,
-      hardNegative,
-      styleProfiles: req.styleProfiles,
-      styleProfileId: req.styleProfileId,
-      imageDefaults: req.imgDefaults,
-      generatedStyle: req.artStyle,
-      applyPromptModeToSourcePrompt: false,
-    });
+    const compilePrefix = (dedupeAgainstPrompt: string) =>
+      compileImagePrompt({
+        kind,
+        prompt: "",
+        dedupeAgainstPrompt,
+        negativePrompt,
+        hardNegative,
+        styleProfiles: req.styleProfiles!,
+        styleProfileId: req.styleProfileId,
+        imageDefaults: req.imgDefaults,
+        generatedStyle: req.artStyle,
+        applyPromptModeToSourcePrompt: false,
+      });
+    // The preliminary prefix determines how much preserved source text can actually fit.
+    // Compare against only that guaranteed slice so truncation cannot remove the sole style copy.
+    const preliminaryPrefix = compilePrefix(prompt);
+    const preliminaryHeader = [canonicalPrefix, preliminaryPrefix.prompt].filter(Boolean).join(", ");
+    const guaranteedSourceLength = Math.max(
+      0,
+      maxLength - preliminaryHeader.length - (preliminaryHeader && prompt.trim() ? 2 : 0),
+    );
+    const compiledPrefix = compilePrefix(prompt.trim().slice(0, guaranteedSourceLength));
     const protectedPrompt = [canonicalPrefix, compiledPrefix.prompt, prompt.trim()].filter(Boolean).join(", ");
     return {
       prompt: protectedPrompt.slice(0, maxLength),
@@ -622,11 +641,44 @@ function compileGameImagePrompt(
     generatedStyle: req.artStyle,
     applyPromptModeToSourcePrompt: kind === "background" || (kind === "illustration" && !req.preserveFullScenePrompt),
   });
-  const protectedPrompt = [canonicalPrefix, compiled.prompt].filter(Boolean).join(", ");
   return {
-    prompt: protectedPrompt.slice(0, maxLength),
+    prompt: prependCanonicalAppearanceIfMissing(
+      compiled.prompt,
+      protectedCanonicalAppearance,
+      canonicalPrefix,
+      maxLength,
+      ", ",
+    ),
     negativePrompt: compiled.negativePrompt,
   };
+}
+
+function prependCanonicalAppearanceIfMissing(
+  prompt: string,
+  canonicalAppearance: string,
+  canonicalPrefix: string,
+  maxLength: number,
+  separator: string,
+): string {
+  // Inspect the provider-visible slice. If identity is missing, rebuild from the original
+  // prompt so prefixing still happens before the single final maxLength truncation.
+  const truncatedPrompt = prompt.slice(0, maxLength);
+  if (!canonicalPrefix || promptContainsCanonicalAppearance(truncatedPrompt, canonicalAppearance)) {
+    return truncatedPrompt;
+  }
+  return [canonicalPrefix, prompt].filter(Boolean).join(separator).slice(0, maxLength);
+}
+
+function promptContainsCanonicalAppearance(prompt: string, canonicalAppearance: string): boolean {
+  // Whole-word matching can still treat short or generic appearances as incidental matches;
+  // changing this behavior trades duplicate suppression against identity preservation.
+  const normalizedAppearance = normalizedPromptText(canonicalAppearance);
+  if (!normalizedAppearance) return false;
+  return ` ${normalizedPromptText(prompt)} `.includes(` ${normalizedAppearance} `);
+}
+
+function normalizedPromptText(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 async function maybeGenerateDynamicGameImagePrompt(
@@ -698,6 +750,7 @@ export async function generateNpcPortrait(req: NpcPortraitRequest): Promise<stri
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -759,6 +812,7 @@ export interface BackgroundGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -795,6 +849,8 @@ export interface SceneIllustrationGenRequest {
   artStyle?: string;
   /** Extra user instructions appended to scene illustration prompts. */
   imagePromptInstructions?: string;
+  /** Use the Game-specific provider prompt wrapper. False keeps the scene prompt direct while preserving optional appearance notes. */
+  useGamePromptTemplate?: boolean;
   referenceImages?: string[];
   /** Structured named-character prompts for providers with native multi-character controls. */
   characterPrompts?: SceneIllustrationCharacterPrompt[];
@@ -806,6 +862,7 @@ export interface SceneIllustrationGenRequest {
   imgEndpointId?: string | null;
   imgComfyWorkflow?: string | undefined;
   imgDefaults?: ImageGenerationDefaultsProfile | null;
+  imgFallback?: ImageGenRequest["fallback"];
   styleProfiles?: ImageStyleProfileSettings;
   styleProfileId?: string | null;
   debugLog?: (message: string, ...args: any[]) => void;
@@ -818,8 +875,10 @@ export interface SceneIllustrationGenRequest {
   negativePromptOverride?: string;
   /** Receives the exact compiled prompt passed to the image provider. */
   onCompiledPrompt?: (compiled: CompiledGameImagePrompt) => void;
-  /** Use the storyboard illustrator's imagePrompt as the complete scene source, bypassing the scene-illustration prompt template. */
-  useDirectScenePrompt?: boolean;
+  /** Selected provider-facing storyboard image prompt template. */
+  storyboardImagePromptTemplateId?: string | null;
+  /** Chat-local provider-facing storyboard image prompt templates. */
+  storyboardImagePromptTemplates?: unknown;
   /** Preserve the full generated scene prompt instead of distilling it into the selected tagged prompt grammar. */
   preserveFullScenePrompt?: boolean;
   /** Optional request-scoped abort signal. */
@@ -909,6 +968,48 @@ export async function buildBackgroundImagePrompt(req: BackgroundGenRequest): Pro
   return (await buildBackgroundProviderPrompt(req)).prompt;
 }
 
+function truncateSceneIllustrationAppearanceLine(value: string, maxLength: number): string {
+  const clean = value.trim().replace(/\s+/g, " ");
+  if (clean.length <= maxLength) return clean;
+  if (maxLength <= 3) return ".".repeat(Math.max(0, maxLength));
+  const clipped = clean.slice(0, maxLength - 3).trimEnd();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  return `${(wordBoundary > 0 ? clipped.slice(0, wordBoundary) : clipped).trimEnd()}...`;
+}
+
+function buildSceneIllustrationAppearanceNotes(characterDescriptions: string[] | undefined): string {
+  const header = "Character appearance notes:\n";
+  const lines = Array.from(
+    new Set(
+      (characterDescriptions ?? []).map((description) => description.trim().replace(/\s+/g, " ")).filter(Boolean),
+    ),
+  ).slice(0, 16);
+  if (!lines.length) return "";
+
+  const separatorChars = Math.max(0, lines.length - 1);
+  let remainingBudget = MAX_SCENE_ILLUSTRATION_APPEARANCE_NOTES_CHARS - header.length - separatorChars;
+  let remainingIndexes = lines.map((_, index) => index);
+  const allocations = new Array<number>(lines.length).fill(0);
+  while (remainingIndexes.length) {
+    const fairShare = Math.floor(remainingBudget / remainingIndexes.length);
+    const completed = remainingIndexes.filter((index) => lines[index]!.length <= fairShare);
+    if (!completed.length) {
+      for (const index of remainingIndexes) allocations[index] = fairShare;
+      break;
+    }
+    for (const index of completed) {
+      allocations[index] = lines[index]!.length;
+      remainingBudget -= allocations[index]!;
+    }
+    remainingIndexes = remainingIndexes.filter((index) => !completed.includes(index));
+  }
+
+  return `${header}${lines
+    .map((line, index) => truncateSceneIllustrationAppearanceLine(line, allocations[index]!))
+    .filter(Boolean)
+    .join("\n")}`;
+}
+
 async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest): Promise<string> {
   const styleHint = [req.artStyle, req.genre, req.setting].filter(Boolean).join(", ");
   const sceneTitle = sceneIllustrationContextTitle(req);
@@ -918,25 +1019,49 @@ async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest)
   const imagePromptInstructionsLine = req.imagePromptInstructions?.trim()
     ? `User image instructions: ${req.imagePromptInstructions.trim().replace(/\s+/g, " ").slice(0, 5000)}`
     : "";
+  const useGamePromptTemplate = req.useGamePromptTemplate !== false;
+  const scopedScenePrompt = req.prompt.trim();
+  const finalVisibilityRuleMatch = scopedScenePrompt.match(
+    /(?:^|\s+)(Final visibility rule:[\s\S]*)$/iu,
+  );
+  const directScenePrompt = finalVisibilityRuleMatch
+    ? scopedScenePrompt.slice(0, finalVisibilityRuleMatch.index).trim()
+    : scopedScenePrompt;
+  const finalVisibilityRuleLine = finalVisibilityRuleMatch?.[1]?.trim() ?? "";
   const sceneIllustrationVars = {
     sceneTitleLine: sceneTitle ? `${sceneTitle}.` : "",
-    scenePrompt: req.prompt,
+    scenePrompt: directScenePrompt,
+    finalVisibilityRuleLine,
     narrativePurposeLine: meaningfulNarrativePurpose ? `Narrative purpose: ${meaningfulNarrativePurpose}.` : "",
     charactersLine: req.characters?.length ? `Characters: ${req.characters.join(", ")}.` : "",
     referenceHandlingLine: referenceImages.length
       ? "Reference handling: attached character reference images are available. Use them to match faces, hair, build, colors, and distinctive features for the referenced characters."
       : "",
-    appearanceNotesBlock: req.characterDescriptions?.length
-      ? `Appearance notes for visible characters without an attached reference image:\n- ${req.characterDescriptions.join("\n- ")}`
-      : "",
+    appearanceNotesBlock: buildSceneIllustrationAppearanceNotes(req.characterDescriptions),
     artDirectionLine: styleHint ? `Art direction: ${styleHint}.` : "",
     imagePromptInstructionsLine,
   };
-  const rawIllustrationPrompt = req.useDirectScenePrompt
-    ? req.prompt.trim()
-    : req.promptOverridesStorage
-      ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
-      : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
+  const directPromptWithAppearance = [
+    directScenePrompt,
+    sceneIllustrationVars.finalVisibilityRuleLine,
+    sceneIllustrationVars.appearanceNotesBlock,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const hasStoryboardImagePromptSelection =
+    req.storyboardImagePromptTemplateId != null || req.storyboardImagePromptTemplates != null;
+  const rawIllustrationPrompt = !useGamePromptTemplate
+    ? directPromptWithAppearance
+    : hasStoryboardImagePromptSelection
+      ? await loadGameStoryboardImagePrompt({
+          promptOverridesStorage: req.promptOverridesStorage,
+          templateId: req.storyboardImagePromptTemplateId,
+          customTemplates: req.storyboardImagePromptTemplates,
+          ctx: sceneIllustrationVars,
+        })
+      : req.promptOverridesStorage
+        ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
+        : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
   const finalPrompt =
     imagePromptInstructionsLine && !rawIllustrationPrompt.includes(imagePromptInstructionsLine)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`
@@ -990,23 +1115,28 @@ export async function buildSceneIllustrationProviderPrompt(
   }
   const sourcePrompt = await buildSceneIllustrationRawPrompt(req);
   const referenceImages = sceneIllustrationReferenceImagesForProvider(req);
+  const useGamePromptTemplate = req.useGamePromptTemplate !== false;
   const prompt = await maybeGenerateDynamicGameImagePrompt(req.dynamicPromptGenerator, {
     kind: "illustration",
     title: req.title || req.reason || req.slug || "Scene illustration",
     sourcePrompt,
     maxCharacters: 7000,
-    assetContext: [
-      req.title ? `Title: ${req.title}` : "",
-      `Scene prompt: ${req.prompt}`,
-      req.reason ? `Narrative purpose: ${req.reason}` : "",
-      req.characters?.length ? `Visible characters: ${req.characters.join(", ")}` : "",
-      req.characterDescriptions?.length ? `Character appearance notes: ${req.characterDescriptions.join("; ")}` : "",
-      req.genre ? `Genre: ${req.genre}` : "",
-      req.setting ? `Setting: ${req.setting}` : "",
-      req.artStyle ? `Art style: ${req.artStyle}` : "",
-      req.imagePromptInstructions ? `User image instructions: ${req.imagePromptInstructions}` : "",
-      referenceImages.length ? `Reference images attached: ${referenceImages.length}` : "",
-    ],
+    assetContext: useGamePromptTemplate
+      ? [
+          req.title ? `Title: ${req.title}` : "",
+          `Scene prompt: ${req.prompt}`,
+          req.reason ? `Narrative purpose: ${req.reason}` : "",
+          req.characters?.length ? `Visible characters: ${req.characters.join(", ")}` : "",
+          req.characterDescriptions?.length
+            ? `Character appearance notes: ${req.characterDescriptions.join("; ")}`
+            : "",
+          req.genre ? `Genre: ${req.genre}` : "",
+          req.setting ? `Setting: ${req.setting}` : "",
+          req.artStyle ? `Art style: ${req.artStyle}` : "",
+          req.imagePromptInstructions ? `User image instructions: ${req.imagePromptInstructions}` : "",
+          referenceImages.length ? `Reference images attached: ${referenceImages.length}` : "",
+        ]
+      : [],
   });
   return compileGameImagePrompt(req, "illustration", prompt, 7000, GAME_ILLUSTRATION_NEGATIVE_PROMPT);
 }
@@ -1062,6 +1192,7 @@ export async function generateBackground(req: BackgroundGenRequest): Promise<str
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -1131,6 +1262,7 @@ export async function generateChatBackground(req: ChatBackgroundGenRequest): Pro
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
       },
     );
@@ -1199,6 +1331,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
         imageEndpointId: req.imgEndpointId || undefined,
         comfyWorkflow: req.imgComfyWorkflow || undefined,
         imageDefaults: req.imgDefaults ?? undefined,
+        fallback: req.imgFallback,
         signal: req.signal,
         referenceImages: referenceImages.length ? referenceImages : undefined,
         characterPrompts: req.characterPrompts,

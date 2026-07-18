@@ -46,6 +46,7 @@ import { ConvoProfileFields } from "./ConvoProfileFields";
 import { useUIStore } from "../../stores/ui.store";
 import { lorebookKeys, useLorebook } from "../../hooks/use-lorebooks";
 import { useConnections } from "../../hooks/use-connections";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { SpriteGenerationModal } from "../ui/SpriteGenerationModal";
 import { AvatarGenerationModal } from "../ui/AvatarGenerationModal";
@@ -108,7 +109,6 @@ import {
   normalizeSpriteExpressionLabel,
   normalizeRpgStatPools,
   syncRpgHpFromPools,
-  type AboutMeSourceConfig,
   type CharacterCardVersion,
   type CharacterData,
   type ConversationCallCharacterVideoClipKind,
@@ -145,7 +145,7 @@ const CHARACTER_CARD_SECTIONS = [
 ] as const;
 
 const CHARACTER_METADATA_HELP =
-  "Use metadata for identity, sharing, and library organization. Name is used as {{char}}, creator/version help track authorship and revisions, tags make the card searchable, talkativeness affects group chat response frequency, and creator notes stay private.";
+  "Use metadata for identity, sharing, and library organization. The avatar identifies the character throughout Marinara, name is used as {{char}}, creator/version help track authorship and revisions, tags make the card searchable, talkativeness affects group chat response frequency, and creator notes stay private.";
 
 const CHARACTER_CARD_HELP =
   "Write the fields that define how the model sees and plays the character. Description, personality, backstory, appearance, scenario, and dialogue are kept together here so you can treat the card as one writing document.";
@@ -342,6 +342,14 @@ export function CharacterEditor() {
       markDirty();
     },
     [formatQuotes, markDirty],
+  );
+
+  const updateCharacterComment = useCallback(
+    (value: string) => {
+      setCharacterComment(value);
+      markDirty();
+    },
+    [markDirty],
   );
 
   const setExtensionValue = useCallback((key: string, value: unknown) => {
@@ -962,10 +970,7 @@ export function CharacterEditor() {
             />
             <input
               value={characterComment}
-              onChange={(e) => {
-                setCharacterComment(e.target.value);
-                markDirty();
-              }}
+              onChange={(e) => updateCharacterComment(e.target.value)}
               className="mari-editor-subtitle-input"
               placeholder="Title / comment (e.g. 'Modern AU version')"
             />
@@ -1031,6 +1036,7 @@ export function CharacterEditor() {
                 characterId={characterId}
                 formData={formData}
                 characterComment={characterComment}
+                updateCharacterComment={updateCharacterComment}
                 updateField={updateField}
                 updateExtension={updateExtension}
                 newTag={newTag}
@@ -1039,6 +1045,8 @@ export function CharacterEditor() {
                 removeTag={removeTag}
                 removeAllTags={removeAllTags}
                 avatarPreview={avatarPreview}
+                onSelectAvatar={() => fileInputRef.current?.click()}
+                avatarUploading={avatarUploading}
                 onRemoveAvatar={handleAvatarRemove}
                 removingAvatar={removeAvatar.isPending}
               />
@@ -1269,8 +1277,8 @@ function ConvoTab({
 }) {
   const ext = formData.extensions;
   return (
-    // Key by the edited character so all transient state (revert snapshot, open
-    // panels, connection choice) resets on switch — the editor reuses this instance.
+    // Key by the edited character so transient edit state resets on switch. The
+    // editor reuses this component instance while moving between characters.
     <ConvoProfileFields
       key={characterId ?? "new-character"}
       kind={kind}
@@ -1280,21 +1288,10 @@ function ConvoTab({
       onDisplayNameChange={(v) => updateExtension("convoDisplayName", v)}
       displayNameInCard={ext.convoDisplayNameInCard === true}
       onDisplayNameInCardChange={(v) => updateExtension("convoDisplayNameInCard", v)}
-      characterId={characterId}
-      sources={ext.aboutMeSources as AboutMeSourceConfig | undefined}
-      onSourcesChange={(v) => updateExtension("aboutMeSources", v)}
       aboutMe={(ext.aboutMe as string) ?? ""}
       onAboutMeChange={(v) => updateExtension("aboutMe", v)}
       behavior={ext.convoBehavior as ConvoBehaviorConfig | undefined}
       onBehaviorChange={(b) => updateExtension("convoBehavior", b)}
-      aiSource={{
-        name: formData.name ?? "",
-        description: formData.description ?? "",
-        personality: formData.personality ?? "",
-        scenario: formData.scenario ?? "",
-        backstory: (ext.backstory as string) ?? "",
-        appearance: (ext.appearance as string) ?? "",
-      }}
     />
   );
 }
@@ -1303,6 +1300,7 @@ function MetadataTab({
   characterId,
   formData,
   characterComment,
+  updateCharacterComment,
   updateField,
   updateExtension,
   newTag,
@@ -1311,12 +1309,15 @@ function MetadataTab({
   removeTag,
   removeAllTags,
   avatarPreview,
+  onSelectAvatar,
+  avatarUploading,
   onRemoveAvatar,
   removingAvatar,
 }: {
   characterId: string | null;
   formData: CharacterData;
   characterComment: string;
+  updateCharacterComment: (value: string) => void;
   updateField: <K extends keyof CharacterData>(key: K, value: CharacterData[K]) => void;
   updateExtension: (key: string, value: unknown) => void;
   newTag: string;
@@ -1325,6 +1326,8 @@ function MetadataTab({
   removeTag: (tag: string) => void;
   removeAllTags: () => void;
   avatarPreview: string | null;
+  onSelectAvatar: () => void;
+  avatarUploading: boolean;
   onRemoveAvatar: () => void;
   removingAvatar: boolean;
 }) {
@@ -1336,9 +1339,57 @@ function MetadataTab({
     <div className="space-y-5">
       <SectionHeader
         title="Metadata"
-        subtitle="Basic character info — name, creator, version, tags."
+        subtitle="Basic character info: avatar, name, title, creator, version, tags."
         helpText={CHARACTER_METADATA_HELP}
       />
+
+      <div className="space-y-1.5">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+          Avatar
+          <HelpTooltip text="The character image shown in the library and chats. You can replace it at any time without changing the character card." />
+        </span>
+        <button
+          type="button"
+          onClick={onSelectAvatar}
+          disabled={avatarUploading}
+          aria-busy={avatarUploading}
+          className="group flex min-h-20 w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-3 text-left transition-colors hover:border-[var(--primary)]/40 hover:bg-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/30 disabled:cursor-wait disabled:opacity-60"
+        >
+          <span
+            className={cn(
+              "relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--background)]",
+              !avatarPreview && "mari-avatar-placeholder mari-avatar-placeholder--character",
+            )}
+          >
+            {avatarPreview ? (
+              <img
+                src={avatarPreview}
+                alt=""
+                className="h-full w-full object-cover"
+                style={getAvatarCropStyle(savedCrop ?? undefined)}
+              />
+            ) : (
+              <User size="1.375rem" className="text-white" />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-[var(--foreground)]">
+              {avatarUploading ? "Uploading avatar…" : avatarPreview ? "Replace avatar" : "Upload avatar"}
+            </span>
+            <span className="mt-0.5 block text-xs leading-5 text-[var(--muted-foreground)]">
+              Choose an image from this device. You can adjust its crop after uploading.
+            </span>
+          </span>
+          {avatarUploading ? (
+            <Loader2 size="1rem" className="shrink-0 animate-spin text-[var(--primary)]" />
+          ) : (
+            <Upload
+              size="1rem"
+              className="shrink-0 text-[var(--muted-foreground)] transition-colors group-hover:text-[var(--primary)]"
+            />
+          )}
+        </button>
+      </div>
 
       {characterId && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
@@ -1376,7 +1427,7 @@ function MetadataTab({
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="space-y-1.5">
+        <label className="space-y-1.5 sm:col-span-2">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
             Name{" "}
             <HelpTooltip text="The character's display name. This is what appears in chat and is used as {{char}} in prompts." />
@@ -1385,6 +1436,18 @@ function MetadataTab({
             value={formData.name}
             onChange={(e) => updateField("name", e.target.value)}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+          />
+        </label>
+        <label className="space-y-1.5 sm:col-span-2">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted-foreground)]">
+            Title / comment{" "}
+            <HelpTooltip text="A short note shown under the character name in the library, useful for variants or alternate versions." />
+          </span>
+          <input
+            value={characterComment}
+            onChange={(e) => updateCharacterComment(e.target.value)}
+            className="w-full rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
+            placeholder="Modern AU version"
           />
         </label>
         <label className="space-y-1.5">
@@ -1923,7 +1986,7 @@ function DialogueTab({
           rows={10}
           title="Example Dialogue"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 font-mono text-xs leading-relaxed outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-          placeholder={"<START>\n{{user}}: Hello!\n{{char}}: *waves excitedly* Hey there!"}
+          placeholder={"<START>\n{{user}}: Hello!\n{{char}}: *Waves excitedly.* Hey there!"}
         />
       </div>
     </div>
@@ -2261,7 +2324,7 @@ function CharacterGalleryTab({ characterId, characterName }: { characterId: stri
                       <button
                         type="button"
                         onClick={() => void handleDelete(image)}
-	                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
+                        className="rounded-lg bg-white/15 p-1.5 text-white transition-colors hover:bg-white/25"
                         title="Delete"
                       >
                         <Trash2 size="0.75rem" />
@@ -3099,6 +3162,10 @@ function SpritesTab({
 
   const { data: sprites, isLoading } = useCharacterSprites(characterId);
   const { data: spriteCapabilities } = useSpriteCapabilities();
+  const { data: installedCapabilities = [] } = useInstalledCapabilityPackages(true);
+  const conversationCallsInstalled = installedCapabilities.some(
+    (item) => item.status === "active" && item.manifest.kind.includes("conversation-calls"),
+  );
   const uploadSprite = useUploadSprite();
   const deleteSprite = useDeleteSprite();
   const exportSprites = useExportSprites();
@@ -3145,16 +3212,13 @@ function SpritesTab({
   const spriteGenerationReason = spriteCapabilities?.reason ?? "Sprite generation is unavailable on this platform.";
   const backgroundCleanupUnavailable = spriteCapabilities?.backgroundRemovalAvailable === false;
   const backgroundCleanupReason = spriteCapabilities?.reason ?? "Background cleanup is unavailable on this platform.";
-  const backgroundRemoverUnavailable = spriteCapabilities?.backgroundRemover?.installed === false;
-  const backgroundRemoverReason =
-    spriteCapabilities?.backgroundRemover?.reason ?? "Local backgroundremover is not installed.";
 
   const categoryTabs = (
     <div className="inline-flex rounded-xl bg-[var(--secondary)] p-1 ring-1 ring-[var(--border)]">
       {[
         { id: "expressions" as const, label: "Facial Expressions" },
         { id: "full-body" as const, label: "Full-body" },
-        { id: "clips" as const, label: "Clips" },
+        ...(conversationCallsInstalled ? [{ id: "clips" as const, label: "Clips" }] : []),
       ].map((tab) => (
         <button
           key={tab.id}
@@ -3347,10 +3411,10 @@ function SpritesTab({
         setLastCleanupBackupId(result.backupId ?? null);
         const engineDetails =
           result.backgroundRemoverProcessed && result.builtinProcessed
-            ? ` with backgroundremover and built-in fallback`
+            ? ` with automatic matte cleanup and AI fallback`
             : result.backgroundRemoverProcessed
-              ? ` with backgroundremover`
-              : ` with built-in cleanup`;
+              ? ` with AI fallback`
+              : ` with automatic matte cleanup`;
         toast.success(`Cleaned ${result.processed} saved sprite${result.processed === 1 ? "" : "s"}${engineDetails}.`);
       }
       if (result.failed.length > 0) {
@@ -3580,7 +3644,7 @@ function SpritesTab({
         {cleaningSprites && (
           <div className="flex items-center gap-2 rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             <Loader2 size="0.75rem" className="animate-spin text-[var(--primary)]" />
-            Running local backgroundremover on saved sprites…
+            Applying automatic matte cleanup to saved sprites…
           </div>
         )}
         {lastCleanupBackupId && (
@@ -3605,11 +3669,6 @@ function SpritesTab({
         {backgroundCleanupUnavailable && !spriteGenerationUnavailable && (
           <div className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
             {backgroundCleanupReason}
-          </div>
-        )}
-        {backgroundRemoverUnavailable && !backgroundCleanupUnavailable && (
-          <div className="rounded-lg bg-[var(--secondary)] px-3 py-2 text-xs text-[var(--muted-foreground)]">
-            {backgroundRemoverReason}
           </div>
         )}
         <div className="flex gap-2">
@@ -4085,13 +4144,22 @@ function ColorsTab({
       </button>
 
       {/* Preview card */}
-      <div className="rounded-xl border border-[var(--border)] bg-black/30 p-4 space-y-3">
+      <div className="space-y-3 overflow-hidden rounded-xl border border-[var(--border)] bg-black/30 p-4">
         <p className="text-[0.625rem] font-medium uppercase tracking-widest text-[var(--muted-foreground)]">Preview</p>
         <div className="flex gap-3">
-          <div className="mari-chrome-accent-tile mari-accent-animated flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-2 ring-[var(--marinara-chat-chrome-button-border-active)]">
-            <User size="1rem" className="text-white" />
+          <div className="mari-chrome-accent-tile mari-accent-animated relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-2 ring-[var(--marinara-chat-chrome-button-border-active)]">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={`${formData.name || "Character"} avatar preview`}
+                className="h-full w-full object-cover"
+                style={getAvatarCropStyle(formData.extensions.avatarCrop as AvatarCrop | LegacyAvatarCrop | undefined)}
+              />
+            ) : (
+              <User size="1rem" className="text-white" />
+            )}
           </div>
-          <div className="flex-1 space-y-1">
+          <div className="min-w-0 flex-1 space-y-1">
             <span
               className="text-[0.75rem] font-bold tracking-tight"
               style={
@@ -4117,9 +4185,9 @@ function ColorsTab({
               className="rounded-2xl rounded-tl-sm px-4 py-3 text-[0.8125rem] leading-[1.8] backdrop-blur-md ring-1 ring-white/8"
               style={boxColor ? { backgroundColor: boxColor } : { backgroundColor: "rgba(255,255,255,0.08)" }}
             >
-              <span className="text-white/90">*She looks at you with a warm smile.* </span>
+              <span className="text-white/90">They jump down, landing behind you, and straighten up. </span>
               <strong style={dialogueColor ? { color: dialogueColor } : { color: "rgb(255, 255, 255)" }}>
-                &ldquo;Hello there! How are you?&rdquo;
+                &ldquo;Hello there.&rdquo;
               </strong>
             </div>
           </div>

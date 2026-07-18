@@ -34,7 +34,7 @@ If Marinara cannot find an image connection to use, the generate step fails with
 Choose an image generation connection for the Background/Illustrator agent, or mark an image generation connection as the default for agents.
 ```
 
-To fix this, open the **Connections** panel and mark one **Image Generation** connection as **Default for Illustrator**, or set a connection for the **Background** agent.
+To fix this, open the **Connections** panel, expand **Defaults**, and choose an image connection under **Images**, or set a connection for the **Background** agent.
 
 ## The Gallery panel
 
@@ -68,7 +68,7 @@ Move your pointer over any image in the **Images** tab, or tap it on mobile, to 
 You can check and edit the prompt before Marinara sends a background request to your image provider.
 
 1. Open **Settings**, then **Generations**, then **Image Generation**.
-2. Turn on **Expose image prompts before sending**.
+2. Turn on **Expose media prompts before sending**.
 
 With this setting on, a **Review Image Prompt** window opens before each request is sent. Its help text reads: "Edit the prompt below before Marinara sends the image request to your provider."
 

@@ -1,31 +1,31 @@
-# Bot Browser: Finding and Importing Characters
+# Card Browser: Finding and Importing Characters
 
-This guide explains the **Bot Browser** in Marinara Engine, the built-in tool for finding character cards on public sites and importing them into your library. It covers the six sources, how to search and filter, and how adult content works on each source. It also covers how to import a character or save it as a file. Older versions of the app labeled this feature **Browser**, so some older guides may still use that shorter name.
+This guide explains the **Card Browser** in Marinara Engine, the built-in tool for finding character cards on public sites and importing them into your library. It covers the six sources, how to search and filter, and how adult content works on each source. It also covers how to import a character or save it as a file. Older versions called this tab **Bot Browser** or **Browser**.
 
-A character card is a file that holds one character's name, personality, greeting, and other details. Normally you would download a card from a website and then upload it into Marinara. The **Bot Browser** does both steps for you in one place.
+A character card is a file that holds one character's name, personality, greeting, and other details. Normally you would download a card from a website and then upload it into Marinara. The **Card Browser** does both steps for you in one place.
 
-## What the Bot Browser is
+## What the Card Browser is
 
-The **Bot Browser** searches several public character-card sites from inside Marinara. It supports six sources: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**. You can search a source, filter the results, and preview a character's full details. Then you can import that character into your library or save it as a PNG file. You do not need an account or an API key to browse and import character cards at the default settings.
+The **Card Browser** searches several public character-card sites from inside Marinara. It supports six sources: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**. You can search a source, filter the results, and preview a character's full details. Then you can import that character into your library or save it as a PNG file. You do not need an account or an API key to browse and import character cards at the default settings.
 
-## Opening the Bot Browser
+## Opening the Card Browser
 
-There are two ways to open the **Bot Browser**.
+There are two ways to open the **Card Browser**.
 
-1. Click the **Bot Browser** icon in the top bar. It sits in the row of panel buttons on the right side.
-2. Or open the **Bot Browser** panel in the right sidebar, then click the **Browse Online** button at the top of that panel.
+1. Click the **Card Browser** icon in the top bar. It sits in the row of panel buttons on the right side.
+2. Or open the **Card Browser** panel in the right sidebar, then click the **Download Cards** button at the top of that panel.
 
-Either way, the whole content area switches to the full **Bot Browser** view. This view replaces the chat area. It is not a small pop-up window.
+Either way, the whole content area switches to the full **Card Browser** view. This view replaces the chat area. It is not a small pop-up window.
 
-To leave, click the back-arrow button in the top-left of the **Bot Browser** header. You should return to the screen you came from.
+To leave, click the back-arrow button in the top-left of the **Card Browser** header. You should return to the screen you came from.
 
-The **Bot Browser** stays loaded while the app is open. If you close it and open it again, your last search, filters, and selected character are still there. Reloading the whole app resets it.
+The **Card Browser** stays loaded while the app is open. If you close it and open it again, your last search, filters, and selected character are still there. Reloading the whole app resets it.
 
 ## Choosing a source
 
 Click the source button in the header. It shows the current source name and a small arrow. A menu opens with all six sources in this order: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**.
 
-**ChubAI** is selected the first time you open the **Bot Browser**. When you switch sources, your search text, tags, and filters are cleared. Each source remembers its own adult-content setting and login separately, so a change on one source does not affect the others.
+**ChubAI** is selected the first time you open the **Card Browser**. When you switch sources, your search text, tags, and filters are cleared. Each source remembers its own adult-content setting and login separately, so a change on one source does not affect the others.
 
 One naming note: the menu lists **ChubAI**, but on a character's detail page the outside link reads **View on Chub**. That is the site's own name for itself. The other five sources use the same name in both places.
 
@@ -35,14 +35,14 @@ Type in the **Search characters...** box to search. You do not need to press Ent
 
 Next to the search box is a sort dropdown. The options are different on each source, and each source starts on its own default sort:
 
-| Source | Default sort |
-|---|---|
-| ChubAI | Most Downloaded |
-| JannyAI | Newest |
-| CharacterTavern | Most Popular |
-| Pygmalion | Downloads |
-| Wyvern | Popular |
-| DataCat | Relevance |
+| Source          | Default sort    |
+| --------------- | --------------- |
+| ChubAI          | Most Downloaded |
+| JannyAI         | Newest          |
+| CharacterTavern | Most Popular    |
+| Pygmalion       | Downloads       |
+| Wyvern          | Popular         |
+| DataCat         | Relevance       |
 
 Click the **Refresh** button (the circular-arrow icon) to run the current search again.
 
@@ -143,10 +143,10 @@ The imported character behaves like any other character. To actually chat with i
 
 The **Imported tags** panel next to the avatar controls which tags come along with the character. The default is **All tags**.
 
-| Option | What it does |
-|---|---|
-| All tags | Keeps the source's tags. |
-| No tags | Skips the source's tags. |
+| Option        | What it does                                 |
+| ------------- | -------------------------------------------- |
+| All tags      | Keeps the source's tags.                     |
+| No tags       | Skips the source's tags.                     |
 | Existing only | Keeps only tags you already use in Marinara. |
 
 ### Embedded lorebook prompt
@@ -161,9 +161,9 @@ JSON and PNG are two common formats for the same character data. JSON is a plain
 
 ## Your imported characters
 
-The **Bot Browser** panel in the right sidebar keeps a separate list of characters you imported through the **Bot Browser**. Characters you made by hand or imported another way do not appear here. All of them still appear in the main **Characters** library.
+The **Card Browser** panel in the right sidebar keeps a separate list of characters you imported through the **Card Browser**. Characters you made by hand or imported another way do not appear here. All of them still appear in the main **Characters** library.
 
-- The **Browse Online** button opens the full **Bot Browser** view.
+- The **Download Cards** button opens the full **Card Browser** view.
 - The **Search imported...** box filters this list.
 - The sort dropdown offers **A-Z**, **Z-A**, **Newest**, and **Oldest**.
 - Right-click a row, or use its buttons, to find **Quick Start Roleplay** and **Quick Start Conversation**. These open a new chat with that character. You can also delete the character from this list here.

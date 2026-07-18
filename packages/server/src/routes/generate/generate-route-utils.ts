@@ -13,6 +13,7 @@ import {
   parseTrackerFieldLocks,
   parseTrackerHiddenFields,
   resolveMacros,
+  resolveChatPersonaCandidate,
   unwrapConversationInstructions,
   wrapConversationInstructions,
   type CharacterStat,
@@ -43,20 +44,15 @@ export type SpeakerPrefixMessage = SimpleMessage & {
 export type StoredGenerationParameters = Partial<GenerationParameters>;
 
 /**
- * Resolve the persona visible to a chat. An explicit chat persona always wins;
- * non-game chats may fall back to the globally active persona, while Game Mode
- * deliberately remains persona-less unless setup selected one.
+ * Preserve the route-layer export while sharing the same Persona policy with
+ * the client: only Conversation falls back to the globally active Persona.
  */
 export function resolveActivePersonaCandidate<T extends { id: string; isActive?: unknown }>(
   personas: readonly T[],
   chatPersonaId: string | null | undefined,
   chatMode: string | null | undefined,
 ): T | null {
-  return (
-    (chatPersonaId ? personas.find((persona) => persona.id === chatPersonaId) : null) ??
-    (chatMode !== "game" ? personas.find((persona) => persona.isActive === "true") : null) ??
-    null
-  );
+  return resolveChatPersonaCandidate(personas, chatPersonaId, chatMode);
 }
 
 export type LocalSidecarGenerationConnection = {
@@ -70,11 +66,13 @@ export type LocalSidecarGenerationConnection = {
   imagePath: null;
   maxContext: number;
   isDefault: "false";
+  fallbackForMain: "false";
   useForRandom: "false";
   enableCaching: "false";
   anthropicExtendedCacheTtl: "false";
   cachingAtDepth: number;
   defaultForAgents: "false";
+  fallbackForAgents: "false";
   embeddingModel: string;
   embeddingBaseUrl: string;
   embeddingConnectionId: null;
@@ -157,11 +155,13 @@ export function createLocalSidecarGenerationConnection(): LocalSidecarGeneration
     imagePath: null,
     maxContext: config.contextSize,
     isDefault: "false",
+    fallbackForMain: "false",
     useForRandom: "false",
     enableCaching: "false",
     anthropicExtendedCacheTtl: "false",
     cachingAtDepth: 5,
     defaultForAgents: "false",
+    fallbackForAgents: "false",
     embeddingModel: "",
     embeddingBaseUrl: "",
     embeddingConnectionId: null,
@@ -924,6 +924,21 @@ export function resolveActiveCharacterIds(
   return characterIds;
 }
 
+export type GroupGenerationMode = "merged" | "individual";
+
+/**
+ * Conversation groups are always generated as one merged provider response so
+ * the model can decide which present characters speak in the turn. Only
+ * roleplay-style chats honor an explicit merged/individual mode.
+ */
+export function resolveGroupGenerationMode(
+  chatMode: string | null | undefined,
+  configuredMode: unknown,
+): GroupGenerationMode {
+  if (chatMode === "conversation") return "merged";
+  return configuredMode === "individual" ? "individual" : "merged";
+}
+
 export function resolvePromptCharacterIdsForTarget(
   characterIds: string[],
   targetCharacterId: string | null | undefined,
@@ -945,11 +960,19 @@ export function shouldPreferLatestVisibleGameState(input: {
 }
 
 export function resolveVisibleGameStateAnchor(
-  messages: Array<{ role?: unknown; id?: unknown; activeSwipeIndex?: unknown }>,
+  messages: Array<{ role?: unknown; id?: unknown; activeSwipeIndex?: unknown; extra?: unknown }>,
 ): { messageId: string; swipeIndex: number } | null {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    if (message.role !== "assistant" || typeof message.id !== "string" || !message.id) continue;
+    const markedSystemAnchor =
+      message.role === "system" && parseExtra(message.extra).gameStateAnchor === "checkpoint_restore";
+    if (
+      (message.role !== "assistant" && !markedSystemAnchor) ||
+      typeof message.id !== "string" ||
+      !message.id
+    ) {
+      continue;
+    }
     const swipeIndex =
       typeof message.activeSwipeIndex === "number" &&
       Number.isInteger(message.activeSwipeIndex) &&
@@ -1154,16 +1177,14 @@ export function resolveBaseUrl(connection: { baseUrl: string | null; provider: s
 
 export function shouldEnableAgentsForGeneration({
   chatEnableAgents,
-  chatMode,
   impersonate,
   impersonateBlockAgents,
 }: {
   chatEnableAgents: boolean;
-  chatMode: string;
   impersonate: boolean;
   impersonateBlockAgents: boolean;
 }): boolean {
-  return chatEnableAgents && chatMode !== "conversation" && !(impersonate && impersonateBlockAgents);
+  return chatEnableAgents && !(impersonate && impersonateBlockAgents);
 }
 
 export function shouldInjectIdentityFallback({
@@ -1301,9 +1322,35 @@ export function injectIntoOutputFormatOrLastUser(
     }
   }
 
-  const lastIdx = Math.max(findLastIndex(messages, "user"), messages.length - 1);
+  const lastUserIdx = findLastIndex(messages, "user");
+  const lastIdx = lastUserIdx >= 0 ? lastUserIdx : messages.length - 1;
+  if (lastIdx < 0) {
+    messages.push({ role: "user", content: block });
+    return;
+  }
   const target = messages[lastIdx]!;
   messages[lastIdx] = { ...target, content: target.content + "\n\n" + block };
+}
+
+/**
+ * Remove speaker wrappers from older group-chat history while preserving the
+ * latest assistant turn as a concrete formatting example for the model.
+ */
+export function stripSpeakerTagsExceptLastAssistant(messages: SimpleMessage[]): void {
+  const lastAssistantIdx = findLastIndex(messages, "assistant");
+  const speakerCloseRegex = /<\/speaker>/g;
+
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i]!;
+    if (message.role === "system" || i === lastAssistantIdx || !message.content.includes("<speaker=")) continue;
+
+    const content = message.content
+      .replace(/<speaker="[^"]*">/g, "")
+      .replace(speakerCloseRegex, "")
+      .replace(/^\s*\n/gm, "")
+      .trim();
+    messages[i] = { ...message, content };
+  }
 }
 
 /** Build wrapped field parts from a record of { fieldName: value }. */
@@ -1370,11 +1417,78 @@ export function isManualTrackerCharacterId(value: unknown): boolean {
   return typeof value === "string" && value.trim().startsWith("manual-");
 }
 
-function canUseManualTrackerNameFallback(character: Record<string, unknown>) {
-  const id = trackerCharacterIdKey(character);
-  if (!id || isManualTrackerCharacterId(id)) return true;
-  const name = trackerCharacterNameKey(character);
-  return !!name && id === name;
+function mergeTrackerStats(previous: unknown, next: unknown) {
+  if (!Array.isArray(previous) || previous.length === 0) return next;
+  const nextStats = Array.isArray(next) ? next : [];
+  const nextNames = new Set(
+    nextStats.map((stat) => normalizeTextForMatch(isPlainRecord(stat) ? stat.name : "")).filter(Boolean),
+  );
+  return [
+    ...nextStats,
+    ...previous.filter((stat) => {
+      const name = normalizeTextForMatch(isPlainRecord(stat) ? stat.name : "");
+      return name && !nextNames.has(name);
+    }),
+  ];
+}
+
+const MAX_TRACKER_CHARACTER_HISTORY = 50;
+
+/** Collect the most recently seen distinct tracker characters within a prompt-safe bound. */
+export function collectLatestTrackerCharacterHistory(
+  snapshots: Array<{ presentCharacters?: unknown }>,
+): Array<Record<string, unknown>> {
+  const history: Array<Record<string, unknown>> = [];
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  for (const snapshot of snapshots) {
+    const characters = parseJsonField<unknown[]>(snapshot.presentCharacters, []);
+    for (const value of characters) {
+      if (!isPlainRecord(value)) continue;
+      const id = trackerCharacterIdKey(value);
+      const name = trackerCharacterNameKey(value);
+      if ((id && seenIds.has(id)) || (!id && name && seenNames.has(name))) continue;
+      history.push(value);
+      if (id) seenIds.add(id);
+      if (name) seenNames.add(name);
+      if (history.length >= MAX_TRACKER_CHARACTER_HISTORY) return history;
+    }
+  }
+  return history;
+}
+
+type TrackerCharacterCardIdentity = {
+  id: string;
+  name: string;
+  avatarPath?: string | null;
+  avatarCrop?: unknown;
+};
+
+export function applyTrackerCharacterCardIdentity(
+  characters: Array<Record<string, unknown>>,
+  cards: TrackerCharacterCardIdentity[],
+): Set<string> {
+  const cardsById = new Map(cards.map((card) => [card.id.trim().toLowerCase(), card]));
+  const cardsByName = new Map<string, TrackerCharacterCardIdentity>();
+  const duplicateNames = new Set<string>();
+  for (const card of cards) {
+    const name = normalizeTextForMatch(card.name);
+    if (!name) continue;
+    if (cardsByName.has(name)) duplicateNames.add(name);
+    else cardsByName.set(name, card);
+  }
+  for (const name of duplicateNames) cardsByName.delete(name);
+
+  const matchedIds = new Set<string>();
+  for (const character of characters) {
+    const card = cardsById.get(trackerCharacterIdKey(character)) ?? cardsByName.get(trackerCharacterNameKey(character));
+    if (!card) continue;
+    character.characterId = card.id;
+    character.avatarPath = card.avatarPath ?? null;
+    character.avatarCrop = card.avatarCrop ?? null;
+    matchedIds.add(card.id);
+  }
+  return matchedIds;
 }
 
 export function preserveTrackerCharacterUiFields(
@@ -1382,16 +1496,14 @@ export function preserveTrackerCharacterUiFields(
   previousCharacters: Array<Record<string, unknown>>,
 ): void {
   const previousByKey = new Map<string, Record<string, unknown>>();
-  const previousManualByName = new Map<string, Record<string, unknown>>();
+  const previousByName = new Map<string, Record<string, unknown>>();
   const previousNameCounts = new Map<string, number>();
   for (const character of previousCharacters) {
     const key = trackerCharacterKey(character);
     if (key) previousByKey.set(key, character);
     const name = trackerCharacterNameKey(character);
     if (name) previousNameCounts.set(name, (previousNameCounts.get(name) ?? 0) + 1);
-    if (name && isManualTrackerCharacterId(character.characterId)) {
-      previousManualByName.set(name, character);
-    }
+    if (name) previousByName.set(name, character);
   }
 
   for (const character of nextCharacters) {
@@ -1399,9 +1511,7 @@ export function preserveTrackerCharacterUiFields(
     const name = trackerCharacterNameKey(character);
     const previous =
       (key ? previousByKey.get(key) : null) ??
-      (name && previousNameCounts.get(name) === 1 && canUseManualTrackerNameFallback(character)
-        ? previousManualByName.get(name)
-        : null);
+      (name && previousNameCounts.get(name) === 1 ? previousByName.get(name) : null);
     const previousPortraitFocusX = previous?.portraitFocusX;
     const previousPortraitFocusY = previous?.portraitFocusY;
     const previousPortraitZoom = previous?.portraitZoom;
@@ -1414,6 +1524,7 @@ export function preserveTrackerCharacterUiFields(
       // values over it so an omitted field cannot erase the user's configuration.
       character.customFields = { ...previousCustomFields, ...(nextCustomFields ?? {}) };
     }
+    character.stats = mergeTrackerStats(previous?.stats, character.stats);
     if (
       (typeof character.avatarPath !== "string" || !character.avatarPath.trim()) &&
       isNpcTrackerAvatarPath(previousAvatarPath)

@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -187,6 +188,20 @@ function rememberConnectionId(id: string) {
 
 function isProfessorMariDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches;
+}
+
+function ProfessorMariMobilePortal({ children }: { children: ReactNode }) {
+  const [mobile, setMobile] = useState(() => !isProfessorMariDesktopViewport());
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 639px)");
+    const sync = () => setMobile(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  return mobile ? createPortal(children, document.body) : children;
 }
 
 function getProfessorMariFileExtension(fileName: string): string {
@@ -3274,13 +3289,15 @@ export function HomeProfessorMariChat({
 
       <AnimatePresence onExitComplete={onChatWindowExitComplete}>
         {chatWindowOpen && (
-          <motion.div
+          <ProfessorMariMobilePortal>
+            <motion.div
             key="professor-mari-window"
+            data-component="HomeProfessorMariChat.Window"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={PROFESSOR_MARI_PANE_TRANSITION}
-            className="fixed inset-x-0 top-[calc(3rem_+_env(safe-area-inset-top))] z-[80] flex h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] max-h-[calc(100vh_-_3rem_-_env(safe-area-inset-top))] items-stretch justify-center bg-[var(--background)] supports-[height:100dvh]:h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] supports-[height:100dvh]:max-h-[calc(100dvh_-_3rem_-_env(safe-area-inset-top))] sm:static sm:z-auto sm:h-full sm:max-h-none sm:w-full sm:flex-1 sm:items-stretch sm:bg-transparent sm:p-0 sm:supports-[height:100dvh]:h-full sm:supports-[height:100dvh]:max-h-none"
+            className="fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)_+_3rem)] z-[80] flex min-h-0 items-stretch justify-center bg-[var(--background)] pb-[env(safe-area-inset-bottom)] sm:static sm:z-auto sm:h-full sm:max-h-none sm:w-full sm:flex-1 sm:items-stretch sm:bg-transparent sm:p-0"
           >
             <div className="h-full w-full max-w-none sm:min-h-0 sm:max-w-5xl">
               <AnimatePresence mode="wait" initial={false}>
@@ -3728,7 +3745,8 @@ export function HomeProfessorMariChat({
                 )}
               </AnimatePresence>
             </div>
-          </motion.div>
+            </motion.div>
+          </ProfessorMariMobilePortal>
         )}
       </AnimatePresence>
     </>

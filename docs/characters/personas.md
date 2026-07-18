@@ -20,6 +20,7 @@ The **Personas** panel is your persona library. Open it from the person icon in 
 
 The panel gives you these controls:
 
+- **Open Full Library** opens the responsive full-page Persona Library. It uses the same grid-and-preview layout as the Character Library, with persona descriptions, card sections, tags, token estimates, and active-persona badges.
 - **New** creates a persona.
 - **Import** opens the **Import Persona** window.
 - **Select** turns on bulk-selection mode so you can act on many personas at once.

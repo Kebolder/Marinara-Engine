@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq } from "../../db/file-query.js";
 import type {
   DiscordBridgeParticipant,
   DiscordBridgeMessageDirection,

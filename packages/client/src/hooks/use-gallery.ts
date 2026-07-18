@@ -104,8 +104,14 @@ export function useUploadGalleryImage(chatId: string) {
 export function useGenerateGallerySelfie(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { characterId: string; context?: string; debugMode?: boolean }) =>
-      api.post<ChatImage>(`/gallery/${chatId}/selfie`, input),
+    mutationFn: (input: {
+      characterId: string;
+      context?: string;
+      promptOverride?: string;
+      negativePromptOverride?: string;
+      queueImageGenerationRequests?: boolean;
+      debugMode?: boolean;
+    }) => api.post<ChatImage>(`/gallery/${chatId}/selfie`, input),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: galleryKeys.chat(chatId) });
       qc.invalidateQueries({ queryKey: galleryKeys.assets(chatId) });

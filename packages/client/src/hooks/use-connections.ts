@@ -39,8 +39,10 @@ export type CreateConnectionPayload = {
   model?: string;
   maxContext?: number;
   isDefault?: boolean;
+  fallbackForMain?: boolean;
   useForRandom?: boolean;
   defaultForAgents?: boolean;
+  fallbackForAgents?: boolean;
   enableCaching?: boolean;
   anthropicExtendedCacheTtl?: boolean;
   cachingAtDepth?: number;

@@ -2,6 +2,11 @@
 // Store: Game Mode
 // ──────────────────────────────────────────────
 import { create } from "zustand";
+import {
+  isSameNpcAvatarResource,
+  normalizeNpcAvatarName,
+  withFreshNpcAvatarRevision,
+} from "../lib/game-npc-avatar";
 import { api } from "../lib/api-client";
 import type {
   GameActiveState,
@@ -296,13 +301,16 @@ export const useGameModeStore = create<GameModeStore>((set) => ({
       const existingByName = new Map<string, string>();
       for (const existing of s.npcs) {
         if (existing.avatarUrl && existing.name) {
-          existingByName.set(existing.name.toLowerCase(), existing.avatarUrl);
+          existingByName.set(normalizeNpcAvatarName(existing.name), existing.avatarUrl);
         }
       }
       const merged = npcs.map((npc) => {
-        if (npc.avatarUrl) return npc;
-        const preserved = existingByName.get((npc.name ?? "").toLowerCase());
-        return preserved ? { ...npc, avatarUrl: preserved } : npc;
+        const preserved = existingByName.get(normalizeNpcAvatarName(npc.name ?? ""));
+        if (!preserved) return npc;
+        if (!npc.avatarUrl || isSameNpcAvatarResource(npc.avatarUrl, preserved)) {
+          return { ...npc, avatarUrl: preserved };
+        }
+        return npc;
       });
       return { npcs: merged };
     }),
@@ -310,18 +318,21 @@ export const useGameModeStore = create<GameModeStore>((set) => ({
     set((s) => {
       let modified = false;
       const nextNpcs = s.npcs.map((npc) => {
-        const match = avatars.find((a) => a.name.toLowerCase() === npc.name.toLowerCase());
-        if (match && match.avatarUrl !== npc.avatarUrl) {
+        const npcName = normalizeNpcAvatarName(npc.name);
+        const match = avatars.find((avatar) => normalizeNpcAvatarName(avatar.name) === npcName);
+        if (match) {
+          const avatarUrl = withFreshNpcAvatarRevision(match.avatarUrl);
           modified = true;
-          return { ...npc, avatarUrl: match.avatarUrl };
+          return { ...npc, avatarUrl };
         }
         return npc; // preserve reference — no churn
       });
 
       for (const avatar of avatars) {
-        const exists = nextNpcs.some((npc) => npc.name.toLowerCase() === avatar.name.toLowerCase());
+        const avatarName = normalizeNpcAvatarName(avatar.name);
+        const exists = nextNpcs.some((npc) => normalizeNpcAvatarName(npc.name) === avatarName);
         if (!exists) {
-          nextNpcs.push(buildTrackedNpcStub(avatar.name, avatar.avatarUrl));
+          nextNpcs.push(buildTrackedNpcStub(avatar.name, withFreshNpcAvatarRevision(avatar.avatarUrl)));
           modified = true;
         }
       }

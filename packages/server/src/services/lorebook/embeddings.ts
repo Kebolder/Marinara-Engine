@@ -7,6 +7,11 @@ import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
 
 const DEFAULT_SEMANTIC_TOP_K = 40;
 const DEFAULT_WARMUP_BATCH_SIZE = 32;
+const SEMANTIC_CALIBRATION_TEXTS = [
+  "A recipe explains how to bake a loaf of bread.",
+  "A spacecraft studies distant galaxies and nebulae.",
+  "A city council reviews municipal zoning regulations.",
+] as const;
 
 export type LorebookEmbeddingOptions = MemoryRecallEmbeddingOptions;
 
@@ -71,6 +76,35 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   }
   const denom = Math.sqrt(magA) * Math.sqrt(magB);
   return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Estimate the model's common cosine floor from deliberately unrelated text.
+ * Some embedding backends produce raw cosine scores around 0.95+ for nearly
+ * every pair; subtracting that floor keeps the user-facing 0-1 threshold useful.
+ */
+export function lorebookSimilarityBaseline(embeddings: number[][]): number {
+  if (embeddings.length < 2) return 0;
+  let similaritySum = 0;
+  let similarityCount = 0;
+  for (let left = 0; left < embeddings.length; left += 1) {
+    for (let right = left + 1; right < embeddings.length; right += 1) {
+      const similarity = cosineSimilarity(embeddings[left]!, embeddings[right]!);
+      if (Number.isFinite(similarity)) {
+        similaritySum += similarity;
+        similarityCount += 1;
+      }
+    }
+  }
+  if (similarityCount === 0) return 0;
+  return Math.max(0, Math.min(0.999, similaritySum / similarityCount));
+}
+
+export function calibrateLorebookSimilarity(similarity: number, baseline = 0): number {
+  if (!Number.isFinite(similarity)) return 0;
+  const safeBaseline = Number.isFinite(baseline) ? Math.max(0, Math.min(0.999, baseline)) : 0;
+  const calibrated = (Math.max(-1, Math.min(1, similarity)) - safeBaseline) / (1 - safeBaseline);
+  return Math.max(0, Math.min(1, calibrated));
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
@@ -148,9 +182,10 @@ export async function semanticShortlistLorebookEntries(
   const queryText = query.trim();
   if (!queryText) return null;
 
-  const queryEmbeddings = await embedLorebookTexts([queryText], options);
+  const queryEmbeddings = await embedLorebookTexts([queryText, ...SEMANTIC_CALIBRATION_TEXTS], options);
   const queryEmbedding = queryEmbeddings[0];
   if (!queryEmbedding || queryEmbedding.length === 0) return null;
+  const similarityBaseline = lorebookSimilarityBaseline(queryEmbeddings.slice(1));
 
   let dimensionMismatchLogged = false;
   const matches = entries
@@ -168,7 +203,10 @@ export async function semanticShortlistLorebookEntries(
         }
         return null;
       }
-      return { entry, similarity: cosineSimilarity(queryEmbedding, embedding) };
+      return {
+        entry,
+        similarity: calibrateLorebookSimilarity(cosineSimilarity(queryEmbedding, embedding), similarityBaseline),
+      };
     })
     .filter((match): match is SemanticLorebookMatch => match !== null)
     .sort((a, b) => b.similarity - a.similarity)
@@ -188,7 +226,11 @@ export async function buildLorebookSemanticEmbeddingsById({
   scanMessages: Array<{ content: string }>;
   embeddingSource: MemoryRecallEmbeddingOptions["embeddingSource"];
   signal?: AbortSignal;
-}): Promise<{ defaultEmbedding: number[] | null; embeddingsByLorebookId?: Map<string, number[] | null> }> {
+}): Promise<{
+  defaultEmbedding: number[] | null;
+  embeddingsByLorebookId?: Map<string, number[] | null>;
+  similarityBaseline: number;
+}> {
   const lorebookIdsWithVectors = new Set(
     entries
       .filter(
@@ -196,24 +238,30 @@ export async function buildLorebookSemanticEmbeddingsById({
       )
       .map((entry) => entry.lorebookId),
   );
-  if (lorebookIdsWithVectors.size === 0) return { defaultEmbedding: null };
+  if (lorebookIdsWithVectors.size === 0) return { defaultEmbedding: null, similarityBaseline: 0 };
 
   const vectorLorebooks = lorebooks.filter(
     (lorebook) => !lorebook.excludeFromVectorization && lorebookIdsWithVectors.has(lorebook.id),
   );
-  if (vectorLorebooks.length === 0) return { defaultEmbedding: null };
+  if (vectorLorebooks.length === 0) return { defaultEmbedding: null, similarityBaseline: 0 };
 
-  const depths = Array.from(new Set(vectorLorebooks.map((lorebook) => normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth))));
+  const depths = Array.from(
+    new Set(vectorLorebooks.map((lorebook) => normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth))),
+  );
   const embeddingsByDepth = new Map<number, number[] | null>();
+  const queryTextsByDepth = new Map(
+    depths.map((depth) => [depth, selectLorebookVectorQueryText(scanMessages, depth)] as const),
+  );
+  const populatedDepths = depths.filter((depth) => queryTextsByDepth.get(depth));
+  const queryAndCalibrationEmbeddings = await embedMemoryRecallTexts(
+    [...populatedDepths.map((depth) => queryTextsByDepth.get(depth)!), ...SEMANTIC_CALIBRATION_TEXTS],
+    { embeddingSource, signal },
+  );
   for (const depth of depths) {
-    const queryText = selectLorebookVectorQueryText(scanMessages, depth);
-    if (!queryText) {
-      embeddingsByDepth.set(depth, null);
-      continue;
-    }
-    const embeddings = await embedMemoryRecallTexts([queryText], { embeddingSource, signal });
-    embeddingsByDepth.set(depth, embeddings[0] ?? null);
+    const queryIndex = populatedDepths.indexOf(depth);
+    embeddingsByDepth.set(depth, queryIndex >= 0 ? (queryAndCalibrationEmbeddings[queryIndex] ?? null) : null);
   }
+  const similarityBaseline = lorebookSimilarityBaseline(queryAndCalibrationEmbeddings.slice(populatedDepths.length));
 
   const embeddingsByLorebookId = new Map<string, number[] | null>();
   for (const lorebook of vectorLorebooks) {
@@ -229,5 +277,6 @@ export async function buildLorebookSemanticEmbeddingsById({
       Array.from(embeddingsByDepth.values()).find((embedding) => embedding && embedding.length > 0) ??
       null,
     embeddingsByLorebookId,
+    similarityBaseline,
   };
 }

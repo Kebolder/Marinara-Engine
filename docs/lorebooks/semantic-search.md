@@ -53,12 +53,14 @@ The panel has three number settings.
 | Setting | What it does | Default | Range |
 |---|---|---|---|
 | **Query Messages** | How many recent chat messages to embed when searching this lorebook. | 10 | 0 to 100 |
-| **Score Threshold** | Minimum similarity an entry needs before it activates. Higher is stricter. | 0.3 | 0 to 1 |
+| **Score Threshold** | Minimum calibrated similarity an entry needs before it activates. Higher is stricter. | 0.3 | 0 to 1 |
 | **Vector Limit** | Most semantic matches this lorebook can add to one generation. | 10 | 1 to 100 |
 
 Set **Query Messages** to 0 to search against the full chat history instead of a recent window.
 
 **Score Threshold** controls how close the meaning must be. A low value like 0.2 lets more entries in but risks off-topic matches. A high value like 0.5 is stricter and matches only close meanings. Start at the default and adjust if you get too many or too few matches.
+
+Marinara calibrates this score against several unrelated neutral passages from the same embedding model. This removes the unusually high common cosine floor produced by some local and OpenAI-compatible embedding backends, where unrelated texts can otherwise all score around 0.95 or higher. The setting therefore remains useful across embedding models instead of requiring a model-specific cutoff near 1.0.
 
 **Vector Limit** caps semantic matches only. Your normal token budgets still apply on top of it.
 

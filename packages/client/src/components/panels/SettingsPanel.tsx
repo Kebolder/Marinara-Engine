@@ -5,7 +5,6 @@ import {
   APP_LANGUAGE_OPTIONS,
   TRACKER_DATA_PANEL_SECTIONS,
   TRACKER_PANEL_DEFAULT_BACKGROUND_COLOR,
-  DEFAULT_ROLEPLAY_BACKGROUND_URL,
   useUIStore,
   getDefaultAppAccentColor,
   getDefaultAppBackgroundColor,
@@ -83,7 +82,6 @@ import {
   ChevronDown,
   Loader2,
   Search,
-  Star,
   Palette,
   Puzzle,
   CloudRain,
@@ -94,7 +92,6 @@ import {
   Paintbrush,
   AlertTriangle,
   Tag,
-  Pencil,
   Code,
   Plus,
   Save,
@@ -118,14 +115,13 @@ import {
 } from "lucide-react";
 import { useClearAllData, useExpungeData, useUpdateChatMetadata, type ExpungeScope } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
-import { useGameAssetStore } from "../../stores/game-asset.store";
-import { useOpenGameAssetsFolder } from "../../hooks/use-game-assets";
+import { useOpenGameAssetsFolder, useRescanGameAssets } from "../../hooks/use-game-assets";
 import { chatKeys } from "../../hooks/use-chats";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { HelpTooltip } from "../ui/HelpTooltip";
 import { ColorPicker } from "../ui/ColorPicker";
 import { TrackerPanelIcon } from "../ui/TrackerPanelIcon";
 import { TrackerSizeTierIcon } from "../ui/TrackerSizeTierIcon";
-import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import {
   ConversationSoundSetting,
   SettingsIntro,
@@ -136,6 +132,7 @@ import {
 import { TrackerCardColorSettings } from "./settings/TrackerCardColorSettings";
 import { DiscordBotSettings } from "./settings/DiscordBotSettings";
 import { PromptOverridesEditor } from "./settings/PromptOverridesEditor";
+import { BackgroundPicker } from "./settings/BackgroundPicker";
 import { DraftNumberInput } from "../ui/DraftNumberInput";
 import { ExportFormatDialog, type ExportFormatChoice } from "../ui/ExportFormatDialog";
 import { inspectCharacterFilesForEmbeddedLorebooks } from "../../lib/character-import";
@@ -201,6 +198,7 @@ type SettingsSectionId =
   | "input-editing"
   | "text-rules"
   | "game-playback"
+  | "overall-generations"
   | "image-generation"
   | "video-generation"
   | "game-assets"
@@ -259,7 +257,7 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     id: "notifications",
     tab: "general",
     label: "Notifications",
-    description: "Notification sounds and browser notifications by mode.",
+    description: "Notification sounds and background notifications by mode.",
     aliases: ["notifications", "sound", "ping", "browser", "background replies", "conversation", "roleplay", "game"],
   },
   {
@@ -304,11 +302,18 @@ const SETTINGS_SECTIONS: readonly SettingsSectionMeta[] = [
     aliases: ["game", "text speed", "auto play", "middle mouse", "navigation", "vn"],
   },
   {
+    id: "overall-generations",
+    tab: "generations",
+    label: "Overall Generations",
+    description: "Shared behavior for image and video generation requests.",
+    aliases: ["media", "image", "video", "queue", "prompt review", "generation"],
+  },
+  {
     id: "image-generation",
     tab: "generations",
     label: "Image Generation",
-    description: "Prompt review, image canvas defaults, and style profiles.",
-    aliases: ["image", "background", "portrait", "selfie", "style profiles", "prompt review"],
+    description: "Image canvas defaults and style profiles.",
+    aliases: ["image", "background", "portrait", "selfie", "style profiles"],
   },
   {
     id: "video-generation",
@@ -553,6 +558,14 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     kind: "Toggle",
   },
   {
+    id: "mobile-background-notifications",
+    sectionId: "notifications",
+    label: "Background replies mobile notifications",
+    description: "Show native Android notifications for background Conversation replies.",
+    aliases: ["mobile", "android", "notifications", "conversation"],
+    kind: "Toggle",
+  },
+  {
     id: "enable-streaming",
     sectionId: "responses",
     label: "Enable streaming",
@@ -681,19 +694,31 @@ const SETTINGS_SEARCHABLE_CONTROLS: readonly SettingsSearchableControlMeta[] = [
     kind: "Slider",
   },
   {
-    id: "queue-image-generation",
-    sectionId: "image-generation",
-    label: "Queue image generation requests",
-    description: "Send image generation jobs one at a time.",
-    aliases: ["image", "queue", "generation"],
+    id: "queue-media-generation",
+    sectionId: "overall-generations",
+    label: "Queue media generation requests",
+    description: "Send image and video generation jobs one at a time per connection.",
+    aliases: ["media", "image", "video", "queue", "generation"],
     kind: "Toggle",
   },
   {
     id: "image-prompt-review",
-    sectionId: "image-generation",
-    label: "Expose image prompts before sending",
-    description: "Review generated image prompts before sending.",
-    aliases: ["image", "prompt", "review"],
+    sectionId: "overall-generations",
+    label: "Expose media prompts before sending",
+    description: "Review generated image and Gallery video prompts before sending.",
+    aliases: [
+      "image",
+      "video",
+      "media",
+      "prompt",
+      "review",
+      "selfie",
+      "noodle",
+      "avatar",
+      "portrait",
+      "sprite",
+      "animated expression",
+    ],
     kind: "Toggle",
   },
   {
@@ -1078,9 +1103,6 @@ const SETTINGS_BUTTON_CLASS = "mari-chrome-control mari-chrome-control--small te
 const SETTINGS_PRIMARY_BUTTON_CLASS = "mari-chrome-control mari-chrome-control--primary text-xs";
 const SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS =
   "mari-chrome-control mari-chrome-control--compact mari-chrome-control--selected text-[0.625rem]";
-const SETTINGS_INLINE_ACCENT_BUTTON_CLASS =
-  "shrink-0 rounded-md border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-1.5 py-0.5 text-[0.5625rem] font-semibold text-[var(--marinara-chat-chrome-button-text-active)] transition-colors hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45";
-
 type MarinaraAndroidBridge = {
   openConsole?: () => void;
 };
@@ -1933,7 +1955,7 @@ function TrackerPanelAppearanceDrawer({
       <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--secondary)]/70 text-[var(--primary)] ring-1 ring-[var(--border)]">
-            <TrackerPanelIcon size="0.9rem" strokeWidth={1.95} />
+            <TrackerPanelIcon size="0.9rem" />
           </span>
           <span className="min-w-0">
             <span className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--foreground)]">
@@ -2640,7 +2662,7 @@ function GeneralSettings() {
             label="Music Player"
             checked={musicPlayerEnabled}
             onChange={setMusicPlayerEnabled}
-            help="Shows the compact Music Player. Switch between Spotify and YouTube from the player itself or the Music DJ agent settings."
+            help="Shows the compact Music Player. Switch between Spotify, YouTube, and Custom from the player itself or the Music DJ agent settings."
           />
           <ToggleSetting
             anchorId={getSettingsControlAnchorId("mini-mari")}
@@ -2661,7 +2683,7 @@ function GeneralSettings() {
 
       <SettingsSection
         title="Notifications"
-        description="Notification sounds and browser notifications by mode."
+        description="Notification sounds and background notifications by mode."
         icon={<Bell size="0.875rem" />}
         {...getSettingsSectionAnchorProps("notifications")}
       >
@@ -2963,11 +2985,40 @@ function GeneralSettings() {
   );
 }
 
-function ImageGenerationSettings() {
+function OverallGenerationSettings() {
   const queueImageGenerationRequests = useUIStore((s) => s.queueImageGenerationRequests);
   const setQueueImageGenerationRequests = useUIStore((s) => s.setQueueImageGenerationRequests);
   const reviewImagePromptsBeforeSend = useUIStore((s) => s.reviewImagePromptsBeforeSend);
   const setReviewImagePromptsBeforeSend = useUIStore((s) => s.setReviewImagePromptsBeforeSend);
+
+  return (
+    <SettingsSection
+      title="Overall Generations"
+      description="Choose behavior shared by image and video generation."
+      icon={<WandSparkles size="0.875rem" />}
+      {...getSettingsSectionAnchorProps("overall-generations")}
+    >
+      <div className="flex flex-col gap-2.5">
+        <ToggleSetting
+          anchorId={getSettingsControlAnchorId("queue-media-generation")}
+          label="Queue media generation requests"
+          checked={queueImageGenerationRequests}
+          onChange={setQueueImageGenerationRequests}
+          help="Sends supported image and video generation jobs one at a time per connection. Keep this on for providers that reject simultaneous requests."
+        />
+        <ToggleSetting
+          anchorId={getSettingsControlAnchorId("image-prompt-review")}
+          label="Expose media prompts before sending"
+          checked={reviewImagePromptsBeforeSend}
+          onChange={setReviewImagePromptsBeforeSend}
+          help="Pauses supported user-started media generation so you can review and edit the final prompt before provider submission. This applies across Game and Roleplay images, Conversation Gallery selfies, Gallery Video and Animate actions, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
+        />
+      </div>
+    </SettingsSection>
+  );
+}
+
+function ImageGenerationSettings() {
   const imageBackgroundWidth = useUIStore((s) => s.imageBackgroundWidth);
   const imageBackgroundHeight = useUIStore((s) => s.imageBackgroundHeight);
   const setImageBackgroundDimensions = useUIStore((s) => s.setImageBackgroundDimensions);
@@ -2986,26 +3037,11 @@ function ImageGenerationSettings() {
   return (
     <SettingsSection
       title="Image Generation"
-      description="Review generated prompts, set image canvas defaults, and tune prompt style profiles."
+      description="Set image canvas defaults and tune prompt style profiles."
       icon={<Image size="0.875rem" />}
       {...getSettingsSectionAnchorProps("image-generation")}
     >
       <div className="flex flex-col gap-2.5">
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("queue-image-generation")}
-          label="Queue image generation requests"
-          checked={queueImageGenerationRequests}
-          onChange={setQueueImageGenerationRequests}
-          help="Sends image generation jobs one at a time. Keep this on for providers that reject simultaneous background, illustration, or portrait requests."
-        />
-        <ToggleSetting
-          anchorId={getSettingsControlAnchorId("image-prompt-review")}
-          label="Expose image prompts before sending"
-          checked={reviewImagePromptsBeforeSend}
-          onChange={setReviewImagePromptsBeforeSend}
-          help="Pauses supported user-started image generation so you can review and edit the final positive and negative prompts before provider submission. This applies across Game and Roleplay scenes, manual Noodle refreshes, avatars, portraits, sprites, and animated expressions. Unattended automatic generations continue without waiting for a modal."
-        />
-
         <ImageDimensionRow
           controlId="image-background-size"
           label="Backgrounds"
@@ -3124,7 +3160,7 @@ function VideoGenerationSettings() {
   return (
     <SettingsSection
       title="Video Generation"
-      description="Set default clip lengths and edit reusable video prompts for Game, Gallery, and Conversation Calls."
+      description="Set default clip lengths and edit reusable video prompts for Game, Gallery, and Calls."
       icon={<Film size="0.875rem" />}
       {...getSettingsSectionAnchorProps("video-generation")}
     >
@@ -3252,7 +3288,7 @@ function VideoGenerationSettings() {
 }
 
 function GameAssetsSettings() {
-  const rescanGameAssets = useGameAssetStore((s) => s.rescanAssets);
+  const rescanGameAssets = useRescanGameAssets();
   const openGameAssetsFolder = useOpenGameAssetsFolder();
   const openGameAssetsBrowser = useUIStore((s) => s.openGameAssetsBrowser);
   const assetFileRef = useRef<HTMLInputElement>(null);
@@ -3311,7 +3347,7 @@ function GameAssetsSettings() {
       );
       const succeeded = uploads.filter((result) => result.status === "fulfilled").length;
       const failed = uploads.length - succeeded;
-      await rescanGameAssets();
+      await rescanGameAssets.mutateAsync();
       if (succeeded > 0) {
         toast.success(`Uploaded ${succeeded} game asset${succeeded === 1 ? "" : "s"}.`);
       }
@@ -3349,7 +3385,8 @@ function GameAssetsSettings() {
           </button>
           <button
             onClick={() => {
-              rescanGameAssets()
+              rescanGameAssets
+                .mutateAsync()
                 .then(() => toast.success("Game assets rescanned."))
                 .catch(() => toast.error("Failed to rescan game assets."));
             }}
@@ -4677,485 +4714,69 @@ function AppearanceSettings() {
   );
 }
 
-type BackgroundLibraryItem = {
-  id?: string;
-  filename: string;
-  url: string;
-  originalName: string | null;
-  tags: string[];
-  source?: "user" | "game_asset";
-  tag?: string;
-  editable?: boolean;
-  deletable?: boolean;
-  renameable?: boolean;
-};
-
-type BackgroundUploadResponse = {
-  success: boolean;
-  filename: string;
-  url: string;
-  originalName: string;
-  tags: string[];
-};
-
-function BackgroundPicker({
-  selected,
-  onSelect,
-  defaultRoleplayBackground,
-  onDefaultChange,
-}: {
-  selected: string | null;
-  onSelect: (url: string | null) => void;
-  defaultRoleplayBackground: string;
-  onDefaultChange: (url: string) => void;
-}) {
-  const [uploading, setUploading] = useState(false);
-  const [editingTags, setEditingTags] = useState<string | null>(null);
-  const [tagInput, setTagInput] = useState("");
-  const [renamingFile, setRenamingFile] = useState<string | null>(null);
-  const [renameInput, setRenameInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const refreshGameAssetManifest = useGameAssetStore((s) => s.fetchManifest);
-  const qc = useQueryClient();
-
-  const { data: backgrounds } = useQuery({
-    queryKey: ["backgrounds"],
-    queryFn: () => api.get<BackgroundLibraryItem[]>("/backgrounds"),
-  });
-
-  const { data: allTags } = useQuery({
-    queryKey: ["background-tags"],
-    queryFn: () => api.get<string[]>("/backgrounds/tags"),
-  });
-
-  const deleteBg = useMutation({
-    mutationFn: (filename: string) => api.delete(`/backgrounds/${filename}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["backgrounds"] });
-      qc.invalidateQueries({ queryKey: ["background-tags"] });
-    },
-  });
-
-  const updateTags = useMutation({
-    mutationFn: ({ filename, tags }: { filename: string; tags: string[] }) =>
-      api.patch(`/backgrounds/${filename}/tags`, { tags }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["backgrounds"] });
-      qc.invalidateQueries({ queryKey: ["background-tags"] });
-    },
-  });
-
-  const renameBg = useMutation({
-    mutationFn: ({ filename, name }: { filename: string; name: string }) =>
-      api.patch<{ success: boolean; oldFilename: string; filename: string; url: string }>(
-        `/backgrounds/${filename}/rename`,
-        { name },
-      ),
-    onSuccess: (data) => {
-      const oldUrl = `/api/backgrounds/file/${encodeURIComponent(data.oldFilename)}`;
-      if (selected === oldUrl) {
-        onSelect(data.url);
-      }
-      if (defaultRoleplayBackground === oldUrl) {
-        onDefaultChange(data.url);
-      }
-      setRenamingFile(null);
-      qc.invalidateQueries({ queryKey: ["backgrounds"] });
-    },
-  });
-
-  const filteredBackgrounds = useMemo(() => {
-    const items = backgrounds ?? [];
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return items;
-    return items.filter((bg) => {
-      const haystack = [
-        bg.filename,
-        bg.originalName ?? "",
-        bg.tag ?? "",
-        bg.source === "game_asset" ? "game asset" : "library",
-        ...bg.tags,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [backgrounds, searchQuery]);
-
-  const handleUpload = async (files: File[]) => {
-    if (files.length === 0) return;
-    setUploading(true);
-    try {
-      const uploads = await Promise.allSettled(
-        files.map((file) => {
-          const formData = new FormData();
-          formData.append("file", file);
-          return api.upload<BackgroundUploadResponse>("/backgrounds/upload", formData);
-        }),
-      );
-      const successfulUploads = uploads
-        .filter((result): result is PromiseFulfilledResult<BackgroundUploadResponse> => result.status === "fulfilled")
-        .map((result) => result.value)
-        .filter((result) => result.success);
-      const failed = uploads.length - successfulUploads.length;
-
-      if (successfulUploads.length > 0) {
-        qc.invalidateQueries({ queryKey: ["backgrounds"] });
-        qc.invalidateQueries({ queryKey: ["background-tags"] });
-        void refreshGameAssetManifest().catch(() => undefined);
-        onSelect(successfulUploads[successfulUploads.length - 1]!.url);
-        toast.success(`Imported ${successfulUploads.length} background${successfulUploads.length === 1 ? "" : "s"}.`);
-      }
-
-      if (failed > 0) {
-        const rejected = uploads.find((result) => result.status === "rejected");
-        toast.error(
-          rejected?.status === "rejected" && rejected.reason instanceof Error
-            ? rejected.reason.message
-            : `${failed} background import${failed === 1 ? "" : "s"} failed.`,
-        );
-      }
-    } catch {
-      toast.error("Background import failed.");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const addTag = (filename: string, currentTags: string[]) => {
-    const tag = tagInput
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9 _-]/g, "");
-    if (!tag || currentTags.includes(tag)) return;
-    updateTags.mutate({ filename, tags: [...currentTags, tag] });
-    setTagInput("");
-  };
-
-  const removeTag = (filename: string, currentTags: string[], tagToRemove: string) => {
-    updateTags.mutate({ filename, tags: currentTags.filter((t) => t !== tagToRemove) });
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <ImageUploadDropzone
-        label="Import Backgrounds"
-        pending={uploading}
-        pendingLabel="Importing..."
-        dragLabel="Drop backgrounds to import"
-        onFilesSelected={(files) => void handleUpload(files)}
-        icon={uploading ? <Loader2 size="0.875rem" className="animate-spin" /> : <Upload size="0.875rem" />}
-        className="rounded-lg py-3 hover:border-[var(--primary)]/40 hover:bg-[var(--secondary)]/50"
-      />
-
-      <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--secondary)]/40 p-2.5 ring-1 ring-[var(--border)]/70">
-        <div className="flex items-center gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search
-              size="0.75rem"
-              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted-foreground)]"
-            />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search backgrounds..."
-              className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-0 pl-7 pr-2 text-xs text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/60 focus:border-[var(--primary)]/50 md:h-9"
-            />
-          </div>
-          {searchQuery.trim() && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery("")}
-              className="shrink-0 rounded-md p-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-              title="Clear search"
-            >
-              <X size="0.75rem" />
-            </button>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-[0.625rem] text-[var(--muted-foreground)]">
-          <span>
-            {filteredBackgrounds.length} of {backgrounds?.length ?? 0} backgrounds
-          </span>
-          {defaultRoleplayBackground !== DEFAULT_ROLEPLAY_BACKGROUND_URL && (
-            <button
-              type="button"
-              onClick={() => onDefaultChange(DEFAULT_ROLEPLAY_BACKGROUND_URL)}
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
-            >
-              <Star size="0.625rem" />
-              Reset Roleplay default
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Background grid */}
-      {backgrounds && backgrounds.length > 0 && filteredBackgrounds.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {filteredBackgrounds.map((bg) => {
-            const itemKey = bg.id ?? bg.url;
-            const isSelected = selected === bg.url;
-            const isDefaultRoleplay = defaultRoleplayBackground === bg.url;
-            const isUserBackground = bg.source !== "game_asset";
-            const isEditable = bg.editable !== false && isUserBackground;
-            const canRename = bg.renameable !== false && isUserBackground;
-            const canDelete = bg.deletable !== false && isUserBackground;
-            const isEditing = editingTags === itemKey;
-            const isRenaming = renamingFile === itemKey;
-            const title = bg.originalName ?? bg.tag ?? bg.filename;
-            const sourceLabel = bg.source === "game_asset" ? "Game asset" : "Library";
-            return (
-              <div key={itemKey} className="flex flex-col gap-1">
-                {/* Thumbnail row */}
-                <div className="group relative flex gap-2">
-                  <button
-                    onClick={() => onSelect(isSelected ? null : bg.url)}
-                    className={cn(
-                      "relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg border-2 transition-all",
-                      isSelected
-                        ? "border-[var(--primary)] shadow-md shadow-[var(--primary)]/20"
-                        : "border-transparent hover:border-[var(--muted-foreground)]/30",
-                    )}
-                  >
-                    <img src={bg.url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                    {isSelected && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                        <Check size="0.875rem" className="text-white" />
-                      </div>
-                    )}
-                  </button>
-                  <div className="flex min-w-0 flex-1 flex-col gap-1 py-0.5">
-                    <div className="flex items-center gap-1">
-                      {isRenaming ? (
-                        <form
-                          className="flex min-w-0 flex-1 items-center gap-1"
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            if (renameInput.trim())
-                              renameBg.mutate({ filename: bg.filename, name: renameInput.trim() });
-                          }}
-                        >
-                          <input
-                            type="text"
-                            value={renameInput}
-                            onChange={(e) => setRenameInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Escape") setRenamingFile(null);
-                            }}
-                            className="w-full min-w-0 rounded border border-[var(--border)] bg-[var(--background)] px-1.5 py-0.5 text-[0.625rem] text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
-                            autoFocus
-                          />
-                          <button
-                            type="submit"
-                            disabled={!renameInput.trim() || renameBg.isPending}
-                            className={SETTINGS_INLINE_ACCENT_BUTTON_CLASS}
-                          >
-                            {renameBg.isPending ? "…" : "Save"}
-                          </button>
-                        </form>
-                      ) : (
-                        <>
-                          <span className="truncate text-[0.625rem] text-[var(--muted-foreground)]" title={title}>
-                            {bg.filename}
-                          </span>
-                          <span
-                            className={cn(
-                              "shrink-0 rounded-full px-1.5 py-0 text-[0.5625rem]",
-                              bg.source === "game_asset"
-                                ? "bg-[var(--primary)]/10 text-[var(--primary)]"
-                                : "bg-[var(--secondary)] text-[var(--muted-foreground)]",
-                            )}
-                          >
-                            {sourceLabel}
-                          </span>
-                          {isDefaultRoleplay && (
-                            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--primary)]/12 px-1.5 py-0 text-[0.5625rem] text-[var(--primary)] ring-1 ring-[var(--primary)]/25">
-                              <Star size="0.5rem" fill="currentColor" />
-                              Default
-                            </span>
-                          )}
-                          {canRename && (
-                            <button
-                              onClick={() => {
-                                const nameWithoutExt = bg.filename.replace(/\.[^.]+$/, "");
-                                setRenameInput(nameWithoutExt);
-                                setRenamingFile(itemKey);
-                              }}
-                              className="shrink-0 rounded-md p-0.5 text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--primary)] group-hover:opacity-100"
-                              title="Rename"
-                            >
-                              <Pencil size="0.5625rem" />
-                            </button>
-                          )}
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDefaultChange(isDefaultRoleplay ? DEFAULT_ROLEPLAY_BACKGROUND_URL : bg.url);
-                        }}
-                        className={cn(
-                          "shrink-0 rounded-md p-0.5 transition-colors",
-                          isDefaultRoleplay
-                            ? "text-[var(--primary)]"
-                            : "text-[var(--muted-foreground)]/70 hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
-                        )}
-                        title={
-                          isDefaultRoleplay ? "Default for new Roleplay chats" : "Set as default for new Roleplay chats"
-                        }
-                        aria-label={
-                          isDefaultRoleplay
-                            ? `${title} is the default Roleplay background`
-                            : `Set ${title} as the default Roleplay background`
-                        }
-                        aria-pressed={isDefaultRoleplay}
-                      >
-                        <Star size="0.75rem" fill={isDefaultRoleplay ? "currentColor" : "none"} />
-                      </button>
-                      {canDelete && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (selected === bg.url) onSelect(null);
-                            if (defaultRoleplayBackground === bg.url) onDefaultChange(DEFAULT_ROLEPLAY_BACKGROUND_URL);
-                            deleteBg.mutate(bg.filename);
-                          }}
-                          className="ml-auto shrink-0 rounded-md p-0.5 text-[var(--muted-foreground)] opacity-0 transition-opacity hover:text-[var(--foreground)] group-hover:opacity-100"
-                        >
-                          <Trash2 size="0.625rem" />
-                        </button>
-                      )}
-                    </div>
-                    {/* Tags */}
-                    <div className="flex flex-wrap items-center gap-1">
-                      {bg.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="inline-flex items-center gap-0.5 rounded-full bg-[var(--secondary)] px-1.5 py-0 text-[0.5625rem] text-[var(--muted-foreground)]"
-                        >
-                          {tag}
-                          {isEditing && isEditable && (
-                            <button
-                              onClick={() => removeTag(bg.filename, bg.tags, tag)}
-                              className="ml-0.5 hover:text-[var(--destructive)]"
-                            >
-                              <X size="0.5rem" />
-                            </button>
-                          )}
-                        </span>
-                      ))}
-                      {isEditable && (
-                        <button
-                          onClick={() => {
-                            setEditingTags(isEditing ? null : itemKey);
-                            setTagInput("");
-                          }}
-                          className={cn(
-                            "rounded-full p-0.5 transition-colors",
-                            isEditing
-                              ? "bg-[var(--primary)]/20 text-[var(--primary)]"
-                              : "text-[var(--muted-foreground)]/60 hover:text-[var(--primary)]",
-                          )}
-                          title="Edit tags"
-                        >
-                          <Tag size="0.5625rem" />
-                        </button>
-                      )}
-                    </div>
-                    {/* Tag input */}
-                    {isEditing && isEditable && (
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={tagInput}
-                          onChange={(e) => setTagInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              addTag(bg.filename, bg.tags);
-                            }
-                            if (e.key === "Escape") setEditingTags(null);
-                          }}
-                          placeholder="Add tag…"
-                          className="w-full min-w-0 rounded border border-[var(--border)] bg-[var(--background)] px-1.5 py-0.5 text-[0.625rem] text-[var(--foreground)] outline-none focus:border-[var(--primary)]"
-                          autoFocus
-                          list={`tag-suggestions-${itemKey}`}
-                        />
-                        <datalist id={`tag-suggestions-${itemKey}`}>
-                          {(allTags ?? [])
-                            .filter((t) => !bg.tags.includes(t))
-                            .map((t) => (
-                              <option key={t} value={t} />
-                            ))}
-                        </datalist>
-                        <button
-                          onClick={() => addTag(bg.filename, bg.tags)}
-                          disabled={!tagInput.trim()}
-                          className={SETTINGS_INLINE_ACCENT_BUTTON_CLASS}
-                        >
-                          Add
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {(!backgrounds || backgrounds.length === 0) && (
-        <div className="flex flex-col items-center gap-1.5 py-4 text-center">
-          <Image size="1.25rem" className="text-[var(--muted-foreground)]/40" />
-          <p className="mari-chrome-text-muted text-[0.625rem]">No backgrounds available yet</p>
-        </div>
-      )}
-      {backgrounds && backgrounds.length > 0 && filteredBackgrounds.length === 0 && (
-        <div className="flex flex-col items-center gap-1.5 py-4 text-center">
-          <Search size="1.25rem" className="text-[var(--muted-foreground)]/40" />
-          <p className="mari-chrome-text-muted text-[0.625rem]">No backgrounds match that search</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function GenerationsSettings() {
+  const { data: installedCapabilities = [], isLoading } = useInstalledCapabilityPackages();
+  const openRightPanel = useUIStore((state) => state.openRightPanel);
+  const openAgentCatalog = useUIStore((state) => state.openAgentCatalog);
+  const illustratorInstalled = installedCapabilities.some(
+    (capability) => capability.id === "illustrator" && capability.status === "active",
+  );
+  const openDownloadAgents = useCallback(() => {
+    openRightPanel("agents");
+    openAgentCatalog();
+  }, [openAgentCatalog, openRightPanel]);
+
   return (
     <div className="flex flex-col gap-3">
       <SettingsIntro>
-        Global defaults for generated images, generated videos, and reusable prompt templates.
+        Global defaults for generated images, videos, and reusable prompt templates.
       </SettingsIntro>
 
-      <ImageGenerationSettings />
-      <VideoGenerationSettings />
-      <div id={getSettingsSectionAnchorId("prompt-overrides")} className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/35 px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-[var(--foreground)]">Prompt Overrides</div>
-            <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
-              Reusable image and video prompt templates.
-            </div>
-          </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-4 py-8 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
+          <Loader2 size="1rem" className="animate-spin" />
+          Checking installed agents…
         </div>
-        <PromptOverridesEditor
-          title="Video Generation Prompt Overrides"
-          description="Edit reusable templates for Game/Gallery scene videos, Conversation Call character clips, and animated Expression portraits."
-          help="Game scene videos use this before sending a reference-image video request. Conversation Call clips use the selected character avatar as the identity reference and return to idle at the end of each clip. Animated Expression portraits become looping GIF sprites."
-          keys={VIDEO_PROMPT_TEMPLATE_KEYS}
-          preferredKey="game.video"
-        />
-        <PromptOverridesEditor
-          title="Image Generation Prompt Overrides"
-          description="Edit the templates used by image, sprite, Game, and prompt-builder systems."
-          help="Global templates for registered prompt builders, including Conversation selfies, Game NPC portraits, scene media, storyboard prompts, and other registered builders."
-          preferredKey="game.npcPortrait"
-        />
-      </div>
+      ) : !illustratorInstalled ? (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)] px-5 py-8 text-center">
+          <WandSparkles size="1.5rem" className="text-[var(--marinara-chat-chrome-highlight-text)]" />
+          <p className="max-w-md text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-text)]">
+            Download Illustrator Agent first from Agents tab to enable image and video generation.
+          </p>
+          <button type="button" onClick={openDownloadAgents} className={SETTINGS_PRIMARY_BUTTON_CLASS}>
+            Download Illustrator Agent
+          </button>
+        </div>
+      ) : (
+        <>
+          <OverallGenerationSettings />
+          <ImageGenerationSettings />
+          <VideoGenerationSettings />
+          <div id={getSettingsSectionAnchorId("prompt-overrides")} className="flex flex-col gap-3">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--background)]/35 px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-[var(--foreground)]">Prompt Overrides</div>
+                <div className="mt-0.5 text-[0.625rem] text-[var(--muted-foreground)]">
+                  Reusable image and video prompt templates.
+                </div>
+              </div>
+            </div>
+            <PromptOverridesEditor
+              title="Video Generation Prompt Overrides"
+              description="Edit reusable templates for Game/Gallery scene videos, Conversation Call character clips, and animated Expression portraits."
+              help="Game scene videos use this before sending a reference-image video request. Conversation Call clips use the selected character avatar as the identity reference and return to idle at the end of each clip. Animated Expression portraits become looping GIF sprites."
+              keys={VIDEO_PROMPT_TEMPLATE_KEYS}
+              preferredKey="game.video"
+            />
+            <PromptOverridesEditor
+              title="Image Generation Prompt Overrides"
+              description="Edit the templates used by image, sprite, Game, and prompt-builder systems."
+              help="Global templates for registered prompt builders, including Conversation selfies, Game NPC portraits, scene media, storyboard prompts, and other registered builders."
+              preferredKey="game.npcPortrait"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

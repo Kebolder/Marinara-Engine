@@ -1,9 +1,9 @@
 // ──────────────────────────────────────────────
 // Schema: Chats, Messages & Folders
 // ──────────────────────────────────────────────
-import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { fileTable, text, integer } from "../file-schema.js";
 
-export const chatFolders = sqliteTable("chat_folders", {
+export const chatFolders = fileTable("chat_folders", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
@@ -14,7 +14,7 @@ export const chatFolders = sqliteTable("chat_folders", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const chats = sqliteTable("chats", {
+export const chats = fileTable("chats", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   mode: text("mode", { enum: ["conversation", "roleplay", "visual_novel", "game"] }).notNull(),
@@ -39,7 +39,7 @@ export const chats = sqliteTable("chats", {
   updatedAt: text("updated_at").notNull(),
 });
 
-export const messages = sqliteTable("messages", {
+export const messages = fileTable("messages", {
   id: text("id").primaryKey(),
   chatId: text("chat_id")
     .notNull()
@@ -53,7 +53,7 @@ export const messages = sqliteTable("messages", {
   createdAt: text("created_at").notNull(),
 });
 
-export const messageSwipes = sqliteTable("message_swipes", {
+export const messageSwipes = fileTable("message_swipes", {
   id: text("id").primaryKey(),
   messageId: text("message_id")
     .notNull()
@@ -65,7 +65,7 @@ export const messageSwipes = sqliteTable("message_swipes", {
   createdAt: text("created_at").notNull(),
 });
 
-export const oocInfluences = sqliteTable("ooc_influences", {
+export const oocInfluences = fileTable("ooc_influences", {
   id: text("id").primaryKey(),
   /** The conversation chat that created this influence */
   sourceChatId: text("source_chat_id")
@@ -84,7 +84,7 @@ export const oocInfluences = sqliteTable("ooc_influences", {
   createdAt: text("created_at").notNull(),
 });
 
-export const conversationNotes = sqliteTable("conversation_notes", {
+export const conversationNotes = fileTable("conversation_notes", {
   id: text("id").primaryKey(),
   /** The conversation chat that emitted this note */
   sourceChatId: text("source_chat_id")
@@ -102,7 +102,7 @@ export const conversationNotes = sqliteTable("conversation_notes", {
 });
 
 // ── Memory Chunks: embedded conversation fragments for semantic recall ──
-export const memoryChunks = sqliteTable("memory_chunks", {
+export const memoryChunks = fileTable("memory_chunks", {
   id: text("id").primaryKey(),
   chatId: text("chat_id")
     .notNull()
@@ -122,7 +122,7 @@ export const memoryChunks = sqliteTable("memory_chunks", {
   createdAt: text("created_at").notNull(),
 });
 
-export const discordBridgeThreadBindings = sqliteTable("discord_bridge_thread_bindings", {
+export const discordBridgeThreadBindings = fileTable("discord_bridge_thread_bindings", {
   id: text("id").primaryKey(),
   guildId: text("guild_id").notNull(),
   channelId: text("channel_id").notNull(),
@@ -137,7 +137,7 @@ export const discordBridgeThreadBindings = sqliteTable("discord_bridge_thread_bi
   updatedAt: text("updated_at").notNull(),
 });
 
-export const discordBridgeMessageMappings = sqliteTable("discord_bridge_message_mappings", {
+export const discordBridgeMessageMappings = fileTable("discord_bridge_message_mappings", {
   id: text("id").primaryKey(),
   bindingId: text("binding_id")
     .notNull()
@@ -154,7 +154,7 @@ export const discordBridgeMessageMappings = sqliteTable("discord_bridge_message_
   updatedAt: text("updated_at").notNull(),
 });
 
-export const discordBridgeUserPersonas = sqliteTable("discord_bridge_user_personas", {
+export const discordBridgeUserPersonas = fileTable("discord_bridge_user_personas", {
   id: text("id").primaryKey(),
   guildId: text("guild_id").notNull(),
   discordUserId: text("discord_user_id").notNull(),
@@ -163,7 +163,7 @@ export const discordBridgeUserPersonas = sqliteTable("discord_bridge_user_person
   updatedAt: text("updated_at").notNull(),
 });
 
-export const chatParticipants = sqliteTable(
+export const chatParticipants = fileTable(
   "chat_participants",
   {
     id: text("id").primaryKey(),
@@ -182,12 +182,5 @@ export const chatParticipants = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
-  (table) => ({
-    chatParticipantSourceUserUnique: uniqueIndex("uniq_chat_participants_source_user").on(
-      table.chatId,
-      table.source,
-      table.guildId,
-      table.discordUserId,
-    ),
-  }),
+  { uniqueBy: [["chatId", "source", "guildId", "discordUserId"]] },
 );

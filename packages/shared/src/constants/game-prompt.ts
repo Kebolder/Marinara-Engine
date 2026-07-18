@@ -38,7 +38,7 @@ export const GAME_GM_BUILT_IN_PROMPT_TEMPLATES: AgentPromptTemplateOption[] = [
   },
   {
     id: ANIME_GAME_PROMPT_TEMPLATE_ID,
-    name: "Anime Game Prompt",
+    name: "Storyboard Game Prompt",
     description: "Shapes GM turns into filmable anime narration with visual anchors for storyboards.",
     promptTemplate: ANIME_GAME_SYSTEM_PROMPT,
   },

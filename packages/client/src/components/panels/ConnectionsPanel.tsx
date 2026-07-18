@@ -9,6 +9,7 @@ import {
   useRef,
   type ChangeEvent,
   type DragEvent,
+  type ReactNode,
   type TouchEvent,
 } from "react";
 import { Reorder, useDragControls } from "framer-motion";
@@ -32,6 +33,7 @@ import {
 import { handleFolderRenameKeyDown, useFolderRenameGesture } from "../../hooks/use-folder-rename-gesture";
 import { useTouchFolderDrag } from "../../hooks/use-touch-folder-drag";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent } from "../../hooks/use-agents";
+import { useInstalledCapabilityPackages } from "../../hooks/use-capability-packages";
 import { useChatStore } from "../../stores/chat.store";
 import { useUIStore, type ConnectionPanelSort } from "../../stores/ui.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
@@ -69,7 +71,9 @@ import {
   ImageIcon,
   Film,
   Mic,
+  Loader2,
   HardDriveDownload,
+  MessageSquareText,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sortBasicPanelItems } from "../../lib/panel-sort";
@@ -186,6 +190,7 @@ function getDroppedConnectionIds(event: DragEvent<HTMLElement>, fallbackId: stri
 
 function SidecarCard() {
   const { data: agentConfigs } = useAgentConfigs();
+  const { data: installedCapabilityPackages } = useInstalledCapabilityPackages();
   const createAgent = useCreateAgent();
   const updateAgentConnection = useUpdateAgent();
   const {
@@ -219,7 +224,15 @@ function SidecarCard() {
   const [assigningTrackers, setAssigningTrackers] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [speechModelChoice, setSpeechModelChoice] = useState<SidecarSpeechModelId>("whisper_tiny");
+  const [deletingSpeechModel, setDeletingSpeechModel] = useState(false);
   const activeModelName = isDownloaded ? modelDisplayName : null;
+  const callsPackageInstalled = useMemo(
+    () =>
+      (installedCapabilityPackages ?? []).some(
+        (item) => item.status !== "error" && item.manifest.kind.includes("conversation-calls"),
+      ),
+    [installedCapabilityPackages],
+  );
   const backendLabel = config.backend === "mlx" ? "MLX" : "GGUF";
   const nativeToolLabel =
     config.backend === "llama_cpp" ? ` • Native tools ${config.enableNativeToolCalls ? "on" : "off"}` : "";
@@ -236,8 +249,8 @@ function SidecarCard() {
   // Fetch status on mount (handles HMR store resets and initial load)
   useEffect(() => {
     fetchStatus();
-    fetchSpeechStatus();
-  }, [fetchSpeechStatus, fetchStatus]);
+    if (callsPackageInstalled) fetchSpeechStatus();
+  }, [callsPackageInstalled, fetchSpeechStatus, fetchStatus]);
 
   useEffect(() => {
     const firstModel = speechModels[0]?.id;
@@ -245,6 +258,19 @@ function SidecarCard() {
       setSpeechModelChoice(firstModel);
     }
   }, [speechModelChoice, speechModels]);
+
+  const handleDeleteSpeechModel = async () => {
+    if (deletingSpeechModel) return;
+    setDeletingSpeechModel(true);
+    try {
+      await deleteSpeechModel();
+      toast.success("Local Whisper model deleted.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete the Local Whisper model.");
+    } finally {
+      setDeletingSpeechModel(false);
+    }
+  };
 
   const handleAssignTrackersToLocal = async () => {
     if (!isDownloaded || assigningTrackers) return;
@@ -321,9 +347,9 @@ function SidecarCard() {
               ? " • Ready"
               : ""
       }`
-    : speechModelDownloaded
+    : callsPackageInstalled && speechModelDownloaded
       ? speechStatusLabel
-      : speechDownloading
+      : callsPackageInstalled && speechDownloading
         ? "Downloading Whisper..."
         : "Not downloaded";
   const speechUnavailableMessage = describeSpeechRuntimeUnavailable(speechRuntime);
@@ -360,7 +386,7 @@ function SidecarCard() {
               event.stopPropagation();
               openLocalModelSettings();
             }}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
+            className="mari-chrome-control mari-chrome-control--small h-8 min-h-0 w-8 p-0"
             title="Open local model settings"
           >
             <Settings2 size="0.8125rem" />
@@ -371,7 +397,7 @@ function SidecarCard() {
               event.stopPropagation();
               setExpanded((v) => !v);
             }}
-            className="mari-chrome-control mari-chrome-control--small p-1"
+            className="mari-chrome-control mari-chrome-control--small h-8 min-h-0 w-8 p-0"
             title={expanded ? "Collapse" : "Expand"}
           >
             {expanded ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
@@ -391,9 +417,10 @@ function SidecarCard() {
               background tasks only.
             </p>
           </div>
+          {callsPackageInstalled && (
           <div className="mt-2.5 rounded-lg border border-sky-400/15 bg-sky-400/5 p-2.5">
             <div className="flex items-start gap-2">
-              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-400/10 text-sky-300">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
                 <Mic size="0.875rem" />
               </div>
               <div className="min-w-0 flex-1">
@@ -402,11 +429,16 @@ function SidecarCard() {
                   {speechModelDownloaded && (
                     <button
                       type="button"
-                      onClick={() => void deleteSpeechModel()}
+                      onClick={() => void handleDeleteSpeechModel()}
+                      disabled={deletingSpeechModel}
                       className="mari-chrome-control mari-chrome-control--small p-1"
                       title="Delete Local Whisper"
                     >
-                      <Trash2 size="0.75rem" />
+                      {deletingSpeechModel ? (
+                        <Loader2 size="0.75rem" className="animate-spin" />
+                      ) : (
+                        <Trash2 size="0.75rem" />
+                      )}
                     </button>
                   )}
                 </div>
@@ -493,6 +525,7 @@ function SidecarCard() {
               </div>
             </div>
           </div>
+          )}
           {isDownloaded && (
             <div className="mt-2.5 flex flex-col gap-1.5 border-t border-sky-400/10 pt-2.5">
               <button
@@ -588,7 +621,9 @@ type ConnectionRowData = {
   imagePath?: string | null;
   useForRandom?: string;
   isDefault?: boolean | string;
+  fallbackForMain?: boolean | string;
   defaultForAgents?: boolean | string;
+  fallbackForAgents?: boolean | string;
   enableCaching?: boolean | string;
   anthropicExtendedCacheTtl?: boolean | string;
   cachingAtDepth?: number;
@@ -634,10 +669,7 @@ function connectionMatchesSearch(conn: ConnectionRowData, query: string) {
   return haystack.includes(query);
 }
 
-function sortConnections(
-  connections: readonly ConnectionRowData[],
-  sort: ConnectionPanelSort,
-): ConnectionRowData[] {
+function sortConnections(connections: readonly ConnectionRowData[], sort: ConnectionPanelSort): ConnectionRowData[] {
   if (sort === "custom") {
     return [...connections].sort((a, b) => {
       const aOrder =
@@ -663,216 +695,221 @@ function formatDefaultConnectionOption(connection: ConnectionRowData, fallbackMo
   return `${connection.name} - ${model}`;
 }
 
-function DefaultAgentConnectionCard({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
-  const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
-  const updateConnection = useUpdateConnection();
-  const qc = useQueryClient();
-  const agentConnections = useMemo(
-    () => connectionsList.filter((conn) => conn.provider !== "image_generation" && conn.provider !== "video_generation"),
-    [connectionsList],
-  );
-  const defaultConnection =
-    agentConnections.find(
-      (conn) =>
-        conn.provider !== "image_generation" &&
-        conn.provider !== "video_generation" &&
-        (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
-    ) ?? null;
-  const hasConnections = agentConnections.length > 0;
+type ConnectionDefaultField = "isDefault" | "defaultForAgents" | "fallbackForMain" | "fallbackForAgents";
 
-  const handleDefaultChange = (event: ChangeEvent<HTMLSelectElement>) => {
+function isEnabledConnectionRole(value: boolean | string | undefined): boolean {
+  return value === true || value === "true";
+}
+
+function ConnectionDefaultPair({
+  title,
+  icon,
+  connections,
+  primaryField,
+  fallbackField,
+  primaryEmptyLabel,
+  fallbackModelLabel,
+}: {
+  title: string;
+  icon: ReactNode;
+  connections: ConnectionRowData[];
+  primaryField: ConnectionDefaultField;
+  fallbackField: ConnectionDefaultField;
+  primaryEmptyLabel: string;
+  fallbackModelLabel: string;
+}) {
+  const openConnectionDetail = useUIStore((state) => state.openConnectionDetail);
+  const updateConnection = useUpdateConnection();
+  const queryClient = useQueryClient();
+  const primaryConnection = connections.find((connection) => isEnabledConnectionRole(connection[primaryField])) ?? null;
+  const fallbackConnection =
+    connections.find((connection) => isEnabledConnectionRole(connection[fallbackField])) ?? null;
+  const hasConnections = connections.length > 0;
+
+  const handleRoleChange = (
+    field: ConnectionDefaultField,
+    currentConnection: ConnectionRowData | null,
+    event: ChangeEvent<HTMLSelectElement>,
+  ) => {
     const nextConnectionId = event.target.value;
-    if (nextConnectionId === defaultConnection?.id) return;
+    if (nextConnectionId === currentConnection?.id) return;
     if (!nextConnectionId) {
-      if (defaultConnection) {
-        updateConnection.mutate({ id: defaultConnection.id, defaultForAgents: false });
-      }
+      if (currentConnection) updateConnection.mutate({ id: currentConnection.id, [field]: false });
       return;
     }
-    updateConnection.mutate({ id: nextConnectionId, defaultForAgents: true });
+    updateConnection.mutate({ id: nextConnectionId, [field]: true });
   };
   const openFreshConnectionDetail = (id: string) => {
-    qc.removeQueries({ queryKey: connectionKeys.detail(id) });
+    queryClient.removeQueries({ queryKey: connectionKeys.detail(id) });
     openConnectionDetail(id);
   };
 
   return (
-    <div className="rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3">
-      <div className="flex items-center gap-2.5 max-sm:items-start">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
-          <Sparkles size="1rem" />
+    <div className="grid gap-2 px-3 py-3 sm:grid-cols-[2.25rem_minmax(0,1fr)]">
+      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
+        {icon}
+      </div>
+      <div className="min-w-0 space-y-2">
+        <div className="text-xs font-semibold text-[var(--foreground)]">{title}</div>
+        <div className="flex flex-col gap-2">
+          <label className="min-w-0">
+            <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">Default</span>
+            <div className="flex items-center gap-1">
+              <select
+                value={primaryConnection?.id ?? ""}
+                onChange={(event) => handleRoleChange(primaryField, primaryConnection, event)}
+                disabled={updateConnection.isPending || (!hasConnections && !primaryConnection)}
+                className="mari-chrome-field h-9 min-w-0 flex-1 px-2 py-0 text-[0.6875rem]"
+                aria-label={`Default connection for ${title}`}
+              >
+                <option value="">{hasConnections ? primaryEmptyLabel : "No compatible connections"}</option>
+                {connections
+                  .filter((connection) => connection.id !== fallbackConnection?.id)
+                  .map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {formatDefaultConnectionOption(connection, fallbackModelLabel)}
+                    </option>
+                  ))}
+              </select>
+              {primaryConnection && (
+                <button
+                  type="button"
+                  onClick={() => openFreshConnectionDetail(primaryConnection.id)}
+                  className="mari-chrome-control h-9 min-h-9 w-9 shrink-0 p-0"
+                  title={`Open default connection for ${title}`}
+                  aria-label={`Open default connection for ${title}`}
+                >
+                  <Settings2 size="0.75rem" />
+                </button>
+              )}
+            </div>
+          </label>
+          <label className="min-w-0">
+            <span className="mb-1 block text-[0.625rem] font-medium text-[var(--muted-foreground)]">Fallback</span>
+            <div className="flex items-center gap-1">
+              <select
+                value={fallbackConnection?.id ?? ""}
+                onChange={(event) => handleRoleChange(fallbackField, fallbackConnection, event)}
+                disabled={updateConnection.isPending || (!hasConnections && !fallbackConnection)}
+                className="mari-chrome-field h-9 min-w-0 flex-1 px-2 py-0 text-[0.6875rem]"
+                aria-label={`Fallback connection for ${title}`}
+              >
+                <option value="">None</option>
+                {connections
+                  .filter((connection) => connection.id !== primaryConnection?.id)
+                  .map((connection) => (
+                    <option key={connection.id} value={connection.id}>
+                      {formatDefaultConnectionOption(connection, fallbackModelLabel)}
+                    </option>
+                  ))}
+              </select>
+              {fallbackConnection && (
+                <button
+                  type="button"
+                  onClick={() => openFreshConnectionDetail(fallbackConnection.id)}
+                  className="mari-chrome-control h-9 min-h-9 w-9 shrink-0 p-0"
+                  title={`Open fallback connection for ${title}`}
+                  aria-label={`Open fallback connection for ${title}`}
+                >
+                  <Settings2 size="0.75rem" />
+                </button>
+              )}
+            </div>
+          </label>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Default for Agents</div>
-          <select
-            value={defaultConnection?.id ?? ""}
-            onChange={handleDefaultChange}
-            disabled={updateConnection.isPending || (!hasConnections && !defaultConnection)}
-            className="mt-1 w-full rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.75rem] text-[var(--foreground)] ring-1 ring-[var(--border)] transition focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label="Default agent connection"
-          >
-            <option value="">{hasConnections ? "No default agent connection" : "No text connections available"}</option>
-            {agentConnections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {formatDefaultConnectionOption(connection, "No model set")}
-              </option>
-            ))}
-          </select>
-        </div>
-        {defaultConnection && (
-          <button
-            type="button"
-            onClick={() => openFreshConnectionDetail(defaultConnection.id)}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
-            title="Open default agent connection"
-          >
-            <Settings2 size="0.8125rem" />
-          </button>
-        )}
       </div>
     </div>
   );
 }
 
-function DefaultIllustratorConnectionCard({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
-  const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
-  const updateConnection = useUpdateConnection();
-  const qc = useQueryClient();
-  const illustratorConnections = useMemo(
-    () => connectionsList.filter((conn) => conn.provider === "image_generation"),
+function ConnectionDefaultsSection({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
+  const [open, setOpen] = useState(false);
+  const languageConnections = useMemo(
+    () =>
+      connectionsList.filter(
+        (connection) => connection.provider !== "image_generation" && connection.provider !== "video_generation",
+      ),
     [connectionsList],
   );
-  const defaultConnection =
-    illustratorConnections.find(
-      (conn) =>
-        conn.provider === "image_generation" && (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
-    ) ?? null;
-  const hasConnections = illustratorConnections.length > 0;
-
-  const handleDefaultChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const nextConnectionId = event.target.value;
-    if (nextConnectionId === defaultConnection?.id) return;
-    if (!nextConnectionId) {
-      if (defaultConnection) {
-        updateConnection.mutate({ id: defaultConnection.id, defaultForAgents: false });
-      }
-      return;
-    }
-    updateConnection.mutate({ id: nextConnectionId, defaultForAgents: true });
-  };
-  const openFreshConnectionDetail = (id: string) => {
-    qc.removeQueries({ queryKey: connectionKeys.detail(id) });
-    openConnectionDetail(id);
-  };
-
-  return (
-    <div className="rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3">
-      <div className="flex items-center gap-2.5 max-sm:items-start">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
-          <ImageIcon size="1rem" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Default for Illustrator</div>
-          <select
-            value={defaultConnection?.id ?? ""}
-            onChange={handleDefaultChange}
-            disabled={updateConnection.isPending || (!hasConnections && !defaultConnection)}
-            className="mt-1 w-full rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.75rem] text-[var(--foreground)] ring-1 ring-[var(--border)] transition focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label="Default Illustrator connection"
-          >
-            <option value="">
-              {hasConnections ? "No default Illustrator connection" : "No image connections available"}
-            </option>
-            {illustratorConnections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {formatDefaultConnectionOption(connection, "Image generation")}
-              </option>
-            ))}
-          </select>
-        </div>
-        {defaultConnection && (
-          <button
-            type="button"
-            onClick={() => openFreshConnectionDetail(defaultConnection.id)}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
-            title="Open default Illustrator connection"
-          >
-            <Settings2 size="0.8125rem" />
-          </button>
-        )}
-      </div>
-    </div>
+  const imageConnections = useMemo(
+    () => connectionsList.filter((connection) => connection.provider === "image_generation"),
+    [connectionsList],
   );
-}
-
-function DefaultVideoConnectionCard({ connectionsList }: { connectionsList: ConnectionRowData[] }) {
-  const openConnectionDetail = useUIStore((s) => s.openConnectionDetail);
-  const updateConnection = useUpdateConnection();
-  const qc = useQueryClient();
   const videoConnections = useMemo(
-    () => connectionsList.filter((conn) => conn.provider === "video_generation"),
+    () => connectionsList.filter((connection) => connection.provider === "video_generation"),
     [connectionsList],
   );
-  const defaultConnection =
-    videoConnections.find(
-      (conn) =>
-        conn.provider === "video_generation" && (conn.defaultForAgents === true || conn.defaultForAgents === "true"),
-    ) ?? null;
-  const hasConnections = videoConnections.length > 0;
-
-  const handleDefaultChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const nextConnectionId = event.target.value;
-    if (nextConnectionId === defaultConnection?.id) return;
-    if (!nextConnectionId) {
-      if (defaultConnection) {
-        updateConnection.mutate({ id: defaultConnection.id, defaultForAgents: false });
-      }
-      return;
-    }
-    updateConnection.mutate({ id: nextConnectionId, defaultForAgents: true });
-  };
-  const openFreshConnectionDetail = (id: string) => {
-    qc.removeQueries({ queryKey: connectionKeys.detail(id) });
-    openConnectionDetail(id);
-  };
 
   return (
-    <div className="rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3">
-      <div className="flex items-center gap-2.5 max-sm:items-start">
+    <section
+      className={cn(
+        "overflow-hidden rounded-xl border border-sky-400/20 bg-gradient-to-br from-sky-400/5 to-blue-500/5 p-3 transition-all",
+        open && "border-sky-400/30",
+      )}
+    >
+      <div className="flex items-center gap-2.5">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 text-white shadow-sm">
-          <Film size="1rem" />
+          <Settings2 size="1rem" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Default for Videos</div>
-          <select
-            value={defaultConnection?.id ?? ""}
-            onChange={handleDefaultChange}
-            disabled={updateConnection.isPending || (!hasConnections && !defaultConnection)}
-            className="mt-1 w-full rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.75rem] text-[var(--foreground)] ring-1 ring-[var(--border)] transition focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label="Default video connection"
-          >
-            <option value="">
-              {hasConnections ? "No default video connection" : "No video connections available"}
-            </option>
-            {videoConnections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {formatDefaultConnectionOption(connection, "Video generation")}
-              </option>
-            ))}
-          </select>
+          <div className="text-sm font-medium text-[var(--foreground)]">Defaults</div>
+          <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
+            Main, Agents, Images, and Videos defaults and fallbacks
+          </div>
         </div>
-        {defaultConnection && (
-          <button
-            type="button"
-            onClick={() => openFreshConnectionDetail(defaultConnection.id)}
-            className="mari-chrome-control mari-chrome-control--small p-1.5"
-            title="Open default video connection"
-          >
-            <Settings2 size="0.8125rem" />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          className="mari-chrome-control mari-chrome-control--small h-8 min-h-0 w-8 p-0"
+          title={open ? "Collapse" : "Expand"}
+          aria-label={open ? "Collapse connection defaults" : "Expand connection defaults"}
+          aria-expanded={open}
+          aria-controls="connection-defaults-content"
+        >
+          {open ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
+        </button>
       </div>
-    </div>
+      <SmoothFolderContent open={open}>
+        <div id="connection-defaults-content" className="mt-3 divide-y divide-sky-400/10 border-t border-sky-400/10">
+          <ConnectionDefaultPair
+            title="Main"
+            icon={<MessageSquareText size="0.875rem" />}
+            connections={languageConnections}
+            primaryField="isDefault"
+            fallbackField="fallbackForMain"
+            primaryEmptyLabel="No default main connection"
+            fallbackModelLabel="No model set"
+          />
+          <ConnectionDefaultPair
+            title="Agents"
+            icon={<Sparkles size="0.875rem" />}
+            connections={languageConnections}
+            primaryField="defaultForAgents"
+            fallbackField="fallbackForAgents"
+            primaryEmptyLabel="Use the active chat connection"
+            fallbackModelLabel="No model set"
+          />
+          <ConnectionDefaultPair
+            title="Images"
+            icon={<ImageIcon size="0.875rem" />}
+            connections={imageConnections}
+            primaryField="defaultForAgents"
+            fallbackField="fallbackForAgents"
+            primaryEmptyLabel="No default image connection"
+            fallbackModelLabel="Image generation"
+          />
+          <ConnectionDefaultPair
+            title="Videos"
+            icon={<Film size="0.875rem" />}
+            connections={videoConnections}
+            primaryField="defaultForAgents"
+            fallbackField="fallbackForAgents"
+            primaryEmptyLabel="No default video connection"
+            fallbackModelLabel="Video generation"
+          />
+        </div>
+      </SmoothFolderContent>
+    </section>
   );
 }
 
@@ -1245,10 +1282,7 @@ export function ConnectionsPanel() {
     return connectionsList.filter((connection) => connectionMatchesSearch(connection, query));
   }, [connectionsList, search]);
   const sortedConnections = useMemo(() => sortConnections(filteredConnections, sort), [filteredConnections, sort]);
-  const sortedConnectionsForReorder = useMemo(
-    () => sortConnections(connectionsList, sort),
-    [connectionsList, sort],
-  );
+  const sortedConnectionsForReorder = useMemo(() => sortConnections(connectionsList, sort), [connectionsList, sort]);
   const searchActive = search.trim().length > 0;
 
   // Sorted folder list + local order for optimistic drag-to-reorder
@@ -1707,15 +1741,13 @@ export function ConnectionsPanel() {
         )}
       </div>
 
+      <ConnectionDefaultsSection connectionsList={connectionsList} />
+
       {/* ── Local Model (Sidecar) ── */}
       {import.meta.env.VITE_MARINARA_LITE !== "true" && <SidecarCard />}
 
       {/* ── Text to Speech ── */}
       <TTSConfigCard />
-
-      <DefaultAgentConnectionCard connectionsList={connectionsList} />
-      <DefaultIllustratorConnectionCard connectionsList={connectionsList} />
-      <DefaultVideoConnectionCard connectionsList={connectionsList} />
 
       {isLoading && (
         <div className="flex flex-col gap-2 py-2">

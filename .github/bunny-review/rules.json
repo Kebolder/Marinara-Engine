@@ -37,7 +37,7 @@
         "docs/development/architecture-map.md"
       ],
       "checks": [
-        "packages/shared stays runtime-agnostic: no React, DOM, Fastify, Drizzle, filesystem, network, or provider SDK imports. It holds only shared types, schemas, constants, and pure helpers.",
+        "packages/shared stays runtime-agnostic: no React, DOM, Fastify, server-storage, filesystem, network, or provider SDK imports. It holds only shared types, schemas, constants, and pure helpers.",
         "When a contract changes, the shared types/schemas/constants change first, then client and server are updated to match. A shared change without matching consumer updates is a likely break.",
         "Do not move client-only or server-only helpers into shared; keep it the cross-runtime contract, not a dumping ground."
       ]

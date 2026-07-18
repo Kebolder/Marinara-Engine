@@ -1,18 +1,28 @@
 import type { DB } from "../../db/connection.js";
-import { logger } from "../../lib/logger.js";
+import { isDebugAgentsEnabled } from "../../config/runtime-config.js";
+import { logger, logDebugOverride } from "../../lib/logger.js";
 import {
   isNovelAiImageConnection,
   resolveIllustratorCharacterReferences,
 } from "../../routes/generate/illustrator-references.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
+import { persistGeneratedImageToEntityGalleries } from "../image/generated-image-entity-gallery.js";
 import { resolveConnectionImageDefaults } from "../image/image-generation-defaults.js";
 import { generateImage, saveImageToDisk } from "../image/image-generation.js";
 import { loadImageGenerationUserSettings } from "../image/image-generation-settings.js";
-import { createLLMProvider } from "../llm/provider-registry.js";
 import { resolveConversationSelfieSystemPrompt } from "../conversation/selfie-prompt.js";
 import type { CharacterCommand, SelfieCommand } from "../conversation/character-commands.js";
 import { createGalleryStorage } from "../storage/gallery.storage.js";
+import { createCharacterGalleryStorage } from "../storage/character-gallery.storage.js";
+import { createPersonaGalleryStorage } from "../storage/persona-gallery.storage.js";
 import { createPromptOverridesStorage } from "../storage/prompt-overrides.storage.js";
+import {
+  resolveIllustratorPromptRuntime,
+  type IllustratorPromptConnection,
+  type IllustratorPromptConnectionsStore,
+} from "./illustrator-prompt-runtime.js";
+import { resolveImageConnectionFallback } from "./media-connection-fallback.js";
+import { resolveBaseUrl } from "../../routes/generate/generate-route-utils.js";
 
 type CharactersStore = {
   getById(id: string): Promise<{ data: unknown } | null>;
@@ -25,17 +35,8 @@ type ChatsStore = {
   getMessage(id: string): Promise<{ activeSwipeIndex?: number | null } | null>;
 };
 
-type ConnectionsStore = {
-  getWithKey(id: string): Promise<Record<string, any> | null>;
-};
-
-type PromptConnection = {
-  provider: string;
-  apiKey: string;
-  model: string;
-  maxContext?: number | null;
-  openrouterProvider?: string | null;
-  maxTokensOverride?: number | null;
+type ConnectionsStore = IllustratorPromptConnectionsStore & {
+  getFallbackForImageGeneration(): Promise<Record<string, any> | null>;
 };
 
 type PromptCharacter = {
@@ -61,9 +62,9 @@ export async function handleConversationSelfieCommand(args: {
   chatMeta: Record<string, unknown>;
   charInfo: PromptCharacter[];
   persona: PersonaReference;
-  promptConnection: PromptConnection;
-  baseUrl: string;
-  suppressModelParameters: boolean;
+  promptConnection: IllustratorPromptConnection;
+  promptConnectionId: string;
+  debugMode?: boolean;
   serviceTier: "flex" | "priority" | null;
   db: DB;
   chars: CharactersStore;
@@ -108,12 +109,14 @@ export async function handleConversationSelfieCommand(args: {
   return true;
 }
 
-async function generateSelfie(args: Parameters<typeof handleConversationSelfieCommand>[0] & {
-  command: SelfieCommand;
-  imgConnId: string;
-  charData: Record<string, unknown> | null;
-  charName: string;
-}): Promise<void> {
+async function generateSelfie(
+  args: Parameters<typeof handleConversationSelfieCommand>[0] & {
+    command: SelfieCommand;
+    imgConnId: string;
+    charData: Record<string, unknown> | null;
+    charName: string;
+  },
+): Promise<void> {
   const imgConnFull = await args.connections.getWithKey(args.imgConnId);
   if (!imgConnFull) throw new Error("Cannot decrypt image generation connection");
 
@@ -129,24 +132,41 @@ async function generateSelfie(args: Parameters<typeof handleConversationSelfieCo
       : selfieTags.join(", ").trim();
   const selfieNegativePrompt =
     typeof args.chatMeta.selfieNegativePrompt === "string" ? args.chatMeta.selfieNegativePrompt.trim() : "";
-  const selfiePromptTemplate =
-    typeof args.chatMeta.selfiePrompt === "string" ? args.chatMeta.selfiePrompt.trim() : "";
+  const selfiePromptTemplate = typeof args.chatMeta.selfiePrompt === "string" ? args.chatMeta.selfiePrompt.trim() : "";
 
-  const promptBuilder = createLLMProvider(
-    args.promptConnection.provider,
-    args.baseUrl,
-    args.promptConnection.apiKey,
-    args.promptConnection.maxContext,
-    args.promptConnection.openrouterProvider,
-    args.promptConnection.maxTokensOverride,
-  );
+  const reportFallback = (notice: {
+    category: "main" | "agents" | "illustrator" | "video";
+    connectionId: string;
+    connectionName: string;
+    model: string;
+  }) => args.sendEvent({ type: "fallback_used", data: notice });
+  const promptRuntime = await resolveIllustratorPromptRuntime({
+    chatMetadata: args.chatMeta,
+    defaultConnection: args.promptConnection,
+    defaultConnectionId: args.promptConnectionId,
+    connections: args.connections,
+    resolveBaseUrl,
+    onFallback: reportFallback,
+  });
   const selfieSystemPrompt = await resolveConversationSelfieSystemPrompt({
     promptOverridesStorage: createPromptOverridesStorage(args.db),
     chatPromptTemplate: selfiePromptTemplate,
     appearance,
     charName: args.charName,
   });
-  const promptResult = await promptBuilder.chatComplete(
+  const userPrompt = args.command.context
+    ? `Context for the selfie: ${args.command.context}`
+    : `Generate a casual selfie of ${args.charName} based on the current conversation context.`;
+  const debugOverrideEnabled = args.debugMode === true || isDebugAgentsEnabled();
+  if (debugOverrideEnabled || logger.isLevelEnabled("debug")) {
+    logDebugOverride(
+      debugOverrideEnabled,
+      "[debug/commands/selfie] prompt-builder system:\n%s",
+      selfieSystemPrompt,
+    );
+    logDebugOverride(debugOverrideEnabled, "[debug/commands/selfie] prompt-builder user:\n%s", userPrompt);
+  }
+  const promptResult = await promptRuntime.provider.chatComplete(
     [
       {
         role: "system",
@@ -154,15 +174,17 @@ async function generateSelfie(args: Parameters<typeof handleConversationSelfieCo
       },
       {
         role: "user",
-        content: args.command.context
-          ? `Context for the selfie: ${args.command.context}`
-          : `Generate a casual selfie of ${args.charName} based on the current conversation context.`,
+        content: userPrompt,
       },
     ],
     {
-      model: args.promptConnection.model,
-      ...(args.suppressModelParameters ? {} : { temperature: 0.7, maxTokens: 8196, serviceTier: args.serviceTier }),
-      suppressModelParameters: args.suppressModelParameters,
+      model: promptRuntime.model,
+      ...(promptRuntime.suppressModelParameters
+        ? {}
+        : { temperature: 0.7, maxTokens: 8196, serviceTier: args.serviceTier }),
+      suppressModelParameters: promptRuntime.suppressModelParameters,
+      enableCaching: promptRuntime.enableCaching,
+      anthropicExtendedCacheTtl: promptRuntime.anthropicExtendedCacheTtl,
     },
   );
 
@@ -225,6 +247,7 @@ async function generateSelfie(args: Parameters<typeof handleConversationSelfieCo
   const selfieRes = typeof args.chatMeta.selfieResolution === "string" ? args.chatMeta.selfieResolution : "";
   const [selfieW, selfieH] = selfieRes.split("x").map(Number) as [number, number];
   const serviceHint = imgConnFull.imageService || "";
+  const imageFallback = await resolveImageConnectionFallback(args.connections, imgConnFull.id);
   const compiledSelfiePrompt = compileImagePrompt({
     kind: "selfie",
     prompt: finalSelfiePrompt,
@@ -243,15 +266,31 @@ async function generateSelfie(args: Parameters<typeof handleConversationSelfieCo
     comfyWorkflow: imgConnFull.comfyuiWorkflow || undefined,
     imageDefaults,
     referenceImages: selfieReferenceImages,
+    fallback: imageFallback,
+    onFallback: reportFallback,
   });
 
   const filePath = saveImageToDisk(args.chatId, imageResult.base64, imageResult.ext);
+  const effectiveImageProvider =
+    imageResult.effectiveConnection?.provider ?? imgConnFull.provider ?? "image_generation";
+  const effectiveImageModel = imageResult.effectiveConnection?.model || imgModel || "unknown";
   const galleryEntry = await galleryStore.create({
     chatId: args.chatId,
     filePath,
     prompt: compiledSelfiePrompt.prompt,
-    provider: imgConnFull.provider ?? "image_generation",
-    model: imgModel || "unknown",
+    provider: effectiveImageProvider,
+    model: effectiveImageModel,
+    width: selfieW || imageSettings.selfie.width,
+    height: selfieH || imageSettings.selfie.height,
+  });
+  await persistGeneratedImageToEntityGalleries({
+    sourceFilePath: filePath,
+    characterIds: args.characterId ? [args.characterId] : [],
+    characterGallery: createCharacterGalleryStorage(args.db),
+    personaGallery: createPersonaGalleryStorage(args.db),
+    prompt: compiledSelfiePrompt.prompt,
+    provider: effectiveImageProvider,
+    model: effectiveImageModel,
     width: selfieW || imageSettings.selfie.width,
     height: selfieH || imageSettings.selfie.height,
   });

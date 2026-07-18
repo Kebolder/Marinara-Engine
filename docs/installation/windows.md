@@ -12,7 +12,7 @@ Marinara Engine runs on your own Windows PC. You need the following:
 
 Both install methods need two tools. The installer can fetch them for you. For the source method you install them yourself:
 
-- **Node.js** version 24 or 25. Node.js runs the app. Version 24 is the LTS release. LTS means Long Term Support, a stable version.
+- **Node.js** version 24, 25, or 26. Node.js runs the app. Version 24 is the recommended LTS release. LTS means Long Term Support, a stable version.
 - **Git**. Git downloads the code and lets the app update itself later.
 
 pnpm is the package manager that installs the app's parts. If you use the installer or the **start.bat** launcher, you do not need to install pnpm yourself. Both fetch the correct pnpm version through Corepack, a pnpm helper included with Node.js, or through a temporary download. Only the manual setup without the launcher needs the `pnpm` command on your system. That section includes the install step.
@@ -63,7 +63,7 @@ https://nodejs.org/en/download
 https://git-scm.com/download/win
 ```
 
-3. Open a new Command Prompt window. Check that Node.js is version 24 or 25:
+3. Open a new Command Prompt window. Check that Node.js is version 24, 25, or 26:
 
 ```bat
 node -v
@@ -153,7 +153,7 @@ HOST=0.0.0.0
 
 ## Optional: AI sprite background removal
 
-Marinara Engine has built in background cleanup for character sprites. You can also install a stronger optional tool called `backgroundremover`. It gives cleaner transparent cutouts. It is optional because it downloads large machine learning files.
+Marinara Engine requests native transparency for generated still sprites and has built-in adaptive matte cleanup for flat chroma and older white backgrounds. You can also install an optional tool called `backgroundremover` as a fallback for detailed scenery and other non-flat backgrounds. It is optional because it downloads large machine learning files.
 
 To use it you first need Python. Install Python 3.11 from the official site, then run the install command from the `Marinara-Engine` folder:
 
@@ -186,6 +186,8 @@ Your chats, characters, and settings stay in place when you update. Marinara Eng
 ### Automatic updates with the launcher
 
 When you launch the app with the desktop shortcut or **start.bat** from a Git based copy, the launcher checks for updates first. If a newer version exists, it downloads the changes, reinstalls dependencies, rebuilds the app, and then starts. This works for both installer setups and manual clones.
+
+Run `start.bat --skip-update` to skip one check. To keep the installed Engine version across launches, add `AUTO_UPDATE_ENABLED=false` to `.env`. Manual checks, in-app apply, and manual Git updates remain available.
 
 If you have unsaved local changes to the code, the launcher tries to set them aside safely. It puts them back after updating. If it cannot, it keeps your current version and prints a note.
 
@@ -262,7 +264,7 @@ git checkout -B staging origin/staging
 
 ## If something goes wrong
 
-If the install or launch fails, first make sure Node.js is version 24 or 25 and that Git is installed. If your antivirus blocks the installer or the download, that is a known false alarm as noted above.
+If the install or launch fails, first make sure Node.js is version 24, 25, or 26 and that Git is installed. If your antivirus blocks the installer or the download, that is a known false alarm as noted above.
 
 For more fixes, see the [Troubleshooting Marinara Engine](../TROUBLESHOOTING.md) guide.
 

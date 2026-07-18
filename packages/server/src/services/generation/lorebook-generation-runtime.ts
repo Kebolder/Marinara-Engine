@@ -43,16 +43,18 @@ export function buildLorebookScanMessagesWithGenerationGuide(
     generationGuide?: string | null;
     generationGuideSource?: "narrator" | "guide" | "game_start" | null;
   },
+  resolveContent: (value: string) => string = (value) => value,
 ): LorebookScanMessage[] {
   const guide = input.generationGuide?.trim();
   if (!guide || (input.generationGuideSource !== "narrator" && input.generationGuideSource !== "guide")) {
     return messages;
   }
-  return [...messages, { role: "user", content: guide }];
+  const resolvedGuide = resolveContent(guide).trim();
+  return resolvedGuide ? [...messages, { role: "user", content: resolvedGuide }] : messages;
 }
 
 export function resolveLorebookTokenBudget(meta: Record<string, unknown>): number {
-  const raw = meta.lorebookTokenBudget;
+  const raw = meta.lorebookTokenBudget ?? meta.generationLorebookTokenBudget;
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
     return LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET;
   }

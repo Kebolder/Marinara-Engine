@@ -20,4 +20,8 @@ export interface BuiltInAgentManifest {
   defaultSettings?: Record<string, unknown>;
   promptTemplates?: readonly AgentPromptTemplateOption[];
   runInterval?: number;
+  /** Default prompt supplied by an installed package. Bundled compatibility manifests may omit it. */
+  defaultPromptTemplate?: string;
+  /** Feature entries use the Agents library for installation/activation but do not run through the LLM pipeline. */
+  execution?: "pipeline" | "feature";
 }

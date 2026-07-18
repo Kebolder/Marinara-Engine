@@ -17,6 +17,15 @@ You might edit configuration when you want to:
 
 Almost everything else, like your AI provider keys, characters, and chat options, is set inside the app, not here. To add an AI provider, see [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
 
+Optional first-party agents are also managed inside the app. Open **Agents → Download Agents** to install or uninstall them. Marinara automatically selects the [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog lane matching its Engine major version.
+
+Package lifecycle and storage:
+
+- **Updates:** On every server startup, already-installed official packages automatically upgrade to the newest compatible version before their runtimes activate and self-check. A fresh install remains empty until you choose packages.
+- **Platforms:** The same behavior applies to desktop, Docker, and Termux-hosted Android installations. iOS and other browser clients use the packages installed on their Marinara host server.
+- **Persistence:** Packages live under `DATA_DIR/capability-packages`. Docker volumes, custom data directories, backups, and normal upgrades preserve them.
+- **Offline resilience:** Existing packages continue working at their installed version when outbound GitHub HTTPS is unavailable or an update fails verification.
+
 ## Where the .env file is
 
 Configuration lives in a file named `.env`. This is a plain text file with one setting per line, in the form `KEY=value`. Lines that start with `#` are comments and the server ignores them.
@@ -46,11 +55,11 @@ A small group of low-level settings are locked in when the server starts. Changi
 
 - `PORT`, `HOST`
 - `SSL_CERT`, `SSL_KEY`
-- `DATA_DIR`, `STORAGE_BACKEND`, `FILE_STORAGE_DIR`, `DATABASE_URL`
+- `DATA_DIR`, `FILE_STORAGE_DIR`
 - `ENCRYPTION_KEY`
 - `MARINARA_ENV_FILE`
 - `TZ`
-- `AUTO_OPEN_BROWSER`, `AUTO_CREATE_DEFAULT_CONNECTION`
+- `AUTO_OPEN_BROWSER`, `AUTO_UPDATE_ENABLED`, `AUTO_CREATE_DEFAULT_CONNECTION`
 - `LOG_DISABLE_REQUEST_LOGGING`
 - The image, video, sprite, and ComfyUI timeout and poll settings (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, `VIDEO_GEN_MAX_RESPONSE_BYTES`, `SPRITE_GENERATION_TIMEOUT_MS`, `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS`, `COMFYUI_GEN_TIMEOUT`, and the four `*_VIDEO_POLL_INTERVAL_MS` settings)
 
@@ -66,7 +75,7 @@ A few terms used below:
 - A CIDR range is a short way to write a whole block of IP addresses, like `192.168.1.0/24`. CIDR stands for Classless Inter-Domain Routing.
 - RFC 1918 ranges are the standard private address ranges used inside home and office networks, such as `10.x.x.x` and `192.168.x.x`.
 
-By default, when you set no password, the server accepts connections only from trusted sources. Those are loopback, any address in `IP_ALLOWLIST`, Tailscale, and the Docker bridge. Every other caller, including your normal home network, gets a `403 Forbidden` until you pick one of the options below.
+By default, when you set no password, the server accepts connections only from trusted sources. Those are loopback, any address in `IP_ALLOWLIST`, Tailscale, and same-host Docker bridge/gateway traffic. Every other caller, including your normal home network, gets a `403 Forbidden` until you pick one of the options below.
 
 The main access-control settings are:
 
@@ -81,7 +90,7 @@ The main access-control settings are:
 | `ALLOW_UNAUTHENTICATED_REMOTE` | `false` | Allows passwordless access from any address, including the public internet. Not recommended. |
 | `TRUSTED_PRIVATE_NETWORKS` | built-in defaults | Replaces the default private-network ranges. Include any defaults you still want. |
 | `BYPASS_AUTH_TAILSCALE` | `true` | Lets Tailscale traffic skip the login and allowlist. |
-| `BYPASS_AUTH_DOCKER` | `true` | Lets Docker bridge traffic skip the login and allowlist. |
+| `BYPASS_AUTH_DOCKER` | `true` | Lets Docker bridge traffic and the exact default gateway detected inside Docker skip the login and allowlist. |
 | `REQUIRE_AUTH_FOR_DOCKER_PROXY` | `false` | Forces normal login for Docker traffic that looks reverse-proxied. |
 | `SSL_CERT` | empty | Path to a TLS certificate file. Set with `SSL_KEY` to serve HTTPS directly. |
 | `SSL_KEY` | empty | Path to the TLS private key file. |
@@ -98,12 +107,10 @@ Storage settings control where your local data lives. Your data includes chats, 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `DATA_DIR` | `packages/server/data` | Root folder for all user data. Docker images set `/app/data`. |
-| `STORAGE_BACKEND` | `files` | Storage engine. `files` stores data as files under `DATA_DIR/storage`. Use `sqlite` for the legacy database. |
 | `FILE_STORAGE_DIR` | the `storage` folder inside `DATA_DIR` | Overrides the file-storage folder. |
-| `DATABASE_URL` | `file:./data/marinara-engine.db` | Legacy SQLite source path. Used only to import old data on first run. |
 | `ENCRYPTION_KEY` | empty | Key used to encrypt saved API keys. Generate one with the command below. |
 
-The default `files` backend keeps your data as plain files. This makes backups easy to copy and inspect. You do not need to change `STORAGE_BACKEND` unless you are migrating an older SQLite install.
+Marinara keeps your data as plain JSON files. This makes backups easy to copy and inspect.
 
 To generate an encryption key, run this command and paste the result into `ENCRYPTION_KEY`:
 
@@ -150,6 +157,7 @@ A timeout is the longest time the server waits for a slow job before giving up. 
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `CHAT_GENERATION_TIMEOUT_MS` | `300000` (5 minutes) | Provider headers/time-to-first-token and inter-chunk timeout for ordinary Conversation, Roleplay, and Game generations. Valid range: `10000`-`3600000`. It does not change Agent, media, embedding, tool, or background-job timeouts. |
 | `EMBEDDING_TIMEOUT_MS` | `300000` (5 minutes) | Time allowed for one embedding request. Higher helps slow local embedding servers. |
 | `IMAGE_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one image generation request. |
 | `VIDEO_GEN_TIMEOUT_MS` | `1800000` (30 minutes) | Time allowed for one scene video generation request. |
@@ -159,7 +167,7 @@ A timeout is the longest time the server waits for a slow job before giving up. 
 | `CUSTOM_TOOL_TIMEOUT_MS` | `60000` (1 minute) | Time allowed for one custom tool call. |
 | `MAX_TOOL_ROUNDS` | `100` | Most tool-call rounds before the model must give a final answer. |
 
-The image, video, sprite, and ComfyUI timeouts are locked in at startup, so a change to them needs a restart. The embedding and custom-tool timeouts take effect on the next request, with no restart. Raise a media timeout when large or high-quality jobs fail partway through. To learn more about video jobs, see [Scene Video](media/scene-video.md).
+The image, video, sprite, and ComfyUI timeouts are locked in at startup, so a change to them needs a restart. Chat-generation, embedding, and custom-tool timeouts take effect on the next request, with no restart. Invalid, zero, negative, or out-of-range chat timeout values log a warning and safely use the five-minute default. Raise a media timeout when large or high-quality jobs fail partway through. To learn more about video jobs, see [Scene Video](media/scene-video.md).
 
 ## Privileged APIs (ADMIN_SECRET)
 
@@ -215,12 +223,15 @@ This section lists the remaining settings, grouped by purpose. The tables above 
 | `PORT` | `7860` | The port the server listens on. Keep Android, Docker, and Termux on the same value. |
 | `HOST` | `127.0.0.1` (`0.0.0.0` in the shell launchers) | The network interface to bind. Use `0.0.0.0` for LAN access. |
 | `AUTO_OPEN_BROWSER` | `true` | Whether the shell launchers open the app URL for you. Set `false` to stop this. |
+| `AUTO_UPDATE_ENABLED` | `true` | Whether Git-based Windows, macOS/Linux, and Termux launchers fetch and apply Engine updates before startup. Set `false` for a persistent opt-out; this takes effect on the next launch and does not disable manual update checks, in-app apply, package updates, or model updates. |
 | `MARINARA_ENV_FILE` | project-root `.env` | Optional path override for the `.env` file. Set it before startup. |
-| `TZ` | system default | IANA timezone used by time-based features like character schedules. |
+| `TZ` | system default | Host fallback timezone for server-side jobs. Conversation schedules use the global timezone selected in their schedule controls when one has been saved. Leave `TZ` unset to inherit the host timezone; an empty `TZ=` is also treated as unset. |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Browser origins allowed to make cross-origin requests. |
 | `AUTO_CREATE_DEFAULT_CONNECTION` | `true` | Legacy flag. Current builds bundle no starter key, so this creates nothing. Add your own connection in the app. |
 
 `AUTO_CREATE_DEFAULT_CONNECTION` is kept only for older installs. New builds no longer ship a bundled starter connection, so leaving it on does nothing. To start chatting, add a connection under [Connecting to an AI Provider](connections/connecting-to-a-provider.md).
+
+Conversation schedule controls default to the timezone reported by the browser or app device. **Schedule timezone** can be changed during Conversation setup, in Conversation Chat Settings, or in the character schedule editor. The selected IANA timezone is one global preference shared by every Conversation chat and synced to other Marinara clients connected to the same server.
 
 ### Media and sprite tools
 
@@ -228,7 +239,7 @@ This section lists the remaining settings, grouped by purpose. The tables above 
 | --- | --- | --- |
 | `FFMPEG_PATH` | empty | Path to an `ffmpeg` program. Used for animated expression GIFs. Falls back to `ffmpeg` on your PATH. |
 | `SPRITE_ANIMATED_FFMPEG_TIMEOUT_MS` | `180000` (3 minutes) | Time allowed to convert one animated expression clip. |
-| `SPRITE_BACKGROUND_REMOVAL_ENGINE` | `auto` | Sprite cleanup engine. `auto`, `builtin`, or `backgroundremover`. |
+| `SPRITE_BACKGROUND_REMOVAL_ENGINE` | `auto` | Sprite cleanup engine. `auto` tries adaptive matte cleanup before the optional AI fallback; `builtin` keeps only the matte path; `backgroundremover` forces the AI tool. |
 | `BACKGROUNDREMOVER_AUTO_INSTALL` | `false` | When `true`, installs the optional AI background remover on launch. |
 | `BACKGROUNDREMOVER_COMMAND` | empty | Path to a system `backgroundremover` program. |
 | `BACKGROUNDREMOVER_PYTHON` | empty | Path to a Python program where `backgroundremover` is installed. |

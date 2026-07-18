@@ -75,4 +75,4 @@ When stats are enabled, they appear in the HUD widget during a chat. HUD means h
 - [Creating and Editing Characters](creating-and-editing-characters.md)
 - [User Personas: Creating and Editing](personas.md)
 - [HUD and Trackers](../roleplay/hud-and-trackers.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)

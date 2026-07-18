@@ -25,8 +25,14 @@ import {
 } from "@marinara-engine/shared";
 import { isImageLocalUrlsEnabled } from "../../config/runtime-config.js";
 import { generateRunPodComfyUI } from "./runpod-comfyui.service.js";
-import { logger } from "../../lib/logger.js";
+import { logger, logDebugOverride } from "../../lib/logger.js";
 import { assertInsideDir, normalizeLoopbackUrl, safeFetch, validateOutboundUrl } from "../../utils/security.js";
+import { notifyGenerationFallback, type GenerationFallbackNotifier } from "../generation/fallback-notification.js";
+import {
+  buildVeniceApiUrl,
+  buildVeniceImageRequest,
+  parseVeniceImageResponse,
+} from "./venice-image.js";
 
 // sharp is an optional native module (no prebuilds on some platforms like Termux).
 // Lazy-load so the server boots even when sharp is missing. The Draw Things img2img
@@ -100,6 +106,24 @@ export interface ImageGenRequest {
   transparentBackground?: boolean;
   /** Optional caller-owned abort signal for cancelling long image requests. */
   signal?: AbortSignal;
+  /** Emit the final provider request even when the global log level is above debug. */
+  debugMode?: boolean;
+  /** Called immediately before a configured fallback connection is attempted. */
+  onFallback?: GenerationFallbackNotifier;
+  /** Optional one-shot backup connection used only when the primary image request fails. */
+  fallback?: {
+    connectionId: string;
+    connectionName: string;
+    provider: string;
+    source: string;
+    baseUrl: string;
+    apiKey: string;
+    serviceHint: string;
+    model: string;
+    imageEndpointId?: string;
+    comfyWorkflow?: string;
+    imageDefaults?: ImageGenerationDefaultsProfile | null;
+  };
 }
 
 export interface ImageGenResult {
@@ -109,6 +133,13 @@ export interface ImageGenResult {
   mimeType: string;
   /** File extension without dot */
   ext: string;
+  /** Present when a configured fallback connection produced the image. */
+  effectiveConnection?: {
+    connectionId: string;
+    connectionName: string;
+    provider: string;
+    model: string;
+  };
 }
 
 const EXPLICIT_IMAGE_SOURCES = new Set([
@@ -121,6 +152,7 @@ const EXPLICIT_IMAGE_SOURCES = new Set([
   "novelai",
   "horde",
   "xai",
+  "venice",
   "comfyui",
   "automatic1111",
   "runpod_comfyui",
@@ -171,54 +203,95 @@ export async function generateImage(
       ? Math.max(IMAGE_GEN_TIMEOUT, COMFYUI_GEN_TIMEOUT_SECONDS * 1000)
       : IMAGE_GEN_TIMEOUT;
 
-  return withImageGenerationDeadline(request, generationTimeoutMs, async (signal) => {
-    const scopedRequest = {
-      ...request,
-      signal,
-      allowLocalUrls:
-        request.allowLocalUrls ?? (await shouldAllowLocalUrlsForImageConnection(normalizedBaseUrl, resolvedSource)),
-    };
+  try {
+    return await withImageGenerationDeadline(request, generationTimeoutMs, async (signal) => {
+      const scopedRequest = {
+        ...request,
+        fallback: undefined,
+        signal,
+        allowLocalUrls:
+          request.allowLocalUrls ?? (await shouldAllowLocalUrlsForImageConnection(normalizedBaseUrl, resolvedSource)),
+      };
 
-    switch (resolvedSource) {
-      case "openai":
-        return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "nanogpt":
-        return generateNanoGPT(normalizedBaseUrl, apiKey, scopedRequest);
-      case "openrouter":
-        return generateOpenRouter(normalizedBaseUrl, apiKey, scopedRequest);
-      case "pollinations":
-        return generatePollinations(scopedRequest);
-      case "stability":
-        return generateStability(normalizedBaseUrl, apiKey, scopedRequest);
-      case "togetherai":
-        return generateTogetherAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "novelai":
-        return generateNovelAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "horde":
-        return generateHorde(normalizedBaseUrl, apiKey, scopedRequest);
-      case "xai":
-        return generateXAI(normalizedBaseUrl, apiKey, scopedRequest);
-      case "comfyui":
-        return generateComfyUI(normalizedBaseUrl, scopedRequest);
-      case "runpod_comfyui": {
-        const endpointId = scopedRequest.imageEndpointId || "";
-        if (!endpointId) {
-          throw new Error(
-            "RunPod ComfyUI requires an endpoint ID. " +
-              "Enter your RunPod endpoint ID in the Endpoint ID field (e.g. 'abc123def456').",
-          );
+      switch (resolvedSource) {
+        case "openai":
+          return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "nanogpt":
+          return generateNanoGPT(normalizedBaseUrl, apiKey, scopedRequest);
+        case "openrouter":
+          return generateOpenRouter(normalizedBaseUrl, apiKey, scopedRequest);
+        case "pollinations":
+          return generatePollinations(scopedRequest);
+        case "stability":
+          return generateStability(normalizedBaseUrl, apiKey, scopedRequest);
+        case "togetherai":
+          return generateTogetherAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "novelai":
+          return generateNovelAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "horde":
+          return generateHorde(normalizedBaseUrl, apiKey, scopedRequest);
+        case "xai":
+          return generateXAI(normalizedBaseUrl, apiKey, scopedRequest);
+        case "venice":
+          return generateVenice(normalizedBaseUrl, apiKey, scopedRequest);
+        case "comfyui":
+          return generateComfyUI(normalizedBaseUrl, scopedRequest);
+        case "runpod_comfyui": {
+          const endpointId = scopedRequest.imageEndpointId || "";
+          if (!endpointId) {
+            throw new Error(
+              "RunPod ComfyUI requires an endpoint ID. " +
+                "Enter your RunPod endpoint ID in the Endpoint ID field (e.g. 'abc123def456').",
+            );
+          }
+          return generateRunPodComfyUI(normalizedBaseUrl, endpointId, apiKey, scopedRequest);
         }
-        return generateRunPodComfyUI(normalizedBaseUrl, endpointId, apiKey, scopedRequest);
+        case "automatic1111":
+          return generateAutomatic1111(normalizedBaseUrl, scopedRequest, serviceHint);
+        case "gemini_image":
+          return generateViaChatCompletions(normalizedBaseUrl, apiKey, scopedRequest);
+        default:
+          return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
       }
-      case "automatic1111":
-        return generateAutomatic1111(normalizedBaseUrl, scopedRequest, serviceHint);
-      case "gemini_image":
-        return generateViaChatCompletions(normalizedBaseUrl, apiKey, scopedRequest);
-      default:
-        // Fallback: try OpenAI-compatible endpoint
-        return generateOpenAI(normalizedBaseUrl, apiKey, scopedRequest);
+    });
+  } catch (error) {
+    const fallback = request.fallback;
+    if (!fallback || request.signal?.aborted) throw error;
+    logger.warn(
+      error,
+      "[illustrator-fallback] Primary image generation failed; retrying with connection %s (%s)",
+      fallback.connectionId,
+      fallback.model,
+    );
+    try {
+      await (request.onFallback ?? notifyGenerationFallback)({
+        category: "illustrator",
+        connectionId: fallback.connectionId,
+        connectionName: fallback.connectionName,
+        model: fallback.model,
+      });
+    } catch (noticeError) {
+      logger.warn(noticeError, "[illustrator-fallback] Failed to report fallback activation");
     }
-  });
+    const result = await generateImage(fallback.source, fallback.baseUrl, fallback.apiKey, fallback.serviceHint, {
+      ...request,
+      fallback: undefined,
+      model: fallback.model,
+      imageEndpointId: fallback.imageEndpointId,
+      comfyWorkflow: fallback.comfyWorkflow,
+      imageDefaults: fallback.imageDefaults,
+      allowLocalUrls: undefined,
+    });
+    return {
+      ...result,
+      effectiveConnection: {
+        connectionId: fallback.connectionId,
+        connectionName: fallback.connectionName,
+        provider: fallback.provider,
+        model: fallback.model,
+      },
+    };
+  }
 }
 
 /**
@@ -863,6 +936,41 @@ async function generateXAI(baseUrl: string, apiKey: string, request: ImageGenReq
   throw new Error("No image data in xAI response");
 }
 
+async function generateVenice(baseUrl: string, apiKey: string, request: ImageGenRequest): Promise<ImageGenResult> {
+  const body = buildVeniceImageRequest(request);
+  logDebugOverride(
+    request.debugMode === true,
+    "[debug/image/venice] final request payload:\n%s",
+    JSON.stringify(body, null, 2),
+  );
+  const resp = await imageFetch(
+    buildVeniceApiUrl(baseUrl, "image/generate"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: imageRequestSignal(request),
+    },
+    { allowLocal: request.allowLocalUrls },
+  );
+
+  const responseText = await resp.text();
+  if (!resp.ok) {
+    throw new Error(`Venice image generation failed (${resp.status}): ${sanitizeErrorText(responseText)}`);
+  }
+
+  let response: unknown;
+  try {
+    response = JSON.parse(responseText);
+  } catch {
+    throw new Error("Venice image generation returned invalid JSON");
+  }
+  return parseVeniceImageResponse(response);
+}
+
 async function generateNanoGPT(baseUrl: string, apiKey: string, request: ImageGenRequest): Promise<ImageGenResult> {
   const url = nanoGPTImagesUrl(baseUrl);
   const size = isOpenAIGptImageModel(request.model)
@@ -1312,7 +1420,32 @@ function clampNovelAiDimension(value: number): number {
   return Math.max(NOVELAI_MIN_DIMENSION, Math.min(NOVELAI_MAX_DIMENSION, rounded));
 }
 
-function resolveNovelAiSize(request: ImageGenRequest): { width: number; height: number } {
+export function detectNovelAiSubjectCount(prompt: string): number | null {
+  const [baseFragment = ""] = prompt.split("|", 1);
+  const subjectTokens = baseFragment.matchAll(/\b(\d+)\s*(?:girls?|boys?|others?)\b/gi);
+  let tokenCount = 0;
+  for (const match of subjectTokens) tokenCount += Number.parseInt(match[1] ?? "0", 10);
+  if (tokenCount > 0) return tokenCount;
+
+  const pipeSegments = prompt
+    .split("|")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return pipeSegments.length > 1 ? pipeSegments.length - 1 : null;
+}
+
+export function resolveNovelAiSize(
+  request: ImageGenRequest,
+  prompt = request.prompt,
+  defaults: NovelAiDefaults = resolveNovelAiDefaults(request),
+): { width: number; height: number } {
+  if (defaults.dynamicResolutionBySubjectCount) {
+    const subjectCount = detectNovelAiSubjectCount(prompt);
+    if (subjectCount === 1) return { width: 832, height: 1216 };
+    if (subjectCount === 2) return { width: 1024, height: 1024 };
+    if (subjectCount !== null && subjectCount >= 3) return { width: 1216, height: 832 };
+  }
+
   let width = clampNovelAiDimension(request.width ?? 832);
   let height = clampNovelAiDimension(request.height ?? 1216);
   const pixels = width * height;
@@ -1562,20 +1695,29 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   const model = request.model || "nai-diffusion-4-5-full";
   const isV4 = isNovelAiV4Model(model);
   const defaults = resolveNovelAiDefaults(request);
-  const prompt = prepareNovelAiPrompt(mergePromptPrefix(defaults.promptPrefix, request.prompt), "prompt", model);
+  const mergedPrompt = mergePromptPrefix(defaults.promptPrefix, request.prompt);
+  const prompt = prepareNovelAiPrompt(mergedPrompt, "prompt", model);
   const negativePrompt = prepareNovelAiPrompt(
     mergeNegativePrompt(defaults.negativePromptPrefix, request.negativePrompt),
     "negative prompt",
     model,
   );
   const seed = resolveSeed(request.imageDefaults);
-  const referenceImages = collectNovelAiReferenceImages(request);
+  const styleReferenceImage = isNovelAiPreciseReferenceModel(model) && defaults.styleReferenceImage
+    ? collectNovelAiReferenceImages({ ...request, referenceImage: defaults.styleReferenceImage, referenceImages: [] })[0]
+    : undefined;
+  const characterReferenceImages = collectNovelAiReferenceImages(request)
+    .filter((reference) => reference !== styleReferenceImage)
+    .slice(0, styleReferenceImage ? 15 : 16);
+  const referenceImages = styleReferenceImage
+    ? [styleReferenceImage, ...characterReferenceImages]
+    : characterReferenceImages;
   if (referenceImages.length > 0 && !isNovelAiPreciseReferenceModel(model)) {
     throw new Error("NovelAI precise reference images require a V4.5 model such as nai-diffusion-4-5-full.");
   }
   const directorReferenceImages = await prepareNovelAiDirectorReferenceImages(referenceImages);
   const characterPromptPayload = buildNovelAiV4CharacterPromptPayload(request.characterPrompts, model);
-  const size = resolveNovelAiSize(request);
+  const size = resolveNovelAiSize(request, mergedPrompt, defaults);
 
   const parameters: Record<string, unknown> = {
     width: size.width,
@@ -1614,14 +1756,19 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
     parameters.reference_strength_multiple = [];
   }
   if (directorReferenceImages.length > 0) {
+    const styleReferenceOffset = styleReferenceImage ? 1 : 0;
     parameters.director_reference_images = directorReferenceImages;
-    parameters.director_reference_descriptions = directorReferenceImages.map(() => ({
-      caption: { base_caption: "character&style", char_captions: [] },
+    parameters.director_reference_descriptions = directorReferenceImages.map((_, index) => ({
+      caption: { base_caption: index < styleReferenceOffset ? "style" : "character&style", char_captions: [] },
       legacy_uc: false,
     }));
     parameters.director_reference_information_extracted = directorReferenceImages.map(() => 1);
-    parameters.director_reference_strength_values = directorReferenceImages.map(() => 1);
-    parameters.director_reference_secondary_strength_values = directorReferenceImages.map(() => 0);
+    parameters.director_reference_strength_values = directorReferenceImages.map((_, index) =>
+      index < styleReferenceOffset ? defaults.styleReferenceStrength : 1,
+    );
+    parameters.director_reference_secondary_strength_values = directorReferenceImages.map((_, index) =>
+      index < styleReferenceOffset ? defaults.styleReferenceFidelity : 0,
+    );
   }
 
   const body: Record<string, unknown> = {

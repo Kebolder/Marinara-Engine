@@ -21,7 +21,7 @@ import { processLorebooks, type LorebookFinalContentResolver, type LorebookScanR
 import { wrapContent } from "./format-engine.js";
 import { sanitizeExampleDialoguePromptLeaf, sanitizePromptLeaf } from "./prompt-escaping.js";
 import { agentRuns } from "../../db/schema/index.js";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc } from "../../db/file-query.js";
 
 /** Context required for expanding markers. */
 export interface MarkerContext {
@@ -53,6 +53,8 @@ export interface MarkerContext {
   activeAgentIds: string[];
   /** Per-chat list of manually activated lorebook IDs from chat settings */
   activeLorebookIds: string[];
+  /** Entries attached to the exact current hierarchical location. */
+  forcedLorebookEntryIds?: string[];
   /** Lorebook IDs that should be excluded even if otherwise scoped to the chat. */
   excludedLorebookIds?: string[];
   /** Source agent IDs whose generated lorebooks should be excluded from scanning. */
@@ -63,6 +65,8 @@ export interface MarkerContext {
   chatEmbedding?: number[] | null;
   /** Per-lorebook pre-computed embeddings for semantic lorebook matching. */
   semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
+  /** Unrelated-text cosine floor used to calibrate clustered embedding models. */
+  semanticSimilarityBaseline?: number;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   /** Per-chat sticky/cooldown/delay timing state for lorebook entries. */
@@ -325,11 +329,13 @@ async function expandLorebook(config: MarkerConfig, ctx: MarkerContext): Promise
         characterIds: ctx.characterIds,
         personaId: ctx.personaId ?? null,
         activeLorebookIds: ctx.activeLorebookIds,
+        forcedEntryIds: ctx.forcedLorebookEntryIds,
         excludedLorebookIds: ctx.excludedLorebookIds,
         excludedSourceAgentIds: ctx.excludedLorebookSourceAgentIds,
         tokenBudget: ctx.lorebookTokenBudget,
         chatEmbedding: ctx.chatEmbedding ?? null,
         semanticEmbeddingsByLorebookId: ctx.semanticEmbeddingsByLorebookId,
+        semanticSimilarityBaseline: ctx.semanticSimilarityBaseline,
         entryStateOverrides: ctx.entryStateOverrides,
         entryTimingStates: ctx.entryTimingStates,
         generationTriggers: ctx.generationTriggers ?? ["chat"],

@@ -36,6 +36,11 @@ export function normalizePromptTimeZone(value: unknown): string | undefined {
   }
 }
 
+/** Conversation schedule overrides take precedence over the legacy per-chat browser timezone. */
+export function resolveConversationTimeZone(metadata: Record<string, unknown>): string | undefined {
+  return normalizePromptTimeZone(metadata.conversationTimeZone) ?? normalizePromptTimeZone(metadata.promptTimeZone);
+}
+
 export function getZonedDateParts(date: Date, timeZone?: string): ZonedDateParts {
   if (!timeZone) return localDateParts(date);
 
@@ -66,6 +71,68 @@ export function getZonedDateParts(date: Date, timeZone?: string): ZonedDateParts
 export function toZonedWallClockDate(date: Date, timeZone?: string): Date {
   const parts = getZonedDateParts(date, timeZone);
   return new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+}
+
+function zonedWallClockToInstant(
+  desired: Pick<ZonedDateParts, "year" | "month" | "day" | "hour" | "minute" | "second">,
+  timeZone?: string,
+): Date {
+  if (!timeZone) {
+    return new Date(desired.year, desired.month - 1, desired.day, desired.hour, desired.minute, desired.second);
+  }
+  const desiredUtc = Date.UTC(
+    desired.year,
+    desired.month - 1,
+    desired.day,
+    desired.hour,
+    desired.minute,
+    desired.second,
+  );
+  let candidate = desiredUtc;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const observed = getZonedDateParts(new Date(candidate), timeZone);
+    const observedUtc = Date.UTC(
+      observed.year,
+      observed.month - 1,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      observed.second,
+    );
+    const correction = desiredUtc - observedUtc;
+    candidate += correction;
+    if (correction === 0) break;
+  }
+  return new Date(candidate);
+}
+
+export function getZonedDayBounds(date: Date, timeZone?: string, dayOffset = 0): { start: Date; end: Date } {
+  const parts = getZonedDateParts(date, timeZone);
+  const calendarDay = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset));
+  const nextCalendarDay = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset + 1));
+  const start = zonedWallClockToInstant(
+    {
+      year: calendarDay.getUTCFullYear(),
+      month: calendarDay.getUTCMonth() + 1,
+      day: calendarDay.getUTCDate(),
+      hour: 0,
+      minute: 0,
+      second: 0,
+    },
+    timeZone,
+  );
+  const nextStart = zonedWallClockToInstant(
+    {
+      year: nextCalendarDay.getUTCFullYear(),
+      month: nextCalendarDay.getUTCMonth() + 1,
+      day: nextCalendarDay.getUTCDate(),
+      hour: 0,
+      minute: 0,
+      second: 0,
+    },
+    timeZone,
+  );
+  return { start, end: new Date(nextStart.getTime() - 1) };
 }
 
 export function getZonedWeekdayName(date: Date, timeZone?: string): string {

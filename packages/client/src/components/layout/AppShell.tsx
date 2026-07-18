@@ -6,6 +6,7 @@ import { TopBar } from "./TopBar";
 import { SpotifyMobileWidget } from "../spotify/SpotifyMiniPlayer";
 import { YouTubeMobileWidget } from "../chat/YouTubePlayer";
 import { LocalMusicMobileWidget } from "../chat/LocalMusicPlayer";
+import { MusicDjUnavailablePlayer } from "../music/MusicDjUnavailablePlayer";
 import { ProfessorMariFloatingAssistantHost } from "../chat/ProfessorMariFloatingAssistantHost";
 import { hasProfessorMariFloatingFollowup } from "../chat/professor-mari-floating-events";
 import {
@@ -19,10 +20,14 @@ import {
 } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { useBackgroundAutonomousPolling } from "../../hooks/use-background-autonomous";
-import { useClearAutonomousUnread } from "../../hooks/use-chats";
+import { useClearAutonomousUnread, useUpdateChatMetadata } from "../../hooks/use-chats";
 import { useIdleDetection } from "../../hooks/use-idle-detection";
 import { usePageActivity } from "../../hooks/use-page-activity";
+import { useCapabilityAgentRegistry, useCapabilityClientModules } from "../../hooks/use-capability-packages";
+import { CapabilityElement } from "../capabilities/CapabilityElement";
+import { FeatureAgentDetailHost } from "../agents/FeatureAgentDetailHost";
 import { getCssBackgroundStyle } from "../../lib/css-colors";
+import { showConfirmDialog } from "../../lib/app-dialogs";
 import { cn } from "../../lib/utils";
 import { parseChatMetadata } from "../../lib/chat-display";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,6 +39,7 @@ import {
   useLayoutEffect,
   useRef,
   useCallback,
+  useMemo,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -45,6 +51,9 @@ const CharacterEditor = lazy(() =>
 );
 const CharacterLibraryView = lazy(() =>
   import("../characters/CharacterLibraryView").then((module) => ({ default: module.CharacterLibraryView })),
+);
+const AgentCatalogView = lazy(() =>
+  import("../agents/AgentCatalogView").then((module) => ({ default: module.AgentCatalogView })),
 );
 const LorebookEditor = lazy(() =>
   import("../lorebooks/LorebookEditor").then((module) => ({ default: module.LorebookEditor })),
@@ -78,9 +87,6 @@ const ChatNotificationBubbles = lazy(() =>
 const OnboardingTutorial = lazy(() =>
   import("../onboarding/OnboardingTutorial").then((module) => ({ default: module.OnboardingTutorial })),
 );
-const ConversationCallFloatingHost = lazy(() =>
-  import("../chat/ConversationCallFloatingHost").then((module) => ({ default: module.ConversationCallFloatingHost })),
-);
 
 function clampWidth(width: number, min: number, max: number) {
   return Math.max(min, Math.min(max, width));
@@ -96,7 +102,6 @@ const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
 const TRACKER_PANEL_DESKTOP_EXIT_MS = 240;
 const TRACKER_PANEL_DESKTOP_EASE = [0.16, 1, 0.3, 1] as const;
 const TRACKER_PANEL_DESKTOP_EXIT_EASE = [0.4, 0, 1, 1] as const;
-const DESKTOP_SHELL_PANEL_EXIT_MS = 160;
 const TRACKER_PANEL_TOGGLE_SELECTOR = '[data-tracker-panel-toggle="roleplay-hud"]';
 const TRACKER_PANEL_ANCHOR_SELECTOR = '[data-tracker-panel-anchor="roleplay-hud"]';
 const TOP_BAR_SELECTOR = '[data-component="TopBar"]';
@@ -179,22 +184,17 @@ function SidePanelFallback() {
   return <div className="mari-chrome-text-muted flex h-full items-center justify-center text-sm">Loading...</div>;
 }
 
-function useExitPresence(open: boolean, exitMs: number) {
-  const [present, setPresent] = useState(open);
-
-  useEffect(() => {
-    if (open) {
-      setPresent(true);
-      return;
-    }
-    const timeout = window.setTimeout(() => setPresent(false), exitMs);
-    return () => window.clearTimeout(timeout);
-  }, [exitMs, open]);
-
-  return open || present;
-}
-
 export function AppShell() {
+  const capabilityAgents = useCapabilityAgentRegistry();
+  const installedCapabilities = useCapabilityClientModules();
+  const updateChatMetadata = useUpdateChatMetadata();
+  const musicPlayerEnabled = useUIStore((state) => state.musicPlayerEnabled);
+  const musicDjInstalled = (installedCapabilities.data ?? []).some(
+    (capability) => capability.id === "spotify" && capability.status === "active",
+  );
+  const showMusicDjUnavailablePlayer =
+    musicPlayerEnabled && !installedCapabilities.isLoading && !musicDjInstalled;
+
   // Background autonomous polling for inactive conversation chats
   useBackgroundAutonomousPolling();
 
@@ -243,6 +243,15 @@ export function AppShell() {
   const trackerPanelHideHudWidgets = useUIStore((s) => s.trackerPanelHideHudWidgets);
   const trackerPanelSizeProfile = useUIStore((s) => s.trackerPanelSizeProfile);
   const trackerPanelBackgroundColor = useUIStore((s) => s.trackerPanelBackgroundColor);
+  const spatialMapDetailChatId = useUIStore((s) => s.spatialMapDetailChatId);
+  const pendingSpatialMapDraftReview = useUIStore((s) => s.pendingSpatialMapDraftReview);
+  const clearPendingSpatialMapDraftReview = useUIStore((s) => s.clearPendingSpatialMapDraftReview);
+  const closeSpatialMapDetail = useUIStore((s) => s.closeSpatialMapDetail);
+  const debugMode = useUIStore((s) => s.debugMode);
+  const setEditorDirty = useUIStore((s) => s.setEditorDirty);
+  const openLorebookDetail = useUIStore((s) => s.openLorebookDetail);
+  const closeAgentDetail = useUIStore((s) => s.closeAgentDetail);
+  const openAgentCatalog = useUIStore((s) => s.openAgentCatalog);
   const setTrackerPanelOpen = useUIStore((s) => s.setTrackerPanelOpen);
   const [sidebarDragWidth, setSidebarDragWidth] = useState<number | null>(null);
   const [rightPanelDragWidth, setRightPanelDragWidth] = useState<number | null>(null);
@@ -290,15 +299,13 @@ export function AppShell() {
   }, []);
 
   const shellOverlayMode = isMobile;
-  const desktopSidebarPresent = useExitPresence(sidebarOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
-  const desktopRightPanelPresent = useExitPresence(rightPanelOpen, DESKTOP_SHELL_PANEL_EXIT_MS);
   const [rightPanelEverOpened, setRightPanelEverOpened] = useState(rightPanelOpen);
   useEffect(() => {
     if (rightPanelOpen) setRightPanelEverOpened(true);
   }, [rightPanelOpen]);
 
-  const layoutSidebarOpen = shellOverlayMode ? sidebarOpen : desktopSidebarPresent;
-  const layoutRightPanelOpen = shellOverlayMode ? rightPanelOpen : desktopRightPanelPresent;
+  const layoutSidebarOpen = sidebarOpen;
+  const layoutRightPanelOpen = rightPanelOpen;
   const desktopReservedSidebarWidth = layoutSidebarOpen ? liveSidebarWidth : 0;
   const desktopReservedRightPanelWidth = layoutRightPanelOpen ? liveRightPanelWidth : 0;
   const desktopCenterWidth = Math.max(0, viewportWidth - desktopReservedSidebarWidth - desktopReservedRightPanelWidth);
@@ -397,6 +404,8 @@ export function AppShell() {
 
   const characterDetailId = useUIStore((s) => s.characterDetailId);
   const characterLibraryOpen = useUIStore((s) => s.characterLibraryOpen);
+  const cardLibraryKind = useUIStore((s) => s.cardLibraryKind);
+  const agentCatalogOpen = useUIStore((s) => s.agentCatalogOpen);
   const lorebookDetailId = useUIStore((s) => s.lorebookDetailId);
   const presetDetailId = useUIStore((s) => s.presetDetailId);
   const connectionDetailId = useUIStore((s) => s.connectionDetailId);
@@ -418,6 +427,59 @@ export function AppShell() {
   const [trackerPanelToggleAnchorY, setTrackerPanelToggleAnchorY] = useState<number | null>(null);
   const trackerPanelWasActiveRef = useRef(false);
   const lastAutonomousUnreadClearRef = useRef<string | null>(null);
+
+  const selectedFeatureAgent = useMemo(
+    () =>
+      agentDetailId
+        ? ((capabilityAgents.data ?? []).find((agent) => agent.id === agentDetailId && agent.execution === "feature") ??
+          null)
+        : null,
+    [agentDetailId, capabilityAgents.data],
+  );
+  const selectedFeaturePackage = useMemo(
+    () =>
+      selectedFeatureAgent
+        ? ((installedCapabilities.data ?? []).find((item) =>
+            item.manifest.contributions?.agentDetail?.agentIds.includes(selectedFeatureAgent.id),
+          ) ?? null)
+        : null,
+    [installedCapabilities.data, selectedFeatureAgent],
+  );
+  const activeChatMetadata = parseChatMetadata(activeChat?.metadata);
+  const activeChatAgentIds = Array.isArray(activeChatMetadata.activeAgentIds)
+    ? activeChatMetadata.activeAgentIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const selectedFeatureSupportsActiveChat = Boolean(
+    selectedFeatureAgent &&
+    activeChat &&
+    (!selectedFeatureAgent.modeAllowlist || selectedFeatureAgent.modeAllowlist.includes(activeChat.mode)),
+  );
+  const selectedFeatureEnabledForChat = Boolean(
+    selectedFeatureAgent &&
+    activeChatMetadata.enableAgents === true &&
+    activeChatAgentIds.includes(selectedFeatureAgent.id),
+  );
+  const setSelectedFeatureEnabledForChat = useCallback(
+    async (enabled: boolean) => {
+      if (!selectedFeatureAgent || !activeChatId || !selectedFeatureSupportsActiveChat) return;
+      const latestChat = useChatStore.getState().activeChat;
+      const latestMetadata = parseChatMetadata(
+        latestChat?.id === activeChatId ? latestChat.metadata : activeChat?.metadata,
+      );
+      const latestAgentIds = Array.isArray(latestMetadata.activeAgentIds)
+        ? latestMetadata.activeAgentIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const activeAgentIds = enabled
+        ? Array.from(new Set([...latestAgentIds, selectedFeatureAgent.id]))
+        : latestAgentIds.filter((id) => id !== selectedFeatureAgent.id);
+      await updateChatMetadata.mutateAsync({
+        id: activeChatId,
+        ...(enabled ? { enableAgents: true } : {}),
+        activeAgentIds,
+      });
+    },
+    [activeChat?.metadata, activeChatId, selectedFeatureAgent, selectedFeatureSupportsActiveChat, updateChatMetadata],
+  );
 
   useEffect(() => {
     if (!activeChatId || isClearingAutonomousUnread) return;
@@ -562,7 +624,28 @@ export function AppShell() {
   ) : toolDetailId ? (
     <ToolEditor />
   ) : agentDetailId ? (
-    <AgentEditor />
+    capabilityAgents.isLoading ? (
+      <MainPaneFallback />
+    ) : selectedFeatureAgent ? (
+      <FeatureAgentDetailHost
+        agent={selectedFeatureAgent}
+        installedPackage={selectedFeaturePackage}
+        activeChat={activeChat ? { id: activeChat.id, name: activeChat.name, mode: activeChat.mode } : null}
+        activeChatSupported={selectedFeatureSupportsActiveChat}
+        enabledForChat={selectedFeatureEnabledForChat}
+        onEnabledForChatChange={setSelectedFeatureEnabledForChat}
+        onClose={closeAgentDetail}
+        onManagePackage={openAgentCatalog}
+        capabilityProps={{
+          debugMode,
+          confirmAction: showConfirmDialog,
+          onDirtyChange: setEditorDirty,
+          onOpenLorebook: openLorebookDetail,
+        }}
+      />
+    ) : (
+      <AgentEditor />
+    )
   ) : connectionDetailId ? (
     <ConnectionEditor />
   ) : presetDetailId ? (
@@ -570,7 +653,9 @@ export function AppShell() {
   ) : characterDetailId ? (
     <CharacterEditor />
   ) : characterLibraryOpen ? (
-    <CharacterLibraryView />
+    <CharacterLibraryView key={cardLibraryKind} />
+  ) : agentCatalogOpen ? (
+    <AgentCatalogView />
   ) : lorebookDetailId ? (
     <LorebookEditor />
   ) : null;
@@ -858,34 +943,36 @@ export function AppShell() {
       {/* Left sidebar - Chat list */}
       <aside
         data-tour="sidebar"
-        data-component="ChatSidebarPanel"
+        data-component="ChatSidebarSlot"
         aria-label="Chat list"
         aria-hidden={!sidebarOpen}
         inert={!sidebarOpen}
         className={cn(
-          "mari-sidebar flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
-          shellOverlayMode && "backdrop-blur-xl",
-          sidebarDragWidth == null &&
-            (shellOverlayMode
-              ? "transition-[width] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
-              : "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]"),
-          !shellOverlayMode &&
-            (sidebarOpen
-              ? "mari-shell-panel-enter-left translate-x-0 opacity-100"
-              : "pointer-events-none -translate-x-3 opacity-0"),
-          sidebarOpen && !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right md:relative",
+          "mari-shell-panel-slot flex-shrink-0 overflow-hidden md:relative",
+          sidebarDragWidth != null && "!transition-none",
+          !sidebarOpen && "pointer-events-none",
           shellOverlayMode &&
             cn(
               "fixed bottom-0 left-0 z-40 max-h-none pb-[max(env(safe-area-inset-bottom),0.5rem)] shadow-2xl",
               MOBILE_SHELL_PANEL_TOP_CLASS,
             ),
-          !sidebarOpen && shellOverlayMode && "!w-0",
         )}
         style={{
-          width: shellOverlayMode ? (sidebarOpen ? "100vw" : 0) : desktopSidebarPresent ? liveSidebarWidth : 0,
+          width: shellOverlayMode ? "100vw" : sidebarOpen ? liveSidebarWidth : 0,
         }}
       >
-        <div className="h-full" style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}>
+        <div
+          data-component="ChatSidebarPanel"
+          aria-hidden={!sidebarOpen}
+          inert={!sidebarOpen}
+          className={cn(
+            "mari-sidebar mari-shell-panel-motion absolute inset-y-0 left-0 overflow-hidden bg-[var(--background)]/95",
+            shellOverlayMode && "backdrop-blur-xl",
+            sidebarOpen ? "mari-shell-panel-enter-left" : "mari-shell-panel-exit-left pointer-events-none",
+            !shellOverlayMode && "mari-shell-panel-edge mari-shell-panel-edge--right",
+          )}
+          style={{ width: shellOverlayMode ? "100vw" : liveSidebarWidth }}
+        >
           <ChatSidebar />
         </div>
       </aside>
@@ -923,7 +1010,7 @@ export function AppShell() {
         <div className="flex-shrink-0 md:hidden h-[env(safe-area-inset-top)] bg-[var(--marinara-topbar-surface)] backdrop-blur-sm" />
         <TopBar />
         <div className="mari-app-background-paint relative flex flex-1 flex-col overflow-hidden">
-          {/* Bot Browser — kept mounted once opened so state persists across close/reopen */}
+          {/* Card Browser — kept mounted once opened so state persists across close/reopen */}
           <MountOnceWhenOpened open={botBrowserOpen} overlay>
             <BotBrowserView />
           </MountOnceWhenOpened>
@@ -959,9 +1046,6 @@ export function AppShell() {
               )}
             </Suspense>
           </div>
-          <Suspense fallback={null}>
-            <ConversationCallFloatingHost />
-          </Suspense>
         </div>
         {/* Floating avatar notification bubbles (right edge) */}
         <Suspense fallback={null}>
@@ -1042,28 +1126,33 @@ export function AppShell() {
         </AnimatePresence>
       ) : (
         <aside
-          data-component="RightPanelDesktop"
+          data-component="RightPanelDesktopSlot"
           aria-label="Settings and tools panel"
           aria-hidden={!rightPanelOpen}
           inert={!rightPanelOpen}
           className={cn(
-            "mari-right-panel flex-shrink-0 overflow-hidden bg-[var(--background)]/95",
-            rightPanelDragWidth == null &&
-              "transition-[transform,opacity] duration-150 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity] [contain:paint]",
-            rightPanelOpen
-              ? "mari-shell-panel-enter-right translate-x-0 opacity-100"
-              : "pointer-events-none translate-x-3 opacity-0",
-            rightPanelOpen && "mari-shell-panel-edge mari-shell-panel-edge--left relative",
+            "mari-shell-panel-slot relative flex-shrink-0 overflow-hidden",
+            rightPanelDragWidth != null && "!transition-none",
+            !rightPanelOpen && "pointer-events-none",
           )}
           style={
             {
-              width: desktopRightPanelPresent ? liveRightPanelWidth : 0,
+              width: rightPanelOpen ? liveRightPanelWidth : 0,
               "--mari-right-panel-width": `${liveRightPanelWidth}px`,
             } as CSSProperties
           }
         >
           {(rightPanelOpen || rightPanelEverOpened) && (
-            <div className="h-full" style={{ width: liveRightPanelWidth }}>
+            <div
+              data-component="RightPanelDesktop"
+              aria-hidden={!rightPanelOpen}
+              inert={!rightPanelOpen}
+              className={cn(
+                "mari-right-panel mari-shell-panel-motion mari-shell-panel-edge mari-shell-panel-edge--left absolute inset-y-0 right-0 overflow-hidden bg-[var(--background)]/95",
+                rightPanelOpen ? "mari-shell-panel-enter-right" : "mari-shell-panel-exit-right pointer-events-none",
+              )}
+              style={{ width: liveRightPanelWidth }}
+            >
               <Suspense fallback={<SidePanelFallback />}>
                 <RightPanel />
               </Suspense>
@@ -1107,6 +1196,23 @@ export function AppShell() {
         />
       )}
 
+      {spatialMapDetailChatId ? (
+        <CapabilityElement
+          packageId="hierarchical-maps"
+          view="workspace"
+          capabilityProps={{
+            chatId: spatialMapDetailChatId,
+            debugMode,
+            pendingDraftReview: pendingSpatialMapDraftReview,
+            confirmAction: showConfirmDialog,
+            onClearPendingDraftReview: clearPendingSpatialMapDraftReview,
+            onDirtyChange: setEditorDirty,
+            onOpenLorebook: openLorebookDetail,
+            onClose: closeSpatialMapDetail,
+          }}
+        />
+      ) : null}
+
       {/* First-time onboarding tutorial */}
       {!hasCompletedOnboarding && (
         <Suspense fallback={null}>
@@ -1114,9 +1220,17 @@ export function AppShell() {
         </Suspense>
       )}
       <ProfessorMariFloatingAssistantHost active={professorMariFloatingActive} />
-      <SpotifyMobileWidget />
-      <YouTubeMobileWidget />
-      <LocalMusicMobileWidget />
+      <div data-component="MobileMusicWidgetLayer" className="contents">
+        {isMobile && showMusicDjUnavailablePlayer ? (
+          <MusicDjUnavailablePlayer floating mobileOnly />
+        ) : isMobile && musicDjInstalled ? (
+          <>
+            <SpotifyMobileWidget />
+            <YouTubeMobileWidget />
+            <LocalMusicMobileWidget />
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }

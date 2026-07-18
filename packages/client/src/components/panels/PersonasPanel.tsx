@@ -138,6 +138,7 @@ export function PersonasPanel() {
   const updatePGroup = useUpdatePersonaGroup();
   const deletePGroup = useDeletePersonaGroup();
   const openPersonaDetail = useUIStore((s) => s.openPersonaDetail);
+  const openPersonaLibrary = useUIStore((s) => s.openPersonaLibrary);
   const openModal = useUIStore((s) => s.openModal);
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -491,25 +492,22 @@ export function PersonasPanel() {
     });
   }, []);
 
-  const handleExportSelected = useCallback(
-    async () => {
-      if (selectedPersonaIds.size === 0) return;
-      setExportingSelected(true);
-      try {
-        await api.downloadPost(
-          "/characters/personas/export-bulk",
-          { ids: [...selectedPersonaIds], format: "native" },
-          "marinara-personas.zip",
-        );
-        toast.success(`Exported ${selectedPersonaIds.size} persona${selectedPersonaIds.size === 1 ? "" : "s"}`);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Failed to export personas");
-      } finally {
-        setExportingSelected(false);
-      }
-    },
-    [selectedPersonaIds],
-  );
+  const handleExportSelected = useCallback(async () => {
+    if (selectedPersonaIds.size === 0) return;
+    setExportingSelected(true);
+    try {
+      await api.downloadPost(
+        "/characters/personas/export-bulk",
+        { ids: [...selectedPersonaIds], format: "native" },
+        "marinara-personas.zip",
+      );
+      toast.success(`Exported ${selectedPersonaIds.size} persona${selectedPersonaIds.size === 1 ? "" : "s"}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to export personas");
+    } finally {
+      setExportingSelected(false);
+    }
+  }, [selectedPersonaIds]);
 
   const handleDeleteSelected = useCallback(async () => {
     const ids = [...selectedPersonaIds];
@@ -545,6 +543,15 @@ export function PersonasPanel() {
 
   return (
     <div className="flex min-h-full flex-col gap-2 p-3">
+      <button
+        onClick={openPersonaLibrary}
+        className="mari-chrome-control mari-chrome-control--primary w-full text-xs"
+        title="Open full persona library"
+      >
+        <User size="0.875rem" />
+        Open Full Library
+      </button>
+
       {/* Actions */}
       <div className="flex gap-2">
         <button
@@ -579,10 +586,7 @@ export function PersonasPanel() {
       {/* Search + Sort */}
       <div className="flex gap-1.5">
         <div className="relative flex-1">
-          <Search
-            size="0.8125rem"
-            className="mari-chrome-field-icon absolute left-3 top-1/2 -translate-y-1/2"
-          />
+          <Search size="0.8125rem" className="mari-chrome-field-icon absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -620,7 +624,9 @@ export function PersonasPanel() {
             New Folder
           </button>
         </div>
-        {parsedGroups.length > 0 && <p className="mari-folder-helper">Drag and drop personas to folders, double-click or double-tap to rename</p>}
+        {parsedGroups.length > 0 && (
+          <p className="mari-folder-helper">Drag and drop personas to folders, double-click or double-tap to rename</p>
+        )}
       </div>
 
       {/* Filters */}
@@ -796,9 +802,9 @@ export function PersonasPanel() {
                       e.stopPropagation();
                       void handleDeleteGroup(group);
                     }}
-		                    className="mari-chrome-control mari-chrome-control--small p-1"
-		                    title="Delete folder"
-		                  >
+                    className="mari-chrome-control mari-chrome-control--small p-1"
+                    title="Delete folder"
+                  >
                     <Trash2 size="0.6875rem" />
                   </button>
                 </div>
@@ -815,131 +821,131 @@ export function PersonasPanel() {
                 ) : (
                   <div className="flex flex-col gap-0.5">
                     {folderMemberIds.map((pid) => {
-                        const p = personaMap.get(pid);
-                        if (!p) return null;
-                        const isBulkSelected = selectedPersonaIds.has(pid);
-                        const personaMetadata = getPersonaPreviewMetadata(p);
-                        return (
-                          <div
-                            key={pid}
-                            data-touch-drag-card="persona"
-                            onClick={() => {
-                              if (suppressPersonaClickRef.current) return;
+                      const p = personaMap.get(pid);
+                      if (!p) return null;
+                      const isBulkSelected = selectedPersonaIds.has(pid);
+                      const personaMetadata = getPersonaPreviewMetadata(p);
+                      return (
+                        <div
+                          key={pid}
+                          data-touch-drag-card="persona"
+                          onClick={() => {
+                            if (suppressPersonaClickRef.current) return;
+                            if (selectionMode) {
+                              toggleSelection(pid);
+                              return;
+                            }
+                            openPersonaDetail(pid);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
                               if (selectionMode) {
                                 toggleSelection(pid);
                                 return;
                               }
                               openPersonaDetail(pid);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                if (selectionMode) {
-                                  toggleSelection(pid);
-                                  return;
-                                }
-                                openPersonaDetail(pid);
-                              }
-                            }}
-                            draggable={nativePersonaDragEnabled}
-                            onContextMenu={(event) => {
-                              if (touchSafePersonaDragMode) event.preventDefault();
-                            }}
-                            onDragStart={(event) => {
-                              if (!nativePersonaDragEnabled) {
-                                event.preventDefault();
-                                return;
-                              }
-                              const ids = getDraggedPersonaIds(pid);
-                              setDraggedPersonaId(pid);
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("application/x-marinara-persona-ids", JSON.stringify(ids));
-                              event.dataTransfer.setData("text/plain", pid);
-                            }}
-                            onDragEnd={() => setDraggedPersonaId(null)}
-                            role="button"
-                            tabIndex={0}
-                            className={cn(
-                              "group group/member flex touch-pan-y cursor-pointer items-center gap-2 rounded-lg p-1.5 text-xs transition-all hover:bg-[var(--sidebar-accent)]",
-                              touchSafePersonaDragMode && "select-none",
-                              selectionMode &&
-                                isBulkSelected &&
-                                "bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-button-border-active)]",
-                              draggedPersonaId === pid && "opacity-50",
-                            )}
-                          >
-                            {selectionMode && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleSelection(pid);
-                                }}
-                                className={cn(
-                                  "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors",
-                                  isBulkSelected
-                                    ? "border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] text-[var(--marinara-chat-chrome-button-text-active)]"
-                                    : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)] text-transparent",
-                                )}
-                                aria-label={isBulkSelected ? "Deselect persona" : "Select persona"}
-                              >
-                                <Check size="0.75rem" />
-                              </button>
-                            )}
-                            <TouchDragHandle
-                              label="Drag persona"
-                              size="0.75rem"
-                              onTouchStart={(event) => {
-                                startPersonaTouchDrag(event, pid, {
-                                  allowInteractiveTarget: true,
-                                  sourceElement: event.currentTarget.closest<HTMLElement>(
-                                    '[data-touch-drag-card="persona"]',
-                                  ),
-                                });
+                            }
+                          }}
+                          draggable={nativePersonaDragEnabled}
+                          onContextMenu={(event) => {
+                            if (touchSafePersonaDragMode) event.preventDefault();
+                          }}
+                          onDragStart={(event) => {
+                            if (!nativePersonaDragEnabled) {
+                              event.preventDefault();
+                              return;
+                            }
+                            const ids = getDraggedPersonaIds(pid);
+                            setDraggedPersonaId(pid);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("application/x-marinara-persona-ids", JSON.stringify(ids));
+                            event.dataTransfer.setData("text/plain", pid);
+                          }}
+                          onDragEnd={() => setDraggedPersonaId(null)}
+                          role="button"
+                          tabIndex={0}
+                          className={cn(
+                            "group group/member flex touch-pan-y cursor-pointer items-center gap-2 rounded-lg p-1.5 text-xs transition-all hover:bg-[var(--sidebar-accent)]",
+                            touchSafePersonaDragMode && "select-none",
+                            selectionMode &&
+                              isBulkSelected &&
+                              "bg-[var(--marinara-chat-chrome-highlight-bg)] ring-1 ring-[var(--marinara-chat-chrome-button-border-active)]",
+                            draggedPersonaId === pid && "opacity-50",
+                          )}
+                        >
+                          {selectionMode && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleSelection(pid);
                               }}
-                            />
-                            <div className="mari-avatar-placeholder mari-avatar-placeholder--persona relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg">
-                              {p.avatarPath ? (
-                                <img
-                                  src={p.avatarPath}
-                                  alt=""
-                                  className="h-full w-full rounded-lg object-cover"
-                                  style={getAvatarCropStyle(parseAvatarCropJson(p.avatarCrop))}
-                                />
-                              ) : (
-                                <User size="0.625rem" />
+                              className={cn(
+                                "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors",
+                                isBulkSelected
+                                  ? "border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] text-[var(--marinara-chat-chrome-button-text-active)]"
+                                  : "border-[var(--muted-foreground)]/40 bg-[var(--secondary)] text-transparent",
                               )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-[0.75rem] font-medium">{p.name}</div>
-                              {p.comment && (
-                                <div className="truncate text-[0.5625rem] italic text-[var(--muted-foreground)]">
-                                  {p.comment}
-                                </div>
-                              )}
-                              {personaMetadata && (
-                                <div className="truncate text-[0.5625rem] text-[var(--muted-foreground)]">
-                                  {personaMetadata}
-                                </div>
-                              )}
-                              <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
-                                {p.description || "No description"}
-                              </div>
-                            </div>
-                            {!selectionMode && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void movePersonasToFolder([pid], null);
-                                }}
-                                className="rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-all hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] group-hover/member:opacity-100 max-md:opacity-100"
-                                title="Remove from folder"
-                              >
-                                <UserMinus size="0.625rem" />
-                              </button>
+                              aria-label={isBulkSelected ? "Deselect persona" : "Select persona"}
+                            >
+                              <Check size="0.75rem" />
+                            </button>
+                          )}
+                          <TouchDragHandle
+                            label="Drag persona"
+                            size="0.75rem"
+                            onTouchStart={(event) => {
+                              startPersonaTouchDrag(event, pid, {
+                                allowInteractiveTarget: true,
+                                sourceElement: event.currentTarget.closest<HTMLElement>(
+                                  '[data-touch-drag-card="persona"]',
+                                ),
+                              });
+                            }}
+                          />
+                          <div className="mari-avatar-placeholder mari-avatar-placeholder--persona relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+                            {p.avatarPath ? (
+                              <img
+                                src={p.avatarPath}
+                                alt=""
+                                className="h-full w-full rounded-lg object-cover"
+                                style={getAvatarCropStyle(parseAvatarCropJson(p.avatarCrop))}
+                              />
+                            ) : (
+                              <User size="0.625rem" />
                             )}
                           </div>
-                        );
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[0.75rem] font-medium">{p.name}</div>
+                            {p.comment && (
+                              <div className="truncate text-[0.5625rem] italic text-[var(--muted-foreground)]">
+                                {p.comment}
+                              </div>
+                            )}
+                            {personaMetadata && (
+                              <div className="truncate text-[0.5625rem] text-[var(--muted-foreground)]">
+                                {personaMetadata}
+                              </div>
+                            )}
+                            <div className="truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                              {p.description || "No description"}
+                            </div>
+                          </div>
+                          {!selectionMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void movePersonasToFolder([pid], null);
+                              }}
+                              className="rounded p-0.5 text-[var(--muted-foreground)] opacity-0 transition-all hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)] group-hover/member:opacity-100 max-md:opacity-100"
+                              title="Remove from folder"
+                            >
+                              <UserMinus size="0.625rem" />
+                            </button>
+                          )}
+                        </div>
+                      );
                     })}
                   </div>
                 )}
@@ -1116,10 +1122,10 @@ export function PersonasPanel() {
                       onClick={(e) => {
                         e.stopPropagation();
                         activatePersona.mutate(persona.id);
-	                      }}
-	                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--selected p-1.5"
-	                      title="Set as active"
-	                    >
+                      }}
+                      className="mari-chrome-control mari-chrome-control--small mari-chrome-control--selected p-1.5"
+                      title="Set as active"
+                    >
                       <Check size="0.75rem" />
                     </button>
                   )}
@@ -1131,10 +1137,10 @@ export function PersonasPanel() {
                           toast.success(`Duplicated "${persona.name}"`);
                         },
                       });
-	                      }}
-	                    className="mari-chrome-control mari-chrome-control--small p-1.5"
-	                    title="Duplicate"
-	                  >
+                    }}
+                    className="mari-chrome-control mari-chrome-control--small p-1.5"
+                    title="Duplicate"
+                  >
                     <Copy size="0.75rem" />
                   </button>
                   <button
@@ -1152,9 +1158,9 @@ export function PersonasPanel() {
                       }
                       deletePersona.mutate(persona.id);
                     }}
-		                    className="mari-chrome-control mari-chrome-control--small p-1.5"
-		                    title="Delete"
-		                  >
+                    className="mari-chrome-control mari-chrome-control--small p-1.5"
+                    title="Delete"
+                  >
                     <Trash2 size="0.75rem" />
                   </button>
                 </div>

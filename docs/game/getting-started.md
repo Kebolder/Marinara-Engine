@@ -55,18 +55,18 @@ These are the starting values in the **World**, **Party**, and **Features** step
 | Automatic Storyboard Illustrations | On | Only active once Visual Generation is on |
 | Automatic Storyboard Animations | Off | Needs a video generation connection |
 | Keyframes per Turn | 3 | Available with storyboard illustrations; range 1 to 6 |
-| Presentation | Standard | **Anime Episode** coordinates the Anime GM prompt with Comic Page Animation and Video prompts |
+| Game Presentation | Standard | **Storyboard Optimized** coordinates the Storyboard Game Prompt, Comic Page Animation planner, Storyboard Illustration, and Comic Page Video prompts |
 | Music DJ | Off | Needs Spotify or a local music folder |
 | Custom HUD Widgets | On | Uses AI-made status widgets from the new world |
 | Start Muted | Off | Begins the game with audio muted |
 
 New to Game Mode? Leave **Game Master Mode** on **Standalone GM**. Marinara builds a fair, slightly snarky GM for you, and you can feel out the mode before writing a custom GM card.
 
-Choose **Anime Episode** on the final step when you want GM turns written as filmable visual beats. It selects the built-in **Anime Game Prompt**, **Comic Page Animation**, and **Comic Page Video** presets, and sends storyboard image prompts directly to the image provider. Comic Page Animation uses the clip duration to limit the number of chronological panels, while Comic Page Video treats those panels as ordered animation references. It does not turn image or video generation on and does not change your selected connections. The GM uses the wizard's **Keyframes per Turn** value as a target for strong visual anchor moments, but it can write fewer for a short exchange and can use more narration paragraphs when the story needs them.
+Choose **Storyboard Optimized** on the final step when you want GM turns written as filmable visual beats. It selects the built-in **Storyboard Game Prompt**, **Comic Page Animation** planner, **Storyboard Illustration**, and **Comic Page Video** presets. Comic Page Animation uses the clip duration to limit the number of chronological panels, Storyboard Illustration formats each planned keyframe for the image model, and Comic Page Video treats those panels as ordered animation references. It does not turn image or video generation on and does not change your selected connections. The GM uses the wizard's **Keyframes per Turn** value as a target for strong visual anchor moments, but it can write fewer for a short exchange and can use more narration paragraphs when the story needs them.
 
-The alternative still-shot combination remains available after setup: choose **Anime Episode Director** for the Animation Prompt and **Anime Game Video** for the Storyboard Video Prompt.
+The alternative anime single-shot combination remains available after setup: choose **Anime Episode Director** for the Animation Planner and **Anime Game Video** for the Storyboard Video Prompt.
 
-The **GM Prompt** editor previews the effective prompt for the selected presentation. With **Anime Episode** selected, opening the editor shows the Anime Game Prompt, including its keyframe-count macro. Leaving that text unchanged keeps the built-in preset selected; editing it creates a custom prompt that overrides the presentation preset.
+The **GM Prompt** editor previews the effective prompt for the selected presentation. With **Storyboard Optimized** selected, opening the editor shows the Storyboard Game Prompt, including its keyframe-count macro. Leaving that text unchanged keeps the built-in preset selected; editing it creates a custom prompt that overrides the presentation preset.
 
 ## The three kinds of AI call
 

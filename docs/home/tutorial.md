@@ -15,7 +15,7 @@ The tour also does more than talk. As you move forward, some steps open the matc
 The tour has 15 steps. Here they are in order, with the exact title of each card and what it points at.
 
 1. **Welcome to Marinara Engine!** A centered welcome card. Professor Mari waves and offers to show you around.
-2. **Bot Browser** Highlights the **Bot Browser** panel button, where you find and import ready-made characters.
+2. **Card Browser** Highlights the **Card Browser** panel button, where you can click **Download Cards** to find and import ready-made characters.
 3. **Characters** Highlights the **Characters** panel button, where your characters live.
 4. **Lorebooks** Highlights the **Lorebooks** panel button, which holds extra world and character details.
 5. **Presets** Highlights the **Presets** panel button, which controls how the prompt is built.

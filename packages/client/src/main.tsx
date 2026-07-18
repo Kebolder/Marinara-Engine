@@ -7,6 +7,12 @@ import { installCsrfFetchShim } from "./lib/csrf-fetch";
 import { registerPreloadErrorRecovery } from "./lib/browser-runtime";
 import "./styles/globals.css";
 
+// Installed capability clients can outlive the Engine build that produced
+// them. Older Conversation-game bundles contain classic JSX output that reads
+// React from the global scope, so expose the host runtime before any package
+// client is imported.
+Object.assign(globalThis, { React, ReactDOM });
+
 // Prevent Chrome/Edge from sleeping this tab
 startKeepAlive();
 installCsrfFetchShim();
@@ -58,9 +64,11 @@ function registerServiceWorker() {
               return;
             }
 
+            const isMobile = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+            const updateIntervalMs = isMobile ? 6 * 60 * 60_000 : 60 * 60_000;
             window.setInterval(() => {
-              void registration.update();
-            }, 60_000);
+              if (document.visibilityState === "visible") void registration.update();
+            }, updateIntervalMs);
           },
         });
       })

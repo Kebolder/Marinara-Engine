@@ -72,6 +72,7 @@ import {
 } from "@marinara-engine/shared";
 import { useTrackerLockContext } from "../../features/tracker-panel/components/TrackerLockContext";
 import { WorldCustomFieldIcon } from "../../features/tracker-panel/lib/world-custom-field-icons";
+import { trackerEditableText } from "../../features/tracker-panel/lib/tracker-display";
 
 interface CombinedPlayerPanelProps {
   showPersona: boolean;
@@ -542,7 +543,7 @@ export function CombinedPlayerPanel({
                           <LabeledEdit
                             key={name}
                             label={name}
-                            value={value}
+                            value={trackerEditableText(value)}
                             onSave={(nextValue) =>
                               updateCharacter(idx, {
                                 ...char,
@@ -1106,7 +1107,7 @@ export function CharactersPanel({
                     <LabeledEdit
                       key={name}
                       label={name}
-                      value={value}
+                      value={trackerEditableText(value)}
                       onSave={(nextValue) =>
                         updateCharacter(idx, {
                           ...char,

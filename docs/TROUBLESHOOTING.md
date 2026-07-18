@@ -32,6 +32,16 @@ npm install -g pnpm
 npm install -g corepack
 ```
 
+### Windows: `'pnpm' is not recognized` while building the shared package
+
+Marinara v2.3.0 could start pnpm through Corepack successfully and then fail during the shared-package build because that build tried to launch a second, global `pnpm` executable. v2.3.1 removes that nested requirement. Close the failed launcher and run `start.bat` again so it can pull the corrected build script before rebuilding. Your data does not need to be removed.
+
+If the checkout itself cannot update, run `git pull` in the Marinara folder and start it again. As a temporary v2.3.0 workaround, install the pinned package manager globally, rerun the launcher, and then update normally:
+
+```bash
+npm install -g pnpm@10.33.2
+```
+
 ### Linux: ERR_PNPM_ENAMETOOLONG during install
 
 This means an older install left behind long folder paths. From the Marinara folder, clear the partial install and run the launcher again:
@@ -61,6 +71,18 @@ Sometimes the server is running but the browser shows a blank page, or the app l
 
 **Refresh App** clears the browser service worker (a background script that caches the web app) and the browser cache, then reloads. It does not change your data. Your chats, settings, and other local data stay intact. It also does not update the server code, so it is not a substitute for a real update. See [Upgrading Marinara Engine](UPGRADING.md) to update the app itself.
 
+## Downloadable agent problems
+
+If **Agents → Download Agents** says the catalog is unavailable, the machine running the Marinara server—not only the browser—must be able to reach the official [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents) catalog over GitHub HTTPS. Installed agents continue to work offline at their current version. Restore the server connection and restart Marinara to retry automatic package updates, or click **Refresh** or **Try again** to browse the catalog immediately.
+
+If an installed map or call does not appear, close Marinara Engine completely and start it again. Those route-bearing packages remain in **Restart required** state until the next process start. Conversation games are different: current Engine builds hot-activate them immediately. Refresh the catalog if installation failed, then confirm the game shows as ready; adding it under a chat's **Commands** settings is only necessary when you want characters to initiate it themselves, not for the game's manual slash command.
+
+If an older installation cannot complete its first package migration, do not delete the `data/capability-packages` folder or your chat data. Marinara leaves the migration incomplete and retries on the next startup. Existing chat selections and settings remain stored while the catalog is unreachable.
+
+Package downloads are rejected when their checksum, declared file list, Engine version range, or archive paths do not match the official catalog. Update Marinara Engine first, refresh the catalog, and retry. Do not manually extract an artifact into the data directory.
+
+Automatic updates never install packages the user did not choose. They only replace an already-installed official package with a newer compatible, verified catalog build. A failed update leaves the installed version registered; if a newly updated server runtime fails its startup self-check, Marinara rolls it back to the previous version.
+
 ## Accessing Marinara from another device
 
 If you cannot access Marinara from a phone, tablet, or another computer on your network, work through these checks.
@@ -68,7 +90,7 @@ If you cannot access Marinara from a phone, tablet, or another computer on your 
 - Bind the server to a reachable address. The server listens on `127.0.0.1` (loopback, your own machine only) by default. The shell launchers set `HOST=0.0.0.0` for you. If you started with `pnpm start` by hand, set `HOST=0.0.0.0` in your `.env` file first.
 - Confirm both devices are on the same Wi-Fi network.
 - Confirm no firewall blocks the port. The default port is `7860`, or whatever you set as `PORT`.
-- Set up access control. For ordinary network or public clients, set `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` in `.env`. Loopback stays passwordless. Traffic over Tailscale and the Docker bridge is trusted by default.
+- Set up access control. For ordinary network or public clients, set `BASIC_AUTH_USER` and `BASIC_AUTH_PASS` in `.env`. Loopback stays passwordless. Traffic over Tailscale and the same-host Docker bridge or detected container gateway is trusted by default.
 - For privileged actions from that device (backups, data clearing, updates), set `ADMIN_SECRET` in the server `.env`. Then paste the same value into **Settings** > **Advanced** > **Admin Access** on that device and click **Save**.
 
 For the full walkthrough, see [Remote Access](REMOTE_ACCESS.md) and the [Frequently Asked Questions](FAQ.md).
@@ -132,28 +154,28 @@ Chat summaries need a working text connection to write them.
 - If your chat requires agent write approval, an AI summary waits for your review before it takes effect.
 - A summary that keeps failing (for example, a bad API key) is retried on a delay. Fix the connection, then use **Backfill**.
 
-## Bot Browser problems
+## Card Browser problems
 
-The **Bot Browser** lets you search public character sites and import characters. Open it from the **Bot Browser** icon in the top bar.
+The **Card Browser** lets you search public character sites and import characters. Open it from the **Card Browser** icon in the top bar, then click **Download Cards**.
 
 - If JannyAI search or a character page fails with a Cloudflare block, Marinara shows a message. It asks you to visit the JannyAI site once in the same browser to clear the challenge, then retry.
 - If your CharacterTavern or Pygmalion login stops working after you restart the server, that is expected. Those logins live only in server memory and clear on restart. Open the login window and paste your cookie or token again.
 
 ## Media generation problems
 
-### Sprite background cleanup still leaves white panels
+### Sprite background cleanup struggles with a complex scene
 
-The built-in **Clean Backgrounds** tool is a simple matte remover. It struggles with disconnected white panels, shadows, or white clothing. For stronger cleanup, install the optional AI background remover:
+Generated still sprites normally use native transparency or an adaptive flat chroma matte. The built-in cleanup also recognizes older white mattes, preserves enclosed subject details, softens the alpha edge, and removes matte-color spill. A photographed room, detailed scenery, heavy cast shadows, or a subject whose colors match the background may still need the optional AI fallback:
 
 ```bash
 pnpm backgroundremover:install
 ```
 
-Then restart Marinara and click **Reapply Cleanup** in the sprite generation window. If the install fails:
+Then restart Marinara and click **Reapply Cleanup** in the sprite generation window. Marinara will still try the built-in matte path first and use the AI model only when the border does not look uniform. If the install fails:
 
 - Confirm Python 3.9 to 3.11 is installed. Newer Python versions can force slow native builds.
 - Rebuild the tool with `pnpm backgroundremover:reinstall`.
-- To force the old built-in cleanup while you troubleshoot, set `SPRITE_BACKGROUND_REMOVAL_ENGINE=builtin` in `.env`.
+- To force automatic matte cleanup without the AI fallback while you troubleshoot, set `SPRITE_BACKGROUND_REMOVAL_ENGINE=builtin` in `.env`.
 
 ### Game Mode storyboards or scene videos do not appear
 
@@ -178,7 +200,7 @@ If starting a game fails because the model returned broken JSON, Marinara opens 
 ## Voice, calls, and TTS
 
 - If characters do not speak during a call, Text to Speech is not set up. Open **Connections** > **Text to Speech**, enable it, choose a source, enter your key, pick a voice, and save. A character with no voice appears as text only.
-- If the microphone is not working, you may need the local speech model. Open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition.
+- If the microphone is not working, you may need the local speech model. Install **Calls** from **Agents > Download Agents**, then open **Connections** > **Local Model**, expand the card, find **Local Speech Model**, choose a Whisper model, and click **Download Whisper**. Firefox in particular needs this because it lacks browser speech recognition. Uninstalling Calls deletes its Whisper models to reclaim disk space.
 - On a Lite build, the message **Local Whisper is disabled in Lite mode** means that small build cannot run the local speech model. Use a full Marinara install instead.
 
 ### Music DJ Spotify login fails on a remote or network install
@@ -196,18 +218,14 @@ The cleanest long-term fix is to put the server behind HTTPS. Last checked again
 
 ### Data seems missing after an update
 
-If your chats or presets look missing after an update, do not delete any data folders yet. Marinara keeps your live data in a `storage` folder inside its data directory. Older installs may also have a legacy `marinara-engine.db` file that can still be imported.
+If your chats or presets look missing after an update, do not delete any data folders yet. Marinara keeps your live data in a `storage` folder inside its data directory.
 
-Check both of these local locations for a `storage` folder or the legacy database file:
+Check both of these local locations for a `storage` folder:
 
 1. `packages/server/data/`
 2. `data/`
 
-The server prints the data directory it resolved on startup. On the first launch after upgrading, Marinara imports the old database automatically.
-
-### Legacy database errors on startup
-
-If you see database or migration errors after updating, remove any custom `STORAGE_BACKEND=sqlite` line from your `.env` and restart. The default file-based backend imports the old database once and then runs without migrations.
+The server prints the data and storage directories it resolved on startup.
 
 ### Backup or Export returns 403
 
@@ -235,6 +253,27 @@ Exit status 134 usually means Android ran out of memory during a build step. Upd
 ```
 
 If it still stops, close other Android apps, reopen Termux, and run the command again.
+
+### Android update runs out of storage while installing dependencies
+
+The built Marinara app is not several gigabytes, and Noodle does not download its own AI models. A large temporary footprint during an update usually comes from pnpm's dependency store and virtual store, especially after several releases or an interrupted forced reinstall.
+
+The current launcher prunes packages left over from older releases and avoids rebuilding the dependency store more than once for the same update. If an older launcher already filled the device, update the launcher and reclaim its unreferenced cache before trying again:
+
+```bash
+cd Marinara-Engine
+git pull --ff-only
+pnpm store prune
+./start-termux.sh
+```
+
+Do not delete `data`, `storage`, or `marinara-engine.db`; those locations may contain your chats and settings. If the command still stops, capture the lines beginning at `Installing dependencies` and include the phone's free-space and memory figures in the report.
+
+### Noodle shows `Etc/Unknown` or schedules use the wrong timezone
+
+For Conversation schedules, open Conversation Chat Settings or a character schedule editor and choose **Schedule timezone**. This global selection applies to every Conversation chat, including background autonomous messages, and can be reset with **Use device**.
+
+For Noodle or server jobs without a Conversation override, remove any blank `TZ=` line from `.env` and restart Marinara so the server inherits the host timezone. To choose a host fallback explicitly, set a valid IANA name such as `TZ=Europe/Warsaw` or `TZ=America/New_York`. Current releases treat a blank value as unset, but a restart is still required for Node's timezone state and scheduled jobs to be rebuilt consistently.
 
 ### Container permission denied on a volume mount
 

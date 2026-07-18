@@ -26,7 +26,7 @@ import { audioManager } from "../../lib/game-audio";
 import { getOrCreateCachedTTSAudioBlob } from "../../lib/tts-audio-cache";
 import { normalizeTTSCharacterName, resolveTTSVoiceForSpeaker, splitTTSChunks } from "../../lib/tts-dialogue";
 import { ttsService } from "../../lib/tts-service";
-import { useGameAssetStore } from "../../stores/game-asset.store";
+import { useGameAssetManifest } from "../../hooks/use-game-assets";
 import { useCombatRound } from "../../hooks/use-game";
 import { useTTSConfig } from "../../hooks/use-tts";
 import { AnimatedText } from "./AnimatedText";
@@ -681,7 +681,7 @@ export function GameCombatUI({
 
   const combatRound = useCombatRound();
   const { data: ttsConfig } = useTTSConfig();
-  const manifest = useGameAssetStore((s) => s.manifest);
+  const { data: manifest } = useGameAssetManifest();
   const assets = manifest?.assets ?? null;
 
   const popupCounter = useRef(0);

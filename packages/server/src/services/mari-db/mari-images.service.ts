@@ -14,6 +14,7 @@ import { generateImage, type ImageGenResult } from "../image/image-generation.js
 import { resolveConnectionImageDefaults } from "../image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../image/image-generation-settings.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
+import { resolveImageConnectionFallback } from "../generation/media-connection-fallback.js";
 import { createConnectionsStorage } from "../storage/connections.storage.js";
 import { createCharactersStorage } from "../storage/characters.storage.js";
 import { createLorebooksStorage } from "../storage/lorebooks.storage.js";
@@ -674,6 +675,7 @@ export class MariImagesService {
     const imgBaseUrl = connection.baseUrl || "https://image.pollinations.ai";
     const imgSource = connection.imageGenerationSource || imgModel;
     const imgServiceHint = connection.imageService || imgSource;
+    const fallback = await resolveImageConnectionFallback(createConnectionsStorage(this.db), connection.id);
     const result = await generateImage(imgSource, imgBaseUrl, connection.apiKey || "", imgServiceHint, {
       prompt: compiled.prompt,
       negativePrompt: compiled.negativePrompt || undefined,
@@ -684,6 +686,7 @@ export class MariImagesService {
       imageEndpointId: connection.imageEndpointId || undefined,
       comfyWorkflow: connection.comfyuiWorkflow || undefined,
       imageDefaults,
+      fallback,
     });
 
     const asset = await savePreviewAsset({

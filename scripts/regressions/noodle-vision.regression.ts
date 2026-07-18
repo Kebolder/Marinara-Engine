@@ -85,6 +85,8 @@ assert.equal(resolveNoodleImagePath("/api/global-gallery/file/%2E%2E%2Fsecret.pn
 assert.equal(resolveNoodleImagePath("https://example.com/image.png"), null);
 
 assert.equal(isUnsupportedNoodleVisionInputError(new Error("This model does not support image_url inputs")), true);
+assert.equal(isUnsupportedNoodleVisionInputError(new Error("No endpoints found that support image input")), true);
+assert.equal(isUnsupportedNoodleVisionInputError(new Error("No endpoints found for text generation")), false);
 assert.equal(isUnsupportedNoodleVisionInputError(new Error("Expected message content to be a string")), true);
 assert.equal(isUnsupportedNoodleVisionInputError(new Error("Provider rate limit exceeded")), false);
 

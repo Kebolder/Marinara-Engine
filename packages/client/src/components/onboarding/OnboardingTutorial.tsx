@@ -49,8 +49,8 @@ const STEPS: TourStep[] = [
   },
   {
     target: "panel-bot-browser",
-    title: "Bot Browser",
-    body: "The Bot Browser allows you to browse and import downloadable character cards and resources. Start here when you want new characters or ready-made material to bring into your library.",
+    title: "Card Browser",
+    body: "The Card Browser lets you find and import downloadable character cards. Start here when you want new characters to add to your library.",
     side: "bottom",
     openPanel: "bot-browser",
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
@@ -90,7 +90,7 @@ const STEPS: TourStep[] = [
   {
     target: "panel-agents",
     title: "Agents",
-    body: "Agents work alongside the main model to provide additional functionality on top of chats. They can track state, retrieve knowledge, process messages, trigger images, guide story events, and more depending on what you enable.",
+    body: "Agents add optional features without making the base app heavy. Open Download Agents here to browse and install image and video generation, trackers, writers, maps, audio and video calls, and various chat games, then enable the ones you want for each chat. You can update or uninstall them from the same catalog.",
     side: "bottom",
     openPanel: "agents",
     sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
@@ -451,16 +451,10 @@ function TourCardContent({
 
       {/* Buttons */}
       <div className="flex items-center justify-between">
-        <button
-          onClick={onSkip}
-          className={TUTORIAL_SECONDARY_BUTTON_CLASS}
-        >
+        <button onClick={onSkip} className={TUTORIAL_SECONDARY_BUTTON_CLASS}>
           {step === 0 ? "Skip Tutorial" : "Skip"}
         </button>
-        <button
-          onClick={onNext}
-          className={TUTORIAL_PRIMARY_BUTTON_CLASS}
-        >
+        <button onClick={onNext} className={TUTORIAL_PRIMARY_BUTTON_CLASS}>
           {isLast ? "Get Started" : "Next"}
           {!isLast && <ChevronRight size="0.75rem" />}
         </button>

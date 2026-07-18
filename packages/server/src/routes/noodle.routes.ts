@@ -14,8 +14,6 @@ import {
   noodleBulkInviteSchema,
   noodleCreateInteractionSchema,
   noodleCreatePostSchema,
-  noodleGeneratedProfilesSchema,
-  noodleGeneratedRefreshSchema,
   noodleInviteSchema,
   noodleInteractionOwnerSchema,
   noodleInteractionUpdateSchema,
@@ -26,12 +24,14 @@ import {
   noodleSettingsUpdateSchema,
   PROFESSOR_MARI_ID,
   readNoodlePollFromMetadata,
+  resolveMacros,
   type APIProvider,
   type NoodleAccount,
   type NoodleBootstrap,
   type NoodleInteraction,
   type NoodleInteractionType,
   type NoodlePost,
+  type NoodleRefreshAttemptKind,
   type NoodleSettings,
 } from "@marinara-engine/shared";
 import type { ChatMessage } from "../services/llm/base-provider.js";
@@ -43,16 +43,23 @@ import { createCharacterGalleryStorage } from "../services/storage/character-gal
 import { createNoodleStorage, parseNoodleAvatarCrop } from "../services/storage/noodle.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { withConnectionFallbackProvider } from "../services/llm/connection-fallback-provider.js";
 import { generateImage, saveImageToDisk } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
 import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
-import { loadPrompt, NOODLE_IMAGE_POST } from "../services/prompt-overrides/index.js";
+import {
+  loadPrompt,
+  NOODLE_IMAGE_POST,
+  NOODLE_TIMELINE_BASE,
+  NOODLE_TIMELINE_VOICE,
+} from "../services/prompt-overrides/index.js";
 import { parseGameJsonish } from "../services/game/jsonish.js";
 import { resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import { clampGenerationMaxOutputTokens } from "../services/generation/output-token-limits.js";
+import { resolveImageConnectionFallback } from "../services/generation/media-connection-fallback.js";
 import {
   noodleRefreshSchedulerStatus,
   rescheduleNoodleRefreshTime,
@@ -62,15 +69,25 @@ import { generateNoodleImageWithRetry } from "../services/noodle/noodle-image-re
 import {
   canGenerateNoodleActivityForAccountKind,
   collectNoodlePromptImageCandidates,
+  composeNoodleTimelineSystemPrompt,
   formatNoodleTimelineForPrompt,
+  noodleLorebookTokenBudget,
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
   noodlePersonaCommentPostIds,
-  NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
-  NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
+  NOODLE_ADULT_PLATFORM_POLICY,
+  NOODLE_LEGACY_PAST_MEMORY_INCLUSION_CHANCE,
+  NOODLE_LEGACY_PAST_MEMORY_MAX_ITEMS,
+  NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION,
+  NOODLE_PERSONA_IDENTITY_INSTRUCTION,
+  NOODLE_RECALLED_MEMORY_INSTRUCTION,
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
+  sampleNoodlePastMemoriesWeighted,
 } from "../services/noodle/noodle-prompt.js";
+import { processLorebooks } from "../services/lorebook/index.js";
+import { buildPromptMacroContext, resolveMacrosWithVariableSnapshot } from "../services/prompt/index.js";
+import type { DB } from "../db/connection.js";
 import {
   generateImageCaptionForDataUrl,
   resolveImageCaptioningRuntime,
@@ -84,6 +101,18 @@ import {
 } from "../services/noodle/noodle-vision.js";
 import { chooseNoodleParticipantAccounts } from "../services/noodle/noodle-participant-selection.js";
 import { canCreateGeneratedNoodleInteraction } from "../services/noodle/noodle-interaction-policy.js";
+import { parseNoodleGeneratedProfiles } from "../services/noodle/noodle-generated-profiles.js";
+import {
+  parseNoodleGeneratedRefresh,
+  validateNoodleGeneratedRefresh,
+} from "../services/noodle/noodle-generated-refresh.js";
+import { normalizeNoodleImagePrompt } from "../services/noodle/noodle-image-prompt.js";
+import { normalizeNoodleHandle } from "../services/noodle/noodle-handle.js";
+import { resolveNoodleAvatarCropAfterProfileUpdate } from "../services/noodle/noodle-profile-avatar.js";
+import {
+  isNoodleProfileGenerated,
+  noodleAccountsNeedingProfiles,
+} from "../services/noodle/noodle-profile-selection.js";
 
 const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
@@ -139,12 +168,29 @@ function escapePromptAttribute(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Reads the chat's already-derived `conversationCharacterStatuses` (updated on each generation in
+ * that chat), keyed by characterId. This is a plain metadata read, not a schedule recomputation —
+ * cheap enough to attach to every opted-in chat_context block without a separate token budget.
+ */
+function parseConversationCharacterStatuses(metadata: unknown): Record<string, { status: string; activity: string }> {
+  const raw = parseRecord(metadata).conversationCharacterStatuses;
+  if (!raw || typeof raw !== "object") return {};
+  const result: Record<string, { status: string; activity: string }> = {};
+  for (const [characterId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const status = (value as Record<string, unknown>).status;
+    const activity = (value as Record<string, unknown>).activity;
+    if (typeof status === "string" && typeof activity === "string") {
+      result[characterId] = { status, activity };
+    }
+  }
+  return result;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-const NOODLE_ADULT_PLATFORM_POLICY =
-  "Noodle only accepts confirmed adult accounts and personas. Every participant on Noodle is 18+; minors are not allowed on the platform. NSFW content is allowed, anything goes, and adult in-character drama, flirtation, gossip, and explicit references may appear when they fit the accounts involved.";
 
 function sinceHoursIso(hours: number) {
   return new Date(Date.now() - Math.max(1, hours) * 60 * 60 * 1000).toISOString();
@@ -163,7 +209,7 @@ function characterContextFromRow(row: { id: string; data: unknown; avatarPath?: 
   const data = parseRecord(row.data);
   const extensions = parseRecord(data.extensions);
   const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "Character";
-  const lines = [`<character id="${row.id}" name="${name}">`];
+  const lines = [`<character name="${escapePromptAttribute(name)}">`];
   for (const [label, value] of [
     ["Description", data.description],
     ["Personality", data.personality],
@@ -181,13 +227,17 @@ function characterContextFromRow(row: { id: string; data: unknown; avatarPath?: 
 function personaContextFromRow(row: {
   id: string;
   name: string;
+  convoDisplayName?: string | null;
   description?: string | null;
   personality?: string | null;
   scenario?: string | null;
   backstory?: string | null;
   appearance?: string | null;
 }) {
-  const lines = [`<persona id="${row.id}" name="${row.name || "User"}">`];
+  const displayName = row.convoDisplayName?.trim() || row.name || "User";
+  const lines = [
+    `<persona id="${escapePromptAttribute(row.id)}" accountKey="persona:${escapePromptAttribute(row.id)}" name="${escapePromptAttribute(displayName)}">`,
+  ];
   for (const [label, value] of [
     ["Description", row.description],
     ["Personality", row.personality],
@@ -216,15 +266,6 @@ function galleryImageUrl(filePath: string, fallbackChatId: string) {
 function characterGalleryImageUrl(characterId: string, filePath: string) {
   const filename = basename(filePath.replace(/\\/g, "/"));
   return `/api/characters/${encodeURIComponent(characterId)}/gallery/file/${encodeURIComponent(filename)}`;
-}
-
-function readBoolSetting(settings: Record<string, unknown>, key: string) {
-  const value = settings[key];
-  return value === true || value === "true";
-}
-
-function isProfileGenerated(account: NoodleAccount) {
-  return readBoolSetting(account.settings, "profileGenerated");
 }
 
 function mentionedCharacterAccounts(accounts: NoodleAccount[], content: string): NoodleAccount[] {
@@ -412,8 +453,12 @@ async function ensureProfessorMariAccount(
     avatarCrop: row ? characterAvatarCrop(row) : null,
     bio: PROFESSOR_MARI_NOODLE_BIO,
     invited: true,
+    syncIdentity: true,
   });
-  if (account.bio !== PROFESSOR_MARI_NOODLE_BIO || !isProfileGenerated(account) || !account.settings.location) {
+  if (
+    account.settings.profileManuallyEdited !== true &&
+    (account.bio !== PROFESSOR_MARI_NOODLE_BIO || !isNoodleProfileGenerated(account) || !account.settings.location)
+  ) {
     await noodle.updateAccount(account.id, {
       handle: account.handle || "professor_mari",
       displayName: account.displayName || "Professor Mari",
@@ -448,6 +493,7 @@ async function ensureSelectedGroupCharacterAccounts(
       avatarUrl: row.avatarPath ?? null,
       avatarCrop: characterAvatarCrop(row),
       bio: String(parseRecord(row.data).description ?? ""),
+      syncIdentity: true,
     });
   }
   return selectedCharacterIds;
@@ -483,13 +529,40 @@ function filterStalePersonaAccounts(bootstrap: NoodleBootstrap, livePersonaIds: 
   };
 }
 
+function filterExcludedNoodleAccounts(bootstrap: NoodleBootstrap, settings: NoodleSettings): NoodleBootstrap {
+  if (settings.allowProfessorMari) return bootstrap;
+  return {
+    ...bootstrap,
+    accounts: bootstrap.accounts.filter(
+      (account) => account.kind !== "character" || account.entityId !== PROFESSOR_MARI_ID,
+    ),
+  };
+}
+
 async function bootstrapVisibleNoodle(
   noodle: ReturnType<typeof createNoodleStorage>,
   characters: ReturnType<typeof createCharactersStorage>,
 ) {
+  const settings = await noodle.getSettings();
   const livePersonaIds = await ensurePersonaAccounts(noodle, characters);
-  await ensureProfessorMariAccount(noodle, characters);
-  return filterStalePersonaAccounts(await noodle.bootstrap(), livePersonaIds);
+  if (settings.allowProfessorMari) await ensureProfessorMariAccount(noodle, characters);
+  const existingCharacterAccounts = (await noodle.listAccounts()).filter(
+    (account) => account.kind === "character" && account.entityId !== PROFESSOR_MARI_ID,
+  );
+  const characterRowsById = new Map((await characters.list()).map((row) => [row.id, row]));
+  for (const account of existingCharacterAccounts) {
+    const row = characterRowsById.get(account.entityId);
+    if (!row) continue;
+    await noodle.upsertAccountFromProfile({
+      kind: "character",
+      entityId: row.id,
+      displayName: characterNameFromRow(row),
+      avatarUrl: row.avatarPath ?? null,
+      avatarCrop: characterAvatarCrop(row),
+      syncIdentity: true,
+    });
+  }
+  return filterExcludedNoodleAccounts(filterStalePersonaAccounts(await noodle.bootstrap(), livePersonaIds), settings);
 }
 
 async function resolvePersonaAccount(
@@ -579,9 +652,20 @@ async function buildOptedInChatContext(
     if (messages.length === 0) continue;
     const speakerNameByCharacterId = new Map(characterNames.map((character) => [character.id, character.name]));
     const participantLines = [
-      `- User persona: ${personaName}${chat.personaId ? ` (id=${chat.personaId})` : " (no persona id)"}`,
-      ...characterNames.map((character) => `- Character: ${character.name} (id=${character.id})`),
+      `- User persona: ${personaName}`,
+      ...characterNames.map((character) => `- Character: ${character.name}`),
     ];
+    // Attach each character's current status/activity from this chat's own schedule, if this chat
+    // has one. Read-only metadata lookup already updated by that chat's own generation — no new
+    // schedule computation and no attempt to reconcile a character's status across multiple chats;
+    // each opted-in chat's status stays scoped to its own <chat_context> block, same as messages.
+    const characterStatuses = parseConversationCharacterStatuses(chat.metadata);
+    const statusLines = characterNames
+      .map((character) => {
+        const status = characterStatuses[character.id];
+        return status ? `- ${character.name}: currently ${status.status} (${status.activity})` : null;
+      })
+      .filter((line): line is string => Boolean(line));
     const messageLines = await Promise.all(
       messages.map(async (message) => {
         const role = messageRoleLabel(message.role);
@@ -595,8 +679,7 @@ async function buildOptedInChatContext(
           .replace(/\s+/g, " ")
           .trim()
           .slice(0, 900);
-        const characterId = message.characterId ? `, characterId=${message.characterId}` : "";
-        return `- ${speaker} (${role}${characterId}): ${content}`;
+        return `- ${speaker} (${role}): ${content}`;
       }),
     );
     blocks.push(
@@ -606,6 +689,7 @@ async function buildOptedInChatContext(
         )}" name="${escapePromptAttribute(chat.name)}">`,
         "Participants:",
         ...participantLines,
+        ...(statusLines.length > 0 ? ["Current status in this story:", ...statusLines] : []),
         "Recent messages:",
         ...messageLines,
         `</chat_context>`,
@@ -618,9 +702,11 @@ async function buildOptedInChatContext(
 }
 
 async function buildRefreshPrompt(input: {
+  db: DB;
   noodle: ReturnType<typeof createNoodleStorage>;
   characters: ReturnType<typeof createCharactersStorage>;
   chats: ReturnType<typeof createChatsStorage>;
+  promptOverrides: ReturnType<typeof createPromptOverridesStorage>;
   activeAccounts: NoodleAccount[];
   personaAccount: NoodleAccount | null;
   settings: NoodleSettings;
@@ -646,58 +732,129 @@ async function buildRefreshPrompt(input: {
   const recentPosts = [...recentPostById.values()].sort(
     (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
   );
-  const pastMemorySampleSize = noodlePastMemorySampleSize();
+  const enhancedTimelineWriting = input.settings.enableEnhancedTimelineWriting;
+  const pastMemorySampleSize = enhancedTimelineWriting
+    ? noodlePastMemorySampleSize()
+    : noodlePastMemorySampleSize(Math.random, NOODLE_LEGACY_PAST_MEMORY_INCLUSION_CHANCE, NOODLE_LEGACY_PAST_MEMORY_MAX_ITEMS);
   const olderPosts =
     pastMemorySampleSize > 0
       ? (await input.noodle.listPostsBefore(noodlePastMemoryCutoff())).filter((post) => !recentPostById.has(post.id))
       : [];
-  const recalledPosts = sampleNoodlePastMemories(olderPosts, pastMemorySampleSize);
+  let recalledPosts: NoodlePost[];
+  if (enhancedTimelineWriting) {
+    const activeAccountIds = new Set(input.activeAccounts.map((account) => account.id));
+    const activeAccountHandles = new Set(
+      input.activeAccounts
+        .map((account) => account.handle?.toLowerCase())
+        .filter((handle): handle is string => Boolean(handle)),
+    );
+    const recentAuthorIds = new Set(recentPosts.map((post) => post.authorAccountId));
+    const recalledPostRelevanceWeight = (post: NoodlePost): number => {
+      let weight = 0.25;
+      if (activeAccountIds.has(post.authorAccountId)) weight += 2;
+      for (const handle of extractNoodleMentionHandles(post.content ?? "")) {
+        if (activeAccountHandles.has(handle)) weight += 1;
+      }
+      if (recentAuthorIds.has(post.authorAccountId)) weight += 1;
+      return weight;
+    };
+    recalledPosts = sampleNoodlePastMemoriesWeighted(olderPosts, pastMemorySampleSize, recalledPostRelevanceWeight);
+  } else {
+    recalledPosts = sampleNoodlePastMemories(olderPosts, pastMemorySampleSize);
+  }
   const [chatContext, recentInteractions, recalledInteractions] = await Promise.all([
     buildOptedInChatContext(input.chats, input.characters, selectedCharacterIds),
     input.noodle.listInteractions(recentPosts.map((post) => post.id)),
     input.noodle.listInteractions(recalledPosts.map((post) => post.id)),
   ]);
 
+  const promptMacroContext = await buildPromptMacroContext({
+    db: input.db,
+    characterIds: selectedCharacterIds,
+    personaName: personaNameFromRow(personaRow),
+    personaPhoneticName: personaRow?.phoneticName ?? "",
+    personaDescription: personaRow?.description ?? "",
+    personaFields: {
+      phoneticName: personaRow?.phoneticName ?? "",
+      personality: personaRow?.personality ?? "",
+      scenario: personaRow?.scenario ?? "",
+      backstory: personaRow?.backstory ?? "",
+      appearance: personaRow?.appearance ?? "",
+    },
+    lastGenerationType: "noodle",
+  });
+  const resolveNoodleMacros = (value: string) => resolveMacros(value, promptMacroContext, { trimResult: false });
   const characterContext = characterRows
     .filter((row): row is NonNullable<typeof row> => !!row)
-    .map(characterContextFromRow)
+    .map((row) => resolveNoodleMacros(characterContextFromRow(row)))
     .join("\n\n");
   const randomUserContext = activeRandomUsers
     .map(
       (account) =>
-        `<random_user entityId="${account.entityId}" name="${account.displayName}" handle="${account.handle}">\nBio: ${
+        `<random_user name="${escapePromptAttribute(account.displayName)}" handle="${escapePromptAttribute(account.handle)}">\nBio: ${
           account.bio || "A casual Noodle user."
         }\n</random_user>`,
     )
     .join("\n\n");
-  const personaContext = personaRow ? personaContextFromRow(personaRow) : "No user persona is active.";
+  const personaContext = personaRow
+    ? resolveNoodleMacros(personaContextFromRow(personaRow))
+    : "No user persona is active.";
   const activeAccountList = [...input.activeAccounts, ...(input.personaAccount ? [input.personaAccount] : [])]
     .map(
       (account) =>
-        `- ${account.displayName} (@${account.handle}) kind=${account.kind} entityId=${account.entityId} accountId=${account.id} generationRole=${
+        `- ${account.displayName} (@${account.handle}) kind=${account.kind} accountKey=${account.kind}:${account.entityId} generationRole=${
           account.kind === "persona" ? "reference-target-only" : "allowed-author-and-actor"
         }`,
     )
     .join("\n");
 
-  const system = [
-    "You write a fake social media timeline for Marinara Engine's in-app parody site called Noodle.",
-    NOODLE_ADULT_PLATFORM_POLICY,
-    "- Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, vulgar, or casual as fits them.",
-    "- Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.",
-    "- Structured actions are limited to posts, polls, follows, likes, reposts, replies, and poll votes.",
-    "- Generated interactions may target existing posts included in this prompt or posts you create in this response.",
-    "- To respond directly to an existing comment, create a reply interaction for its post and set parentInteractionId to that comment's exact replyId.",
-    "- Do not make an account interact with the same existing post again when it has already liked, reposted, voted, or replied there, unless that account was tagged or is answering a direct response to its own comment. Never make an account reply to its own comment.",
-    "- Avoid repeating an account's recent post topic or phrasing. Continue an existing thread only when new activity gives the account a reason to return.",
-    NOODLE_PERSONA_AUTHORSHIP_INSTRUCTION,
-    ...NOODLE_CREATIVE_FORMAT_INSTRUCTIONS,
-    "- For each interaction, set either targetTempId or targetPostId and set the unused target field to null.",
-    "- pollOptionIndex must be a zero-based integer for votes and null for every other interaction.",
-    "- An exact @handle in post or reply text tags that active account. Preserve the @handle exactly when mentioning someone.",
-    ...noodleTimelineFeatureInstructions(input.settings),
-    "- Return JSON only. No prose outside the JSON object.",
-  ].join("\n");
+  // Reuse the engine's existing multi-character lorebook system (already used by group chats) so
+  // character lore/backstory can surface in Noodle refreshes. Off by default (Settings ->
+  // Lorebook context) so existing timelines are unaffected until a user opts in. Oldest-first scan
+  // messages from recent timeline text give keyword-scoped entries real content to match against;
+  // character context is appended last so entries keyed to a character's own traits stay in scan depth.
+  const lorebookResult = input.settings.enableLorebookContext
+    ? await processLorebooks(
+        input.db,
+        [
+          ...recentPosts
+            .slice()
+            .reverse()
+            .map((post) => ({ role: "user", content: post.content })),
+          ...recentInteractions
+            .filter((interaction) => interaction.type === "reply" && interaction.content)
+            .map((interaction) => ({ role: "user", content: interaction.content ?? "" })),
+          ...(characterContext ? [{ role: "user", content: characterContext }] : []),
+        ],
+        null,
+        {
+          characterIds: selectedCharacterIds,
+          personaId: input.personaAccount?.entityId ?? null,
+          tokenBudget: noodleLorebookTokenBudget(activeCharacters.length),
+          generationTriggers: ["noodle"],
+          previewOnly: true,
+          resolveContent: (value) =>
+            resolveMacrosWithVariableSnapshot(value, promptMacroContext, { trimResult: false }),
+        },
+      )
+    : null;
+  const loreContext = lorebookResult
+    ? [lorebookResult.worldInfoBefore, lorebookResult.worldInfoAfter].filter(Boolean).join("\n")
+    : "";
+
+  // The base timeline prompt and its voice/tone tail are independently editable. The base prompt
+  // includes the complete default adult-platform, persona-authorship, interaction, and JSON rules;
+  // the voice text is deliberately appended last so users can tune style without hunting through
+  // the structural instructions.
+  const [timelineBaseText, timelineVoiceText] = await Promise.all([
+    loadPrompt(input.promptOverrides, NOODLE_TIMELINE_BASE, {}),
+    loadPrompt(input.promptOverrides, NOODLE_TIMELINE_VOICE, {
+      enhanced: String(enhancedTimelineWriting),
+      allowRandomUsers: String(input.settings.allowRandomUsers),
+    }),
+  ]);
+  const system = composeNoodleTimelineSystemPrompt(timelineBaseText, timelineVoiceText);
+  const timelineFeatureInstructions = noodleTimelineFeatureInstructions(input.settings);
 
   const visionCandidates = await prepareNoodleVisionAttachments([
     ...collectNoodlePromptImageCandidates(recentPosts, recentInteractions, {
@@ -742,12 +899,15 @@ async function buildRefreshPrompt(input: {
       "# User Persona",
       personaContext,
       "",
+      "# Persona Identity Rule",
+      NOODLE_PERSONA_IDENTITY_INSTRUCTION,
+      "The User Persona above is the identity selected for this refresh only. Historical timeline authors retain the distinct accountKey recorded on their own activity.",
+      "",
       "# Character Profiles",
       characterContext || "No character profiles.",
       "",
-      "# Random User Profiles",
-      randomUserContext || "Random users are disabled for this refresh.",
-      "",
+      ...(loreContext ? ["# World / Lore", loreContext, ""] : []),
+      ...(randomUserContext ? ["# Random User Profiles", randomUserContext, ""] : []),
       "# Opted-In Chat Context",
       "Only chats whose Chat Settings allow Noodle references are included here.",
       chatContext,
@@ -763,7 +923,7 @@ async function buildRefreshPrompt(input: {
         ? [
             "",
             "# Randomly Recalled Older Noodle Activity",
-            "These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.",
+            enhancedTimelineWriting ? NOODLE_RECALLED_MEMORY_INSTRUCTION : NOODLE_LEGACY_RECALLED_MEMORY_INSTRUCTION,
             formatNoodleTimelineForPrompt(recalledPosts, recalledInteractions, {
               emptyMessage: "No older Noodle activity was recalled.",
               includeTimestamp: true,
@@ -774,6 +934,9 @@ async function buildRefreshPrompt(input: {
           ]
         : []),
       ...(imageManifest ? ["", imageManifest] : []),
+      ...(timelineFeatureInstructions.length > 0
+        ? ["", "# Enabled Timeline Features", ...timelineFeatureInstructions]
+        : []),
       "",
       "# Quotas",
       `posts: at most ${input.settings.maxGeneratedPostsPerRefresh}`,
@@ -799,7 +962,7 @@ async function buildRefreshPrompt(input: {
         posts: [
           {
             tempId: "local id used only inside this response",
-            authorEntityId: "exact non-persona entityId allowed to author generated activity",
+            authorHandle: "exact @handle of a non-persona account allowed to author generated activity",
             content: "post text",
             poll: { question: "optional poll question", options: ["first answer", "second answer"] },
             imagePrompt: "optional image prompt or null",
@@ -808,7 +971,7 @@ async function buildRefreshPrompt(input: {
         ],
         interactions: [
           {
-            actorEntityId: "exact non-persona entityId allowed to perform generated activity",
+            actorHandle: "exact @handle of a non-persona account allowed to perform generated activity",
             targetTempId: "tempId from posts, if targeting a newly created post",
             targetPostId: "existing post id, if targeting an existing post",
             parentInteractionId: "existing replyId when directly answering a comment, otherwise null",
@@ -819,8 +982,8 @@ async function buildRefreshPrompt(input: {
         ],
         follows: [
           {
-            actorEntityId: "exact non-persona entityId allowed to perform generated activity",
-            targetEntityId: "exact entityId from Active Noodle Accounts",
+            actorHandle: "exact @handle of a non-persona account allowed to perform generated activity",
+            targetHandle: "exact @handle from Active Noodle Accounts",
           },
         ],
       },
@@ -851,6 +1014,7 @@ async function buildRefreshPrompt(input: {
     visionAttachmentCount: visionAttachments.length,
     captionedImageCount: captionedImages.size,
     recalledPostIds: recalledPosts.map((post) => post.id),
+    lorebookActivatedEntryIds: lorebookResult?.activatedEntryIds ?? [],
   };
 }
 
@@ -872,8 +1036,7 @@ async function generateMissingNoodleProfiles(input: {
     row: { id: string; data: unknown; avatarPath?: string | null };
     bannerUrl: string | null;
   }> = [];
-  for (const account of input.accounts) {
-    if (account.kind !== "character" || isProfileGenerated(account)) continue;
+  for (const account of noodleAccountsNeedingProfiles(input.accounts)) {
     const row = await input.characters.getById(account.entityId);
     if (!row) continue;
     const bannerUrl = await pickRandomCharacterBannerUrl(input.characterGallery, account.entityId);
@@ -941,7 +1104,13 @@ async function generateMissingNoodleProfiles(input: {
     debugMode: input.debugMode,
     responseFormat: noodleResponseFormat(input.connection.model, "profiles"),
   });
-  const generated = noodleGeneratedProfilesSchema.parse(parseGameJsonish(result.content ?? ""));
+  const generated = parseNoodleGeneratedProfiles(parseGameJsonish(result.content ?? ""));
+  if (generated.rejected.length > 0) {
+    logger.warn(
+      "[noodle] Skipped %d invalid generated profile row(s); valid profiles will still be applied",
+      generated.rejected.length,
+    );
+  }
   const profileByEntityId = new Map(generated.profiles.map((profile) => [profile.entityId, profile]));
 
   for (const target of targets) {
@@ -962,6 +1131,11 @@ function interactionDigestVerb(type: NoodleInteractionType) {
   if (type === "repost") return "reposted";
   if (type === "vote") return "voted in";
   return "liked";
+}
+
+function noodleDigestAccountLabel(account: Pick<NoodleAccount, "kind" | "displayName" | "handle">) {
+  const identity = `${account.displayName} (@${account.handle})`;
+  return account.kind === "persona" ? `Persona ${identity}` : identity;
 }
 
 async function generateNoodlePostImage(input: {
@@ -985,6 +1159,10 @@ async function generateNoodlePostImage(input: {
   const imageBaseUrl = input.imageConnection.baseUrl || "https://image.pollinations.ai";
   const imageSource = input.imageConnection.imageGenerationSource || imageModel;
   const imageServiceHint = input.imageConnection.imageService || imageSource;
+  const imageFallback = await resolveImageConnectionFallback(
+    createConnectionsStorage(input.app.db),
+    input.imageConnection.id,
+  );
   let characterDescription = "";
   let referenceImages: string[] | undefined;
 
@@ -1089,6 +1267,8 @@ async function generateNoodlePostImage(input: {
         comfyWorkflow: input.imageConnection.comfyuiWorkflow || undefined,
         imageDefaults,
         referenceImages,
+        debugMode: input.debugMode,
+        fallback: imageFallback,
       }),
     (error, attempt, maxAttempts) => {
       logger.warn(
@@ -1190,7 +1370,38 @@ export async function noodleRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const parsed = noodleAccountUpdateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const updated = await noodle.updateAccount(id, parsed.data);
+    const existing = await noodle.getAccountById(id);
+    if (!existing) return reply.code(404).send({ error: "Noodle account not found" });
+    const sourceCharacter = existing.kind === "character" ? await characters.getById(existing.entityId) : null;
+    const avatarCrop = resolveNoodleAvatarCropAfterProfileUpdate({
+      currentAvatarUrl: existing.avatarUrl,
+      nextAvatarUrl: parsed.data.avatarUrl,
+      currentCrop: existing.avatarCrop,
+      sourceAvatarUrl: sourceCharacter?.avatarPath,
+      sourceCrop: sourceCharacter ? characterAvatarCrop(sourceCharacter) : null,
+    });
+    const profileFieldsChanged =
+      existing.kind === "character" &&
+      (parsed.data.handle !== undefined ||
+        parsed.data.displayName !== undefined ||
+        parsed.data.bio !== undefined ||
+        parsed.data.avatarUrl !== undefined ||
+        parsed.data.settings?.avatarCrop !== undefined ||
+        parsed.data.settings?.bannerUrl !== undefined ||
+        parsed.data.settings?.location !== undefined);
+    const updated = await noodle.updateAccount(id, {
+      ...parsed.data,
+      ...(profileFieldsChanged
+        ? {
+            settings: {
+              ...existing.settings,
+              ...parsed.data.settings,
+              ...(avatarCrop !== undefined ? { avatarCrop } : {}),
+              profileManuallyEdited: true,
+            },
+          }
+        : {}),
+    });
     if (!updated) return reply.code(404).send({ error: "Noodle account not found" });
     return updated;
   });
@@ -1209,6 +1420,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       avatarCrop: characterAvatarCrop(row),
       bio: String(parseRecord(row.data).description ?? ""),
       invited: true,
+      syncIdentity: true,
     });
   });
 
@@ -1229,10 +1441,19 @@ export async function noodleRoutes(app: FastifyInstance) {
           avatarCrop: characterAvatarCrop(row),
           bio: String(parseRecord(row.data).description ?? ""),
           invited: true,
+          syncIdentity: true,
         }),
       );
     }
     return accounts;
+  });
+
+  app.delete("/invites", async () => {
+    await Promise.all([
+      noodle.clearCharacterInvites(),
+      noodle.updateSettings({ invitedCharacterGroupIds: [], allowRandomUsers: false }),
+    ]);
+    return bootstrapVisibleNoodle(noodle, characters);
   });
 
   app.delete("/invites/:characterId", async (req, reply) => {
@@ -1265,7 +1486,7 @@ export async function noodleRoutes(app: FastifyInstance) {
     if (!post) return reply.code(404).send({ error: "Noodle author not found" });
     const digest = await noodle.createDigest({
       accountIds: [account.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
-      content: `${account.displayName} posted on Noodle: ${post.content}`,
+      content: `${noodleDigestAccountLabel(account)} posted on Noodle: ${post.content}`,
       sourcePostId: post.id,
     });
     return (await noodle.updatePostMedia(post.id, { metadata: { activityDigestId: digest.id } })) ?? post;
@@ -1288,7 +1509,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       if (typeof digestId === "string" && digestId && author) {
         await noodle.updateDigest(digestId, {
           accountIds: [author.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
-          content: `${author.displayName} posted on Noodle: ${post.content}`,
+          content: `${noodleDigestAccountLabel(author)} posted on Noodle: ${post.content}`,
         });
       }
     }
@@ -1349,7 +1570,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         accountIds: Array.from(
           new Set([actor.id, post.authorAccountId, directReplyTarget?.actorAccountId].filter(Boolean) as string[]),
         ),
-        content: `${actor.displayName} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${interactionSummary}`,
+        content: `${noodleDigestAccountLabel(actor)} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${interactionSummary}`,
         sourcePostId: post.id,
         sourceInteractionId: interaction.id,
       });
@@ -1388,7 +1609,7 @@ export async function noodleRoutes(app: FastifyInstance) {
     const [post, accounts] = await Promise.all([noodle.getPostById(postId), noodle.listAccounts()]);
     if (post && interactionActor) {
       const directReplyTarget = updated.parentInteractionId
-        ? (await noodle.getInteractionById(updated.parentInteractionId))
+        ? await noodle.getInteractionById(updated.parentInteractionId)
         : null;
       const mentionedAccounts = mentionedCharacterAccounts(accounts, updated.content ?? "");
       await noodle.createDigest({
@@ -1402,7 +1623,7 @@ export async function noodleRoutes(app: FastifyInstance) {
             ].filter(Boolean) as string[],
           ),
         ),
-        content: `${interactionActor.displayName} replied to a Noodle post: ${
+        content: `${noodleDigestAccountLabel(interactionActor)} replied to a Noodle post: ${
           updated.content || (updated.imageUrl ? "shared an image" : post.content)
         }`,
         sourcePostId: post.id,
@@ -1541,7 +1762,7 @@ export async function noodleRoutes(app: FastifyInstance) {
 
     try {
       const baseUrl = resolveBaseUrl(conn);
-      const provider = createLLMProvider(
+      const primaryProvider = createLLMProvider(
         conn.provider,
         baseUrl,
         conn.apiKey,
@@ -1550,9 +1771,18 @@ export async function noodleRoutes(app: FastifyInstance) {
         conn.maxTokensOverride,
         conn.claudeFastMode === "true",
         conn.treatAsLocalEndpoint === "true",
+        conn.defaultParameters,
       );
+      const fallbackConnection = await connections.getFallbackForMain();
+      const provider = withConnectionFallbackProvider({
+        primary: primaryProvider,
+        primaryConnectionId: conn.id,
+        fallbackConnection,
+        fallbackBaseUrl: fallbackConnection ? resolveBaseUrl(fallbackConnection) : "",
+        category: "main",
+      });
       await ensurePersonaAccounts(noodle, characters);
-      await ensureProfessorMariAccount(noodle, characters);
+      if (settings.allowProfessorMari) await ensureProfessorMariAccount(noodle, characters);
       const personaAccount = await resolvePersonaAccount(noodle, characters, parsed.data.personaId);
       const selectedGroupCharacterIds = await ensureSelectedGroupCharacterAccounts(
         noodle,
@@ -1560,20 +1790,6 @@ export async function noodleRoutes(app: FastifyInstance) {
         settings.invitedCharacterGroupIds,
       );
       if (settings.allowRandomUsers) await ensureRandomUserAccounts(noodle);
-      const eligibleAccounts = await noodle.listAccounts();
-      const eligibleCharacterAccounts = eligibleAccounts.filter(
-        (account) =>
-          account.kind === "character" && (account.invited || selectedGroupCharacterIds.has(account.entityId)),
-      );
-      await generateMissingNoodleProfiles({
-        noodle,
-        characters,
-        characterGallery,
-        accounts: eligibleCharacterAccounts,
-        provider,
-        connection: conn,
-        debugMode,
-      });
       const participantAccounts = await noodle.listAccounts();
       const selectionCutoff = sinceHoursIso(48);
       const [recentCreatedSelectionPosts, recentPersonaSelectionReplies] = await Promise.all([
@@ -1599,7 +1815,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         interactions: recentSelectionInteractions,
         personaAccount,
       });
-      const selectedParticipants = chooseNoodleParticipantAccounts({
+      let selectedParticipants = chooseNoodleParticipantAccounts({
         accounts: participantAccounts,
         settings,
         selectedGroupCharacterIds,
@@ -1613,6 +1829,19 @@ export async function noodleRoutes(app: FastifyInstance) {
           .send({ error: "Invite a character, select a character folder, or enable random users before refreshing." });
       }
 
+      await generateMissingNoodleProfiles({
+        noodle,
+        characters,
+        characterGallery,
+        accounts: selectedParticipants,
+        provider,
+        connection: conn,
+        debugMode,
+      });
+      selectedParticipants = (
+        await Promise.all(selectedParticipants.map((account) => noodle.getAccountById(account.id)))
+      ).filter((account): account is NoodleAccount => account !== null);
+
       const activeAccounts = [...selectedParticipants, ...(personaAccount ? [personaAccount] : [])];
       const {
         messages,
@@ -1622,10 +1851,13 @@ export async function noodleRoutes(app: FastifyInstance) {
         visionAttachmentCount,
         captionedImageCount,
         recalledPostIds,
+        lorebookActivatedEntryIds,
       } = await buildRefreshPrompt({
+        db: app.db,
         noodle,
         characters,
         chats,
+        promptOverrides,
         activeAccounts: selectedParticipants,
         personaAccount,
         settings,
@@ -1644,6 +1876,14 @@ export async function noodleRoutes(app: FastifyInstance) {
           debugMode,
           "[debug/noodle] Added %d generated timeline image caption(s) to the refresh prompt",
           captionedImageCount,
+        );
+      }
+      if (lorebookActivatedEntryIds.length > 0) {
+        logDebugOverride(
+          debugMode,
+          "[debug/noodle] Activated %d lorebook entr(ies) for this refresh: %s",
+          lorebookActivatedEntryIds.length,
+          lorebookActivatedEntryIds.join(", "),
         );
       }
       run = await noodle.createRefreshRun({
@@ -1668,6 +1908,8 @@ export async function noodleRoutes(app: FastifyInstance) {
         debugMode,
         responseFormat: noodleResponseFormat(conn.model, "timeline"),
       } as const;
+      let requestMessages: ChatMessage[] = messages;
+      let firstAttemptKind: NoodleRefreshAttemptKind = "initial";
       let result: Awaited<ReturnType<typeof provider.chatComplete>>;
       try {
         result = await provider.chatComplete(messages, completionOptions);
@@ -1682,11 +1924,97 @@ export async function noodleRoutes(app: FastifyInstance) {
           "[debug/noodle] Text-only fallback prompt sent to model:\n%s",
           textOnlyPromptForLog,
         );
+        requestMessages = textOnlyMessages;
+        firstAttemptKind = "text_only_fallback";
         result = await provider.chatComplete(textOnlyMessages, completionOptions);
       }
-      const content = result.content ?? "";
-      const generated = noodleGeneratedRefreshSchema.parse(parseGameJsonish(content));
-      const entityToAccount = new Map(activeAccounts.map((account) => [account.entityId, account]));
+      let content = result.content ?? "";
+      logDebugOverride(
+        debugMode,
+        "[debug/noodle] Raw model response (%s attempt %d):\n%s",
+        firstAttemptKind,
+        1,
+        content,
+      );
+      let parsedGenerated: ReturnType<typeof parseNoodleGeneratedRefresh> | null = null;
+      let retryReason: string | null = null;
+      const allowedActorHandles = new Set(selectedParticipants.map((account) => normalizeNoodleHandle(account.handle)));
+      const knownHandles = new Set(activeAccounts.map((account) => normalizeNoodleHandle(account.handle)));
+      try {
+        parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
+        retryReason = validateNoodleGeneratedRefresh(parsedGenerated.refresh, allowedActorHandles, knownHandles);
+      } catch (error) {
+        retryReason = `the response was not valid timeline JSON (${getErrorMessage(error)})`;
+      }
+      await noodle.recordRefreshAttempt(runId, {
+        sequence: 1,
+        kind: firstAttemptKind,
+        response: content,
+        rejectionReason: retryReason,
+        createdAt: new Date().toISOString(),
+      });
+
+      if (retryReason) {
+        const allowedHandles = selectedParticipants.map((account) => `@${account.handle}`);
+        const knownTargetHandles = activeAccounts.map((account) => `@${account.handle}`);
+        logger.warn("[noodle] Retrying timeline generation because %s", retryReason);
+        const correction = [
+          "Your previous timeline response could not be used.",
+          `Reason: ${retryReason}.`,
+          `Regenerate the complete JSON object now. Authors and actors must use only these selected participant handles: ${allowedHandles.join(", ")}.`,
+          `Follow targets may additionally use these known handles: ${knownTargetHandles.join(", ")}.`,
+          "Do not invent, rename, or omit an authorHandle, actorHandle, or targetHandle. Return JSON only.",
+        ].join("\n");
+        result = await provider.chatComplete([...requestMessages, { role: "user", content: correction }], completionOptions);
+        content = result.content ?? "";
+        logDebugOverride(
+          debugMode,
+          "[debug/noodle] Raw model response (%s attempt %d):\n%s",
+          "correction",
+          2,
+          content,
+        );
+        parsedGenerated = null;
+        let correctedRetryReason: string | null = null;
+        try {
+          parsedGenerated = parseNoodleGeneratedRefresh(parseGameJsonish(content));
+          correctedRetryReason = validateNoodleGeneratedRefresh(
+            parsedGenerated.refresh,
+            allowedActorHandles,
+            knownHandles,
+          );
+        } catch (error) {
+          correctedRetryReason = `the response was not valid timeline JSON (${getErrorMessage(error)})`;
+        }
+        await noodle.recordRefreshAttempt(runId, {
+          sequence: 2,
+          kind: "correction",
+          response: content,
+          rejectionReason: correctedRetryReason,
+          createdAt: new Date().toISOString(),
+        });
+        if (correctedRetryReason) {
+          throw new Error(`Noodle timeline correction could not be used because ${correctedRetryReason}.`);
+        }
+      }
+
+      if (!parsedGenerated) throw new Error("Noodle timeline generation returned no usable response.");
+      const generated = parsedGenerated.refresh;
+      for (const rejected of parsedGenerated.rejected) {
+        logger.warn(
+          "[noodle] Ignoring malformed generated %s item at index %d (%d validation issue%s)",
+          rejected.collection,
+          rejected.index,
+          rejected.issueCount,
+          rejected.issueCount === 1 ? "" : "s",
+        );
+      }
+      const handleToAccount = new Map(
+        [...(personaAccount ? [personaAccount] : []), ...selectedParticipants].map((account) => [
+          normalizeNoodleHandle(account.handle),
+          account,
+        ]),
+      );
       const mutableAccountSettings = new Map(
         activeAccounts.map((account) => [account.id, { ...account.settings }] as const),
       );
@@ -1714,14 +2042,14 @@ export async function noodleRoutes(app: FastifyInstance) {
       const activeCharacterReferenceAccounts = activeAccounts.filter((account) => account.kind === "character");
 
       for (const generatedPost of generated.posts.slice(0, settings.maxGeneratedPostsPerRefresh)) {
-        const account = entityToAccount.get(generatedPost.authorEntityId);
+        const account = handleToAccount.get(normalizeNoodleHandle(generatedPost.authorHandle));
         if (!account) continue;
         if (!canGenerateNoodleActivityForAccountKind(account.kind)) {
           logger.warn("[noodle] Ignoring generated post attributed to persona %s", account.entityId);
           continue;
         }
         const imagePrompt =
-          remainingImagePrompts > 0 && generatedPost.imagePrompt?.trim() ? generatedPost.imagePrompt.trim() : null;
+          remainingImagePrompts > 0 ? normalizeNoodleImagePrompt(generatedPost.imagePrompt) : null;
         if (imagePrompt) remainingImagePrompts -= 1;
         let persistedImagePrompt = imagePrompt;
         let imageUrl: string | null = null;
@@ -1798,7 +2126,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         if (generatedPost.tempId) tempIdToPostId.set(generatedPost.tempId, post.id);
         const digest = await noodle.createDigest({
           accountIds: [account.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
-          content: `${account.displayName} posted on Noodle: ${post.content}`,
+          content: `${noodleDigestAccountLabel(account)} posted on Noodle: ${post.content}`,
           sourceRunId: runId,
           sourcePostId: post.id,
         });
@@ -1813,7 +2141,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       };
       for (const generatedInteraction of generated.interactions) {
         if (quotas[generatedInteraction.type] <= 0) continue;
-        const actor = entityToAccount.get(generatedInteraction.actorEntityId);
+        const actor = handleToAccount.get(normalizeNoodleHandle(generatedInteraction.actorHandle));
         if (!actor) continue;
         if (!canGenerateNoodleActivityForAccountKind(actor.kind)) {
           logger.warn(
@@ -1872,7 +2200,7 @@ export async function noodleRoutes(app: FastifyInstance) {
             accountIds: Array.from(
               new Set([actor.id, targetPost.authorAccountId, parentInteraction?.actorAccountId]),
             ).filter((accountId): accountId is string => Boolean(accountId)),
-            content: `${actor.displayName} ${interactionDigestVerb(
+            content: `${noodleDigestAccountLabel(actor)} ${interactionDigestVerb(
               generatedInteraction.type,
             )} a Noodle post: ${interactionSummary}`,
             sourceRunId: runId,
@@ -1885,8 +2213,8 @@ export async function noodleRoutes(app: FastifyInstance) {
       const maxGeneratedFollows = Math.max(12, activeAccounts.length * 2);
       const seenGeneratedFollows = new Set<string>();
       for (const generatedFollow of generated.follows.slice(0, maxGeneratedFollows)) {
-        const actor = entityToAccount.get(generatedFollow.actorEntityId);
-        const target = entityToAccount.get(generatedFollow.targetEntityId);
+        const actor = handleToAccount.get(normalizeNoodleHandle(generatedFollow.actorHandle));
+        const target = handleToAccount.get(normalizeNoodleHandle(generatedFollow.targetHandle));
         if (!actor || !target || actor.id === target.id) continue;
         if (!canGenerateNoodleActivityForAccountKind(actor.kind)) {
           logger.warn("[noodle] Ignoring generated follow attributed to persona %s", actor.entityId);
@@ -1911,7 +2239,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         await noodle.updateAccount(actor.id, { settings: nextSettings });
         await noodle.createDigest({
           accountIds: [actor.id, target.id],
-          content: `${actor.displayName} followed ${target.displayName} on Noodle.`,
+          content: `${noodleDigestAccountLabel(actor)} followed ${noodleDigestAccountLabel(target)} on Noodle.`,
           sourceRunId: runId,
         });
       }

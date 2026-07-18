@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Modal } from "./Modal";
 import { cn } from "../../lib/utils";
 
-export type ImagePromptReviewKind = "background" | "illustration" | "portrait" | "sprite" | "avatar";
+export type ImagePromptReviewKind = "background" | "illustration" | "portrait" | "sprite" | "avatar" | "video";
 
 export type ImagePromptReviewItem = {
   id: string;
@@ -11,8 +11,10 @@ export type ImagePromptReviewItem = {
   title: string;
   prompt: string;
   negativePrompt?: string;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
+  details?: string;
+  maxLength?: number;
 };
 
 export type ImagePromptOverride = {
@@ -25,6 +27,7 @@ type ImagePromptReviewModalProps = {
   open: boolean;
   items: ImagePromptReviewItem[];
   isSubmitting?: boolean;
+  mediaType?: "image" | "video";
   onCancel: () => void;
   onConfirm: (overrides: ImagePromptOverride[]) => void;
 };
@@ -33,6 +36,7 @@ export function ImagePromptReviewModal({
   open,
   items,
   isSubmitting = false,
+  mediaType = "image",
   onCancel,
   onConfirm,
 }: ImagePromptReviewModalProps) {
@@ -45,15 +49,20 @@ export function ImagePromptReviewModal({
   }, [items]);
 
   const hasEmptyPrompt = useMemo(() => items.some((item) => !(drafts[item.id] ?? item.prompt).trim()), [drafts, items]);
+  const mediaLabel = mediaType === "video" ? "video" : "image";
+  const mediaTitle = mediaType === "video" ? "Video" : "Image";
 
   const handleConfirm = () => {
     if (hasEmptyPrompt || isSubmitting) return;
     onConfirm(
-      items.map((item) => ({
-        id: item.id,
-        prompt: (drafts[item.id] ?? item.prompt).trim(),
-        negativePrompt: (negativeDrafts[item.id] ?? item.negativePrompt ?? "").trim() || undefined,
-      })),
+      items.map((item) => {
+        const negativePrompt = (negativeDrafts[item.id] ?? item.negativePrompt ?? "").trim();
+        return {
+          id: item.id,
+          prompt: (drafts[item.id] ?? item.prompt).trim(),
+          ...(item.negativePrompt !== undefined || negativePrompt ? { negativePrompt } : {}),
+        };
+      }),
     );
   };
 
@@ -61,12 +70,12 @@ export function ImagePromptReviewModal({
     <Modal
       open={open}
       onClose={isSubmitting ? () => {} : onCancel}
-      title={items.length === 1 ? "Review Image Prompt" : "Review Image Prompts"}
+      title={items.length === 1 ? `Review ${mediaTitle} Prompt` : `Review ${mediaTitle} Prompts`}
       width="max-w-4xl"
     >
       <div className="flex max-h-[72vh] flex-col gap-4">
         <div className="text-xs leading-relaxed text-[var(--muted-foreground)]">
-          Edit the prompt{items.length === 1 ? "" : "s"} below before Marinara sends the image request
+          Edit the prompt{items.length === 1 ? "" : "s"} below before Marinara sends the {mediaLabel} request
           {items.length === 1 ? "" : "s"} to your provider.
         </div>
 
@@ -74,6 +83,9 @@ export function ImagePromptReviewModal({
           {items.map((item) => {
             const value = drafts[item.id] ?? item.prompt;
             const negativeValue = negativeDrafts[item.id] ?? item.negativePrompt ?? "";
+            const itemDetails =
+              item.details ??
+              (typeof item.width === "number" && typeof item.height === "number" ? `${item.width}x${item.height}` : "");
             return (
               <label
                 key={item.id}
@@ -83,16 +95,19 @@ export function ImagePromptReviewModal({
                   <div className="min-w-0">
                     <div className="truncate text-xs font-semibold text-[var(--foreground)]">{item.title}</div>
                     <div className="mt-0.5 text-[0.625rem] capitalize text-[var(--muted-foreground)]">
-                      {item.kind} | {item.width}x{item.height}
+                      {item.kind}
+                      {itemDetails ? ` | ${itemDetails}` : ""}
                     </div>
                   </div>
                   <span className="rounded-md bg-[var(--background)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                    {value.trim().length} chars
+                    {value.trim().length}
+                    {item.maxLength ? ` / ${item.maxLength}` : ""} chars
                   </span>
                 </div>
                 <textarea
                   value={value}
                   onChange={(event) => setDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                  maxLength={item.maxLength}
                   rows={8}
                   spellCheck={false}
                   className="min-h-40 resize-y rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/70 focus:border-[var(--primary)]"
@@ -118,7 +133,9 @@ export function ImagePromptReviewModal({
 
         <div className="flex flex-col gap-2 border-t border-[var(--border)]/50 pt-3 sm:flex-row sm:items-center sm:justify-between">
           {hasEmptyPrompt ? (
-            <span className="text-[0.625rem] text-[var(--destructive)]">Every image request needs a prompt.</span>
+            <span className="text-[0.625rem] text-[var(--destructive)]">
+              Every {mediaLabel} request needs a prompt.
+            </span>
           ) : (
             <span className="text-[0.625rem] text-[var(--muted-foreground)]">
               {items.length} request{items.length === 1 ? "" : "s"} ready.

@@ -2,7 +2,7 @@
 // Routes: Backup
 // ──────────────────────────────────────────────
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { basename, dirname, join, relative } from "path";
+import { dirname, join, relative } from "path";
 import { createReadStream, createWriteStream, existsSync, readdirSync, statSync } from "fs";
 import type { WriteStream } from "fs";
 import { cp, mkdir, copyFile, readFile, readdir, writeFile, stat, mkdtemp, rm, open } from "fs/promises";
@@ -12,9 +12,8 @@ import { pipeline } from "stream/promises";
 import { createHash } from "crypto";
 import { inflateRawSync } from "zlib";
 import AdmZip from "adm-zip";
-import { is } from "drizzle-orm";
-import { SQLiteTable, getTableConfig } from "drizzle-orm/sqlite-core";
 import { FILE_BACKED_TABLES } from "../db/file-backed-store.js";
+import { getFileTableConfig, isFileTable, type AnyFileTable } from "../db/file-schema.js";
 import * as schema from "../db/schema/index.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
@@ -23,12 +22,21 @@ import { createAgentsStorage } from "../services/storage/agents.storage.js";
 import { createThemesStorage } from "../services/storage/themes.storage.js";
 import { canReparentFolder, type ExportEnvelope } from "@marinara-engine/shared";
 import { getDataDir } from "../utils/data-dir.js";
-import { getDatabaseFilePath, getFileStorageDir } from "../config/runtime-config.js";
+import { getFileStorageDir } from "../config/runtime-config.js";
 import { normalizeTimestampOverrides } from "../services/import/import-timestamps.js";
 import { flushDB } from "../db/connection.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { assertInsideDir } from "../utils/security.js";
 import { logger } from "../lib/logger.js";
+import {
+  ProfileImportAssetValidationError,
+  cleanupStagedProfileAssets,
+  promoteStagedProfileAssets,
+  rollbackPromotedProfileAssets,
+  stageProfileImportAssets,
+  type ProfileImportAssetInput,
+  type StagedProfileImportAssets,
+} from "../services/import/profile-import-assets.js";
 
 /** Directories inside DATA_DIR that should be included in every backup. */
 const BACKUP_DIRS = [
@@ -63,6 +71,22 @@ const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_EOCD_MIN_SIZE = 22;
 const ZIP_EOCD_MAX_COMMENT_BYTES = 0xffff;
 const ZIP_ENCRYPTED_FLAG = 0x0001;
+let profileImportLifecycleTail = Promise.resolve();
+
+/** Serialize database replacement, asset promotion, and failure recovery as one import lifecycle. */
+async function withProfileImportLifecycleLock<T>(task: () => Promise<T>): Promise<T> {
+  const predecessor = profileImportLifecycleTail;
+  let release: () => void = () => undefined;
+  profileImportLifecycleTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await predecessor;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
 
 function normalizeLorebookScope(value: unknown): { mode: "all" | "disabled" | "specific"; chatIds: string[] } {
   if (!value || typeof value !== "object") return { mode: "all", chatIds: [] };
@@ -362,24 +386,17 @@ function redactAgentSecrets(agent: any) {
   return { ...agent, settings: redactSettings(agent.settings) };
 }
 
-function isSchemaTable(value: unknown): value is SQLiteTable {
-  return is(value, SQLiteTable);
+function schemaTableName(table: AnyFileTable) {
+  return getFileTableConfig(table).name;
 }
 
-function schemaTableName(table: SQLiteTable) {
-  return getTableConfig(table).name;
+function schemaPrimaryKeyColumn(table: AnyFileTable) {
+  return getFileTableConfig(table).columns.find((column) => column.primary) ?? null;
 }
 
-function schemaPrimaryKeyColumn(table: SQLiteTable) {
-  const config = getTableConfig(table);
-  const columnPrimary = config.columns.find((column) => column.primary === true);
-  if (columnPrimary) return columnPrimary;
-  return config.primaryKeys[0]?.columns[0] ?? null;
-}
-
-const profileTableObjects = new Map<string, SQLiteTable>();
+const profileTableObjects = new Map<string, AnyFileTable>();
 for (const candidate of Object.values(schema)) {
-  if (!isSchemaTable(candidate)) continue;
+  if (!isFileTable(candidate)) continue;
   const tableName = schemaTableName(candidate);
   if (tableName && FILE_BACKED_TABLES.includes(tableName as (typeof FILE_BACKED_TABLES)[number])) {
     profileTableObjects.set(tableName, candidate);
@@ -405,7 +422,7 @@ export function sanitizeProfileTableRows(tableName: string, rows: Array<Record<s
 }
 
 // Secret-bearing columns to omit on the conflict-UPDATE path so an existing row
-// keeps its stored secret (Drizzle leaves an unmentioned column untouched); only
+// keeps its stored secret (the file store leaves an unmentioned column untouched); only
 // the fresh-insert path carries the export's redacted values. For
 // api_connections/custom_tools the export blanks the whole column; for
 // agent_configs the export redacts secret keys *inside* the settings JSON, so we
@@ -417,10 +434,7 @@ const REDACTED_UPDATE_COLUMNS: Record<string, string> = {
   custom_tools: "webhookUrl",
 };
 
-export function buildProfileUpdateSet(
-  tableName: string,
-  cleanRow: Record<string, unknown>,
-): Record<string, unknown> {
+export function buildProfileUpdateSet(tableName: string, cleanRow: Record<string, unknown>): Record<string, unknown> {
   const updateSet: Record<string, unknown> = { ...cleanRow };
   const secretColumn = REDACTED_UPDATE_COLUMNS[tableName];
   if (secretColumn) delete updateSet[secretColumn];
@@ -664,12 +678,79 @@ function countLegacyProfileImportItems(data: Record<string, any>) {
   }, 0);
 }
 
+function validateProfileStorageTableInputs(snapshot: ProfileStorageSnapshot) {
+  for (const tableName of FILE_BACKED_TABLES) {
+    const rows = snapshot.tables[tableName];
+    if (rows === undefined) continue;
+    if (!Array.isArray(rows)) {
+      throw new ProfileImportRequestError(`Profile table ${tableName} is not an array.`);
+    }
+
+    const table = profileTableObjects.get(tableName);
+    if (!table) throw new ProfileImportRequestError(`Profile table ${tableName} is not supported.`);
+    const primaryKey = schemaPrimaryKeyColumn(table);
+    for (const row of rows) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        throw new ProfileImportRequestError(`Profile table ${tableName} contains an invalid row.`);
+      }
+      if (primaryKey) {
+        const primaryValue = row[primaryKey.key];
+        if (primaryValue === undefined || primaryValue === null || primaryValue === "") {
+          throw new ProfileImportRequestError(
+            `Profile table ${tableName} contains a row without ${primaryKey.key}.`,
+          );
+        }
+      }
+    }
+  }
+}
+
+function buildProfileImportAssetInputs(
+  snapshot: ProfileStorageSnapshot,
+  readAsset: ProfileAssetReader | undefined,
+): ProfileImportAssetInput[] {
+  if (!Array.isArray(snapshot.files)) return [];
+  return snapshot.files.flatMap((file) => {
+    const safePath = normalizeProfileAssetPath(file?.path);
+    if (!safePath) return [];
+    const expectedSize = getProfileAssetManifestSize(file, safePath);
+    assertProfileArchiveEntryLimit(safePath, expectedSize);
+    return [
+      {
+        path: safePath,
+        expectedSize,
+        read: () =>
+          typeof file.data === "string"
+            ? Buffer.from(file.data, "base64")
+            : readAsset
+              ? readAsset(safePath)
+              : null,
+      },
+    ];
+  });
+}
+
 async function importProfileStorageSnapshot(
   app: FastifyInstance,
   snapshot: ProfileStorageSnapshot,
   onProgress?: ProfileImportProgressReporter,
   readAsset?: ProfileAssetReader,
 ) {
+  validateProfileStorageTableInputs(snapshot);
+  let stagedAssets: StagedProfileImportAssets;
+  try {
+    stagedAssets = await stageProfileImportAssets(
+      getDataDir(),
+      buildProfileImportAssetInputs(snapshot, readAsset),
+      PROFILE_ARCHIVE_TOTAL_UNCOMPRESSED_LIMIT_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof ProfileImportAssetValidationError) {
+      throw new ProfileImportRequestError(error.message);
+    }
+    throw error;
+  }
+
   const totalItems = Math.max(1, countProfileStorageSnapshotItems(snapshot));
   let completedItems = 0;
   const tableCounts: Record<string, number> = {};
@@ -684,61 +765,76 @@ async function importProfileStorageSnapshot(
     });
   };
 
-  for (const tableName of FILE_BACKED_TABLES) {
-    const table = profileTableObjects.get(tableName);
-    const rows = snapshot.tables[tableName];
-    if (!table || !Array.isArray(rows) || rows.length === 0) {
-      tableCounts[tableName] = 0;
-      continue;
-    }
+  return withProfileImportLifecycleLock(async () => {
+    let files = 0;
+    let committed = false;
+    let rollbackFailed = false;
+    try {
+      await app.db.transaction(async (tx) => {
+        for (const tableName of FILE_BACKED_TABLES) {
+          const table = profileTableObjects.get(tableName);
+          const rows = snapshot.tables[tableName];
+          if (!table || !Array.isArray(rows) || rows.length === 0) {
+            tableCounts[tableName] = 0;
+            continue;
+          }
 
-    emit("tables", `Importing ${tableName.replace(/_/g, " ")}`);
-    for (const row of rows) {
-      const cleanRow = { ...row };
-      if (tableName === "api_connections") cleanRow.apiKeyEncrypted = "";
-      const insert = app.db.insert(table as any).values(cleanRow as any) as any;
-      const conflictTarget = schemaPrimaryKeyColumn(table);
-      if (conflictTarget) {
-        // Preserve live secrets on rows that still exist: the export redacts secret
-        // columns, so upserting the blanks would wipe them unrecoverably. The fresh
-        // insert above still carries the blanks (no prior secret to keep).
-        await insert.onConflictDoUpdate({ target: conflictTarget, set: buildProfileUpdateSet(tableName, cleanRow) });
-      } else {
-        await insert;
+          emit("tables", `Importing ${tableName.replace(/_/g, " ")}`);
+          for (const row of rows) {
+            const cleanRow = { ...row };
+            if (tableName === "api_connections") cleanRow.apiKeyEncrypted = "";
+            const insert = tx.insert(table as any).values(cleanRow as any) as any;
+            const conflictTarget = schemaPrimaryKeyColumn(table);
+            if (conflictTarget) {
+              // Preserve live secrets on rows that still exist: the export redacts secret
+              // columns, so upserting the blanks would wipe them unrecoverably. The fresh
+              // insert above still carries the blanks (no prior secret to keep).
+              await insert.onConflictDoUpdate({
+                target: conflictTarget,
+                set: buildProfileUpdateSet(tableName, cleanRow),
+              });
+            } else {
+              await insert;
+            }
+            completedItems++;
+            tableCounts[tableName] = (tableCounts[tableName] ?? 0) + 1;
+            emit("tables", `Importing ${tableName.replace(/_/g, " ")}`);
+          }
+        }
+
+        await promoteStagedProfileAssets(stagedAssets);
+        for (const asset of stagedAssets.assets) {
+          files++;
+          completedItems++;
+          emit("files", `Restoring ${asset.path}`, files);
+        }
+        await flushDB();
+      });
+      committed = true;
+      return buildProfileImportStats(tableCounts, files);
+    } catch (error) {
+      try {
+        await rollbackPromotedProfileAssets(stagedAssets);
+      } catch (rollbackError) {
+        rollbackFailed = true;
+        logger.error(
+          rollbackError,
+          "[backup] Asset rollback failed; preserving recovery files at %s",
+          stagedAssets.rootDir,
+        );
+        throw new AggregateError([error, rollbackError], "Profile import and asset rollback both failed");
       }
-      completedItems++;
-      tableCounts[tableName] = (tableCounts[tableName] ?? 0) + 1;
-      emit("tables", `Importing ${tableName.replace(/_/g, " ")}`);
-    }
-  }
-
-  let files = 0;
-  let restoredFileBytes = 0;
-  if (Array.isArray(snapshot.files)) {
-    for (const file of snapshot.files) {
-      const safePath = normalizeProfileAssetPath(file?.path);
-      if (!safePath) continue;
-      const expectedSize = getProfileAssetManifestSize(file, safePath);
-      assertProfileArchiveEntryLimit(safePath, expectedSize);
-      const buffer =
-        typeof file.data === "string" ? Buffer.from(file.data, "base64") : readAsset ? await readAsset(safePath) : null;
-      if (!buffer) continue;
-      restoredFileBytes += expectedSize;
-      assertProfileArchiveTotalLimit(restoredFileBytes);
-      if (buffer.length !== expectedSize) {
-        throw new ProfileImportRequestError(`Profile asset ${safePath} does not match its manifest size.`);
+      throw error;
+    } finally {
+      if (!rollbackFailed) {
+        try {
+          await cleanupStagedProfileAssets(stagedAssets);
+        } catch (cleanupError) {
+          if (committed) logger.warn(cleanupError, "[backup] Failed to remove profile import staging files");
+        }
       }
-      const outputPath = assertInsideDir(getDataDir(), join(getDataDir(), ...safePath.split("/")));
-      await mkdir(dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, buffer);
-      files++;
-      completedItems++;
-      emit("files", `Restoring ${safePath}`, files);
     }
-  }
-
-  await flushDB();
-  return buildProfileImportStats(tableCounts, files);
+  });
 }
 
 async function buildProfileExportEnvelope(
@@ -1625,7 +1721,7 @@ function buildBackupRestoreNotes() {
     "",
     "This archive contains a raw filesystem backup for manual recovery.",
     "Treat it as sensitive: full backups include local secret material such as .encryption-key when that file exists.",
-    "Restore .encryption-key together with the database/storage files to keep saved API keys decryptable.",
+    "Restore .encryption-key together with the storage files to keep saved API keys decryptable.",
     "If this install used an ENCRYPTION_KEY environment variable instead of a persisted key file, restore that environment variable separately.",
     "",
     "For one-click import inside Marinara:",
@@ -1672,7 +1768,6 @@ export async function backupRoutes(app: FastifyInstance) {
     try {
       await flushDB();
       const dataDir = getDataDir();
-      const dbPath = getDatabaseFilePath();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
       const backupName = `marinara-backup-${timestamp}`;
       const backupsRoot = join(dataDir, "backups");
@@ -1686,21 +1781,9 @@ export async function backupRoutes(app: FastifyInstance) {
       await writeFile(join(backupDir, "marinara-profile.json"), JSON.stringify(profileEnvelope, null, 2), "utf8");
       await writeFile(join(backupDir, "RESTORE.txt"), buildBackupRestoreNotes(), "utf8");
 
-      // 1. Copy the database file (respects DATABASE_URL)
-      if (dbPath && existsSync(dbPath)) {
-        const dbName = basename(dbPath);
-        await copyFile(dbPath, join(backupDir, dbName));
-        // Also copy WAL/SHM if they exist (for a complete backup)
-        for (const ext of ["-wal", "-shm"]) {
-          const walSrc = dbPath + ext;
-          if (existsSync(walSrc)) {
-            await copyFile(walSrc, join(backupDir, dbName + ext));
-          }
-        }
-      }
       await copyPersistedEncryptionKey(dataDir, backupDir);
 
-      // 2. Copy data directories
+      // Copy data directories.
       for (const dirName of BACKUP_DIRS) {
         const src = resolveBackupDir(dataDir, dirName);
         if (existsSync(src)) {
@@ -1725,7 +1808,6 @@ export async function backupRoutes(app: FastifyInstance) {
     try {
       await flushDB();
       const dataDir = getDataDir();
-      const dbPath = getDatabaseFilePath();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
       const backupName = `marinara-backup-${timestamp}`;
 
@@ -1737,19 +1819,7 @@ export async function backupRoutes(app: FastifyInstance) {
       zip.addFile(`${backupName}/marinara-profile.json`, Buffer.from(JSON.stringify(profileEnvelope, null, 2), "utf8"));
       zip.addFile(`${backupName}/RESTORE.txt`, Buffer.from(buildBackupRestoreNotes(), "utf8"));
 
-      // 1. Add the database file (and WAL/SHM if present)
-      if (dbPath && existsSync(dbPath)) {
-        const dbName = basename(dbPath);
-        zip.addFile(`${backupName}/${dbName}`, await readFile(dbPath));
-        for (const ext of ["-wal", "-shm"]) {
-          const walSrc = dbPath + ext;
-          if (existsSync(walSrc)) {
-            zip.addFile(`${backupName}/${dbName}${ext}`, await readFile(walSrc));
-          }
-        }
-      }
-
-      // 2. Recursively add each data directory under backupName/<dir>/...
+      // Recursively add each data directory under backupName/<dir>/...
       for (const dirName of BACKUP_DIRS) {
         const src = resolveBackupDir(dataDir, dirName);
         if (!existsSync(src)) continue;

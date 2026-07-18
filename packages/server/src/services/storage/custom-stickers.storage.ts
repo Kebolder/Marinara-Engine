@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Custom Stickers
 // ──────────────────────────────────────────────
-import { eq, asc } from "drizzle-orm";
+import { eq, asc } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { customStickers } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

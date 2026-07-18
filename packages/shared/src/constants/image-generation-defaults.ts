@@ -44,6 +44,10 @@ export const DEFAULT_NOVELAI_DEFAULTS: NovelAiDefaults = {
   promptGuidance: 6,
   promptGuidanceRescale: 0,
   undesiredContentPreset: 0,
+  dynamicResolutionBySubjectCount: true,
+  styleReferenceImage: null,
+  styleReferenceStrength: 0.6,
+  styleReferenceFidelity: 0.5,
 };
 
 export const SD_WEBUI_SAMPLER_OPTIONS = [
@@ -294,6 +298,26 @@ function normalizeNovelAiDefaults(rawDefaults: unknown): NovelAiDefaults {
       DEFAULT_NOVELAI_DEFAULTS.undesiredContentPreset,
       0,
       4,
+    ),
+    dynamicResolutionBySubjectCount: readBoolean(
+      raw.dynamicResolutionBySubjectCount,
+      DEFAULT_NOVELAI_DEFAULTS.dynamicResolutionBySubjectCount,
+    ),
+    styleReferenceImage: readNullableString(
+      raw.styleReferenceImage,
+      DEFAULT_NOVELAI_DEFAULTS.styleReferenceImage,
+    ),
+    styleReferenceStrength: readNumber(
+      raw.styleReferenceStrength,
+      DEFAULT_NOVELAI_DEFAULTS.styleReferenceStrength,
+      0,
+      1,
+    ),
+    styleReferenceFidelity: readNumber(
+      raw.styleReferenceFidelity,
+      DEFAULT_NOVELAI_DEFAULTS.styleReferenceFidelity,
+      0,
+      1,
     ),
   };
 }

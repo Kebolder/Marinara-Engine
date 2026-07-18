@@ -8,7 +8,7 @@ A normal expression sprite is a still image, such as a happy face or an angry fa
 
 Marinara makes an animated expression in two steps. First it asks a **Video Generation** connection to create a short video clip of the expression. Then it converts that clip into a looping GIF sprite on your machine.
 
-Once saved, an animated expression works like any other sprite. The **Expression Engine** agent picks it and shows it when the scene calls for that emotion. The Expression Engine is the built-in agent that chooses which sprite to display during a chat. See [Character Sprites](../characters/sprites.md) for how sprites are shown, and [Built-in Agents Reference](../agents/built-in-agents.md) for the Expression Engine.
+Once saved, an animated expression works like any other sprite. The downloadable **Expression Engine** agent picks it and shows it when the scene calls for that emotion. See [Character Sprites](../characters/sprites.md) for how sprites are shown, and [Downloadable Agents Reference](../agents/built-in-agents.md) for the Expression Engine.
 
 ## Before you start
 
@@ -65,7 +65,7 @@ The review step confirms the same thing. It shows this note: "Animated portrait 
 
 Animated expressions take longer than still sprites. Marinara generates them one expression at a time, not in a batch. Picking many expressions at once can take a while, so start with a few.
 
-If you turned on **Expose image prompts before sending** (in **Settings**, in the **Image Generation** section), Marinara pauses at a prompt review step. You can read and edit each prompt before Marinara sends it to the provider. Leave this setting off to skip the review.
+If you turned on **Expose media prompts before sending** (in **Settings**, in the **Image Generation** section), Marinara pauses at a prompt review step. You can read and edit each prompt before Marinara sends it to the provider. Leave this setting off to skip the review.
 
 ## Troubleshooting
 
@@ -81,4 +81,4 @@ The saved GIF still shows a background. This is expected. Animated expressions s
 
 - [Character Sprites](../characters/sprites.md)
 - [Scene Video Generation](scene-video.md)
-- [Built-in Agents Reference](../agents/built-in-agents.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)

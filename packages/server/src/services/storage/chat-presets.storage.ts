@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 // CRUD for the saved chat-settings bundles applied to new chats.
 // One preset per mode is marked active and used as the starting state.
-import { eq, and, ne, asc } from "drizzle-orm";
+import { eq, and, ne, asc } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { chats, chatPresets } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

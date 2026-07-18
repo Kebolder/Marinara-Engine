@@ -29,14 +29,14 @@ const BotBrowserPanel = lazy(() =>
 
 const PANEL_CONFIG: Record<string, { title: string; icon: ReactNode; gradient?: string; gradientClass?: string }> = {
   "bot-browser": {
-    title: "Bot Browser",
+    title: "Card Browser",
     icon: <Bot size="0.875rem" />,
     gradient: "from-lime-400 via-green-500 to-cyan-500",
   },
   characters: {
     title: "Characters",
     icon: <Users size="0.875rem" />,
-    gradientClass: "bg-[image:var(--marinara-app-accent-gradient)] text-[var(--primary-foreground)]",
+    gradientClass: "mari-panel-gradient-surface mari-panel-gradient--characters",
   },
   lorebooks: { title: "Lorebooks", icon: <BookOpen size="0.875rem" />, gradient: "from-amber-400 to-orange-500" },
   presets: {
@@ -89,9 +89,11 @@ export function RightPanel() {
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
         <div className="flex items-center gap-2.5">
           <div
+            data-component="RightPanelHeaderIcon"
             className={cn(
               "flex h-6 w-6 items-center justify-center rounded-md shadow-sm",
-              config.gradientClass ?? `bg-gradient-to-br ${config.gradient ?? "from-slate-400 to-slate-500"} text-white`,
+              config.gradientClass ??
+                `bg-gradient-to-br ${config.gradient ?? "from-slate-400 to-slate-500"} text-white`,
             )}
           >
             {config.icon}

@@ -27,7 +27,7 @@ Noodle lives in the top bar, not in a settings panel.
 2. Click **Noodle**.
 3. The main chat area is replaced by the Noodle timeline.
 
-You should see a fake browser address bar reading `https://noodle.local` with a small **Noodle** badge. This is just for flavor. Opening Noodle closes any other open panel, such as the character library or the bot browser.
+You should see a fake browser address bar reading `https://noodle.local` with a small **Noodle** badge. This is just for flavor. Opening Noodle closes any other open panel, such as the character library or the Card Browser.
 
 To leave Noodle, click the **Noodle** button again or open any other panel.
 

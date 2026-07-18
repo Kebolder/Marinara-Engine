@@ -16,6 +16,7 @@ import { cn } from "../../../lib/utils";
 import { useTrackerGameState } from "../hooks/use-tracker-game-state";
 import { useTrackerFieldLockUpdater } from "../hooks/use-tracker-field-lock-updater";
 import { useTrackerPanelModel } from "../hooks/use-tracker-panel-model";
+import type { TrackerEditMode } from "../tracker-panel.types";
 import { EmptySection } from "./controls/SectionControls";
 import { TrackerSectionList } from "./TrackerSectionList";
 import { TrackerSkeleton } from "./TrackerSkeleton";
@@ -89,10 +90,11 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
     trackerPanelSectionOrder,
     trackerPanelUseExpressionSprites,
   });
-  const [deleteMode, setDeleteMode] = useState(false);
-  const [addMode, setAddMode] = useState(false);
-  const [lockMode, setLockMode] = useState(false);
-  const [hideMode, setHideMode] = useState(false);
+  const [activeEditMode, setActiveEditMode] = useState<TrackerEditMode | null>(null);
+  const deleteMode = activeEditMode === "delete";
+  const addMode = activeEditMode === "add";
+  const lockMode = activeEditMode === "lock";
+  const hideMode = activeEditMode === "hide";
   const fieldLocks = currentGameState
     ? normalizeTrackerFieldLocksForState(currentGameState.fieldLocks, currentGameState)
     : null;
@@ -162,8 +164,6 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
         hiddenTrackerFields={hiddenTrackerFields}
         lockMode={lockMode}
         hideMode={hideMode}
-        onSetLockMode={setLockMode}
-        onSetHideMode={setHideMode}
         onToggleFieldLock={toggleFieldLock}
         onToggleFieldHidden={toggleFieldHidden}
         onUpdateFieldLocks={updateFieldLocks}
@@ -172,12 +172,8 @@ export function TrackerDataSidebar({ fillHeight = false }: { fillHeight?: boolea
         <TrackerSidebarHeader
           trackerPanelSide={trackerPanelSide}
           sizeProfile={trackerPanelSizeProfile}
-          addMode={addMode}
-          deleteMode={deleteMode}
-          hideMode={hideMode}
-          onSetAddMode={setAddMode}
-          onSetDeleteMode={setDeleteMode}
-          onSetHideMode={setHideMode}
+          activeEditMode={activeEditMode}
+          onSetEditMode={setActiveEditMode}
           onSetSide={setTrackerPanelSide}
           onSetSizeProfile={setTrackerPanelSizeProfile}
           onClose={() => setTrackerPanelOpen(false)}

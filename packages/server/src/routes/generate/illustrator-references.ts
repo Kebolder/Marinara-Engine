@@ -33,6 +33,8 @@ export type IllustratorChatCharacterReference = {
 };
 
 export type IllustratorReferenceResolution = {
+  characterIds: string[];
+  personaId: string | null;
   referenceImages: string[];
   referenceNames: string[];
   referenceLine: string | null;
@@ -59,6 +61,35 @@ const NAME_STOPWORDS = new Set(["the", "a", "an", "il", "la", "le", "de", "van",
 
 export const ILLUSTRATOR_TEXT_NEGATIVE_PROMPT =
   "dialogue boxes, speech bubbles, word balloons, captions, narration boxes, text boxes, manga sound effect text, SFX lettering, readable text, letters, subtitles, watermark, logo, signature";
+
+export const ILLUSTRATOR_NON_TEXT_ARTIFACT_NEGATIVE_PROMPT = "watermark, logo, signature";
+
+const ILLUSTRATOR_RENDERED_TEXT_REQUEST_PATTERNS = [
+  /\b(?:caption|sfx|sound effect|speech bubble|dialogue bubble|word balloon)s?\s*(?:\([^\n)]{1,80}\))?\s*:/iu,
+  /\b(?:include|add|show|draw|render|display|feature|place|contain|use|keep|preserve)\b[^\n.!?]{0,100}\b(?:dialogue boxes?|speech bubbles?|word balloons?|captions?|narration boxes?|text boxes?|sfx lettering|sound effect text|readable text|comic lettering|manga lettering)\b/iu,
+  /\b(?:expressive|readable|clear|clean|hand[- ]?lettered|stylized)(?:\s+(?:readable|comic|manga))*\s+(?:lettering|dialogue boxes?|speech bubbles?|word balloons?|captions?|sfx)\b/iu,
+  /\b(?:short\s+)?readable text plan\b/iu,
+  /\b(?:sign|poster|screen|label|title)\s+(?:reading|reads|saying)\b/iu,
+];
+
+export function illustratorPromptRequestsRenderedText(prompt: string): boolean {
+  return ILLUSTRATOR_RENDERED_TEXT_REQUEST_PATTERNS.some((pattern) => pattern.test(prompt));
+}
+
+/**
+ * Preserve the default ban on accidental image text for ordinary illustrations,
+ * but do not contradict comic pages or other prompts that explicitly request
+ * lettering. User- and agent-authored negative prompts remain intact.
+ */
+export function mergeIllustratorNegativePrompt(
+  prompt: string,
+  negativePrompt?: string | null,
+): string {
+  const builtInNegativePrompt = illustratorPromptRequestsRenderedText(prompt)
+    ? ILLUSTRATOR_NON_TEXT_ARTIFACT_NEGATIVE_PROMPT
+    : ILLUSTRATOR_TEXT_NEGATIVE_PROMPT;
+  return [negativePrompt?.trim(), builtInNegativePrompt].filter(Boolean).join(", ");
+}
 
 function parseRecord(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -106,7 +137,7 @@ function buildNameAliases(name: string, opts: { includeStandaloneTokens?: boolea
   return [...aliases].sort((a, b) => b.length - a.length);
 }
 
-function readAppearance(data: Record<string, unknown>): string | null {
+export function readIllustratorAppearance(data: Record<string, unknown>): string | null {
   const extensions = parseRecord(data.extensions);
   const raw =
     typeof extensions.appearance === "string"
@@ -116,9 +147,11 @@ function readAppearance(data: Record<string, unknown>): string | null {
         : "";
   const cleaned = stripMacroComments(raw).replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
-  return cleaned.length > MAX_ILLUSTRATOR_APPEARANCE_CHARS
-    ? `${cleaned.slice(0, MAX_ILLUSTRATOR_APPEARANCE_CHARS).trimEnd()}...`
-    : cleaned;
+  if (cleaned.length <= MAX_ILLUSTRATOR_APPEARANCE_CHARS) return cleaned;
+  const limit = MAX_ILLUSTRATOR_APPEARANCE_CHARS - 3;
+  const clipped = cleaned.slice(0, limit).trimEnd();
+  const wordBoundary = clipped.lastIndexOf(" ");
+  return `${(wordBoundary > 0 ? clipped.slice(0, wordBoundary) : clipped).trimEnd()}...`;
 }
 
 function textContainsAlias(normalizedText: string, alias: string): boolean {
@@ -134,7 +167,7 @@ function characterRowToSource(row: CharacterRowLike, sourceOrder: number): Chara
     id: row.id,
     name: rawName,
     avatarPath: typeof row.avatarPath === "string" ? row.avatarPath : null,
-    appearance: readAppearance(data),
+    appearance: readIllustratorAppearance(data),
     aliases: buildNameAliases(rawName),
     promptAliases: buildNameAliases(rawName, { includeStandaloneTokens: false }),
     sourceOrder,
@@ -153,6 +186,7 @@ export async function resolveIllustratorCharacterReferences(args: {
   promptText: string;
   fallbackToChatCharacters?: boolean;
   maxReferences?: number;
+  includeReferenceImages?: boolean;
 }): Promise<IllustratorReferenceResolution> {
   const maxReferences = Math.max(1, Math.min(args.maxReferences ?? MAX_ILLUSTRATOR_REFERENCE_IMAGES, 12));
   const allRows = await args.charactersStore.list().catch(() => []);
@@ -216,9 +250,8 @@ export async function resolveIllustratorCharacterReferences(args: {
     }
   }
 
-  const orderedSources = [...selected.values()]
-    .sort((a, b) => a.sourceOrder - b.sourceOrder)
-    .slice(0, maxReferences);
+  const orderedSelectedSources = [...selected.values()].sort((a, b) => a.sourceOrder - b.sourceOrder);
+  const orderedSources = orderedSelectedSources.slice(0, maxReferences);
   const referenceImages: string[] = [];
   const referenceNames: string[] = [];
   const appearanceLines: string[] = [];
@@ -236,13 +269,19 @@ export async function resolveIllustratorCharacterReferences(args: {
   }
 
   for (const source of orderedSources) {
+    if (args.includeReferenceImages === false) continue;
     const b64 = readBestReferenceImage(source.id, source.avatarPath);
     if (!b64) continue;
     referenceImages.push(b64);
     referenceNames.push(source.name);
   }
 
-  if (args.persona && personaRequested && referenceImages.length < maxReferences) {
+  if (
+    args.includeReferenceImages !== false &&
+    args.persona &&
+    personaRequested &&
+    referenceImages.length < maxReferences
+  ) {
     const b64 = readBestReferenceImage(args.persona.id, args.persona.avatarPath ?? null);
     if (b64) {
       referenceImages.push(b64);
@@ -254,6 +293,11 @@ export async function resolveIllustratorCharacterReferences(args: {
   }
 
   return {
+    // Gallery persistence is not constrained by the reference-image cap: every
+    // depicted character should receive the generated image even when only the
+    // first few likeness references can be sent to the provider.
+    characterIds: orderedSelectedSources.map((source) => source.id),
+    personaId: args.persona && personaRequested ? args.persona.id : null,
     referenceImages,
     referenceNames,
     referenceLine:

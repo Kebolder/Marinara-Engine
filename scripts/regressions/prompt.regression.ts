@@ -15,10 +15,14 @@ import {
   createRegexScriptSchema,
   createDefaultImageStyleProfileSettings,
   getDefaultBuiltInAgentSettings,
+  isAgentAvailableInChatMode,
   isPatternSafe,
   normalizeChatSummaryEntries,
   normalizeWorldCustomFields,
+  LIMITS,
   resolveRegexPatternLiteralMacros,
+  resolveGameSetupArtStylePrompt,
+  resolveChatPersonaCandidate,
   resolveMacros,
   resolveAgentPromptTemplate,
   resolveDefaultAgentPromptTemplateId,
@@ -27,24 +31,147 @@ import {
   type AgentContext,
   type ChatMLMessage,
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
-  DEFAULT_AGENT_PROMPTS,
+  DEFAULT_CONVERSATION_PROMPT,
+  getDefaultAgentPrompt,
+  replaceBuiltInAgentDefinitions,
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_BW_MANGA_ANIMATION_PROMPT_TEMPLATE,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE,
   GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_COLORED_MANGA_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID,
+  STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE,
+  STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
   DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE,
   hasDeferredRelocationConditionals,
+  getGameStoryboardPromptTemplateKind,
   normalizeGameStoryboardKeyframeCount,
   parseDeferredConditionalPayload,
   selectConditionalPayloadBranch,
 } from "../../packages/shared/src/index.js";
+import { replaceBuiltInAgentDefinitions as replaceBuiltInAgentDefinitionsDist } from "../../packages/shared/dist/index.js";
+import {
+  formatNoodleTimelineForPrompt,
+  NOODLE_PERSONA_IDENTITY_INSTRUCTION,
+} from "../../packages/server/src/services/noodle/noodle-prompt.js";
+
+const personaA = {
+  id: "noodle-account-a",
+  kind: "persona" as const,
+  entityId: "persona-a",
+  handle: "persona_a",
+  displayName: "Persona A",
+  avatarUrl: null,
+  avatarCrop: null,
+};
+const personaB = {
+  id: "noodle-account-b",
+  kind: "persona" as const,
+  entityId: "persona-b",
+  handle: "persona_b",
+  displayName: "Persona B",
+  avatarUrl: null,
+  avatarCrop: null,
+};
+const formattedPersonaTimeline = formatNoodleTimelineForPrompt(
+  [
+    {
+      id: "post-a",
+      authorAccountId: personaA.id,
+      authorSnapshot: personaA,
+      content: "Post from A",
+      imageUrl: null,
+      imagePrompt: null,
+      metadata: {},
+      createdAt: "2026-07-16T00:00:00.000Z",
+    },
+    {
+      id: "post-b",
+      authorAccountId: personaB.id,
+      authorSnapshot: personaB,
+      content: "Post from B",
+      imageUrl: null,
+      imagePrompt: null,
+      metadata: {},
+      createdAt: "2026-07-16T00:01:00.000Z",
+    },
+  ],
+  [
+    {
+      id: "reply-b",
+      postId: "post-a",
+      parentInteractionId: null,
+      actorAccountId: personaB.id,
+      actorSnapshot: personaB,
+      type: "reply",
+      content: "B replies as B",
+      imageUrl: null,
+      createdAt: "2026-07-16T00:02:00.000Z",
+    },
+  ],
+);
+assert.match(formattedPersonaTimeline, /Persona A \(@persona_a; persona accountKey=persona:persona-a\)/);
+assert.match(formattedPersonaTimeline, /Persona B \(@persona_b; persona accountKey=persona:persona-b\)/);
+assert.match(formattedPersonaTimeline, /replyId=reply-b.*accountKey=persona:persona-b/);
+assert.match(NOODLE_PERSONA_IDENTITY_INSTRUCTION, /separate user identity/);
+
+const REGRESSION_AGENT_IDS = [
+  "about-me-keeper", "background", "card-evolution-auditor", "character-tracker", "combat", "continuity",
+  "conversation-calls", "custom-tracker", "cyoa", "director", "echo-chamber", "eightball", "expression", "haptic",
+  "html", "illustrator", "knowledge-retrieval", "knowledge-router", "lorebook-keeper", "persona-stats", "poker",
+  "prose-guardian", "quest", "rock-paper-scissors", "spotify", "tic-tac-toe", "uno", "world-state", "chess",
+] as const;
+
+// The production Engine intentionally carries no optional agent definitions.
+// Prompt regressions install a small synthetic registry so they exercise the
+// generic pipeline without copying package-owned prompts back into the base.
+const regressionAgentDefinitions = REGRESSION_AGENT_IDS.map((id) => ({
+  id,
+  name: id === "html" ? "Immersive HTML" : id === "illustrator" ? "Illustrator" : id,
+  description: id === "html"
+    ? "Post-processes the latest Roleplay response with diegetic HTML/CSS/JS visual artifacts without changing the story meaning."
+    : `Regression fixture for ${id}`,
+  phase: "post_processing" as const,
+  enabledByDefault: false,
+  category: "misc" as const,
+  defaultTools: [],
+  defaultPromptTemplate: id === "html"
+    ? "You are Immersive HTML, a post-processing visual enhancer. Rewrite only the assistant response."
+    : id === "illustrator"
+      ? "Create an image-generation prompt for a visually important moment."
+      : `Run the ${id} agent.`,
+  ...(id === "html" ? {
+    resultType: "text_rewrite" as const,
+    defaultSettings: { resultType: "text_rewrite", contextSize: 5, maxTokens: 4096, holdForRewrite: true },
+  } : {}),
+  ...(id === "illustrator" ? {
+    defaultSettings: { defaultPromptTemplateId: "default" },
+    promptTemplates: [{
+      id: "background",
+      name: "Background",
+      description: "Background-only plate.",
+      promptTemplate: "Create a background-only prompt with no characters.",
+    }],
+  } : {}),
+}));
+replaceBuiltInAgentDefinitions(regressionAgentDefinitions);
+replaceBuiltInAgentDefinitionsDist(regressionAgentDefinitions);
 import {
   compactGameStateForAgentContext,
   executeAgent,
@@ -53,6 +180,7 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import { loadGameStoryboardImagePrompt } from "../../packages/server/src/services/image/game-storyboard-image-prompt.js";
 import { formatAgentFailuresToast, toAgentFailure } from "../../packages/client/src/lib/agent-failures.js";
 import { formatGenerationParameterError } from "../../packages/client/src/lib/generation-parameter-errors.js";
 import {
@@ -61,12 +189,38 @@ import {
 } from "../../packages/server/src/services/video/prompt-context.js";
 import { resolveGameGmPromptTemplate } from "../../packages/server/src/services/generation/game-gm-prompt-runtime.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
+import {
+  prepareConversationPromptHistory,
+  resolveConversationMembershipHistoryEvent,
+} from "../../packages/server/src/routes/generate/conversation-history-runtime.js";
+import { formatConversationGroupOutputFormat } from "../../packages/server/src/routes/generate/conversation-prompt-formatting.js";
+import {
+  LEGACY_DEFAULT_CONVERSATION_PROMPT_LEAD,
+  migrateLegacyDefaultConversationPromptLead,
+} from "../../packages/server/src/db/default-conversation-prompt-migration.js";
+import {
+  buildNpcPortraitProviderPrompt,
+  buildSceneIllustrationProviderPrompt,
+} from "../../packages/server/src/services/game/game-asset-generation.js";
+import {
+  buildLorebookScanMessagesWithGenerationGuide,
+  resolveLorebookTokenBudget,
+} from "../../packages/server/src/services/generation/lorebook-generation-runtime.js";
+import {
+  buildGameIllustratorAppearanceContextBlock,
+  buildIllustrationNarrationSummaryMessages,
+  buildStoryboardIllustratorMessages,
+  extractCharacterAppearanceText,
+  resolveNpcPortraitAppearance,
+  selectStoryboardAppearanceCharacterNames,
+} from "../../packages/server/src/routes/game.routes.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
 import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
+import { truncateRecalledMemory } from "../../packages/server/src/services/generation/memory-recall-pack.js";
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
 import { injectIdentityFallbackMessages } from "../../packages/server/src/services/generation/character-prompt-context.js";
 import { injectSceneContextMessages } from "../../packages/server/src/services/generation/scene-context-runtime.js";
-import { expandMarker } from "../../packages/server/src/services/prompt/marker-expander.js";
+import { expandMarker, type MarkerContext } from "../../packages/server/src/services/prompt/marker-expander.js";
 import {
   buildRuntimeAgentSectionEligibleTypesForTest,
   clearUnusedRuntimeAgentSectionsForTest,
@@ -87,17 +241,32 @@ import {
 import {
   appendNonLeadingSystemMessagesToLastUser,
   appendReadableAttachmentsToContent,
+  applyTrackerCharacterCardIdentity,
   buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
+  collectLatestTrackerCharacterHistory,
+  injectIntoOutputFormatOrLastUser,
   preserveTrackerCharacterUiFields,
+  resolveActivePersonaCandidate,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
+  stripSpeakerTagsExceptLastAssistant,
   type SimpleMessage,
 } from "../../packages/server/src/routes/generate/generate-route-utils.js";
+import { formatRoleplaySummaryChatLog } from "../../packages/server/src/services/generation/roleplay-summary-runtime.js";
 import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/routes/generate/prompt-preset-selection.js";
+import {
+  calibrateLorebookSimilarity,
+  lorebookSimilarityBaseline,
+} from "../../packages/server/src/services/lorebook/embeddings.js";
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
-import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
+import {
+  assemblePrompt,
+  resolvePromptMessageMacros,
+  scopePromptMacroContextToCharacter,
+  type AssemblerInput,
+} from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
 import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
 import type { PromptOverridesStorage } from "../../packages/server/src/services/storage/prompt-overrides.storage.js";
@@ -120,6 +289,18 @@ import {
   extractDialogueUtterances,
   resolveTTSVoiceForSpeaker,
 } from "../../packages/client/src/lib/tts-dialogue.js";
+import { resolveCharacterAdvancedPromptIds } from "../../packages/server/src/services/prompt/macro-context.js";
+import {
+  illustratorPromptRequestsRenderedText,
+  mergeIllustratorNegativePrompt,
+  readIllustratorAppearance,
+  resolveIllustratorCharacterReferences,
+} from "../../packages/server/src/routes/generate/illustrator-references.js";
+import {
+  OFFICIAL_AGENT_KNOWLEDGE_ENTRIES,
+  PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE,
+} from "../../packages/server/src/services/professor-mari/official-agent-knowledge.js";
+import { filterEnabledConversationCommands } from "../../packages/server/src/services/generation/conversation-command-runtime.js";
 
 type RegressionCase = {
   name: string;
@@ -218,6 +399,93 @@ const keywordOptions = {
 
 const cases: RegressionCase[] = [
   {
+    name: "installed Conversation feature commands do not require per-chat agent attachment",
+    run() {
+      const commands = [
+        { type: "uno" },
+        { type: "chess" },
+        { type: "call" },
+        { type: "selfie" },
+        { type: "note", content: "remember this" },
+      ] as Parameters<typeof filterEnabledConversationCommands>[0];
+      const withoutLegacyAttachment = filterEnabledConversationCommands(commands, {
+        enableAgents: false,
+        activeAgentIds: [],
+      });
+      assert.deepEqual(withoutLegacyAttachment.map((command) => command.type), [
+        "uno",
+        "chess",
+        "call",
+        "selfie",
+        "note",
+      ]);
+
+      const withUnoDisabled = filterEnabledConversationCommands(commands, {
+        enableAgents: false,
+        activeAgentIds: [],
+        conversationCommandToggles: { uno: false },
+      });
+      assert.deepEqual(withUnoDisabled.map((command) => command.type), ["chess", "call", "selfie", "note"]);
+    },
+  },
+  {
+    name: "Professor Mari and the public reference cover every official downloadable agent",
+    run() {
+      const publicReference = readFileSync(
+        new URL("../../docs/agents/built-in-agents.md", import.meta.url),
+        "utf8",
+      );
+      const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
+      const seededMariSource = readFileSync(
+        new URL("../../packages/server/src/db/seed-mari.ts", import.meta.url),
+        "utf8",
+      );
+      const workspaceMariSource = readFileSync(
+        new URL("../../packages/server/src/services/professor-mari/workspace-agent.service.ts", import.meta.url),
+        "utf8",
+      );
+
+      assert.equal(OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.length, 29);
+      assert.equal(new Set(OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.map((entry) => entry.id)).size, 29);
+      assert.deepEqual(
+        Object.fromEntries(
+          (["writer", "tracker", "misc"] as const).map((category) => [
+            category,
+            OFFICIAL_AGENT_KNOWLEDGE_ENTRIES.filter((entry) => entry.category === category).length,
+          ]),
+        ),
+        { writer: 6, tracker: 8, misc: 15 },
+      );
+
+      for (const entry of OFFICIAL_AGENT_KNOWLEDGE_ENTRIES) {
+        assert.ok(
+          PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE.includes(`- ${entry.name} (package \`${entry.id}\`;`),
+          `Professor Mari knowledge is missing ${entry.name}`,
+        );
+        assert.ok(publicReference.includes(`### ${entry.name}\n`), `Public agent reference is missing ${entry.name}`);
+        assert.ok(readme.includes(entry.name), `README agent catalog is missing ${entry.name}`);
+      }
+
+      assert.match(seededMariSource, /\$\{PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE\}/u);
+      assert.match(workspaceMariSource, /\$\{PROFESSOR_MARI_AGENT_CATALOG_KNOWLEDGE\}/u);
+    },
+  },
+  {
+    name: "lorebook budget normalization preserves legacy generation metadata",
+    run() {
+      assert.equal(resolveLorebookTokenBudget({ lorebookTokenBudget: 512.9 }), 512);
+      assert.equal(resolveLorebookTokenBudget({ generationLorebookTokenBudget: 384.9 }), 384);
+      assert.equal(
+        resolveLorebookTokenBudget({ lorebookTokenBudget: Number.NaN, generationLorebookTokenBudget: 384 }),
+        LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET,
+      );
+      assert.equal(
+        resolveLorebookTokenBudget({ generationLorebookTokenBudget: -1 }),
+        LIMITS.DEFAULT_LOREBOOK_TOKEN_BUDGET,
+      );
+    },
+  },
+  {
     name: "game narration preserves angle-bracket status readouts and rejects transformed empty steps",
     run() {
       const statusReadout = [
@@ -278,6 +546,92 @@ const cases: RegressionCase[] = [
       assert.equal(
         normalized.some((message, index) => index > 0 && message.role === "system"),
         false,
+      );
+    },
+  },
+  {
+    name: "group speaker instructions prefer output format and otherwise use the last user turn",
+    run() {
+      const withOutputFormat: SimpleMessage[] = [
+        { role: "system", content: "base system" },
+        { role: "user", content: "<output_format>\nexisting rule\n</output_format>" },
+      ];
+      injectIntoOutputFormatOrLastUser(withOutputFormat, "speaker tag rule", { indent: true });
+
+      assert.match(
+        withOutputFormat[1]?.content ?? "",
+        /existing rule\n    speaker tag rule\n<\/output_format>/,
+      );
+
+      const withoutOutputFormat: SimpleMessage[] = [
+        { role: "system", content: "base system" },
+        { role: "user", content: "latest user turn" },
+        { role: "assistant", content: "assistant prefill" },
+      ];
+      injectIntoOutputFormatOrLastUser(withoutOutputFormat, "speaker tag rule", { indent: true });
+
+      assert.equal(withoutOutputFormat[1]?.content, "latest user turn\n\nspeaker tag rule");
+      assert.equal(withoutOutputFormat[2]?.content, "assistant prefill");
+    },
+  },
+  {
+    name: "group speaker tag cleanup preserves the latest assistant example",
+    run() {
+      const messages: SimpleMessage[] = [
+        { role: "system", content: "base system" },
+        { role: "assistant", content: '<speaker="Dottore">"An older line."</speaker>' },
+        { role: "user", content: '<speaker="Mari">"A user-authored tag."</speaker>' },
+        { role: "assistant", content: '<speaker="Pantalone">"The latest example."</speaker>' },
+      ];
+
+      stripSpeakerTagsExceptLastAssistant(messages);
+
+      assert.equal(messages[1]?.content, '"An older line."');
+      assert.equal(messages[2]?.content, '"A user-authored tag."');
+      assert.equal(messages[3]?.content, '<speaker="Pantalone">"The latest example."</speaker>');
+    },
+  },
+  {
+    name: "character advanced prompts stay wired into Conversation and Game runtime assembly",
+    run() {
+      const generateRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const dryRunRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate/dry-run-route.ts", import.meta.url),
+        "utf8",
+      );
+      const assemblerSource = readFileSync(
+        new URL("../../packages/server/src/services/prompt/assembler.ts", import.meta.url),
+        "utf8",
+      );
+      const gamePromptRuntimeSource = readFileSync(
+        new URL(
+          "../../packages/server/src/services/generation/game-gm-prompt-runtime.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+
+      assert.match(generateRouteSource, /collectCharacterAdvancedPromptEntries/);
+      assert.match(generateRouteSource, /if \(chatMode !== "game"\) \{\s*await injectCharacterAdvancedPrompts\(\)/);
+      const gameInjectionIndex = generateRouteSource.indexOf("Game bypasses the preset assembler");
+      const gameFormatReminderIndex = generateRouteSource.indexOf(
+        "const formatReminder = resolvePromptMacros",
+        gameInjectionIndex,
+      );
+      assert.ok(gameInjectionIndex >= 0 && gameFormatReminderIndex > gameInjectionIndex);
+      assert.doesNotMatch(generateRouteSource, /if \(!presetId && chatMode !== "game"\)/);
+      assert.match(dryRunRouteSource, /collectCharacterAdvancedPromptEntries/);
+      assert.match(assemblerSource, /collectCharacterAdvancedPromptEntries/);
+      assert.match(gamePromptRuntimeSource, /Character System Instructions/);
+      assert.deepEqual(
+        resolveCharacterAdvancedPromptIds(["chat-character"], "game", {
+          gamePartyCharacterIds: ["party-character", "npc:temporary-companion"],
+          gameGmCharacterId: "gm-character",
+        }),
+        ["chat-character", "party-character", "gm-character"],
       );
     },
   },
@@ -616,7 +970,7 @@ const cases: RegressionCase[] = [
         user: "Mari",
         char: "Dottore",
         characters: ["Dottore"],
-        variables: {},
+        variables: {} as Record<string, string>,
         personaFields: {
           description: "{{setvar::personaTouched::yes}}Unused persona description",
         },
@@ -794,6 +1148,78 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "provider-bound greeting and /guided messages resolve identity macros",
+    run() {
+      const baseContext = {
+        user: "Mari",
+        char: "Wrong responder",
+        characters: ["Dottore", "Pantalone"],
+        variables: {},
+      };
+      const dottoreProfile = {
+        name: "Dottore",
+        description: "A precise researcher.",
+      };
+      const profilesById = new Map([["char-dottore", dottoreProfile]]);
+      const providerContext = scopePromptMacroContextToCharacter(baseContext, dottoreProfile);
+      const resolved = resolvePromptMessageMacros(
+        [
+          {
+            id: "opening-greeting",
+            role: "assistant" as const,
+            characterId: "char-dottore",
+            content: "Welcome, {{user}}. I am {{char}}.",
+          },
+          {
+            id: "late-guided-injection",
+            role: "system" as const,
+            content: buildNarratorInstructionMessage("Let {{char}} reassure {{user}}."),
+          },
+        ],
+        providerContext,
+        profilesById,
+      );
+
+      assert.equal(resolved[0]?.content, "Welcome, Mari. I am Dottore.");
+      assert.match(resolved[1]?.content ?? "", /Let Dottore reassure Mari/);
+      assert.equal(resolved.some((message) => /\{\{(?:user|char)\}\}/i.test(message.content)), false);
+
+      const generateRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const dryRunRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate/dry-run-route.ts", import.meta.url),
+        "utf8",
+      );
+      assert.match(generateRouteSource, /const preparedMessagesForGen = resolvePromptMessageMacros\(/);
+      assert.match(dryRunRouteSource, /finalMessages = resolveHistoryMessageMacros\(finalMessages\);/);
+    },
+  },
+  {
+    name: "/guided lorebook scans resolve macros before embedding or routing",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+      const messages = buildLorebookScanMessagesWithGenerationGuide(
+        [{ role: "assistant", content: "The experiment is ready." }],
+        {
+          generationGuide: buildNarratorInstructionMessage("Have {{char}} answer {{user}}."),
+          generationGuideSource: "narrator",
+        },
+        (value) => resolveMacros(value, context, { trimResult: false }),
+      );
+
+      assert.match(messages.at(-1)?.content ?? "", /Have Dottore answer Mari/);
+      assert.equal(messages.at(-1)?.content.includes("{{user}}"), false);
+      assert.equal(messages.at(-1)?.content.includes("{{char}}"), false);
+    },
+  },
+  {
     name: "manual group generation does not inject a duplicate recent transcript prompt",
     run() {
       const routeSource = readFileSync(
@@ -894,7 +1320,7 @@ const cases: RegressionCase[] = [
     },
   },
   {
-    name: "Anime Game presets stay keyframe-aware and causally animation-ready",
+    name: "Storyboard Game presets stay keyframe-aware and causally animation-ready",
     run() {
       const gameSetupWizardSource = readFileSync(
         new URL("../../packages/client/src/components/game/GameSetupWizard.tsx", import.meta.url),
@@ -921,6 +1347,7 @@ const cases: RegressionCase[] = [
       assert.equal(normalizeGameStoryboardKeyframeCount(0), 1);
       assert.equal(normalizeGameStoryboardKeyframeCount(12), 6);
       assert.equal(gmPreset?.promptTemplate, ANIME_GAME_SYSTEM_PROMPT);
+      assert.equal(gmPreset?.name, "Storyboard Game Prompt");
       assert.match(resolvedGmPrompt, /Aim to include 5 strong visual anchor moments/);
       assert.doesNotMatch(resolvedGmPrompt, /\{\{gameStoryboardKeyframeCount\}\}/);
       assert.match(directorPreset?.promptTemplate ?? "", /time T=0: the exact first frame/);
@@ -931,13 +1358,18 @@ const cases: RegressionCase[] = [
         gameSetupWizardSource,
         /gamePresentation === "anime"\s*\? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID/,
       );
+      assert.match(
+        gameSetupWizardSource,
+        /gamePresentation === "anime"\s*\? STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID/,
+      );
       assert.match(gameSetupWizardSource, /gamePresentation === "anime"\s*\? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID/);
+      assert.doesNotMatch(gameSetupWizardSource, /gameStoryboardUseDirectScenePrompt:\s*gamePresentation === "anime"/);
       assert.match(gameSetupWizardSource, /trimmedGameSystemPrompt !== effectiveGameSystemPrompt\.trim\(\)/);
       assert.match(gameSetupWizardSource, /Reset to selected/);
     },
   },
   {
-    name: "custom Game GM text wins over a selected Anime Game preset",
+    name: "custom Game GM text wins over a selected Storyboard Game preset",
     run() {
       assert.equal(
         resolveGameGmPromptTemplate({
@@ -978,10 +1410,148 @@ const cases: RegressionCase[] = [
     },
   },
   {
-    name: "Comic Page illustration and animation presets remain separate prompt contracts",
+    name: "campaign art style controls and manual storyboard review remain wired end to end",
+    run() {
+      assert.equal(resolveGameSetupArtStylePrompt({ artStylePrompt: "  painterly fantasy  " }), "painterly fantasy");
+      assert.equal(
+        resolveGameSetupArtStylePrompt({ artStylePrompt: "painterly fantasy", useCampaignArtStyle: false }),
+        "",
+      );
+      assert.equal(resolveGameSetupArtStylePrompt({ useCampaignArtStyle: true }), "");
+
+      const drawerSource = readFileSync(
+        new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameSurfaceSource = readFileSync(
+        new URL("../../packages/client/src/components/game/GameSurface.tsx", import.meta.url),
+        "utf8",
+      );
+      const storyboardHookSource = readFileSync(
+        new URL("../../packages/client/src/hooks/use-game-storyboards.ts", import.meta.url),
+        "utf8",
+      );
+      const gameRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/game.routes.ts", import.meta.url),
+        "utf8",
+      );
+
+      assert.match(drawerSource, /label="Use Campaign Art Style"/);
+      assert.match(drawerSource, /generatedArtStylePrompt: generatedCampaignArtStyle \|\| campaignArtStyle/);
+      assert.match(gameSurfaceSource, /reviewImagePromptsBeforeSend/);
+      assert.match(gameSurfaceSource, /previewTurnStoryboardPrompts\.mutateAsync\(payload\)/);
+      assert.match(gameSurfaceSource, /plannedStoryboard = preview\.plannedStoryboard/);
+      assert.match(gameSurfaceSource, /promptOverrides/);
+      const storyboardHandlerStart = gameSurfaceSource.indexOf("const handleGenerateTurnStoryboard = useCallback");
+      const storyboardHandlerEnd = gameSurfaceSource.indexOf("\n  useEffect(() =>", storyboardHandlerStart);
+      assert.notEqual(storyboardHandlerStart, -1);
+      assert.notEqual(storyboardHandlerEnd, -1);
+      const storyboardHandlerSource = gameSurfaceSource.slice(storyboardHandlerStart, storyboardHandlerEnd);
+      assert.match(
+        storyboardHandlerSource,
+        /latestTurnStoryboardRendering \|\| manualStoryboardReviewActive/,
+      );
+      assert.match(
+        storyboardHandlerSource,
+        /withTimeout\(\s*\(\) => previewTurnStoryboardPrompts\.mutateAsync\(payload\),\s*GAME_ASSET_PREVIEW_TIMEOUT_MS/,
+      );
+      assert.match(storyboardHandlerSource, /GAME_ASSET_PROMPT_REVIEW_TIMEOUT_MS/);
+      assert.match(storyboardHandlerSource, /overrides = IMAGE_PROMPT_REVIEW_TIMED_OUT/);
+      assert.match(
+        gameSurfaceSource,
+        /onClick=\{\(\) => void handleGenerateTurnStoryboard\(\)\}[\s\S]{0,300}manualStoryboardReviewActive/,
+      );
+      assert.match(storyboardHookSource, /previewOnly: true/);
+      assert.match(gameRouteSource, /if \(input\.previewOnly\)/);
+      assert.match(gameRouteSource, /return \{ items, plannedStoryboard: plan \}/);
+      assert.match(gameRouteSource, /storyboardPromptOverrideById\.get\(`storyboard:\$\{frame\.index\}`\)/);
+      assert.match(gameRouteSource, /\[debug\/game\/storyboard-image-preview\]/);
+    },
+  },
+  {
+    name: "Storyboard Illustration Prompt preserves legacy fallback and supports selected chat templates",
+    async run() {
+      const promptOverridesStorage = {
+        async get(key: string) {
+          if (key !== "game.sceneIllustration") return null;
+          return {
+            key,
+            template: "GLOBAL SCENE ${scenePrompt}",
+            enabled: true,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+        },
+        async list() {
+          return [];
+        },
+        async upsert(input) {
+          return {
+            key: input.key,
+            template: input.template,
+            enabled: input.enabled,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          };
+        },
+        async remove() {},
+      } satisfies PromptOverridesStorage;
+      const ctx = {
+        sceneTitleLine: "Mira at the gate.",
+        scenePrompt: "Mira braces beneath a storm-lit archway.",
+        finalVisibilityRuleLine: "Final visibility rule: Only depict these named visible characters: Mira.",
+        narrativePurposeLine: "Narrative purpose: arrival.",
+        charactersLine: "Characters: Mira.",
+        referenceHandlingLine: "Reference handling: match the attached portrait.",
+        appearanceNotesBlock: "",
+        artDirectionLine: "Art direction: painterly fantasy.",
+        imagePromptInstructionsLine: "User image instructions: keep the silver cloak.",
+      };
+
+      const legacyPrompt = await loadGameStoryboardImagePrompt({ promptOverridesStorage, ctx });
+      const optimizedPrompt = await loadGameStoryboardImagePrompt({
+        promptOverridesStorage,
+        templateId: STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+        ctx,
+      });
+      const customPrompt = await loadGameStoryboardImagePrompt({
+        promptOverridesStorage,
+        templateId: "custom-storyboard-image",
+        customTemplates: [
+          {
+            id: "custom-storyboard-image",
+            name: "Custom Storyboard Image",
+            promptTemplate: "CUSTOM ${scenePrompt} ${artDirectionLine}",
+          },
+        ],
+        ctx,
+      });
+
+      assert.equal(legacyPrompt, "GLOBAL SCENE Mira braces beneath a storm-lit archway.");
+      assert.match(optimizedPrompt, /Storyboard keyframe: Mira braces beneath a storm-lit archway/);
+      assert.match(optimizedPrompt, /Final visibility rule: Only depict these named visible characters: Mira/);
+      assert.match(optimizedPrompt, /Reference handling: match the attached portrait/);
+      assert.match(optimizedPrompt, /Art direction: painterly fantasy/);
+      assert.doesNotMatch(optimizedPrompt, /GLOBAL SCENE/);
+      assert.equal(customPrompt, "CUSTOM Mira braces beneath a storm-lit archway. Art direction: painterly fantasy.");
+      assert.doesNotMatch(customPrompt, /Final visibility rule/);
+      assert.equal(GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES.length, 2);
+      assert.equal(
+        GAME_STORYBOARD_IMAGE_BUILT_IN_PROMPT_TEMPLATES.find(
+          (template) => template.id === STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE_ID,
+        )?.promptTemplate,
+        STORYBOARD_OPTIMIZED_IMAGE_PROMPT_TEMPLATE,
+      );
+      assert.equal(GAME_STORYBOARD_IMAGE_PROMPT_TEMPLATE_ID, "game-scene-illustration");
+    },
+  },
+  {
+    name: "Storyboard illustration and animation lanes remain separate prompt contracts",
     run() {
       const drawerSource = readFileSync(
         new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/game.routes.ts", import.meta.url),
         "utf8",
       );
       const gameSurfaceSource = readFileSync(
@@ -992,14 +1562,39 @@ const cases: RegressionCase[] = [
         new URL("../../packages/client/src/components/game/StoryboardBackgroundControls.tsx", import.meta.url),
         "utf8",
       );
-      const illustrationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
-        (template) => template.id === "comic-page-keyframes",
+      const illustrationPreset = GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE_ID,
       );
-      const animationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+      const animationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
         (template) => template.id === GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
       );
+      const stillAnimationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
+      );
+      const illustrationIds = new Set(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.map((template) => template.id));
+      const animationIds = new Set(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.map((template) => template.id));
 
+      assert.equal(GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.length, 5);
+      assert.equal(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.length, 6);
+      assert.equal(GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID);
+      assert.notEqual(
+        GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE_ID,
+        GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+      );
+      assert.deepEqual([...illustrationIds].filter((id) => animationIds.has(id)), []);
+      assert.ok(
+        GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES.every(
+          (template) => !template.promptTemplate.includes("${durationSeconds}"),
+        ),
+      );
+      assert.ok(
+        GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.every((template) =>
+          template.promptTemplate.includes("${durationSeconds}"),
+        ),
+      );
       assert.equal(illustrationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE);
+      assert.equal(stillAnimationPreset?.promptTemplate, GAME_STORYBOARD_STILL_ANIMATION_PROMPT_TEMPLATE);
+      assert.match(stillAnimationPreset?.promptTemplate ?? "", /style-neutral/);
       assert.match(illustrationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
       assert.doesNotMatch(illustrationPreset?.promptTemplate ?? "", /\$\{durationSeconds\}-second/);
       assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE);
@@ -1015,12 +1610,42 @@ const cases: RegressionCase[] = [
       assert.match(animationPreset?.promptTemplate ?? "", /Reserve the final 0.4-0.7 seconds/);
       assert.match(animationPreset?.promptTemplate ?? "", /Do not ask the video model to animate every panel at once/);
       assert.doesNotMatch(animationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
+      assert.match(GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE, /timing in narrationBeat only/);
+      assert.match(GAME_STORYBOARD_COLORED_MANGA_ANIMATION_PROMPT_TEMPLATE, /one stable frame to animate/);
+      assert.match(GAME_STORYBOARD_BW_MANGA_ANIMATION_PROMPT_TEMPLATE, /Do not introduce color during the clip/);
+      assert.equal(
+        getGameStoryboardPromptTemplateKind({
+          id: "custom-animation-example",
+          name: "Example",
+          promptTemplate: "Custom prompt",
+        }),
+        "animation",
+      );
+      assert.equal(
+        getGameStoryboardPromptTemplateKind({
+          id: "legacy-custom",
+          name: "Legacy",
+          promptTemplate: "Plan a ${durationSeconds}-second clip",
+        }),
+        "animation",
+      );
       assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /no more than 0.35 seconds/);
       assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /reveal a later consequence before its cause/);
-      assert.match(drawerSource, /onAddTemplate\(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add Comic Animation Copy/);
-      assert.match(drawerSource, /onAddTemplate\(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add Comic Video Copy/);
+      assert.match(drawerSource, /options=\{gameStoryboardIllustrationPromptOptions\}/);
+      assert.match(drawerSource, /options=\{gameStoryboardAnimationPromptOptions\}/);
+      assert.match(drawerSource, /label="Illustration Planner"/);
+      assert.match(drawerSource, /label="Animation Planner"/);
+      assert.match(drawerSource, /label="Storyboard Illustration Prompt"/);
+      assert.match(drawerSource, /options=\{gameStoryboardImagePromptOptions\}/);
+      assert.match(drawerSource, /label="Storyboard Video Prompt"/);
+      assert.match(drawerSource, /kind="illustration"/);
+      assert.match(drawerSource, /kind="animation"/);
+      assert.match(drawerSource, /builtInTemplates\.map\(\(template\) =>/);
+      assert.match(gameRouteSource, /getGameStoryboardPromptTemplateKind\(template, selectedAnimationTemplateId\)/);
+      assert.match(gameRouteSource, /const builtInTemplates = args\.generateVideos/);
+      assert.match(gameRouteSource, /storyboardImagePromptTemplateId: readTrimmedString\(meta\.gameStoryboardImagePromptTemplateId\)/);
+      assert.match(drawerSource, /title="Edit Illustration Prompt Presets"/);
+      assert.match(drawerSource, /title="Edit Video Prompt Presets"/);
       const backgroundViewerStart = gameSurfaceSource.indexOf("const renderStoryboardBackgroundVisual");
       const backgroundViewerEnd = gameSurfaceSource.indexOf("const renderGameAssetsPanel", backgroundViewerStart);
       const backgroundViewerSource = gameSurfaceSource.slice(backgroundViewerStart, backgroundViewerEnd);
@@ -1032,6 +1657,310 @@ const cases: RegressionCase[] = [
       assert.match(gameSurfaceSource, /setStoryboardViewerPlayingVideoId\(activeStoryboardKeyframe\.video\.id\)/);
       assert.match(backgroundViewerSource, /onEnded=\{\(\) =>/);
       assert.doesNotMatch(backgroundViewerSource, /\bloop\b/);
+    },
+  },
+  {
+    name: "Roleplay Illustrator keeps requested comic lettering out of the built-in negative prompt",
+    run() {
+      const generateRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const retryRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate/retry-agents-route.ts", import.meta.url),
+        "utf8",
+      );
+      for (const source of [generateRouteSource, retryRouteSource]) {
+        assert.match(
+          source,
+          /mergeIllustratorNegativePrompt\(\s*compiledPrompt\.prompt,\s*compiledPrompt\.negativePrompt/,
+        );
+        assert.doesNotMatch(source, /ILLUSTRATOR_TEXT_NEGATIVE_PROMPT/);
+      }
+
+      const comicPrompt = [
+        "colored comic page, five panels, cinematic nighttime thriller flow",
+        "Caption: 'The drone tows them deeper into the reeds.'",
+        "Speech bubble (Maukie, whisper): 'Stay with me.'",
+        "SFX: 'SNAP'",
+        "Expressive lettering and clean readable speech bubbles.",
+      ].join(" ");
+      assert.equal(illustratorPromptRequestsRenderedText(comicPrompt), true);
+      const comicNegative = mergeIllustratorNegativePrompt(comicPrompt, "unreadable text, broken lettering");
+      assert.equal(comicNegative, "unreadable text, broken lettering, watermark, logo, signature");
+      assert.doesNotMatch(comicNegative, /dialogue boxes|word balloons|captions|SFX lettering|subtitles/iu);
+
+      const ordinaryPrompt = "cinematic lakeside portrait, cold moonlight, reeds, detailed faces";
+      assert.equal(illustratorPromptRequestsRenderedText(ordinaryPrompt), false);
+      assert.match(mergeIllustratorNegativePrompt(ordinaryPrompt), /speech bubbles/iu);
+      assert.match(mergeIllustratorNegativePrompt(ordinaryPrompt), /SFX lettering/iu);
+
+      assert.equal(
+        illustratorPromptRequestsRenderedText("Avoid captions, speech bubbles, subtitles, logos, and watermarks."),
+        false,
+      );
+      assert.equal(illustratorPromptRequestsRenderedText('shopfront sign reading "OPEN ALL NIGHT"'), true);
+    },
+  },
+  {
+    name: "Illustrator resolves depicted character and persona gallery targets without loading references",
+    async run() {
+      const resolution = await resolveIllustratorCharacterReferences({
+        charactersStore: {
+          list: async () => [
+            {
+              id: "character-maukie",
+              data: { name: "Maukie", extensions: { appearance: "Wet brown hair." } },
+              avatarPath: null,
+            },
+            {
+              id: "character-dottore",
+              data: { name: "Dottore", extensions: { appearance: "A masked scientist." } },
+              avatarPath: null,
+            },
+          ],
+        },
+        chatCharacters: [
+          { id: "character-maukie", name: "Maukie", avatarPath: null, appearance: "Wet brown hair." },
+          { id: "character-dottore", name: "Dottore", avatarPath: null, appearance: "A masked scientist." },
+        ],
+        persona: { id: "persona-mari", name: "Mari", avatarPath: null, appearance: "Chubby woman." },
+        requestedNames: ["Maukie", "Dottore", "Mari"],
+        promptText: "Maukie and Dottore carry Mari through the reeds.",
+        includeReferenceImages: false,
+        maxReferences: 1,
+      });
+      assert.deepEqual(resolution.characterIds, ["character-maukie", "character-dottore"]);
+      assert.equal(resolution.personaId, "persona-mari");
+      assert.deepEqual(resolution.referenceImages, []);
+    },
+  },
+  {
+    name: "Game planner always receives card appearance while final attachment stays optional",
+    async run() {
+      const appearance = "auburn hair, green eyes, leather jacket";
+      const description = "A verbose roleplay card description that must not be sent as visual appearance.";
+
+      assert.equal(extractCharacterAppearanceText({ extensions: { appearance }, description }), appearance);
+      assert.equal(
+        extractCharacterAppearanceText({
+          extensions: { appearance: `${appearance} {{// author-only note}}` },
+          description,
+        }),
+        appearance,
+      );
+      assert.equal(extractCharacterAppearanceText({ appearance, description }), appearance);
+      assert.equal(extractCharacterAppearanceText({ description }), "");
+      assert.equal(
+        extractCharacterAppearanceText({ extensions: { appearance }, description }),
+        readIllustratorAppearance({ extensions: { appearance }, description }),
+      );
+      const longAppearance = "silver braided hair with violet ribbon ".repeat(80).trim();
+      const boundedLongAppearance = readIllustratorAppearance({ appearance: longAppearance });
+      assert.ok(boundedLongAppearance);
+      assert.ok(boundedLongAppearance.length <= 1400);
+      assert.match(boundedLongAppearance, /(?:silver|braided|hair|with|violet|ribbon)\.\.\.$/u);
+
+      const appearanceContextBlock = buildGameIllustratorAppearanceContextBlock([
+        `Lyra's Appearance: ${extractCharacterAppearanceText({ extensions: { appearance }, description })}`,
+      ]);
+      assert.match(appearanceContextBlock, /^<character_appearance_context>/u);
+      assert.match(appearanceContextBlock, new RegExp(appearance, "u"));
+      assert.doesNotMatch(appearanceContextBlock, new RegExp(description, "u"));
+
+      assert.deepEqual(
+        selectStoryboardAppearanceCharacterNames({
+          sourceNarration: "You raise your hand beside 2B- as the shrine begins to glow.",
+          sections: [],
+          allowedCharacterNames: ["2B-", "matt", "Mara Venn"],
+          activePersonaName: "matt",
+        }),
+        ["matt", "2B-"],
+      );
+      assert.deepEqual(
+        selectStoryboardAppearanceCharacterNames({
+          sourceNarration: "You raise your hand beside 2B- as the shrine begins to glow.",
+          sections: [],
+          allowedCharacterNames: ["2B-", "matt", "Mara Venn"],
+        }),
+        ["2B-"],
+      );
+
+      const narrationSummaryMessages = await buildIllustrationNarrationSummaryMessages({
+        illustration: {
+          prompt: "Lyra stands beneath the moon while rain darkens her jacket and the forest around her.",
+          characters: ["Lyra"],
+        },
+        narration: "Lyra stands beneath the moon while rain darkens her jacket and the forest around her.",
+        characterAppearanceContextBlock: appearanceContextBlock,
+      });
+      const narrationSummarySystemPrompt = narrationSummaryMessages[0]?.content ?? "";
+      assert.match(narrationSummarySystemPrompt, /^You are Marinara's Game Mode narration summarizer/u);
+      assert.ok(narrationSummarySystemPrompt.indexOf(appearanceContextBlock) > 0);
+      assert.ok(
+        narrationSummarySystemPrompt.indexOf(appearanceContextBlock) <
+          narrationSummarySystemPrompt.indexOf("Read the completed turn narration"),
+      );
+      assert.match(narrationSummarySystemPrompt, /never invent or contradict a supplied hair color/iu);
+
+      const narrationSummaryWithoutAppearance = await buildIllustrationNarrationSummaryMessages({
+        illustration: {
+          prompt: "Lyra stands beneath the moon while rain darkens the forest around her.",
+          characters: ["Lyra"],
+        },
+        narration: "Lyra stands beneath the moon while rain darkens the forest around her.",
+      });
+      assert.doesNotMatch(narrationSummaryWithoutAppearance[0]?.content ?? "", /character_appearance_context/u);
+
+      const storyboardMessages = await buildStoryboardIllustratorMessages({
+        promptOverridesStorage: {} as never,
+        meta: {},
+        setupConfig: null,
+        latestState: null,
+        sourceNarration: "Lyra stands beneath the moon while rain darkens the forest around her.",
+        sections: [
+          {
+            index: 0,
+            kind: "narration",
+            content: "Lyra stands beneath the moon while rain darkens the forest around her.",
+          },
+        ],
+        keyframeCount: 1,
+        durationSeconds: 6,
+        aspectRatio: "16:9",
+        generateVideos: false,
+        allowedCharacterNames: ["Lyra"],
+        maxVisibleCharacters: 1,
+        characterAppearanceContextBlock: appearanceContextBlock,
+      });
+      assert.match(storyboardMessages.systemPrompt, /^You are Marinara's Game Mode Storyboard Illustrator/u);
+      assert.ok(storyboardMessages.systemPrompt.indexOf(appearanceContextBlock) > 0);
+      assert.ok(
+        storyboardMessages.systemPrompt.indexOf(appearanceContextBlock) <
+          storyboardMessages.systemPrompt.indexOf("Turn exactly one completed GM narration"),
+      );
+      assert.match(storyboardMessages.systemPrompt, /omit it instead of guessing/iu);
+
+      const compiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "prompt-regression",
+        prompt:
+          "Lyra standing in a moonlit forest Final visibility rule: Only depict these named visible characters: Lyra.",
+        characters: ["Lyra"],
+        characterDescriptions: [`Lyra's Appearance: ${appearance}`],
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.match(compiled.prompt, /Character appearance notes:\s*Lyra's Appearance:/u);
+      assert.match(compiled.prompt, /Final visibility rule: Only depict these named visible characters: Lyra/iu);
+      assert.doesNotMatch(compiled.prompt, /without an attached reference image/iu);
+      assert.doesNotMatch(compiled.prompt, new RegExp(description, "u"));
+
+      const separatedVisibilityCompiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "prompt-regression",
+        prompt:
+          "Lyra standing in a moonlit forest Final visibility rule: Only depict these named visible characters: Lyra.",
+        characters: ["Lyra"],
+        storyboardImagePromptTemplateId: "separated-visibility",
+        storyboardImagePromptTemplates: [
+          {
+            id: "separated-visibility",
+            name: "Separated Visibility",
+            promptTemplate: "SCENE ${scenePrompt}\nSCOPE ${finalVisibilityRuleLine}",
+          },
+        ],
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.equal(
+        separatedVisibilityCompiled.prompt,
+        "SCENE Lyra standing in a moonlit forest\nSCOPE Final visibility rule: Only depict these named visible characters: Lyra.",
+      );
+
+      const compiledWithoutAttachedAppearance = await buildSceneIllustrationProviderPrompt({
+        chatId: "prompt-regression",
+        prompt: "Lyra standing in a moonlit forest",
+        characters: ["Lyra"],
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.doesNotMatch(compiledWithoutAttachedAppearance.prompt, /Character appearance notes:/u);
+
+      const longCharacterNames = ["Lyra", "Korr", "Mira", "Tarin", "Sable", "Orin"];
+      const longCompiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "prompt-regression",
+        prompt: "Six adventurers regroup around a moonlit shrine.",
+        characters: longCharacterNames,
+        characterDescriptions: longCharacterNames.map(
+          (name) => `${name}'s Appearance: ${"silver braided hair with violet ribbon ".repeat(80).trim()}`,
+        ),
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.ok(longCompiled.prompt.length <= 7000);
+      const longAppearanceBlock = longCompiled.prompt.split("Character appearance notes:\n")[1] ?? "";
+      const longAppearanceLines = longAppearanceBlock.split("\n").filter((line) => line.includes("'s Appearance:"));
+      assert.equal(longAppearanceLines.length, longCharacterNames.length);
+      for (const name of longCharacterNames)
+        assert.match(longAppearanceBlock, new RegExp(`${name}'s Appearance:`, "u"));
+      for (const line of longAppearanceLines) {
+        assert.ok(line.length > 300);
+        assert.match(line, /(?:silver|braided|hair|with|violet|ribbon)\.\.\.$/u);
+      }
+
+      const directCompiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "prompt-regression",
+        title: "Moonlit meeting",
+        prompt:
+          "Lyra standing in a moonlit forest Final visibility rule: Only depict these named visible characters: Lyra.",
+        reason: "Key emotional moment",
+        characters: ["Lyra"],
+        characterDescriptions: [`Lyra's Appearance: ${appearance}`],
+        imagePromptInstructions: "Keep the moon visible.",
+        useGamePromptTemplate: false,
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.match(directCompiled.prompt, /^Lyra standing in a moonlit forest/u);
+      assert.match(
+        directCompiled.prompt,
+        /Final visibility rule: Only depict these named visible characters: Lyra/iu,
+      );
+      assert.match(directCompiled.prompt, /Character appearance notes:\s*Lyra's Appearance:/u);
+      assert.match(directCompiled.prompt, /User image instructions: Keep the moon visible/u);
+      assert.doesNotMatch(
+        directCompiled.prompt,
+        /(?:^|\n)(?:Scene moment|Narrative purpose|Characters|Reference handling|Art direction):/iu,
+      );
+
+      const chatSettingsSource = readFileSync(
+        new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameSurfaceSource = readFileSync(
+        new URL("../../packages/client/src/components/game/GameSurface.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameRouteSource = readFileSync(
+        new URL("../../packages/server/src/routes/game.routes.ts", import.meta.url),
+        "utf8",
+      );
+      assert.match(chatSettingsSource, /label="Use Storyboard Template"/u);
+      assert.doesNotMatch(chatSettingsSource, /Use Storyboard Prompt Directly|gameStoryboardUseDirectScenePrompt/u);
+      assert.match(chatSettingsSource, /gameStoryboardUsePromptTemplate:\s*!gameStoryboardUsePromptTemplate/u);
+      assert.doesNotMatch(gameSurfaceSource, /useGamePromptTemplate/u);
+      assert.match(gameRouteSource, /characterAppearanceContextBlock:\s*storyboardAppearanceContextBlock/u);
+      assert.equal(gameRouteSource.match(/^\s+characterAppearanceContextBlock,\s*$/gmu)?.length, 2);
+      assert.equal(gameRouteSource.match(/includeCharacterDescriptions:\s*true,/gu)?.length, 1);
+      assert.equal(gameRouteSource.match(/includeCharacterDescriptions:\s*includeCharacterAppearance,/gu)?.length, 5);
+      assert.doesNotMatch(
+        gameRouteSource,
+        /const storyboardAppearanceCharacterNames\s*=\s*includeCharacterAppearance/gu,
+      );
     },
   },
   {
@@ -1066,6 +1995,9 @@ const cases: RegressionCase[] = [
       const preset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
         (template) => template.id === GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
       );
+      const animationPreset = GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE_ID,
+      );
 
       assert.equal(preset?.promptTemplate, GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE);
       assert.match(preset?.promptTemplate ?? "", /ASCII-only comma-separated NovelAI\/Danbooru tag list/);
@@ -1073,9 +2005,11 @@ const cases: RegressionCase[] = [
       assert.match(preset?.promptTemplate ?? "", /Do not put the keyframe title/);
       assert.match(preset?.promptTemplate ?? "", /\$\{keyframeCount\}/);
       assert.match(preset?.promptTemplate ?? "", /\$\{aspectRatio\}/);
+      assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_NOVELAI_ANIMATION_PROMPT_TEMPLATE);
+      assert.match(animationPreset?.promptTemplate ?? "", /\$\{durationSeconds\}-second/);
       assert.match(drawerSource, /label="Use NovelAI Character Prompts"/);
-      assert.match(drawerSource, /onAddTemplate\(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID\)/);
-      assert.match(drawerSource, /Add NovelAI Copy/);
+      assert.match(drawerSource, /builtInTemplates=\{GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATES\}/);
+      assert.match(drawerSource, /builtInTemplates=\{GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATES\}/);
       assert.match(gameRouteSource, /meta\.gameStoryboardUseNovelAiCharacterPrompts !== false/);
       assert.match(gameRouteSource, /useNovelAiCharacterPrompts\s*&&\s*providerSupportsStructuredCharacterPrompts/);
     },
@@ -1108,12 +2042,12 @@ const cases: RegressionCase[] = [
         id: "builtin:illustrator",
         type: "illustrator",
         name: "Illustrator",
-        description: "Generates image prompts for key scenes (requires image generation API).",
+        description: "Responsible for image and video generations.",
         phase: "post_processing",
         enabled: "false",
         connectionId: null,
         imagePath: null,
-        promptTemplate: DEFAULT_AGENT_PROMPTS.illustrator,
+        promptTemplate: getDefaultAgentPrompt("illustrator"),
         settings: JSON.stringify({ defaultPromptTemplateId: "background" }),
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1299,6 +2233,24 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "memory recall truncation preserves supplementary Unicode characters",
+    run() {
+      const tokenBudget = 96;
+      const maxChars = tokenBudget * 4;
+      const marker = "\n...[recalled memory truncated]...\n";
+      const headChars = Math.ceil((maxChars - marker.length) * 0.7);
+      const tailChars = maxChars - marker.length - headChars;
+      const cutsHeadPair = `${"a".repeat(headChars - 1)}\u{10920}${"b".repeat(maxChars)}`;
+      const cutsTailPair = `${"a".repeat(maxChars)}😀${"b".repeat(tailChars - 1)}`;
+
+      for (const memory of [cutsHeadPair, cutsTailPair]) {
+        const truncated = truncateRecalledMemory(memory, tokenBudget);
+        assert.match(truncated, /\[recalled memory truncated]/);
+        assert.doesNotMatch(JSON.stringify(truncated), /\\u(?:d[89ab][0-9a-f]{2}(?!\\ud[c-f][0-9a-f]{2})|d[c-f][0-9a-f]{2})/i);
+      }
+    },
+  },
+  {
     name: "conversation awareness memories escape XML delimiters",
     async run() {
       const merged = await mergeConversationCharacterMemories({
@@ -1363,7 +2315,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(settings.contextSize, 5);
       assert.equal(settings.maxTokens, 4096);
       assert.deepEqual(settings.promptTemplates, []);
-      assert.match(DEFAULT_AGENT_PROMPTS.html, /post-processing visual enhancer/);
+      assert.match(getDefaultAgentPrompt("html"), /post-processing visual enhancer/);
     },
   },
   {
@@ -1494,6 +2446,35 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "XML agent output contracts preserve template tags while escaping macro values",
+    async run() {
+      const { calls, provider } = makeCapturingProvider(`{"entries":[]}`);
+      const config = makeRegressionAgentConfig({
+        type: "lorebook-keeper",
+        name: "Lorebook Keeper",
+        promptTemplate:
+          "Skip facts already captured by <chat_summary>. Review <existing_entries> first. Active user: {{user}}.",
+        settings: { resultType: "json" },
+      });
+      const context = makeRegressionAgentContext({
+        wrapFormat: "xml",
+        persona: { name: "Mari <override>", description: "The active user persona." },
+      });
+
+      const result = await executeAgent(config as any, context, provider as any, "regression-model");
+      assert.equal(result.success, true);
+      const messages = calls[0]!;
+      const system = messages[0]!.content;
+      const terminal = messages[messages.length - 1]!.content;
+      assert.match(system, /<chat_summary>/u);
+      assert.match(system, /<existing_entries>/u);
+      assert.match(terminal, /<chat_summary>/u);
+      assert.match(terminal, /<existing_entries>/u);
+      assert.doesNotMatch(terminal, /&lt;chat_summary>/u);
+      assert.match(terminal, /Mari &lt;override&gt;/u);
+    },
+  },
+  {
     name: "batched agent output format lists only active requested agents in terminal user message",
     async run() {
       const { calls, provider } = makeCapturingProvider(
@@ -1533,6 +2514,299 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.match(last.content, /"character-tracker": null/);
       assert.doesNotMatch(last.content, /"quest": null/);
       assert.equal(last.content.trim().endsWith("</output_format>"), true);
+    },
+  },
+  {
+    name: "game portrait appearance aggregation deduplicates raw values before labels",
+    run() {
+      const description = "A silver-furred fox-woman in a persimmon kimono.";
+      const appearance = resolveNpcPortraitAppearance(
+        { description: `  ${description.toUpperCase()}  ` },
+        {
+          description,
+          descriptionSource: "model",
+          notes: ["Carries a debt-scroll."],
+        } as any,
+        {
+          appearance: description,
+          outfit: "Persimmon kimono",
+          mood: "Warm smile",
+        },
+      );
+
+      assert.equal(appearance.toLowerCase().split(description.toLowerCase()).length - 1, 1);
+      assert.match(appearance, /^Canonical NPC profile:/);
+      assert.match(appearance, /Current outfit: Persimmon kimono/);
+      assert.match(appearance, /Current expression or mood: Warm smile/);
+      assert.match(appearance, /Notable details: Carries a debt-scroll/);
+    },
+  },
+  {
+    name: "game portrait prompts preserve one canonical description across compilation paths",
+    async run() {
+      const appearance = "silver-furred fox-woman, persimmon kimono, debt-scroll tucked in her sleeve";
+      const request = {
+        chatId: "prompt-regression",
+        npcName: "Lyra",
+        appearance,
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      };
+      const countAppearance = (prompt: string) => prompt.toLowerCase().split(appearance.toLowerCase()).length - 1;
+
+      const unstyled = await buildNpcPortraitProviderPrompt(request);
+      assert.equal(countAppearance(unstyled.prompt), 1);
+
+      const zImage = await buildNpcPortraitProviderPrompt({
+        ...request,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+      });
+      assert.equal(countAppearance(zImage.prompt), 1);
+
+      const tagged = await buildNpcPortraitProviderPrompt({
+        ...request,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "danbooru",
+      });
+      assert.equal(countAppearance(tagged.prompt), 1);
+      assert.match(tagged.prompt, /silver-furred fox-woman/);
+
+      const dynamicPreserved = await buildNpcPortraitProviderPrompt({
+        ...request,
+        dynamicPromptGenerator: async () =>
+          `Centered portrait of Lyra, ${appearance}, readable expression, single subject.`,
+      });
+      assert.equal(countAppearance(dynamicPreserved.prompt), 1);
+
+      const dynamicOmitted = await buildNpcPortraitProviderPrompt({
+        ...request,
+        dynamicPromptGenerator: async () => "Centered portrait of Lyra with a readable expression and clean lighting.",
+      });
+      assert.equal(countAppearance(dynamicOmitted.prompt), 1);
+
+      const shortDescription = await buildNpcPortraitProviderPrompt({
+        ...request,
+        appearance: "man",
+        dynamicPromptGenerator: async () => "Centered portrait of a woman with clean lighting and a readable expression.",
+      });
+      assert.match(shortDescription.prompt, /^Required canonical NPC visual profile: man\./);
+
+      const narrationDescription = "A rain-soaked courier in a patched green cloak.";
+      const narrationAppearance = resolveNpcPortraitAppearance(
+        { description: null },
+        {
+          description: narrationDescription,
+          descriptionSource: "narration",
+          notes: [],
+        } as any,
+        null,
+      );
+      const narrationPrompt = await buildNpcPortraitProviderPrompt({
+        ...request,
+        appearance: narrationAppearance,
+      });
+      assert.equal(
+        narrationPrompt.prompt.toLowerCase().split(narrationDescription.toLowerCase()).length - 1,
+        1,
+      );
+      assert.doesNotMatch(narrationPrompt.prompt, /Canonical NPC profile:/);
+    },
+  },
+  {
+    name: "image prompt compilation suppresses exact provider-visible duplicate inputs",
+    run() {
+      const styleProfiles = createDefaultImageStyleProfileSettings();
+      const generatedStyle = "Watercolor fantasy illustration, soft edges, warm palette";
+      const appearance = "silver-furred fox-woman, persimmon kimono, debt-scroll tucked in her sleeve";
+      const countValue = (prompt: string, value: string) =>
+        prompt.toLowerCase().split(value.toLowerCase()).length - 1;
+
+      for (const profile of styleProfiles.profiles) {
+        for (const kind of ["portrait", "background", "illustration"] as const) {
+          const compiled = compileImagePrompt({
+            kind,
+            prompt: `Art style: ${generatedStyle}. A moonlit graveyard scene with one clear subject.`,
+            styleProfiles,
+            styleProfileId: profile.id,
+            generatedStyle,
+            applyPromptModeToSourcePrompt: kind !== "portrait",
+          });
+
+          assert.equal(
+            countValue(compiled.prompt, generatedStyle),
+            1,
+            `${profile.id}/${kind} repeated the generated style: ${compiled.prompt}`,
+          );
+        }
+
+        const sprite = compileImagePrompt({
+          kind: "sprite",
+          prompt: `Single full-body character sprite, ${appearance}, idle pose.`,
+          userPositive: appearance,
+          styleProfiles,
+          styleProfileId: profile.id,
+        });
+        assert.equal(
+          countValue(sprite.prompt, appearance),
+          1,
+          `${profile.id}/sprite repeated the supplied appearance: ${sprite.prompt}`,
+        );
+        assert.match(sprite.prompt, /silver-furred/i);
+        assert.match(sprite.prompt, /persimmon kimono/i);
+        assert.match(sprite.prompt, /debt-scroll/i);
+        if (profile.id === "anime") {
+          const compactAppearance = "natural expression";
+          const compactBudgetPrompt = [
+            ...Array.from({ length: 40 }, (_, index) => `forest detail ${index}`),
+            compactAppearance,
+          ].join(", ");
+          const compactSprite = compileImagePrompt({
+            kind: "sprite",
+            prompt: compactBudgetPrompt,
+            userPositive: compactAppearance,
+            styleProfiles,
+            styleProfileId: profile.id,
+          });
+          assert.equal(
+            countValue(compactSprite.prompt, compactAppearance),
+            1,
+            `compact sprite lost the supplied appearance: ${compactSprite.prompt}`,
+          );
+        }
+
+        const preservedPrompt = `Art direction: ${generatedStyle}. Lyra raises a lantern in the graveyard.`;
+        const preservedPrefix = compileImagePrompt({
+          kind: "illustration",
+          prompt: "",
+          dedupeAgainstPrompt: preservedPrompt,
+          styleProfiles,
+          styleProfileId: profile.id,
+          generatedStyle,
+        });
+        const preservedProviderPrompt = [preservedPrefix.prompt, preservedPrompt].filter(Boolean).join(", ");
+        assert.equal(
+          countValue(preservedProviderPrompt, generatedStyle),
+          1,
+          `${profile.id}/preserved illustration repeated the generated style: ${preservedProviderPrompt}`,
+        );
+        assert.ok(preservedPrefix.diagnostics.removedPositiveDuplicates.includes(generatedStyle));
+      }
+
+      const zImageStyleAlreadyPresent = compileImagePrompt({
+        kind: "portrait",
+        prompt: `Art style: ${generatedStyle}. Centered portrait of Lyra.`,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleAlreadyPresent.prompt, generatedStyle), 1);
+      assert.doesNotMatch(zImageStyleAlreadyPresent.prompt, /Z-Image Turbo prompt that keeps compact narrative/);
+
+      const zImageStyleMissing = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait of Lyra.",
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleMissing.prompt, generatedStyle), 1);
+
+      const zImageStyleOnlyNegated = compileImagePrompt({
+        kind: "portrait",
+        prompt: `Avoid ${generatedStyle}. Centered portrait of Lyra.`,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+        generatedStyle,
+      });
+      assert.equal(countValue(zImageStyleOnlyNegated.prompt, generatedStyle), 1);
+      assert.equal(zImageStyleOnlyNegated.diagnostics.removedPositiveDuplicates.includes(generatedStyle), false);
+
+      const zImageAppearanceMissing = compileImagePrompt({
+        kind: "sprite",
+        prompt: "Single full-body character sprite in an idle pose.",
+        userPositive: appearance,
+        styleProfiles,
+        styleProfileId: "z-image-turbo",
+      });
+      assert.equal(countValue(zImageAppearanceMissing.prompt, appearance), 1);
+
+      const compactBudgetPrompt = [
+        ...Array.from({ length: 40 }, (_, index) => `blue eyes detail ${index}`),
+        `Art style: ornate rococo oil painting`,
+      ].join(", ");
+      for (const profileId of ["anime", "danbooru", "realistic", "painterly"] as const) {
+        const compact = compileImagePrompt({
+          kind: "portrait",
+          prompt: compactBudgetPrompt,
+          styleProfiles,
+          styleProfileId: profileId,
+          generatedStyle: "ornate rococo oil painting",
+        });
+        assert.equal(
+          countValue(compact.prompt, "ornate rococo oil painting"),
+          1,
+          `${profileId} compact prompt lost the configured style: ${compact.prompt}`,
+        );
+      }
+
+      const semicolonNegation = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait; avoid ornate rococo oil painting",
+        styleProfiles,
+        styleProfileId: "danbooru",
+        generatedStyle: "ornate rococo oil painting",
+      });
+      assert.equal(countValue(semicolonNegation.prompt, "ornate rococo oil painting"), 1);
+      assert.match(semicolonNegation.negativePrompt, /ornate rococo oil painting/i);
+
+      const embeddedNegation = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Centered portrait, avoid ornate rococo oil painting, blue eyes",
+        styleProfiles,
+        styleProfileId: "anime",
+        generatedStyle: "ornate rococo oil painting",
+      });
+      assert.equal(countValue(embeddedNegation.prompt, "ornate rococo oil painting"), 1);
+      assert.match(embeddedNegation.negativePrompt, /ornate rococo oil painting/i);
+    },
+  },
+  {
+    name: "preserved storyboard prompts retain one configured style through final truncation",
+    async run() {
+      const generatedStyle = "ornate rococo oil painting";
+      const longScene = `${"moonlit forest atmosphere ".repeat(280).slice(0, 6900)} Art direction: ${generatedStyle}.`;
+      const compiled = await buildSceneIllustrationProviderPrompt({
+        chatId: "style-truncation-regression",
+        prompt: "A moonlit forest scene.",
+        artStyle: generatedStyle,
+        preserveFullScenePrompt: true,
+        dynamicPromptGenerator: async () => longScene,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+
+      assert.equal(compiled.prompt.length, 7000);
+      assert.equal(compiled.prompt.toLowerCase().split(generatedStyle).length - 1, 1);
+
+      const styleLeadingScene = `Art direction: ${generatedStyle}. ${"moonlit forest atmosphere ".repeat(280)}`;
+      const styleLeading = await buildSceneIllustrationProviderPrompt({
+        chatId: "style-deduplication-regression",
+        prompt: "A moonlit forest scene.",
+        artStyle: generatedStyle,
+        preserveFullScenePrompt: true,
+        dynamicPromptGenerator: async () => styleLeadingScene,
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "z-image-turbo",
+        imgModel: "unused",
+        imgBaseUrl: "",
+        imgApiKey: "",
+      });
+      assert.equal(styleLeading.prompt.toLowerCase().split(generatedStyle).length - 1, 1);
     },
   },
   {
@@ -1639,6 +2913,22 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "Roleplay preserves an explicit no-Persona selection",
+    run() {
+      const personas = [
+        { id: "active-persona", isActive: "true" },
+        { id: "selected-persona", isActive: "false" },
+      ];
+
+      assert.equal(resolveChatPersonaCandidate(personas, null, "roleplay"), null);
+      assert.equal(resolveActivePersonaCandidate(personas, null, "roleplay"), null);
+      assert.equal(resolveActivePersonaCandidate(personas, null, "visual_novel"), null);
+      assert.equal(resolveActivePersonaCandidate(personas, null, "game"), null);
+      assert.equal(resolveActivePersonaCandidate(personas, null, "conversation")?.id, "active-persona");
+      assert.equal(resolveActivePersonaCandidate(personas, "selected-persona", "roleplay")?.id, "selected-persona");
+    },
+  },
+  {
     name: "chat summaries normalize legacy data and compile enabled entries only",
     run() {
       const legacyEntries = normalizeChatSummaryEntries([], {
@@ -1661,6 +2951,27 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       ]);
 
       assert.equal(compiled, "The previous scene was summarized.");
+
+      const chapterMessage = "A".repeat(8_500);
+      assert.equal(
+        formatRoleplaySummaryChatLog([{ role: "assistant", content: chapterMessage }]),
+        `[assistant]: ${chapterMessage}`,
+        "Roleplay Summary must send a chapter-length source message without per-message truncation",
+      );
+
+      const largeSummary = "Summary detail. ".repeat(5_000);
+      const compiledLargeSummary = compileChatSummaryEntries([
+        {
+          ...legacyEntries[0]!,
+          id: "large-summary",
+          content: largeSummary,
+        },
+      ]);
+      assert.equal(
+        compiledLargeSummary,
+        largeSummary.trim(),
+        "Compiled chat metadata must preserve summaries larger than the former 64 KiB ceiling",
+      );
     },
   },
   {
@@ -1715,6 +3026,59 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(promptText.includes("&lt;START>"), false);
       assert.equal(promptText.includes("<system>bad example</system>"), false);
       assert.match(promptText, /&lt;system>bad example&lt;\/system>/);
+    },
+  },
+  {
+    name: "Conversation named profiles cannot suppress character System Prompts",
+    run() {
+      const messages: ChatMLMessage[] = [
+        {
+          role: "system",
+          content: "<injected_character><description>Custom profile.</description></injected_character>",
+        },
+        { role: "user", content: "Hello." },
+      ];
+
+      injectIdentityFallbackMessages({
+        messages,
+        charInfo: [
+          {
+            id: "char-injected",
+            name: "Injected Character",
+            description: "Original profile that should remain omitted.",
+            personality: "",
+            scenario: "",
+            creatorNotes: "",
+            systemPrompt: "Always preserve this character-authored instruction.",
+            backstory: "",
+            appearance: "",
+            mesExample: "",
+            firstMes: "",
+            postHistoryInstructions: "",
+            tags: [],
+            talkativeness: 0.5,
+            avatarPath: null,
+            avatarCrop: null,
+          },
+        ],
+        promptTargetCharacterId: null,
+        promptMacroContext: {
+          user: "Mari",
+          char: "Injected Character",
+          characters: ["Injected Character"],
+          variables: {},
+        },
+        wrapFormat: "xml",
+        personaName: "Mari",
+        personaDescription: "",
+        personaFields: {},
+        persona: null,
+        resolvePromptMacros: (value) => value,
+      });
+
+      const promptText = messages.map((message) => message.content).join("\n");
+      assert.match(promptText, /Always preserve this character-authored instruction\./);
+      assert.equal(promptText.includes("Original profile that should remain omitted."), false);
     },
   },
   {
@@ -1911,7 +3275,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         activatedEntries: [],
         budgetSkippedEntries: [],
       };
-      const markerCtx = {
+      const markerCtx: MarkerContext = {
         db: undefined as unknown as DB,
         chatId: "chat-lorebook-markup",
         characterIds: [],
@@ -1947,18 +3311,31 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(
         shouldEnableAgentsForGeneration({
           chatEnableAgents: true,
-          chatMode: "roleplay",
           impersonate: false,
           impersonateBlockAgents: false,
         }),
         true,
       );
+      for (const chatMode of ["conversation", "roleplay", "visual_novel", "game"] as const) {
+        assert.equal(
+          isAgentAvailableInChatMode(chatMode, "custom-human-voice-rewriter"),
+          true,
+          `expected custom agents to be available in ${chatMode}`,
+        );
+      }
+      assert.equal(
+        shouldEnableAgentsForGeneration({
+          chatEnableAgents: false,
+          impersonate: false,
+          impersonateBlockAgents: false,
+        }),
+        false,
+      );
       assert.equal(
         shouldEnableAgentsForGeneration({
           chatEnableAgents: true,
-          chatMode: "conversation",
-          impersonate: false,
-          impersonateBlockAgents: false,
+          impersonate: true,
+          impersonateBlockAgents: true,
         }),
         false,
       );
@@ -2229,6 +3606,187 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "Conversation group output rule follows the preset wrap format",
+    run() {
+      const instruction = "Remember to prefix messages with `Name: message`!";
+      const responseBoundary =
+        "Only respond for these characters: Dottore, Pantalone. Never respond for Mari or write Mari's messages.";
+      const formatOutput = (wrapFormat: "xml" | "markdown" | "none") =>
+        formatConversationGroupOutputFormat({
+          wrapFormat,
+          characterNames: ["Dottore", "Pantalone"],
+          userName: "Mari",
+        });
+      assert.equal(
+        formatOutput("xml"),
+        `<output_format>\n    ${instruction}\n    ${responseBoundary}\n</output_format>`,
+      );
+      assert.equal(formatOutput("markdown"), `## Output Format\n${instruction}\n${responseBoundary}`);
+      assert.equal(formatOutput("none"), `${instruction}\n${responseBoundary}`);
+
+      const contextSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate/conversation-context-block.ts", import.meta.url),
+        "utf8",
+      );
+      assert.equal(contextSource.includes(instruction), false);
+    },
+  },
+  {
+    name: "Conversation reaction syntax is advertised only inside Commands",
+    run() {
+      const routeSource = readFileSync(
+        new URL("../../packages/server/src/routes/generate.routes.ts", import.meta.url),
+        "utf8",
+      );
+      const commandSource = readFileSync(
+        new URL(
+          "../../packages/server/src/services/generation/conversation-command-runtime.ts",
+          import.meta.url,
+        ),
+        "utf8",
+      );
+      assert.equal(routeSource.includes("each character reacts for themselves"), false);
+      assert.match(commandSource, /\[react: emoji="😂"\].*\[react: emoji=":name:"\]/u);
+    },
+  },
+  {
+    name: "Conversation membership events recognize tagged and legacy timeline notices",
+    run() {
+      assert.equal(
+        resolveConversationMembershipHistoryEvent({
+          role: "system",
+          content: "Arlecchino has joined the chat.",
+          extra: { conversationMembershipEvent: "joined" },
+        }),
+        "joined",
+      );
+      assert.equal(
+        resolveConversationMembershipHistoryEvent({ role: "system", content: "Arlecchino has left the chat." }),
+        "left",
+      );
+      assert.equal(
+        resolveConversationMembershipHistoryEvent({ role: "system", content: "Stay in character." }),
+        null,
+      );
+    },
+  },
+  {
+    name: "default Conversation identity wording is safe for DMs and groups",
+    run() {
+      assert.match(
+        DEFAULT_CONVERSATION_PROMPT,
+        /^You are \{\{charName\}\} chatting with the user called \{\{userName\}\} in a casual private DM conversation\. You are real and autonomous people\./u,
+      );
+      const customizedTail = "\nKeep this installation-specific instruction.";
+      assert.equal(
+        migrateLegacyDefaultConversationPromptLead(
+          LEGACY_DEFAULT_CONVERSATION_PROMPT_LEAD + customizedTail,
+          DEFAULT_CONVERSATION_PROMPT,
+        ),
+        DEFAULT_CONVERSATION_PROMPT.split("\n", 1)[0] + customizedTail,
+      );
+      assert.equal(
+        migrateLegacyDefaultConversationPromptLead("A genuinely custom opening.", DEFAULT_CONVERSATION_PROMPT),
+        "A genuinely custom opening.",
+      );
+    },
+  },
+  {
+    name: "past Conversation scene summaries compact into day and week summaries",
+    async run() {
+      const oldCreatedAt = "2026-06-23T12:00:00.000Z";
+      const currentCreatedAt = "2026-07-15T12:00:00.000Z";
+      const oldSceneSummary = "OLD_SCENE_SUMMARY_MUST_NOT_REMAIN_VERBATIM";
+      const currentSceneSummary = "CURRENT_SCENE_SUMMARY_MUST_REMAIN_VERBATIM";
+      const authoredSystemInstruction = "AUTHORED_SYSTEM_INSTRUCTION_MUST_REMAIN";
+      const legacySetupMembership = "SETUP_ONLY has joined the chat.";
+      const currentMembership = "Tartaglia has joined the chat.";
+      const chatMessages = [
+        { id: "legacy-setup-membership", role: "system", content: legacySetupMembership, createdAt: oldCreatedAt },
+        { id: "old-user", role: "user", content: "An older conversation turn.", createdAt: oldCreatedAt },
+        { id: "old-scene", role: "narrator", content: oldSceneSummary, createdAt: oldCreatedAt },
+        { id: "authored-system", role: "system", content: authoredSystemInstruction, createdAt: oldCreatedAt },
+        { id: "current-scene", role: "narrator", content: currentSceneSummary, createdAt: currentCreatedAt },
+        {
+          id: "current-membership",
+          role: "system",
+          content: currentMembership,
+          createdAt: currentCreatedAt,
+          extra: { conversationMembershipEvent: "joined" },
+        },
+      ];
+      const finalMessages = [
+        {
+          id: "legacy-setup-membership",
+          role: "system" as const,
+          content: legacySetupMembership,
+          contextKind: "history" as const,
+        },
+        { id: "old-user", role: "user" as const, content: "An older conversation turn.", contextKind: "history" as const },
+        { id: "old-scene", role: "system" as const, content: oldSceneSummary, contextKind: "history" as const },
+        {
+          id: "authored-system",
+          role: "system" as const,
+          content: authoredSystemInstruction,
+          contextKind: "history" as const,
+        },
+        { id: "current-scene", role: "system" as const, content: currentSceneSummary, contextKind: "history" as const },
+        {
+          id: "current-membership",
+          role: "system" as const,
+          content: currentMembership,
+          contextKind: "history" as const,
+        },
+      ];
+
+      const prepared = await prepareConversationPromptHistory({
+        finalMessages,
+        chatMessages,
+        scopedMessages: chatMessages,
+        chatMeta: {
+          summaryTailMessages: 1,
+          daySummaries: {
+            "23.06.2026": { summary: "Compact day summary.", keyDetails: [] },
+          },
+          weekSummaries: {
+            "22.06.2026": { summary: "COMPACT_WEEK_SUMMARY", keyDetails: [] },
+          },
+        },
+        chatId: "conversation-scene-summary-regression",
+        chats: {
+          async patchMetadata() {
+            throw new Error("Existing day and week summaries should not require a metadata patch");
+          },
+        },
+        chars: {
+          async getById() {
+            return null;
+          },
+        },
+        characterIds: ["char-echo"],
+        allCharacterIds: ["char-echo"],
+        convoCharInfo: [{ name: "Echo" }],
+        convoCharNames: ["Echo"],
+        personaName: "User",
+        nowInstant: new Date("2026-07-15T18:00:00.000Z"),
+        promptTimeZone: "UTC",
+        wrapFormat: "xml",
+        connection: { provider: "openai", apiKey: "", model: "regression-model" },
+        connectionId: "regression-connection",
+        baseUrl: "https://example.invalid/v1",
+      });
+      const promptText = prepared.finalMessages.map((message) => message.content).join("\n");
+
+      assert.match(promptText, /COMPACT_WEEK_SUMMARY/u);
+      assert.equal(promptText.includes(oldSceneSummary), false, promptText);
+      assert.match(promptText, /An older conversation turn\./u);
+      assert.match(promptText, new RegExp(currentSceneSummary, "u"));
+      assert.match(promptText, new RegExp(authoredSystemInstruction, "u"));
+      assert.equal(promptText.includes(legacySetupMembership), false, promptText);
+      assert.match(promptText, new RegExp(currentMembership, "u"));
+    },
+  },
+  {
     name: "chat prompt preset defaults fill missing chat preset choices",
     run() {
       assert.deepEqual(
@@ -2269,11 +3827,6 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
   {
     name: "tracker custom fields remain part of the model contract and survive omitted agent output",
     run() {
-      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /worldCustomFields/);
-      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /do not add, rename, reorder, or remove fields/i);
-      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /customFields/);
-      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /Do not add, rename, or remove custom fields/i);
-
       assert.deepEqual(
         normalizeWorldCustomFields([
           { name: " Moon Phase ", value: "Waxing", icon: "Moon" },
@@ -2335,6 +3888,43 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         Goal: "Find the atlas",
       });
 
+      const recurringHistory = collectLatestTrackerCharacterHistory([
+        { presentCharacters: [] },
+        {
+          presentCharacters: JSON.stringify([
+            {
+              characterId: "mira-card",
+              name: "Mira",
+              customFields: { Goal: "Find the atlas" },
+              stats: [
+                { name: "HP", value: 72, max: 100, color: "#ef4444" },
+                { name: "MP", value: 31, max: 80, color: "#3b82f6" },
+              ],
+            },
+          ]),
+        },
+      ]);
+      const returningCharacters: Array<Record<string, unknown>> = [
+        {
+          characterId: "Mira",
+          name: "Mira",
+          stats: [{ name: "HP", value: 65, max: 100, color: "#ef4444" }],
+          avatarPath: "/api/avatars/npc/chat/mira.png",
+        },
+      ];
+      preserveTrackerCharacterUiFields(returningCharacters, recurringHistory);
+      const matchedCards = applyTrackerCharacterCardIdentity(returningCharacters, [
+        { id: "mira-card", name: "Mira", avatarPath: "/api/avatars/file/mira.png", avatarCrop: { zoom: 2, offsetX: 1, offsetY: 1 } },
+      ]);
+      assert.deepEqual(returningCharacters[0]?.stats, [
+        { name: "HP", value: 65, max: 100, color: "#ef4444" },
+        { name: "MP", value: 31, max: 80, color: "#3b82f6" },
+      ]);
+      assert.deepEqual(returningCharacters[0]?.customFields, { Goal: "Find the atlas" });
+      assert.equal(returningCharacters[0]?.characterId, "mira-card");
+      assert.equal(returningCharacters[0]?.avatarPath, "/api/avatars/file/mira.png");
+      assert.equal(matchedCards.has("mira-card"), true);
+
       assert.equal(resolveCharacterCustomFieldName("  ", "Goal"), "Goal");
       assert.equal(makeUniqueCharacterCustomFieldName({ "New Field": "", "new   field 2": "" }), "New Field 3");
 
@@ -2369,6 +3959,54 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.doesNotMatch(promptBlock ?? "", /Duplicate mood/);
       assert.match(promptBlock ?? "", /Field 62: 62/);
       assert.doesNotMatch(promptBlock ?? "", /Field 63: 63/);
+    },
+  },
+  {
+    name: "character tracker receives card RPG configuration and recurring-character history",
+    async run() {
+      const { calls, provider } = makeCapturingProvider(`{"presentCharacters":[]}`);
+      const config = makeRegressionAgentConfig({
+        id: "builtin:character-tracker",
+        type: "character-tracker",
+        name: "Character Tracker",
+        promptTemplate: getDefaultAgentPrompt("character-tracker") || "Track characters.",
+        settings: { resultType: "character_tracker_update" },
+      });
+      const context = makeRegressionAgentContext({
+        characters: [
+          {
+            id: "mira-card",
+            name: "Mira",
+            description: "A recurring alchemist.",
+            rpgStats: {
+              enabled: true,
+              hp: { value: 90, max: 100 },
+              pools: [{ name: "HP", value: 90, max: 100, color: "#ef4444" }],
+              attributes: [{ name: "INT", value: 18 }],
+            },
+          },
+        ],
+        characterTrackerHistory: [
+          {
+            characterId: "mira-card",
+            name: "Mira",
+            emoji: "⚗️",
+            mood: "Focused",
+            appearance: null,
+            outfit: null,
+            thoughts: null,
+            customFields: {},
+            stats: [{ name: "HP", value: 72, max: 100, color: "#ef4444" }],
+          },
+        ],
+      });
+      await executeAgent(config as any, context, provider as any, "regression-model");
+      const system = calls[0]?.[0]?.content ?? "";
+      assert.match(system, /Configured RPG pools: HP: 90\/100/u);
+      assert.match(system, /Configured RPG attributes: INT: 18/u);
+      assert.match(system, /<character_tracker_history>/u);
+      assert.match(system, /this list does not mean everyone is present now/u);
+      assert.match(system, /"value":72/u);
     },
   },
   {
@@ -2431,6 +4069,35 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
         },
       );
       assert.equal(belowThreshold.length, 0);
+
+      assert.equal(calibrateLorebookSimilarity(0.97, 0.97), 0);
+      assert.ok(calibrateLorebookSimilarity(0.99, 0.97) > 0.6);
+      assert.ok(
+        Math.abs(lorebookSimilarityBaseline([[1, 0], [0.97, Math.sqrt(1 - 0.97 ** 2)]]) - 0.97) < 1e-12,
+      );
+
+      const clusteredIrrelevant = scanForActivatedEntries(
+        [{ role: "user", content: "unrelated query" }],
+        [{ ...entry, id: "entry-clustered-irrelevant", keys: [], embedding: [0.97, Math.sqrt(1 - 0.97 ** 2)] } as any],
+        {
+          chatEmbedding: [1, 0],
+          semanticSimilarityBaseline: 0.97,
+          semanticThresholdByLorebookId: new Map([["book-semantic", 0.3]]),
+        },
+      );
+      assert.equal(clusteredIrrelevant.length, 0);
+
+      const clusteredRelevant = scanForActivatedEntries(
+        [{ role: "user", content: "related query" }],
+        [{ ...entry, id: "entry-clustered-relevant", keys: [], embedding: [0.99, Math.sqrt(1 - 0.99 ** 2)] } as any],
+        {
+          chatEmbedding: [1, 0],
+          semanticSimilarityBaseline: 0.97,
+          semanticThresholdByLorebookId: new Map([["book-semantic", 0.3]]),
+        },
+      );
+      assert.equal(clusteredRelevant.length, 1);
+      assert.match(clusteredRelevant[0]?.matchedKeys[0] ?? "", /^\[semantic:0\.66/u);
     },
   },
 ];

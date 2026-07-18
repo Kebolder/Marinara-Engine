@@ -2,10 +2,8 @@
 // File-Native Storage
 // ──────────────────────────────────────────────
 //
-// Marinara v1.5.7+ stores user data as JSON table snapshots under
-// DATA_DIR/storage. SQLite is only opened during one-time legacy import when a
-// previous marinara-engine.db exists; the live runtime uses this in-memory
-// file-native table store and persists dirty tables back to JSON.
+// Marinara stores user data as JSON table snapshots under DATA_DIR/storage.
+// This in-memory table store persists dirty tables back to those files.
 import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readSync, statSync } from "node:fs";
 import { copyFile, open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -13,20 +11,26 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "../lib/logger.js";
 import { getFileStorageDir } from "../config/runtime-config.js";
 import * as schema from "./schema/index.js";
+import { inArray, isFileCondition, isFileOrdering, type FileCondition, type FileOrdering } from "./file-query.js";
+import {
+  getFileTableConfig,
+  FileUniqueConstraintError,
+  isFileColumn,
+  isFileTable,
+  type AnyFileColumn,
+  type AnyFileTable,
+  type FileColumnValue,
+} from "./file-schema.js";
 
-type Row = Record<string, unknown>;
-type Table = Record<string | symbol, unknown>;
-type Column = {
-  name: string;
-  table: Table;
-  primary?: boolean;
-  hasDefault?: boolean;
-  default?: unknown;
-  notNull?: boolean;
+type Row = any;
+type Table = AnyFileTable;
+type Column = AnyFileColumn;
+type Projection = Record<string, unknown>;
+type Condition = FileCondition | undefined;
+type Ordering = FileOrdering | Column;
+type ProjectedRow<TProjection extends Projection> = {
+  [TKey in keyof TProjection]: FileColumnValue<TProjection[TKey]>;
 };
-type Projection = Record<string, unknown> | undefined;
-type Condition = unknown;
-type Ordering = unknown;
 
 type ColumnMeta = {
   key: string;
@@ -44,11 +48,11 @@ type TableMeta = {
   byKey: Map<string, ColumnMeta>;
   byDbName: Map<string, ColumnMeta>;
   primaryKey: string | null;
+  uniqueConstraints: Array<{ keys: string[]; when?: (row: Row) => boolean }>;
 };
 
 type RowContext = {
   rows: Record<string, Row>;
-  rowids: Record<string, number>;
   baseTable: string;
   joined: boolean;
 };
@@ -58,24 +62,17 @@ type JoinSpec = {
   condition: Condition;
 };
 
-type LegacyReader = "libsql" | "node:sqlite";
-
 type TableSnapshotManifest = {
   version: 2;
   savedAt: string;
   backend: "file-native";
-  migratedFromSqlite?: {
-    path?: string;
-    paths?: string[];
-    importedAt: string;
-  };
-  legacyRepair?: {
-    paths: string[];
-    repairedAt: string;
-    tables: Record<string, number>;
-    reader?: LegacyReader;
-  };
   tables: Record<string, number>;
+};
+
+type FileTransactionContext = {
+  snapshots: Map<string, Row[]>;
+  dirtyTables: Set<string>;
+  flushed: boolean;
 };
 
 export type QuarantinedStorageTable = {
@@ -94,27 +91,34 @@ export type FileNativeStoreController = {
 };
 
 export type FileNativeDB = {
-  select: (projection?: Projection) => SelectFromBuilder;
+  select: {
+    (): SelectFromBuilder<undefined>;
+    <TProjection extends Projection>(projection: TProjection): SelectFromBuilder<TProjection>;
+  };
   insert: (table: Table) => InsertBuilder;
   update: (table: Table) => UpdateSetBuilder;
   delete: (table: Table) => DeleteBuilder;
   transaction: <T>(fn: (tx: FileNativeDB) => Promise<T> | T) => Promise<T>;
-  run: () => Promise<void>;
-  all: <T = unknown>() => Promise<T[]>;
   _fileStore: FileNativeStoreController;
 };
 
-type SelectFromBuilder = {
-  from: (table: Table) => SelectQueryBuilder;
+export type FileNativeStoreTestHooks = {
+  beforeTableWrite?: (table: string, serializedRows: string) => Promise<void> | void;
 };
 
-type SelectQueryBuilder = PromiseLike<Row[]> & {
-  innerJoin: (table: Table, condition: Condition) => SelectQueryBuilder;
-  where: (condition: Condition) => SelectQueryBuilder;
-  orderBy: (...orderings: Ordering[]) => SelectQueryBuilder;
-  limit: (limit: number) => SelectQueryBuilder;
-  offset: (offset: number) => SelectQueryBuilder;
-  run: () => Promise<Row[]>;
+type SelectFromBuilder<TProjection extends Projection | undefined> = {
+  from: <TTable extends Table>(
+    table: TTable,
+  ) => SelectQueryBuilder<TProjection extends Projection ? ProjectedRow<TProjection> : TTable["$inferSelect"]>;
+};
+
+type SelectQueryBuilder<TResult> = PromiseLike<TResult[]> & {
+  innerJoin: (table: Table, condition: Condition) => SelectQueryBuilder<any>;
+  where: (condition: Condition) => SelectQueryBuilder<TResult>;
+  orderBy: (...orderings: Ordering[]) => SelectQueryBuilder<TResult>;
+  limit: (limit: number) => SelectQueryBuilder<TResult>;
+  offset: (offset: number) => SelectQueryBuilder<TResult>;
+  run: () => Promise<TResult[]>;
 };
 
 type InsertBuilder = {
@@ -181,6 +185,7 @@ export const FILE_BACKED_TABLES = [
   "agent_memory",
   "custom_tools",
   "game_state_snapshots",
+  "spatial_context_snapshots",
   "game_engine_state",
   "game_checkpoints",
   "game_scene_videos",
@@ -221,58 +226,61 @@ const warnedFlushFailures = new Set<string>();
 // Parent→child delete graph. Exported as the single source of truth: the Mari
 // DB CLI (services/mari-db) consumes it for cascade deletes and its
 // dangling-reference validator, so every new relation added here reaches both.
-export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
-  { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "agent_runs", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "agent_memory", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_state_snapshots", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_engine_state", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "discord_bridge_thread_bindings", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "chat_participants", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
-  { parent: "chats", child: "game_turn_storyboards", parentKey: "id", childKey: "chatId" },
-  {
-    parent: "game_turn_storyboards",
-    child: "game_turn_storyboard_keyframes",
-    parentKey: "id",
-    childKey: "storyboardId",
-  },
-  { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
-  { parent: "messages", child: "discord_bridge_message_mappings", parentKey: "id", childKey: "marinaraMessageId" },
-  {
-    parent: "discord_bridge_thread_bindings",
-    child: "discord_bridge_message_mappings",
-    parentKey: "id",
-    childKey: "bindingId",
-  },
-  // Game rows must not outlive their message: mirrors the application-level
-  // cleanup in chats.storage.ts deleteGameStateForMessages(), which deletes
-  // checkpoints (by snapshotId and messageId), snapshots, and engine state
-  // whenever messages are removed.
-  { parent: "messages", child: "game_state_snapshots", parentKey: "id", childKey: "messageId" },
-  { parent: "messages", child: "game_checkpoints", parentKey: "id", childKey: "messageId" },
-  { parent: "messages", child: "game_engine_state", parentKey: "id", childKey: "messageId" },
-  { parent: "game_state_snapshots", child: "game_checkpoints", parentKey: "id", childKey: "snapshotId" },
-  { parent: "conversation_call_sessions", child: "conversation_call_messages", parentKey: "id", childKey: "callId" },
-  { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
-  { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },
-  { parent: "personas", child: "persona_images", parentKey: "id", childKey: "personaId" },
-  { parent: "personas", child: "persona_card_versions", parentKey: "id", childKey: "personaId" },
-  { parent: "lorebooks", child: "lorebook_character_links", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_persona_links", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_folders", parentKey: "id", childKey: "lorebookId" },
-  { parent: "lorebooks", child: "lorebook_entries", parentKey: "id", childKey: "lorebookId" },
-  { parent: "prompt_presets", child: "prompt_groups", parentKey: "id", childKey: "presetId" },
-  { parent: "prompt_presets", child: "prompt_sections", parentKey: "id", childKey: "presetId" },
-  { parent: "prompt_presets", child: "choice_blocks", parentKey: "id", childKey: "presetId" },
-  { parent: "agent_configs", child: "agent_runs", parentKey: "id", childKey: "agentConfigId" },
-  { parent: "agent_configs", child: "agent_memory", parentKey: "id", childKey: "agentConfigId" },
-];
+export const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> =
+  [
+    { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "agent_runs", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "agent_memory", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "memory_chunks", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "game_state_snapshots", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "spatial_context_snapshots", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "game_engine_state", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "game_checkpoints", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "discord_bridge_thread_bindings", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "chat_participants", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "game_scene_videos", parentKey: "id", childKey: "chatId" },
+    { parent: "chats", child: "game_turn_storyboards", parentKey: "id", childKey: "chatId" },
+    {
+      parent: "game_turn_storyboards",
+      child: "game_turn_storyboard_keyframes",
+      parentKey: "id",
+      childKey: "storyboardId",
+    },
+    { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
+    { parent: "messages", child: "discord_bridge_message_mappings", parentKey: "id", childKey: "marinaraMessageId" },
+    {
+      parent: "discord_bridge_thread_bindings",
+      child: "discord_bridge_message_mappings",
+      parentKey: "id",
+      childKey: "bindingId",
+    },
+    // Game rows must not outlive their message: mirrors the application-level
+    // cleanup in chats.storage.ts deleteGameStateForMessages(), which deletes
+    // checkpoints (by snapshotId and messageId), snapshots, and engine state
+    // whenever messages are removed.
+    { parent: "messages", child: "game_state_snapshots", parentKey: "id", childKey: "messageId" },
+    { parent: "messages", child: "spatial_context_snapshots", parentKey: "id", childKey: "messageId" },
+    { parent: "messages", child: "game_checkpoints", parentKey: "id", childKey: "messageId" },
+    { parent: "messages", child: "game_engine_state", parentKey: "id", childKey: "messageId" },
+    { parent: "game_state_snapshots", child: "game_checkpoints", parentKey: "id", childKey: "snapshotId" },
+    { parent: "conversation_call_sessions", child: "conversation_call_messages", parentKey: "id", childKey: "callId" },
+    { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
+    { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },
+    { parent: "personas", child: "persona_images", parentKey: "id", childKey: "personaId" },
+    { parent: "personas", child: "persona_card_versions", parentKey: "id", childKey: "personaId" },
+    { parent: "lorebooks", child: "lorebook_character_links", parentKey: "id", childKey: "lorebookId" },
+    { parent: "lorebooks", child: "lorebook_persona_links", parentKey: "id", childKey: "lorebookId" },
+    { parent: "lorebooks", child: "lorebook_folders", parentKey: "id", childKey: "lorebookId" },
+    { parent: "lorebooks", child: "lorebook_entries", parentKey: "id", childKey: "lorebookId" },
+    { parent: "prompt_presets", child: "prompt_groups", parentKey: "id", childKey: "presetId" },
+    { parent: "prompt_presets", child: "prompt_sections", parentKey: "id", childKey: "presetId" },
+    { parent: "prompt_presets", child: "choice_blocks", parentKey: "id", childKey: "presetId" },
+    { parent: "agent_configs", child: "agent_runs", parentKey: "id", childKey: "agentConfigId" },
+    { parent: "agent_configs", child: "agent_memory", parentKey: "id", childKey: "agentConfigId" },
+  ];
 
 const SET_NULL_RELATIONS: Array<{
   parent: FileBackedTable;
@@ -287,46 +295,36 @@ const SET_NULL_RELATIONS: Array<{
     parentKey: "id",
     childKey: "sceneVideoId",
   },
+  {
+    parent: "spatial_context_snapshots",
+    child: "game_checkpoints",
+    parentKey: "id",
+    childKey: "spatialSnapshotId",
+  },
 ];
 
 const tableMetasByObject = new WeakMap<object, TableMeta>();
 const columnMetasByObject = new WeakMap<object, ColumnMeta>();
 const tableMetasByName = new Map<string, TableMeta>();
-let skipLibsqlLegacyReader = false;
-let skipNodeSqliteLegacyReader = false;
-let legacyReaderUsed: LegacyReader | null = null;
-
-function symbolValue<T>(target: object, symbolName: string): T | undefined {
-  const symbol = Object.getOwnPropertySymbols(target).find((entry) => String(entry) === symbolName);
-  return symbol ? (target as Record<symbol, T>)[symbol] : undefined;
-}
-
-function isTable(value: unknown): value is Table {
-  return Boolean(value && typeof value === "object" && symbolValue(value as object, "Symbol(drizzle:IsDrizzleTable)"));
-}
 
 function tableNameOf(table: Table): string {
-  const name = symbolValue<string>(table, "Symbol(drizzle:Name)");
-  if (!name) {
-    throw new Error("[file-storage] Unknown table object");
-  }
-  return name;
+  return getFileTableConfig(table).name;
 }
 
 function buildTableMetadata() {
   for (const candidate of Object.values(schema)) {
-    if (!isTable(candidate)) continue;
-    const table = candidate as Table;
+    if (!isFileTable(candidate)) continue;
+    const table = candidate;
     const name = tableNameOf(table);
     if (!FILE_BACKED_TABLE_SET.has(name)) continue;
-    const columnsObject = symbolValue<Record<string, Column>>(table, "Symbol(drizzle:Columns)") ?? {};
-    const columns: ColumnMeta[] = Object.entries(columnsObject).map(([key, column]) => ({
-      key,
+    const tableConfig = getFileTableConfig(table);
+    const columns: ColumnMeta[] = tableConfig.columns.map((column) => ({
+      key: column.key,
       dbName: column.name,
       column,
-      primary: column.primary === true,
-      hasDefault: column.hasDefault === true,
-      defaultValue: column.default,
+      primary: column.primary,
+      hasDefault: column.hasDefault,
+      defaultValue: column.defaultValue,
     }));
     const meta: TableMeta = {
       name,
@@ -335,7 +333,16 @@ function buildTableMetadata() {
       byKey: new Map(columns.map((column) => [column.key, column])),
       byDbName: new Map(columns.map((column) => [column.dbName, column])),
       primaryKey: columns.find((column) => column.primary)?.key ?? null,
+      uniqueConstraints: tableConfig.uniqueConstraints.map((constraint) => ({
+        keys: [...constraint.keys],
+        when: constraint.when,
+      })),
     };
+    for (const constraint of meta.uniqueConstraints) {
+      if (constraint.keys.length === 0 || constraint.keys.some((key) => !meta.byKey.has(key))) {
+        throw new Error(`[file-storage] Invalid unique key metadata for ${name}: ${constraint.keys.join(", ")}`);
+      }
+    }
     tableMetasByObject.set(table, meta);
     tableMetasByName.set(name, meta);
     for (const column of columns) {
@@ -350,10 +357,6 @@ function buildTableMetadata() {
 }
 
 buildTableMetadata();
-
-function quoteIdentifier(value: string) {
-  return `"${value.replace(/"/g, '""')}"`;
-}
 
 function warnFlushFailure(kind: "file" | "directory", path: string, err: unknown) {
   const key = `${kind}:${path}`;
@@ -692,25 +695,34 @@ function normalizeConflictTargets(target: unknown) {
   return targets.map((entry) => getColumnMeta(entry)?.key).filter((entry): entry is string => Boolean(entry));
 }
 
-function findDuplicateIndex(meta: TableMeta, rows: Row[], row: Row, conflictColumns: string[]) {
-  const columns = conflictColumns.length > 0 ? conflictColumns : meta.primaryKey ? [meta.primaryKey] : [];
-  if (columns.length === 0) return -1;
+function findMatchingRowIndex(rows: Row[], row: Row, columns: string[]) {
   return rows.findIndex((existing) => columns.every((column) => existing[column] === row[column]));
 }
 
-function legacyRowTimestamp(row: Row) {
-  for (const key of ["updatedAt", "updated_at", "createdAt", "created_at"]) {
-    const value = row[key];
-    if (typeof value !== "string") continue;
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-  return 0;
+function declaredUniqueConstraints(meta: TableMeta) {
+  return [...(meta.primaryKey ? [{ keys: [meta.primaryKey] }] : []), ...meta.uniqueConstraints] as Array<{
+    keys: string[];
+    when?: (row: Row) => boolean;
+  }>;
 }
 
-function chooseLegacyRow(existing: Row | undefined, candidate: Row) {
-  if (!existing) return candidate;
-  return legacyRowTimestamp(candidate) >= legacyRowTimestamp(existing) ? candidate : existing;
+function findUniqueViolation(meta: TableMeta, rows: Row[], row: Row, excludedIndex = -1) {
+  for (const constraint of declaredUniqueConstraints(meta)) {
+    if (constraint.when && !constraint.when(row)) continue;
+    const duplicateIndex = rows.findIndex(
+      (existing, index) =>
+        index !== excludedIndex &&
+        (!constraint.when || constraint.when(existing)) &&
+        constraint.keys.every((key) => existing[key] === row[key]),
+    );
+    if (duplicateIndex !== -1) return constraint;
+  }
+  return null;
+}
+
+function assertUniqueRow(meta: TableMeta, rows: Row[], row: Row, excludedIndex = -1) {
+  const violation = findUniqueViolation(meta, rows, row, excludedIndex);
+  if (violation) throw new FileUniqueConstraintError(meta.name, violation.keys);
 }
 
 function cloneRow(row: Row) {
@@ -718,103 +730,47 @@ function cloneRow(row: Row) {
 }
 
 function getMeta(table: Table | string) {
-  const meta = typeof table === "string" ? tableMetasByName.get(table) : tableMetasByObject.get(table);
+  const tableName = typeof table === "string" ? table : tableNameOf(table);
+  // Downloaded capability bundles carry their own file-table instances.
+  // Keep object identity as the fast path, then resolve only registered Engine
+  // table names so package-owned storage code can use the same file-native DB.
+  const meta =
+    typeof table === "string"
+      ? tableMetasByName.get(table)
+      : (tableMetasByObject.get(table) ?? tableMetasByName.get(tableName));
   if (!meta) {
-    throw new Error(`[file-storage] Unsupported table: ${typeof table === "string" ? table : tableNameOf(table)}`);
+    throw new Error(`[file-storage] Unsupported table: ${tableName}`);
   }
   return meta;
 }
 
 function getColumnMeta(column: unknown): ColumnMeta | null {
-  if (!column || typeof column !== "object") return null;
+  if (!isFileColumn(column)) return null;
   const direct = columnMetasByObject.get(column);
   if (direct) return direct;
-  const candidate = column as Partial<Column>;
-  if (!candidate.table || !candidate.name) return null;
-  const tableMeta = tableMetasByObject.get(candidate.table);
-  return tableMeta?.byDbName.get(candidate.name) ?? null;
+  if (!column.table) return null;
+  let tableMeta = tableMetasByObject.get(column.table);
+  if (!tableMeta) {
+    tableMeta = tableMetasByName.get(tableNameOf(column.table));
+  }
+  return tableMeta?.byDbName.get(column.name) ?? null;
 }
 
 function isColumn(value: unknown): value is Column {
   return Boolean(getColumnMeta(value));
 }
 
-function isSql(value: unknown): value is { queryChunks: unknown[] } {
-  return Boolean(
-    value && typeof value === "object" && Array.isArray((value as { queryChunks?: unknown[] }).queryChunks),
-  );
-}
-
-function isAliasedSql(value: unknown): value is { sql: { queryChunks: unknown[] }; fieldAlias: string } {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    isSql((value as { sql?: unknown }).sql) &&
-    typeof (value as { fieldAlias?: unknown }).fieldAlias === "string",
-  );
-}
-
-function stringChunkText(chunk: unknown) {
-  if (!chunk || typeof chunk !== "object" || !Array.isArray((chunk as { value?: unknown }).value)) return null;
-  return (chunk as { value: unknown[] }).value.map((part) => String(part)).join("");
-}
-
-function isParam(value: unknown): value is { value: unknown } {
-  return Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "value"));
-}
-
-function compactChunks(sqlValue: { queryChunks: unknown[] }) {
-  return sqlValue.queryChunks.filter((chunk) => {
-    const text = stringChunkText(chunk);
-    return text === null || text.trim().length > 0;
-  });
-}
-
-function unwrapParenthesizedChunks(chunks: unknown[]) {
-  let unwrapped = chunks;
-  while (unwrapped.length >= 3) {
-    const first = stringChunkText(unwrapped[0])?.trim();
-    const last = stringChunkText(unwrapped[unwrapped.length - 1])?.trim();
-    if (first !== "(" || last !== ")") break;
-    unwrapped = unwrapped.slice(1, -1);
-  }
-  return unwrapped;
-}
-
 function valueForColumn(ctx: RowContext, column: Column) {
   const meta = getColumnMeta(column);
   if (!meta) return undefined;
+  if (!column.table) return undefined;
   const tableName = tableNameOf(column.table);
   return ctx.rows[tableName]?.[meta.key];
 }
 
-function rowidForColumnPath(ctx: RowContext, path: string) {
-  const [tableName, columnName] = path.split(".");
-  if (columnName !== "rowid" || !tableName) return undefined;
-  return ctx.rowids[tableName];
-}
-
 function resolveValue(value: unknown, ctx: RowContext): unknown {
   if (isColumn(value)) return valueForColumn(ctx, value);
-  if (isParam(value)) return value.value;
   if (Array.isArray(value)) return value.map((entry) => resolveValue(entry, ctx));
-  if (isAliasedSql(value)) return resolveValue(value.sql, ctx);
-  if (isSql(value)) {
-    const chunks = compactChunks(value);
-    if (chunks.length === 1) {
-      const text = stringChunkText(chunks[0])?.trim();
-      if (text) return rowidForColumnPath(ctx, text);
-    }
-    if (chunks.length === 3) {
-      const operator = stringChunkText(chunks[1])?.trim();
-      if (operator === "-") {
-        return Number(resolveValue(chunks[0], ctx)) - Number(resolveValue(chunks[2], ctx));
-      }
-      if (operator === "+") {
-        return Number(resolveValue(chunks[0], ctx)) + Number(resolveValue(chunks[2], ctx));
-      }
-    }
-  }
   return value;
 }
 
@@ -831,89 +787,53 @@ function matchesLike(value: unknown, pattern: unknown) {
   return new RegExp(`^${escaped}$`, "i").test(String(value ?? ""));
 }
 
-function evaluateSqlCondition(sqlValue: { queryChunks: unknown[] }, ctx: RowContext): boolean {
-  const chunks = unwrapParenthesizedChunks(compactChunks(sqlValue));
-  if (chunks.length === 1 && isSql(chunks[0])) {
-    return evaluateSqlCondition(chunks[0], ctx);
-  }
-
-  const logicalSeparator = chunks.find((chunk) => {
-    const text = stringChunkText(chunk)?.trim().toLowerCase();
-    return text === "and" || text === "or";
-  });
-  const logicalOp = stringChunkText(logicalSeparator)?.trim().toLowerCase();
-  if (logicalOp === "and" || logicalOp === "or") {
-    const parts = chunks.filter((chunk) => isSql(chunk)) as Array<{ queryChunks: unknown[] }>;
-    return logicalOp === "and"
-      ? parts.every((part) => evaluateSqlCondition(part, ctx))
-      : parts.some((part) => evaluateSqlCondition(part, ctx));
-  }
-
-  const opIndex = chunks.findIndex((chunk) => {
-    const text = stringChunkText(chunk)?.trim().toLowerCase();
-    return ["=", "<>", "!=", "<", ">", "<=", ">=", "in", "like"].includes(text ?? "");
-  });
-  if (opIndex !== -1) {
-    const operator = stringChunkText(chunks[opIndex])!.trim().toLowerCase();
-    const left = resolveValue(chunks[opIndex - 1], ctx);
-    const right = resolveValue(chunks[opIndex + 1], ctx);
-
-    if (operator === "=") return left === right;
-    if (operator === "<>" || operator === "!=") {
-      if (right === null || right === undefined) return left !== null && left !== undefined;
-      return left !== right;
-    }
-    if (operator === "<") return compareValues(left, right) < 0;
-    if (operator === ">") return compareValues(left, right) > 0;
-    if (operator === "<=") return compareValues(left, right) <= 0;
-    if (operator === ">=") return compareValues(left, right) >= 0;
-    if (operator === "in") return Array.isArray(right) && right.includes(left);
-    if (operator === "like") return matchesLike(left, right);
-  }
-
-  const nullCheck = chunks.find((chunk) => {
-    const text = stringChunkText(chunk)?.trim().toLowerCase();
-    return text === "is null" || text === "is not null";
-  });
-  const nullOp = stringChunkText(nullCheck)?.trim().toLowerCase();
-  if (nullOp === "is null" || nullOp === "is not null") {
-    const left = resolveValue(chunks[chunks.indexOf(nullCheck) - 1], ctx);
-    return nullOp === "is null" ? left === null || left === undefined : left !== null && left !== undefined;
-  }
-
-  return Boolean(resolveValue(sqlValue, ctx));
-}
-
 function evaluateCondition(condition: Condition, ctx: RowContext): boolean {
   if (!condition) return true;
-  if (isSql(condition)) return evaluateSqlCondition(condition, ctx);
-  return Boolean(condition);
+  if (!isFileCondition(condition)) return false;
+
+  if (condition.kind === "file-logical") {
+    return condition.operator === "and"
+      ? condition.conditions.every((entry) => evaluateCondition(entry, ctx))
+      : condition.conditions.some((entry) => evaluateCondition(entry, ctx));
+  }
+  if (condition.kind === "file-null-check") {
+    const value = resolveValue(condition.value, ctx);
+    return condition.operator === "is-null" ? value == null : value != null;
+  }
+  if (condition.kind === "file-membership") {
+    const value = resolveValue(condition.value, ctx);
+    const values = condition.values.map((entry) => resolveValue(entry, ctx));
+    return condition.operator === "in" ? values.includes(value) : !values.includes(value);
+  }
+  if (condition.kind === "file-pattern") {
+    return matchesLike(resolveValue(condition.value, ctx), resolveValue(condition.pattern, ctx));
+  }
+
+  const left = resolveValue(condition.left, ctx);
+  const right = resolveValue(condition.right, ctx);
+  if (condition.operator === "eq") return left === right;
+  if (condition.operator === "ne") {
+    if (right == null) return left != null;
+    return left !== right;
+  }
+  const comparison = compareValues(left, right);
+  if (condition.operator === "lt") return comparison < 0;
+  if (condition.operator === "lte") return comparison <= 0;
+  if (condition.operator === "gt") return comparison > 0;
+  return comparison >= 0;
 }
 
 function orderSpec(ordering: Ordering, ctx: RowContext): { value: unknown; direction: "asc" | "desc" } {
   if (isColumn(ordering)) {
     return { value: resolveValue(ordering, ctx), direction: "asc" };
   }
-  if (isSql(ordering)) {
-    const chunks = compactChunks(ordering);
-    const directionChunk = chunks.find((chunk) => {
-      const text = stringChunkText(chunk)?.trim().toLowerCase();
-      return text === "asc" || text === "desc";
-    });
-    const direction = stringChunkText(directionChunk)?.trim().toLowerCase() === "desc" ? "desc" : "asc";
-    const valueChunk = chunks.find((chunk) => chunk !== directionChunk && isColumn(chunk));
-    if (valueChunk) return { value: resolveValue(valueChunk, ctx), direction };
-    const rawPath = chunks
-      .map((chunk) => stringChunkText(chunk) ?? "")
-      .join("")
-      .replace(/\s+(asc|desc)$/i, "")
-      .trim();
-    return { value: rowidForColumnPath(ctx, rawPath), direction };
+  if (isFileOrdering(ordering)) {
+    return { value: resolveValue(ordering.value, ctx), direction: ordering.direction };
   }
-  return { value: ordering, direction: "asc" };
+  return { value: undefined, direction: "asc" };
 }
 
-function projectRow(ctx: RowContext, projection: Projection) {
+function projectRow(ctx: RowContext, projection?: Projection) {
   if (!projection) {
     if (ctx.joined) {
       return Object.fromEntries(Object.entries(ctx.rows).map(([table, row]) => [table, cloneRow(row)]));
@@ -942,88 +862,31 @@ function executable<T>(operation: () => T | Promise<T>): Executable<T> {
   };
 }
 
-async function readLegacyRowsWithLibsql(dbPath: string, table: string) {
-  const { createClient } = await import("@libsql/client");
-  const client = createClient({ url: `file:${dbPath}` });
-  try {
-    const exists = await client.execute({
-      sql: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-      args: [table],
-    });
-    if (!exists.rows.length) return [];
-
-    const result = await client.execute(`SELECT * FROM ${quoteIdentifier(table)}`);
-    return result.rows.map((row) => ({ ...row }) as Row);
-  } finally {
-    client.close();
-  }
-}
-
-async function readLegacyRowsWithNodeSqlite(dbPath: string, table: string) {
-  const { DatabaseSync } = await import("node:sqlite");
-  const database = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    const exists = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
-    if (!exists) return [];
-
-    return database.prepare(`SELECT * FROM ${quoteIdentifier(table)}`).all() as Row[];
-  } finally {
-    database.close();
-  }
-}
-
-async function readLegacyRows(dbPath: string, table: string) {
-  if (!skipLibsqlLegacyReader && process.env.MARINARA_DISABLE_LIBSQL_LEGACY_READER !== "true") {
-    try {
-      const rows = await readLegacyRowsWithLibsql(dbPath, table);
-      legacyReaderUsed = "libsql";
-      return rows;
-    } catch (libsqlErr) {
-      skipLibsqlLegacyReader = true;
-      logger.warn({ err: libsqlErr }, "[file-storage] libSQL unavailable for legacy import; falling back");
-    }
-  }
-
-  if (!skipNodeSqliteLegacyReader) {
-    try {
-      const rows = await readLegacyRowsWithNodeSqlite(dbPath, table);
-      legacyReaderUsed = "node:sqlite";
-      return rows;
-    } catch (nodeSqliteErr) {
-      skipNodeSqliteLegacyReader = true;
-      logger.warn(
-        { err: nodeSqliteErr },
-        "[file-storage] node:sqlite unavailable for legacy import; skipping legacy DB",
-      );
-    }
-  }
-
-  return [];
-}
-
 class FileTableStore {
   private tables = new Map<string, Row[]>();
   private dirtyTables = new Set<string>();
   private backupRecoveredPaths = new Set<string>();
   private dirty = false;
-  private saving = false;
+  private activeFlush: Promise<void> | null = null;
+  private lastFlushError: unknown = null;
   private debounceTimer: NodeJS.Timeout | null = null;
   private safetyTimer: NodeJS.Timeout | null = null;
   private beforeExitHandler: (() => void) | null = null;
-  private migratedFromSqlite: TableSnapshotManifest["migratedFromSqlite"];
-  private legacyRepair: TableSnapshotManifest["legacyRepair"];
   private loadedManifest: TableSnapshotManifest | null = null;
   // Rollback state for the active transaction lives in this AsyncLocalStorage so
-  // it is bound to the transaction's own async call path. A concurrent
-  // non-transactional write that interleaves during an await runs OUTSIDE this
-  // context and is therefore never recorded — so it survives a rollback. See
-  // transaction() / recordTxMutation().
-  private readonly txContext = new AsyncLocalStorage<{ snapshots: Map<string, Row[]>; dirtyTables: Set<string> }>();
+  // it is bound to the transaction's own async call path. Writes from other
+  // async call paths wait for the transaction to finish and are therefore never
+  // captured by (or reverted with) its rollback snapshots.
+  private readonly txContext = new AsyncLocalStorage<FileTransactionContext>();
+  private transactionQueue: Promise<void> = Promise.resolve();
+  private activeTransactionCount = 0;
+  private transactionIdleWaiters = new Set<() => void>();
+  private pendingTransactionFlush = false;
   private quarantinedTables: QuarantinedStorageTable[] = [];
 
   constructor(
     private readonly rootDir: string,
-    private readonly legacyDbPaths: string[],
+    private readonly testHooks?: FileNativeStoreTestHooks,
   ) {
     for (const table of FILE_BACKED_TABLES) {
       this.tables.set(table, []);
@@ -1033,17 +896,7 @@ class FileTableStore {
   async initialize() {
     mkdirSync(this.rootDir, { recursive: true });
 
-    if (fileStoreManifestExists(this.rootDir)) {
-      await this.loadFileSnapshots();
-      await this.repairLegacyImportIfNeeded();
-    } else if (this.legacyDbPaths.some((path) => existsSync(path))) {
-      const imported = await this.importLegacySqlite(this.legacyDbPaths);
-      if (imported) {
-        await this.flush(true);
-      } else if (tableSnapshotsExist(this.rootDir)) {
-        await this.loadFileSnapshots();
-      }
-    } else if (tableSnapshotsExist(this.rootDir)) {
+    if (fileStoreManifestExists(this.rootDir) || tableSnapshotsExist(this.rootDir)) {
       await this.loadFileSnapshots();
     }
 
@@ -1062,19 +915,31 @@ class FileTableStore {
   async transaction<T>(fn: (tx: FileNativeDB) => Promise<T> | T, tx: FileNativeDB): Promise<T> {
     // Copy-on-write rollback, isolated to this transaction's async context:
     // instead of cloning every table up front (O(total rows) per call, on the
-    // per-turn setMemories hot path) and restoring the whole map on throw (which
-    // also dropped concurrent writes), snapshot each table only on its first
-    // mutation by THIS transaction and restore only those. Mutations made on
-    // other async call paths (concurrent non-transactional writes) run outside
-    // the context, are never recorded, and so survive a rollback.
+    // per-turn setMemories hot path), snapshot each table only on its first
+    // mutation by THIS transaction and restore only those. Other writes wait for
+    // this transaction, then run against its committed or restored state.
     if (this.txContext.getStore()) {
       // Nested call: run inside the outer transaction's context so the whole
       // nest rolls back together; the outermost owns snapshot/restore.
       return await fn(tx);
     }
-    const ctx = { snapshots: new Map<string, Row[]>(), dirtyTables: new Set<string>() };
+
+    let releaseTransaction!: () => void;
+    const previousTransaction = this.transactionQueue;
+    this.transactionQueue = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    await previousTransaction;
+    if (this.activeFlush) await this.activeFlush;
+
+    const ctx: FileTransactionContext = {
+      snapshots: new Map<string, Row[]>(),
+      dirtyTables: new Set<string>(),
+      flushed: false,
+    };
     const dirtySnapshot = this.dirty;
     const dirtyTablesSnapshot = new Set(this.dirtyTables);
+    this.activeTransactionCount++;
 
     try {
       return await this.txContext.run(ctx, () => fn(tx));
@@ -1085,7 +950,38 @@ class FileTableStore {
       }
       this.dirty = dirtySnapshot;
       this.dirtyTables = dirtyTablesSnapshot;
+      if (ctx.flushed) {
+        this.dirty = true;
+        for (const tableName of ctx.dirtyTables) this.dirtyTables.add(tableName);
+        try {
+          await this.txContext.run(ctx, () => this.flush(true, true));
+        } catch (rollbackError) {
+          throw new AggregateError([err, rollbackError], "File-storage transaction and durable rollback both failed");
+        }
+      }
       throw err;
+    } finally {
+      this.activeTransactionCount--;
+      if (this.activeTransactionCount === 0) {
+        for (const resolve of this.transactionIdleWaiters) resolve();
+        this.transactionIdleWaiters.clear();
+      }
+      releaseTransaction();
+      if (this.pendingTransactionFlush) {
+        this.pendingTransactionFlush = false;
+        void this.flush();
+      }
+    }
+  }
+
+  private async waitForTransactions(): Promise<void> {
+    if (this.activeTransactionCount === 0) return;
+    await new Promise<void>((resolve) => this.transactionIdleWaiters.add(resolve));
+  }
+
+  private async waitForWritableTurn(): Promise<void> {
+    if (this.activeTransactionCount > 0 && !this.txContext.getStore()) {
+      await this.waitForTransactions();
     }
   }
 
@@ -1105,9 +1001,11 @@ class FileTableStore {
     ctx.dirtyTables.add(tableName);
   }
 
-  select(projection?: Projection): SelectFromBuilder {
+  select<TProjection extends Projection | undefined = undefined>(
+    projection?: TProjection,
+  ): SelectFromBuilder<TProjection> {
     return {
-      from: (table) => new SelectQuery(this, getMeta(table), projection),
+      from: (table) => new SelectQuery(this, getMeta(table), projection) as never,
     };
   }
 
@@ -1117,30 +1015,33 @@ class FileTableStore {
       values: (rows) => {
         const runInsert = (onConflict?: { target: unknown; set: Row }) =>
           executable(async () => {
+            await this.waitForWritableTurn();
             const conflictColumns = normalizeConflictTargets(onConflict?.target);
             const inputRows = Array.isArray(rows) ? rows : [rows];
             const target = this.rows(meta.name);
-            this.recordTxMutation(meta.name);
+            const nextRows = target.map(cloneRow);
             for (const input of inputRows) {
               const row = prepareInsertRow(meta, input);
-              const duplicateIndex = findDuplicateIndex(meta, target, row, conflictColumns);
-              if (duplicateIndex !== -1) {
-                if (!onConflict) {
-                  const conflictKey = conflictColumns[0] ?? meta.primaryKey ?? "unknown";
-                  throw new Error(
-                    `[file-storage] Duplicate primary key for ${meta.name}.${conflictKey}: ${row[conflictKey]}`,
-                  );
-                }
-                const existing = target[duplicateIndex]!;
-                const ctx = this.contextForRow(meta, existing, duplicateIndex);
+              const conflictKeys =
+                conflictColumns.length > 0 ? conflictColumns : meta.primaryKey ? [meta.primaryKey] : [];
+              const duplicateIndex = onConflict ? findMatchingRowIndex(nextRows, row, conflictKeys) : -1;
+              if (onConflict && duplicateIndex !== -1) {
+                const existing = nextRows[duplicateIndex]!;
+                const ctx = this.contextForRow(meta, existing);
+                const candidate = cloneRow(existing);
                 for (const [key, value] of Object.entries(onConflict.set)) {
                   const column = meta.byKey.get(key) ?? meta.byDbName.get(key);
-                  existing[column?.key ?? key] = resolveValue(value, ctx);
+                  candidate[column?.key ?? key] = resolveValue(value, ctx);
                 }
+                assertUniqueRow(meta, nextRows, candidate, duplicateIndex);
+                nextRows[duplicateIndex] = candidate;
               } else {
-                target.push(row);
+                assertUniqueRow(meta, nextRows, row);
+                nextRows.push(row);
               }
             }
+            this.recordTxMutation(meta.name);
+            this.tables.set(meta.name, nextRows);
             this.markDirty(meta.name);
           });
         const builder = runInsert() as InsertValuesBuilder;
@@ -1156,21 +1057,28 @@ class FileTableStore {
       set: (patch) => {
         const runUpdate = (condition?: Condition) =>
           executable(async () => {
+            await this.waitForWritableTurn();
             const target = this.rows(meta.name);
-            let changed = false;
-            target.forEach((row, index) => {
-              const ctx = this.contextForRow(meta, row, index);
-              if (!evaluateCondition(condition, ctx)) return;
-              // Snapshot lazily, just before the first actual row mutation, so an
-              // update whose WHERE matches nothing never clones the table.
-              this.recordTxMutation(meta.name);
+            const changedIndexes: number[] = [];
+            const nextRows = target.map((row, index) => {
+              const ctx = this.contextForRow(meta, row);
+              if (!evaluateCondition(condition, ctx)) return row;
+              const candidate = cloneRow(row);
               for (const [key, value] of Object.entries(patch)) {
                 const column = meta.byKey.get(key) ?? meta.byDbName.get(key);
-                row[column?.key ?? key] = resolveValue(value, ctx);
+                candidate[column?.key ?? key] = resolveValue(value, ctx);
               }
-              changed = true;
+              changedIndexes.push(index);
+              return candidate;
             });
-            if (changed) this.markDirty(meta.name);
+            if (changedIndexes.length > 0) {
+              for (const index of changedIndexes) {
+                assertUniqueRow(meta, nextRows, nextRows[index]!, index);
+              }
+              this.recordTxMutation(meta.name);
+              this.tables.set(meta.name, nextRows);
+              this.markDirty(meta.name);
+            }
           });
         const builder = runUpdate() as UpdateWhereBuilder;
         builder.where = (condition) => runUpdate(condition);
@@ -1183,6 +1091,7 @@ class FileTableStore {
     const meta = getMeta(table);
     const runDelete = (condition?: Condition) =>
       executable(async () => {
+        await this.waitForWritableTurn();
         this.deleteWhere(meta, condition);
       });
     const builder = runDelete() as DeleteBuilder;
@@ -1190,22 +1099,21 @@ class FileTableStore {
     return builder;
   }
 
-  async all<T = unknown>() {
-    return [] as T[];
-  }
-
-  async run() {
-    // Raw SQL is intentionally unsupported by the file-native runtime. The app
-    // keeps this no-op for legacy migrations in opt-in SQLite mode only.
-  }
-
-  async flush(force = false) {
-    if (this.saving) {
-      this.dirty = true;
+  async flush(force = false, throwOnError = false) {
+    const transactionContext = this.txContext.getStore();
+    if (this.activeTransactionCount > 0 && !(force && transactionContext)) {
+      this.pendingTransactionFlush = true;
+      if (transactionContext) return;
+      await this.waitForTransactions();
+    }
+    if (transactionContext && force) transactionContext.flushed = true;
+    if (this.activeFlush) {
+      await this.activeFlush;
+      if (this.dirty || this.dirtyTables.size > 0) await this.flush(force, throwOnError);
+      else if (throwOnError && this.lastFlushError) throw this.lastFlushError;
       return;
     }
     if (!force && !this.dirty && this.dirtyTables.size === 0) return;
-    this.saving = true;
     this.dirty = false;
     // Snapshot the dirty set and reset it BEFORE the async write. saveFileSnapshots
     // now yields the event loop, so a markDirty() that interleaves during the I/O
@@ -1213,17 +1121,26 @@ class FileTableStore {
     // clear() — the synchronous version had a zero-width window here.
     const dirtyTables = this.dirtyTables;
     this.dirtyTables = new Set();
+    const flush = (async () => {
+      try {
+        await this.saveFileSnapshots(dirtyTables);
+        this.lastFlushError = null;
+      } catch (err) {
+        this.lastFlushError = err;
+        this.dirty = true;
+        // Re-mark the tables we failed to persist so they retry on the next flush
+        // (without clobbering any tables marked dirty during the failed write).
+        for (const table of dirtyTables) this.dirtyTables.add(table);
+        logger.error(err, "[file-storage] Failed to persist file-native storage");
+      }
+    })();
+    this.activeFlush = flush;
     try {
-      await this.saveFileSnapshots(dirtyTables);
-    } catch (err) {
-      this.dirty = true;
-      // Re-mark the tables we failed to persist so they retry on the next flush
-      // (without clobbering any tables marked dirty during the failed write).
-      for (const table of dirtyTables) this.dirtyTables.add(table);
-      logger.error(err, "[file-storage] Failed to persist file-native storage");
+      await flush;
     } finally {
-      this.saving = false;
+      if (this.activeFlush === flush) this.activeFlush = null;
     }
+    if (throwOnError && this.lastFlushError) throw this.lastFlushError;
   }
 
   async close() {
@@ -1239,7 +1156,11 @@ class FileTableStore {
       process.off("beforeExit", this.beforeExitHandler);
       this.beforeExitHandler = null;
     }
-    await this.flush(true);
+    if (this.activeFlush) await this.activeFlush;
+    while (this.dirty || this.dirtyTables.size > 0) {
+      await this.flush(true);
+      if (this.lastFlushError) throw this.lastFlushError;
+    }
   }
 
   getQuarantinedTables() {
@@ -1249,10 +1170,9 @@ class FileTableStore {
     }));
   }
 
-  contextForRow(meta: TableMeta, row: Row, index: number): RowContext {
+  contextForRow(meta: TableMeta, row: Row): RowContext {
     return {
       rows: { [meta.name]: row },
-      rowids: { [meta.name]: index + 1 },
       baseTable: meta.name,
       joined: false,
     };
@@ -1273,8 +1193,8 @@ class FileTableStore {
     const target = this.rows(meta.name);
     const kept: Row[] = [];
     const deleted: Row[] = [];
-    target.forEach((row, index) => {
-      if (evaluateCondition(condition, this.contextForRow(meta, row, index))) {
+    target.forEach((row) => {
+      if (evaluateCondition(condition, this.contextForRow(meta, row))) {
         deleted.push(row);
       } else {
         kept.push(row);
@@ -1295,12 +1215,12 @@ class FileTableStore {
       let changed = false;
       for (const row of this.rows(childMeta.name)) {
         if (row[relation.childKey] != null && deletedValues.has(row[relation.childKey])) {
+          if (!changed) this.recordTxMutation(childMeta.name);
           row[relation.childKey] = null;
           changed = true;
         }
       }
       if (changed) {
-        this.recordTxMutation(childMeta.name);
         this.markDirty(childMeta.name);
       }
     }
@@ -1310,13 +1230,16 @@ class FileTableStore {
     for (const cascade of CASCADES.filter((entry) => entry.parent === parentTable)) {
       const childMeta = getMeta(cascade.child);
       const deletedValues = new Set(deletedRows.map((row) => row[cascade.parentKey]));
-      this.deleteWhere(childMeta, {
-        queryChunks: [
-          childMeta.byKey.get(cascade.childKey)?.column,
-          { value: [" in "] },
-          Array.from(deletedValues).map((value) => ({ value })),
-        ],
-      });
+      const childColumn = childMeta.byKey.get(cascade.childKey)?.column;
+      if (childColumn) {
+        this.deleteWhere(childMeta, inArray(childColumn, Array.from(deletedValues)));
+      } else {
+        const err = new Error(`Cascade child column ${cascade.child}.${cascade.childKey} is not registered`);
+        logger.error(
+          { err, parent: parentTable, parentKey: cascade.parentKey, child: cascade.child, childKey: cascade.childKey },
+          "[file-storage] Cascade configuration is invalid; child rows were not deleted",
+        );
+      }
     }
   }
 
@@ -1345,8 +1268,6 @@ class FileTableStore {
       needsManifestRewrite = true;
     }
     this.loadedManifest = loadedManifest;
-    this.migratedFromSqlite = this.loadedManifest?.migratedFromSqlite;
-    this.legacyRepair = this.loadedManifest?.legacyRepair;
     if (needsManifestRewrite) {
       // Force a manifest rewrite on next save so the corrupt main file gets
       // replaced rather than persistently triggering the .bak fallback path.
@@ -1389,148 +1310,6 @@ class FileTableStore {
     logger.info({ tables: counts }, `[file-storage] Loaded file-native data from ${this.rootDir}`);
   }
 
-  private async readMergedLegacyRows(dbPaths: string[], table: string) {
-    const meta = getMeta(table);
-    const byPrimaryKey = new Map<string, Row>();
-    const rowsWithoutPrimaryKey: Row[] = [];
-
-    for (const dbPath of dbPaths) {
-      if (!existsSync(dbPath)) continue;
-      const rows = await readLegacyRows(dbPath, table);
-      for (const row of rows) {
-        const normalized = normalizeRow(meta, row);
-        const primaryValue = meta.primaryKey ? normalized[meta.primaryKey] : null;
-        if (primaryValue === null || primaryValue === undefined || primaryValue === "") {
-          rowsWithoutPrimaryKey.push(normalized);
-          continue;
-        }
-        const key = String(primaryValue);
-        byPrimaryKey.set(key, chooseLegacyRow(byPrimaryKey.get(key), normalized));
-      }
-    }
-
-    return [...byPrimaryKey.values(), ...rowsWithoutPrimaryKey];
-  }
-
-  private async importLegacySqlite(dbPaths: string[]) {
-    const existingPaths = [...new Set(dbPaths.filter((path) => existsSync(path)))];
-    if (existingPaths.length === 0) return false;
-
-    legacyReaderUsed = null;
-    const counts: Record<string, number> = {};
-    let totalRows = 0;
-    for (const table of FILE_BACKED_TABLES) {
-      const rows = await this.readMergedLegacyRows(existingPaths, table);
-      this.tables.set(table, rows);
-      counts[table] = rows.length;
-      totalRows += rows.length;
-    }
-
-    if (totalRows === 0) return false;
-
-    const importedAt = new Date().toISOString();
-    this.migratedFromSqlite = {
-      path: existingPaths[0],
-      paths: existingPaths,
-      importedAt,
-    };
-    this.legacyRepair = {
-      paths: existingPaths,
-      repairedAt: importedAt,
-      tables: {},
-      reader: legacyReaderUsed ?? undefined,
-    };
-    for (const table of FILE_BACKED_TABLES) this.dirtyTables.add(table);
-    this.dirty = true;
-    logger.info(
-      { sources: existingPaths, rows: totalRows, tables: counts },
-      "[file-storage] Imported existing SQLite data into file-native storage",
-    );
-    return true;
-  }
-
-  private async repairLegacyImportIfNeeded() {
-    const existingPaths = [...new Set(this.legacyDbPaths.filter((path) => existsSync(path)))];
-    if (existingPaths.length === 0) return;
-    if (this.isLegacyRepairComplete()) return;
-
-    legacyReaderUsed = null;
-    const repairedCounts: Record<string, number> = {};
-    let repairedRows = 0;
-
-    for (const table of FILE_BACKED_TABLES) {
-      const meta = getMeta(table);
-      const legacyRows = await this.readMergedLegacyRows(existingPaths, table);
-      if (legacyRows.length === 0) continue;
-
-      const currentRows = this.rows(table);
-      const merged = new Map<string, Row>();
-      const passthroughRows: Row[] = [];
-
-      for (const row of currentRows) {
-        const primaryValue = meta.primaryKey ? row[meta.primaryKey] : null;
-        if (primaryValue === null || primaryValue === undefined || primaryValue === "") {
-          passthroughRows.push(row);
-        } else {
-          merged.set(String(primaryValue), row);
-        }
-      }
-
-      let tableRepairs = 0;
-      for (const row of legacyRows) {
-        const primaryValue = meta.primaryKey ? row[meta.primaryKey] : null;
-        if (primaryValue === null || primaryValue === undefined || primaryValue === "") continue;
-        const key = String(primaryValue);
-        if (merged.has(key)) continue;
-        merged.set(key, row);
-        tableRepairs += 1;
-      }
-
-      if (tableRepairs > 0) {
-        this.tables.set(table, [...merged.values(), ...passthroughRows]);
-        this.dirtyTables.add(table);
-        repairedCounts[table] = tableRepairs;
-        repairedRows += tableRepairs;
-      }
-    }
-
-    if (repairedRows === 0) {
-      if (!legacyReaderUsed) {
-        logger.warn(
-          { sources: existingPaths },
-          "[file-storage] Legacy SQLite data could not be read; will retry repair on next startup",
-        );
-        return;
-      }
-      this.legacyRepair = {
-        paths: existingPaths,
-        repairedAt: new Date().toISOString(),
-        tables: {},
-        reader: legacyReaderUsed,
-      };
-    } else {
-      this.legacyRepair = {
-        paths: existingPaths,
-        repairedAt: new Date().toISOString(),
-        tables: repairedCounts,
-        reader: legacyReaderUsed ?? undefined,
-      };
-      this.dirty = true;
-      logger.info(
-        { sources: existingPaths, rows: repairedRows, tables: repairedCounts },
-        "[file-storage] Repaired file-native storage from legacy SQLite data",
-      );
-    }
-
-    await this.flush(true);
-  }
-
-  private isLegacyRepairComplete() {
-    if (!this.legacyRepair) return false;
-    if (this.legacyRepair.reader) return true;
-    return Object.values(this.legacyRepair.tables ?? {}).some((count) => count > 0);
-  }
-
   private async saveFileSnapshots(dirtyTables: Set<string>) {
     mkdirSync(join(this.rootDir, "tables"), { recursive: true });
     const tables: Record<string, number> = {};
@@ -1540,7 +1319,9 @@ class FileTableStore {
       tables[table] = rows.length;
       const path = tableFilePath(this.rootDir, table);
       if (dirtyTables.has(table) || !existsSync(path)) {
-        await atomicWriteFile(path, JSON.stringify(rows), { refreshBackup: !this.backupRecoveredPaths.has(path) });
+        const serializedRows = JSON.stringify(rows);
+        await this.testHooks?.beforeTableWrite?.(table, serializedRows);
+        await atomicWriteFile(path, serializedRows, { refreshBackup: !this.backupRecoveredPaths.has(path) });
       }
     }
 
@@ -1548,8 +1329,6 @@ class FileTableStore {
       version: STORAGE_VERSION,
       savedAt: new Date().toISOString(),
       backend: "file-native",
-      ...(this.migratedFromSqlite && { migratedFromSqlite: this.migratedFromSqlite }),
-      ...(this.legacyRepair && { legacyRepair: this.legacyRepair }),
       tables,
     };
     const path = manifestPath(this.rootDir);
@@ -1572,7 +1351,7 @@ class FileTableStore {
   }
 }
 
-class SelectQuery implements SelectQueryBuilder {
+class SelectQuery implements SelectQueryBuilder<any> {
   private joins: JoinSpec[] = [];
   private condition: Condition;
   private orderings: Ordering[] = [];
@@ -1611,18 +1390,15 @@ class SelectQuery implements SelectQueryBuilder {
   }
 
   async run() {
-    let contexts = this.store
-      .rows(this.fromMeta.name)
-      .map((row, index) => this.store.contextForRow(this.fromMeta, row, index));
+    let contexts = this.store.rows(this.fromMeta.name).map((row) => this.store.contextForRow(this.fromMeta, row));
 
     for (const join of this.joins) {
       const joinedContexts: RowContext[] = [];
       const joinRows = this.store.rows(join.table.name);
       for (const ctx of contexts) {
-        joinRows.forEach((row, index) => {
+        joinRows.forEach((row) => {
           const candidate: RowContext = {
             rows: { ...ctx.rows, [join.table.name]: row },
-            rowids: { ...ctx.rowids, [join.table.name]: index + 1 },
             baseTable: ctx.baseTable,
             joined: true,
           };
@@ -1661,27 +1437,25 @@ class SelectQuery implements SelectQueryBuilder {
   }
 }
 
-export async function createFileNativeDB(legacyDbPaths: string[] = []): Promise<FileNativeDB> {
+export async function createFileNativeDB(testHooks?: FileNativeStoreTestHooks): Promise<FileNativeDB> {
   const rootDir = getFileStorageDir();
-  const store = new FileTableStore(rootDir, legacyDbPaths);
+  const store = new FileTableStore(rootDir, testHooks);
   await store.initialize();
 
   const controller: FileNativeStoreController = {
     rootDir,
-    flush: () => store.flush(true),
+    flush: () => store.flush(true, true),
     close: () => store.close(),
     getQuarantinedTables: () => store.getQuarantinedTables(),
   };
 
   let db: FileNativeDB;
   db = {
-    select: (projection) => store.select(projection),
+    select: store.select.bind(store) as FileNativeDB["select"],
     insert: (table) => store.insert(table),
     update: (table) => store.update(table),
     delete: (table) => store.delete(table),
     transaction: (fn) => store.transaction(fn, db),
-    run: () => store.run(),
-    all: <T = unknown>() => store.all<T>(),
     _fileStore: controller,
   };
   return db;

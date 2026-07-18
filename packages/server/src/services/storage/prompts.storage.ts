@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Storage: Prompt Presets, Groups, Sections & Choices
 // ──────────────────────────────────────────────
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc } from "../../db/file-query.js";
 import type { DB } from "../../db/connection.js";
 import { promptPresets, promptGroups, promptSections, choiceBlocks } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";

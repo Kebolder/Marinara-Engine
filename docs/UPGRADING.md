@@ -8,6 +8,8 @@ Upgrading Marinara Engine does not delete your data. Your chats, characters, per
 
 Marinara keeps your data in a local data folder on the machine that runs the server. Docker and Podman keep it in the `marinara-data` volume. Updating only replaces the app code, not this data folder or volume.
 
+When upgrading from a version that bundled first-party agents, maps, calls, or Conversation games, the first start downloads their matching optional packages from the official catalog. Existing chat selections, agent settings, stored runtime data, and history are preserved. Keep the server online for that first start. If the catalog cannot be reached, Marinara retries the migration the next time it starts instead of deleting or disabling your stored configuration.
+
 To learn where your data lives and how to save a copy, see [Backing Up and Restoring Marinara](data/backup-and-restore.md).
 
 ## Back up first
@@ -37,6 +39,8 @@ If you used the Windows installer or a git checkout, the launcher updates you au
 
 The launcher fetches the latest code, reinstalls what changed, rebuilds the app, and starts the new version. This works for both the installer and a manual clone.
 
+For one launch, run `start.bat --skip-update`. To keep the installed Engine version across launches, set `AUTO_UPDATE_ENABLED=false` in the project `.env`. This only disables automatic Engine updates; manual commands and **Settings → Advanced → Check for Updates** remain available.
+
 If the launcher says Node.js is too old, install Node.js 24 LTS, then start Marinara again. LTS means Long Term Support, the recommended stable release of Node.js.
 
 You can also download the newest installer from the GitHub Releases page and run it. It uses the same git-based path, so future updates still run through the launcher.
@@ -50,6 +54,8 @@ Close Marinara Engine, then run the launcher from your Marinara folder.
 ```
 
 The launcher fetches the latest code, reinstalls changed dependencies, rebuilds, and starts the new version.
+
+Use `./start.sh --skip-update` for one launch, or set `AUTO_UPDATE_ENABLED=false` in `.env` for a persistent opt-out. Manual update commands and the in-app update controls remain available.
 
 If it says Node.js is too old, install Node.js 24 LTS, then run the launcher again.
 
@@ -89,6 +95,8 @@ If an update is broken and you need to stay on your current copy, skip the updat
 cd Marinara-Engine
 ./start-termux.sh --skip-update
 ```
+
+For a persistent opt-out, set `AUTO_UPDATE_ENABLED=false` in the project `.env`. This affects only launcher-managed Engine updates; manual updates and the in-app update controls remain available.
 
 If you use the Android app icon (the APK), open it and tap **Install / Start Marinara**. The APK is a sideloaded app, which means you installed it outside the official app store. It is a shell over Termux, so it updates the same Termux copy behind it.
 

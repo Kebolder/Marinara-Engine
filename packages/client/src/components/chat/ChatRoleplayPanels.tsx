@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Loader2, PenLine, Sparkles, X } from "lucide-react";
+import { AlertTriangle, BookOpen, ChevronDown, ChevronRight, Loader2, MapPin, PenLine, Sparkles, X } from "lucide-react";
 import { useUpdateChatMetadata } from "../../hooks/use-chats";
 import { type BudgetSkippedLorebookEntry, useActiveLorebookEntries } from "../../hooks/use-lorebooks";
 import { cn } from "../../lib/utils";
+import { useUIStore } from "../../stores/ui.store";
 import {
   ROLEPLAY_POPOVER_CLOSE_BUTTON,
   ROLEPLAY_POPOVER_CLOSE_ICON_SIZE,
@@ -63,6 +64,9 @@ function ActiveLorebookEntryRow({
     constant: boolean;
     selective: boolean;
     order: number;
+    lorebookId: string;
+    lorebookName: string;
+    activationSources: Array<"current_location" | "keyword" | "semantic" | "constant" | "sticky" | "recursive">;
     matchedKeys?: string[];
     matchType?: "keyword" | "semantic" | "constant" | "sticky";
     semanticScore?: number;
@@ -76,6 +80,7 @@ function ActiveLorebookEntryRow({
   const semanticScoreLabel = formatSemanticScore(semanticScore);
   const isSemanticMatch = entry.matchType === "semantic" || semanticScore !== null;
   const visibleMatchedKeys = matchedKeys.filter((key) => !key.startsWith("[semantic:"));
+  const isCurrentLocation = entry.activationSources.includes("current_location");
 
   return (
     <div
@@ -97,8 +102,27 @@ function ActiveLorebookEntryRow({
             Vector{semanticScoreLabel ? ` ${semanticScoreLabel}` : ""}
           </span>
         )}
+        {isCurrentLocation && (
+          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-sky-400/15 px-1 py-0.5 text-[0.5rem] font-semibold text-sky-200 ring-1 ring-sky-400/25">
+            <MapPin size="0.55rem" /> Location
+          </span>
+        )}
         <span className="ml-auto shrink-0 text-[0.625rem] text-[var(--muted-foreground)]">#{entry.order}</span>
+        <button
+          type="button"
+          className="min-h-8 shrink-0 rounded px-1.5 text-[0.625rem] text-[var(--muted-foreground)] hover:bg-white/10 hover:text-[var(--foreground)]"
+          onClick={(event) => {
+            event.stopPropagation();
+            useUIStore.getState().openLorebookDetail(entry.lorebookId);
+          }}
+          aria-label={`Open ${entry.name} in ${entry.lorebookName}`}
+        >
+          Open
+        </button>
       </div>
+      <p className="mt-0.5 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+        {entry.lorebookName} · {entry.activationSources.map((source) => source.replaceAll("_", " ")).join(", ")}
+      </p>
       {entry.keys.length > 0 && (
         <p className="mt-0.5 truncate text-[0.625rem] text-[var(--muted-foreground)]">
           Keys: {entry.keys.slice(0, 5).join(", ")}
@@ -128,6 +152,7 @@ function ActiveLorebookEntryRow({
 function formatBudgetName(blockedBy: BudgetSkippedLorebookEntry["blockedBy"]) {
   if (blockedBy === "lorebook") return "lorebook budget";
   if (blockedBy === "chat") return "chat budget";
+  if (blockedBy === "location") return "current-location context cap";
   return "lorebook and chat budgets";
 }
 
@@ -137,6 +162,9 @@ function formatBudgetCap(entry: BudgetSkippedLorebookEntry) {
   }
   if (entry.blockedBy === "chat") {
     return `${entry.chatUsedTokens.toLocaleString()} / ${entry.chatBudget.toLocaleString()}`;
+  }
+  if (entry.blockedBy === "location") {
+    return `${entry.chatUsedTokens.toLocaleString()} tokens used before the location cap`;
   }
   const lorebookPart = `${entry.lorebookUsedTokens.toLocaleString()} / ${entry.lorebookBudget.toLocaleString()} lorebook`;
   const chatPart = `${entry.chatUsedTokens.toLocaleString()} / ${entry.chatBudget.toLocaleString()} chat`;
@@ -168,6 +196,9 @@ function BudgetSkippedEntryRow({ entry }: { entry: BudgetSkippedLorebookEntry })
       </div>
       <p className="mt-0.5 truncate pl-5 text-[0.625rem] text-amber-100/70">
         {entry.lorebookName} blocked by {formatBudgetName(entry.blockedBy)}
+      </p>
+      <p className="mt-0.5 truncate pl-5 text-[0.625rem] text-amber-100/60">
+        Sources: {entry.activationSources.map((source) => source.replaceAll("_", " ")).join(", ")}
       </p>
       {expanded && (
         <div className="mt-1.5 space-y-1 border-t border-amber-500/20 pt-1.5 pl-5 text-[0.625rem] leading-relaxed text-amber-50/75">
@@ -225,6 +256,8 @@ export function ActiveLorebookEntriesPanel({
   const { data, isLoading } = useActiveLorebookEntries(chatId, true);
   const entries = data?.entries ?? [];
   const skippedEntries = data?.budgetSkippedEntries ?? [];
+  const currentLocationEntries = entries.filter((entry) => entry.activationSources.includes("current_location"));
+  const otherEntries = entries.filter((entry) => !entry.activationSources.includes("current_location"));
 
   return (
     <>
@@ -256,11 +289,32 @@ export function ActiveLorebookEntriesPanel({
             {entries.length} active • ~{(data?.totalTokens ?? 0).toLocaleString()} tokens
           </p>
           <BudgetSkippedEntriesNotice entries={skippedEntries} />
-          <div className="space-y-1.5">
-            {entries.map((entry) => (
-              <ActiveLorebookEntryRow key={entry.id} entry={entry} />
-            ))}
-          </div>
+          {currentLocationEntries.length > 0 && (
+            <section aria-label="Current location lore">
+              <h4 className="mb-1.5 flex items-center gap-1.5 text-[0.625rem] font-semibold uppercase tracking-wide text-sky-200">
+                <MapPin size="0.6875rem" /> Current location
+              </h4>
+              <div className="space-y-1.5">
+                {currentLocationEntries.map((entry) => (
+                  <ActiveLorebookEntryRow key={entry.id} entry={entry} />
+                ))}
+              </div>
+            </section>
+          )}
+          {otherEntries.length > 0 && (
+            <section className={cn(currentLocationEntries.length > 0 && "mt-3")} aria-label="Other active lore">
+              {currentLocationEntries.length > 0 && (
+                <h4 className="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+                  Other active lore
+                </h4>
+              )}
+              <div className="space-y-1.5">
+                {otherEntries.map((entry) => (
+                  <ActiveLorebookEntryRow key={entry.id} entry={entry} />
+                ))}
+              </div>
+            </section>
+          )}
         </>
       )}
     </>

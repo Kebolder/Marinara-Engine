@@ -9,10 +9,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { X, MapPin, Swords, ScrollText, Package, Users, PenLine, BookOpen, Trash2, Loader2, Wand2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
+import { cleanNpcAvatarDisplayName, normalizeNpcAvatarName } from "../../lib/game-npc-avatar";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
 import { AnimatedText } from "./AnimatedText";
 
-import { normalizeTextForMatch, type GameNpc } from "@marinara-engine/shared";
+import type { GameNpc } from "@marinara-engine/shared";
 
 interface JournalEntry {
   timestamp: string;
@@ -82,14 +83,12 @@ function isMobileGameViewport(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
 }
 
-const TRAILING_REPUTATION_LABEL = /(devoted|allied|friendly|neutral|unfriendly|hostile|enemy)$/i;
-
 function normalizeNpcName(value: string): string {
-  return normalizeTextForMatch(value).replace(/[_-]+/g, " ");
+  return normalizeNpcAvatarName(value);
 }
 
 function cleanNpcDisplayName(value: string): string {
-  return value.replace(TRAILING_REPUTATION_LABEL, "").trim() || value;
+  return cleanNpcAvatarDisplayName(value);
 }
 
 function normalizeNpcEntryTitle(value: string): string {
@@ -275,7 +274,7 @@ export function GameJournal({
     <div
       className={
         embedded
-          ? "flex min-h-0 flex-1 flex-col overflow-hidden bg-transparent"
+          ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-transparent"
           : "absolute inset-0 z-40 flex min-h-0 flex-col overflow-hidden bg-black/85 backdrop-blur-md"
       }
     >
@@ -317,7 +316,10 @@ export function GameJournal({
       </div>
 
       {/* Content */}
-      <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain p-4 [-webkit-overflow-scrolling:touch]">
+      <div
+        data-game-journal-scroll
+        className="relative min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-contain p-4 [-webkit-overflow-scrolling:touch]"
+      >
         {activeTab === "all" && <TimelineView entries={visibleEntries} />}
         {activeTab === "npcs" && (
           <NpcsView

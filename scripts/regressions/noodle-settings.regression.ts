@@ -1,10 +1,57 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DB } from "../../packages/server/src/db/connection.js";
 import { createFileNativeDB } from "../../packages/server/src/db/file-backed-store.js";
 import { createNoodleStorage } from "../../packages/server/src/services/storage/noodle.storage.js";
+import { resolveNoodleAvatarCropAfterProfileUpdate } from "../../packages/server/src/services/noodle/noodle-profile-avatar.js";
+
+const sourceCrop = { x: 12, y: 18, width: 62, height: 62, unit: "%" as const };
+assert.equal(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: undefined,
+    currentCrop: sourceCrop,
+  }),
+  undefined,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/avatar.png",
+    currentCrop: sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: undefined,
+    currentCrop: null,
+    sourceAvatarUrl: "/avatar.png",
+    sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.deepEqual(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/avatar.png",
+    currentCrop: null,
+    sourceAvatarUrl: "/avatar.png",
+    sourceCrop,
+  }),
+  sourceCrop,
+);
+assert.equal(
+  resolveNoodleAvatarCropAfterProfileUpdate({
+    currentAvatarUrl: "/avatar.png",
+    nextAvatarUrl: "/replacement.png",
+    currentCrop: sourceCrop,
+  }),
+  null,
+);
 
 const storageDir = mkdtempSync(join(tmpdir(), "marinara-noodle-settings-"));
 process.env.FILE_STORAGE_DIR = storageDir;
@@ -20,13 +67,99 @@ try {
   assert.equal(updated.maxImagesPerRefresh, 9);
   assert.equal(updated.allowRandomUsers, true);
   assert.equal(updated.maxGeneratedPostsPerRefresh, 11);
+  const refreshRun = await firstNoodle.createRefreshRun({
+    activeAccountIds: ["alpha"],
+    prompt: "Generate a Noodle timeline.",
+  });
+  assert.deepEqual(refreshRun.attempts, []);
+  const rejectedResponse = "{not valid timeline JSON";
+  const rejectionReason = "the response was not valid timeline JSON (full parser detail)";
+  await firstNoodle.recordRefreshAttempt(refreshRun.id, {
+    sequence: 1,
+    kind: "initial",
+    response: rejectedResponse,
+    rejectionReason,
+    createdAt: "2026-07-15T19:00:00.000Z",
+  });
+  const correctedResponse = '{"posts":[{"authorHandle":"alpha","content":"Valid"}]}';
+  await firstNoodle.recordRefreshAttempt(refreshRun.id, {
+    sequence: 2,
+    kind: "correction",
+    response: correctedResponse,
+    rejectionReason: null,
+    createdAt: "2026-07-15T19:00:01.000Z",
+  });
+  await firstNoodle.finishRefreshRun(refreshRun.id, { status: "completed", result: correctedResponse });
+  const legacyRefreshRun = await firstNoodle.createRefreshRun({
+    activeAccountIds: ["legacy"],
+    prompt: "Legacy refresh prompt.",
+  });
+  await firstNoodle.finishRefreshRun(legacyRefreshRun.id, { status: "completed", result: "legacy result" });
+  const characterAccount = await firstNoodle.upsertAccountFromProfile({
+    kind: "character",
+    entityId: "renamed-character",
+    displayName: "Old Card Name",
+    avatarUrl: "/old-avatar.png",
+    bio: "Generated Noodle biography",
+    invited: true,
+    syncIdentity: true,
+  });
+  await firstNoodle.updateAccount(characterAccount.id, {
+    displayName: "Generated Social Name",
+    handle: "custom_handle",
+    bio: "Keep this generated biography",
+    settings: { profileGenerated: true, location: "Snezhnaya" },
+  });
+  const renamedCharacterAccount = await firstNoodle.upsertAccountFromProfile({
+    kind: "character",
+    entityId: "renamed-character",
+    displayName: "New Card Name",
+    avatarUrl: "/new-avatar.png",
+    syncIdentity: true,
+  });
+  assert.equal(renamedCharacterAccount.displayName, "New Card Name");
+  assert.equal(renamedCharacterAccount.avatarUrl, "/new-avatar.png");
+  assert.equal(renamedCharacterAccount.handle, "custom_handle");
+  assert.equal(renamedCharacterAccount.bio, "Keep this generated biography");
+  assert.deepEqual(renamedCharacterAccount.settings, { profileGenerated: true, location: "Snezhnaya" });
   await firstDb._fileStore.close();
 
+  const refreshRunsPath = join(storageDir, "tables", "noodle_refresh_runs.json");
+  const persistedRefreshRuns = JSON.parse(readFileSync(refreshRunsPath, "utf8")) as Array<Record<string, unknown>>;
+  const legacyPersistedRun = persistedRefreshRuns.find((entry) => entry.id === legacyRefreshRun.id);
+  assert.ok(legacyPersistedRun);
+  delete legacyPersistedRun.attempts;
+  writeFileSync(refreshRunsPath, JSON.stringify(persistedRefreshRuns));
+
   const reopenedDb = await createFileNativeDB();
-  const reopenedSettings = await createNoodleStorage(reopenedDb as unknown as DB).getSettings();
+  const reopenedNoodle = createNoodleStorage(reopenedDb as unknown as DB);
+  const reopenedSettings = await reopenedNoodle.getSettings();
   assert.equal(reopenedSettings.maxImagesPerRefresh, 9);
   assert.equal(reopenedSettings.allowRandomUsers, true);
   assert.equal(reopenedSettings.maxGeneratedPostsPerRefresh, 11);
+  const reopenedRuns = await reopenedNoodle.listRefreshRuns({ status: "completed", limit: 2 });
+  const reopenedRun = reopenedRuns.find((entry) => entry.id === refreshRun.id);
+  assert.equal(reopenedRun?.result, correctedResponse);
+  assert.deepEqual(reopenedRun?.attempts, [
+    {
+      sequence: 1,
+      kind: "initial",
+      response: rejectedResponse,
+      rejectionReason,
+      createdAt: "2026-07-15T19:00:00.000Z",
+    },
+    {
+      sequence: 2,
+      kind: "correction",
+      response: correctedResponse,
+      rejectionReason: null,
+      createdAt: "2026-07-15T19:00:01.000Z",
+    },
+  ]);
+  assert.deepEqual(
+    reopenedRuns.find((entry) => entry.id === legacyRefreshRun.id)?.attempts,
+    [],
+  );
   await reopenedDb._fileStore.close();
 } finally {
   rmSync(storageDir, { recursive: true, force: true });

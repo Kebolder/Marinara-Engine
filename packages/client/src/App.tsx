@@ -1,11 +1,21 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { Component, lazy, Suspense, useEffect, useMemo, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  type CSSProperties,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { CustomThemeInjector } from "./components/layout/CustomThemeInjector";
 import { ModelDownloadModal } from "./components/modals/ModelDownloadModal";
+import { WhatsNewModal } from "./components/modals/WhatsNewModal";
 import { AppDialogRenderer } from "./components/ui/AppDialogRenderer";
 import { ChibiProfessorMariEasterEgg } from "./components/ui/ChibiProfessorMariEasterEgg";
 import { CsrfOriginWarningBanner } from "./components/diagnostics/CsrfOriginWarningBanner";
@@ -17,6 +27,7 @@ import {
   useUIStore,
 } from "./stores/ui.store";
 import { useSidecarStore } from "./stores/sidecar.store";
+import { useDialogStore } from "./stores/dialog.store";
 import { api } from "./lib/api-client";
 import { forceRefreshSpa } from "./lib/browser-runtime";
 import {
@@ -467,6 +478,7 @@ export function App() {
   const showDownloadModal = useSidecarStore((s) => s.showDownloadModal);
   const setShowDownloadModal = useSidecarStore((s) => s.setShowDownloadModal);
   const fetchSidecarStatus = useSidecarStore((s) => s.fetchStatus);
+  const hasAppDialogOpen = useDialogStore((s) => s.dialog !== null);
 
   // [#3104 diagnostic] warn on long main-thread tasks (see lib/perf-diagnostics.ts)
   useEffect(() => {
@@ -589,6 +601,13 @@ export function App() {
       ? getCssGradientColorStops(animatedAccentSource, animatedSolidAccent)
       : [animatedSolidAccent];
     const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode || themeAccentPulseConfig.enabled;
+    const usesTimerDrivenAccentAnimation = accentAnimationEnabled;
+
+    root.style.setProperty("--marinara-app-accent-static", solidAccent);
+    root.style.setProperty(
+      "--marinara-app-accent-static-gradient",
+      accentIsGradient ? accentSource : getSolidAccentGradient(solidAccent),
+    );
 
     let accentAnimationTimer: ReturnType<typeof window.setTimeout> | null = null;
     let cursorRecolorFreezeTimer: ReturnType<typeof window.setTimeout> | null = null;
@@ -675,14 +694,27 @@ export function App() {
           ? getGradientRgbAccent(animatedGradientStops)
           : getSolidRgbAccent(animatedSolidAccent);
 
-      applyAppAccentVariables({
-        root,
-        accent: liveAccent,
-        gradient: getSolidAccentGradient(liveAccent),
-        surfaceAccent: accentIsGradient ? solidAccent : liveAccent,
-        theme,
-        updateCursor: false,
-      });
+      const liveGradient = getSolidAccentGradient(liveAccent);
+      if (appAccentRgbMode) {
+        applyAppAccentVariables({
+          root,
+          accent: liveAccent,
+          gradient: liveGradient,
+          surfaceAccent: accentIsGradient ? solidAccent : liveAccent,
+          theme,
+          updateCursor: false,
+        });
+      } else {
+        // Pulse only the foreground-facing accent tokens. Recomputing surface,
+        // sidebar, and glow tokens on every tick forces Firefox to restyle most
+        // of the app and can briefly starve an otherwise independent canvas.
+        root.style.setProperty("--primary", liveAccent);
+        root.style.setProperty("--ring", liveAccent);
+        root.style.setProperty("--marinara-app-accent-solid", liveAccent);
+        root.style.setProperty("--marinara-app-accent-gradient", liveGradient);
+        root.style.setProperty("--marinara-chat-chrome-accent", liveAccent);
+        root.style.setProperty("--marinara-chat-chrome-accent-gradient", liveGradient);
+      }
       applyCursorAccent(liveAccent, { slow: true });
       setAccentModeDataset();
     };
@@ -714,8 +746,10 @@ export function App() {
     const startAccentAnimation = () => {
       root.dataset.marinaraAccentAnimation =
         animatedAccentIsGradient && animatedGradientStops.length > 1 ? "gradient" : "solid";
-      applyLiveAccent();
-      queueAccentAnimationTick();
+      if (usesTimerDrivenAccentAnimation) {
+        applyLiveAccent();
+        queueAccentAnimationTick();
+      }
     };
 
     const syncAccentAnimationState = () => {
@@ -921,6 +955,7 @@ export function App() {
       <Suspense fallback={null}>
         <LazyAppShell />
       </Suspense>
+      <WhatsNewModal presentationAllowed={!hasModalOpen && !hasAppDialogOpen && (isLite || !showDownloadModal)} />
       {!isLite && <ModelDownloadModal open={showDownloadModal} onClose={() => setShowDownloadModal(false)} />}
       {hasModalOpen && (
         <Suspense fallback={null}>
@@ -943,6 +978,7 @@ export function App() {
       >
         <Toaster
           position="top-center"
+          swipeDirections={["left", "right", "top"]}
           offset="4rem"
           theme={theme}
           closeButton

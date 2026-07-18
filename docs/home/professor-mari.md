@@ -23,6 +23,7 @@ Ask her for help with any of these:
 - Creating or editing a persona. A persona is the identity you play as in a chat, the "you" in the story.
 - Creating or editing a lorebook. A lorebook is a set of world notes the AI pulls in when they are relevant.
 - Creating or editing a theme, an agent, or a prompt preset. A theme is a look for the app. An agent is a background AI helper. A preset is a saved bundle of prompt settings.
+- Comparing all 29 official downloadable agents and feature packages, explaining which modes they support, and advising which ones fit a user's goal. She distinguishes catalog availability from what is actually installed, directs users to **Agents → Download Agents** when needed, and knows that package sources and the complete catalog are available in [Pasta-Devs/Marinara-Agents](https://github.com/Pasta-Devs/Marinara-Agents).
 - Generating or assigning images, such as avatars, sprites, and backgrounds. A sprite is a character image, like a portrait or a full body pose, shown during a chat.
 - Looking up public Fandom wiki pages to help you research a character or world.
 - Following quick-reply suggestion chips above the chat input, color-coded by entity type, through a multi-step creation or edit.
@@ -144,4 +145,5 @@ Professor Mari is a helper, not the full documentation. Keep these limits in min
 - [The First-Time Tutorial](tutorial.md)
 - [Connecting to an AI Provider](../connections/connecting-to-a-provider.md)
 - [Creating and Editing Characters](../characters/creating-and-editing-characters.md)
+- [Downloadable Agents Reference](../agents/built-in-agents.md)
 - [Remote Access: Basic Auth and IP Allowlist](../REMOTE_ACCESS.md)

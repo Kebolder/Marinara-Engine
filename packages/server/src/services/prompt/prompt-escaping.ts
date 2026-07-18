@@ -1,5 +1,10 @@
 import type { WrapFormat } from "@marinara-engine/shared";
 
+// Some import paths can hand us the standard example-dialogue separator after
+// an HTML-entity pass. Only this exact control marker is canonicalized.
+const EXAMPLE_DIALOGUE_MARKER_PATTERN = /(<START>|&lt;START(?:&gt;|>))/g;
+const EXACT_EXAMPLE_DIALOGUE_MARKER_PATTERN = /^(?:<START>|&lt;START(?:&gt;|>))$/;
+
 export function escapeXmlText(value: string): string {
   // XML text nodes only require escaping `&` and `<`. Keep plain `>` literal so
   // user-authored Markdown blockquotes do not become visible `&gt;` tokens.
@@ -18,5 +23,9 @@ export function sanitizePromptLeaf(value: string, wrapFormat: WrapFormat): strin
 
 export function sanitizeExampleDialoguePromptLeaf(value: string, wrapFormat: WrapFormat): string {
   if (wrapFormat !== "xml") return sanitizePromptLeaf(value, wrapFormat);
-  return value.split("<START>").map(escapeXmlText).join("<START>");
+
+  return value
+    .split(EXAMPLE_DIALOGUE_MARKER_PATTERN)
+    .map((chunk) => (EXACT_EXAMPLE_DIALOGUE_MARKER_PATTERN.test(chunk) ? "<START>" : escapeXmlText(chunk)))
+    .join("");
 }

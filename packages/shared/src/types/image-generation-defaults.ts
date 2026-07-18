@@ -33,6 +33,11 @@ export interface NovelAiDefaults {
   promptGuidance: number;
   promptGuidanceRescale: number;
   undesiredContentPreset: number;
+  dynamicResolutionBySubjectCount: boolean;
+  /** Persistent V4.5 style-only director reference stored with this connection. */
+  styleReferenceImage: string | null;
+  styleReferenceStrength: number;
+  styleReferenceFidelity: number;
 }
 
 export interface ImageGenerationDefaultsProfile {

@@ -36,7 +36,7 @@ pkg update -y && pkg install -y git nodejs-lts && ([ -d "$HOME/Marinara-Engine/.
 This one command does five things:
 
 1. Updates the Termux packages.
-2. Installs Git and Node.js. Marinara needs Node.js version 24 or 25.
+2. Installs Git and Node.js. Marinara supports Node.js versions 24, 25, and 26.
 3. Downloads Marinara Engine, unless it is already installed.
 4. Makes the launcher (the `start-termux.sh` script) runnable.
 5. Runs the launcher for the first time.
@@ -69,6 +69,8 @@ cd Marinara-Engine
 ./start-termux.sh --skip-update
 ```
 
+The launcher also removes unreferenced packages from its local pnpm cache during dependency updates. This keeps old releases from accumulating several gigabytes on the phone; it does not touch Marinara chats, settings, or other user data.
+
 ## Access from another device
 
 By default, the launcher makes Marinara reachable on your local network. This means a laptop or another phone on the same Wi-Fi can open it. For step-by-step instructions on finding the right address, see the [Frequently Asked Questions](../FAQ.md).
@@ -82,6 +84,8 @@ To start your installed copy without updating, use the skip flag:
 ```
 ./start-termux.sh --skip-update
 ```
+
+To keep the installed Engine version across launches, add `AUTO_UPDATE_ENABLED=false` to the project `.env`. This does not disable manual update commands or **Settings → Advanced → Updates**.
 
 You can also check for updates inside the app. Open **Settings**, go to the **Advanced** tab, and open the **Updates** section. Click **Check for Updates** to see if a newer release exists. The in-app **Apply Update** button is off by default and needs setup. For how to enable and use it, see [Upgrading Marinara Engine](../UPGRADING.md).
 
